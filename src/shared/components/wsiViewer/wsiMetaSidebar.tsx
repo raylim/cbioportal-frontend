@@ -1,6 +1,10 @@
 import * as React from 'react';
 import { Sample } from './wsiViewerTypes';
-import { CnaTable, MutationTable, StructuralVariantTable } from './wsiMolecularTables';
+import {
+    CnaTable,
+    MutationTable,
+    StructuralVariantTable,
+} from './wsiMolecularTables';
 
 const SIDEBAR_COLORS = {
     blue: '#2986e2',
@@ -72,14 +76,12 @@ function renderMetaValue(row: MetaRow) {
             rel="noopener noreferrer"
             style={linkedValueStyle}
             onMouseEnter={event => {
-                (
-                    event.currentTarget as HTMLAnchorElement
-                ).style.textDecoration = 'underline';
+                (event.currentTarget as HTMLAnchorElement).style.textDecoration =
+                    'underline';
             }}
             onMouseLeave={event => {
-                (
-                    event.currentTarget as HTMLAnchorElement
-                ).style.textDecoration = 'none';
+                (event.currentTarget as HTMLAnchorElement).style.textDecoration =
+                    'none';
             }}
         >
             {row.value || '—'}
@@ -155,6 +157,12 @@ function WsiMetaSidebarComponent({
     pathRows,
     seqRows,
     sample,
+    dsaUrl,
+    currentGirderItemId,
+    dsaAnnotationCount = 0,
+    annotationsLoading = false,
+    annotationsVisible = true,
+    onToggleAnnotations,
 }: {
     width: number;
     showImageProperties: boolean;
@@ -163,6 +171,12 @@ function WsiMetaSidebarComponent({
     pathRows: MetaRow[];
     seqRows: MetaRow[];
     sample: Sample | null;
+    dsaUrl?: string | null;
+    currentGirderItemId?: string | null;
+    dsaAnnotationCount?: number;
+    annotationsLoading?: boolean;
+    annotationsVisible?: boolean;
+    onToggleAnnotations?: () => void;
 }) {
     const showMskImpact = hasMskImpactContent(sample, seqRows);
 
@@ -188,12 +202,82 @@ function WsiMetaSidebarComponent({
             </SbSection>
 
             <SbSection title="Pathology">
-                {showPathology ? (
-                    <MetaTable rows={pathRows} />
-                ) : (
-                    <EmptyState />
-                )}
+                {showPathology ? <MetaTable rows={pathRows} /> : <EmptyState />}
             </SbSection>
+
+            {dsaUrl && (
+                <SbSection title="Annotations">
+                    <div style={{ marginTop: 6 }}>
+                        {annotationsLoading && (
+                            <div
+                                style={{
+                                    color: SIDEBAR_COLORS.muted,
+                                    fontSize: 11,
+                                }}
+                            >
+                                Checking DSA…
+                            </div>
+                        )}
+                        {!annotationsLoading && !currentGirderItemId && (
+                            <div
+                                style={{
+                                    color: SIDEBAR_COLORS.muted,
+                                    fontSize: 11,
+                                }}
+                            >
+                                Slide not in DSA
+                            </div>
+                        )}
+                        {!annotationsLoading && currentGirderItemId && (
+                            <div
+                                style={{
+                                    fontSize: 11,
+                                    color: SIDEBAR_COLORS.text,
+                                    marginBottom: 4,
+                                }}
+                            >
+                                {dsaAnnotationCount} annotation
+                                {dsaAnnotationCount !== 1 ? 's' : ''}
+                            </div>
+                        )}
+                        {currentGirderItemId && (
+                            <a
+                                href={`${dsaUrl}/histomics#?image=${currentGirderItemId}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                style={{
+                                    display: 'block',
+                                    fontSize: 11,
+                                    color: SIDEBAR_COLORS.blue,
+                                    textDecoration: 'none',
+                                    marginBottom: 4,
+                                }}
+                            >
+                                ✏️ Annotate in DSA
+                            </a>
+                        )}
+                        {currentGirderItemId &&
+                            dsaAnnotationCount > 0 &&
+                            onToggleAnnotations && (
+                                <button
+                                    onClick={onToggleAnnotations}
+                                    style={{
+                                        fontSize: 11,
+                                        padding: '2px 6px',
+                                        cursor: 'pointer',
+                                        border: `1px solid ${SIDEBAR_COLORS.border}`,
+                                        borderRadius: 3,
+                                        background: SIDEBAR_COLORS.sidebarBg,
+                                        color: SIDEBAR_COLORS.text,
+                                    }}
+                                >
+                                    {annotationsVisible ? 'Hide' : 'Show'}{' '}
+                                    annotations
+                                </button>
+                            )}
+                    </div>
+                </SbSection>
+            )}
 
             {showMskImpact && (
                 <SbSection title="MSK-IMPACT">
