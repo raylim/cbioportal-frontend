@@ -585,3 +585,156 @@ describe('WSIViewer — open handler (mountOSD integration)', () => {
         expect(afterOpen).toBe(true);
     });
 });
+
+// ---- Annotation CRUD helpers ----
+
+// Mock @annotorious/openseadragon so no real canvas ops run
+jest.mock('@annotorious/openseadragon', () => ({
+    createOSDAnnotator: jest.fn(() => ({
+        on: jest.fn(),
+        setAnnotations: jest.fn(),
+        setVisible: jest.fn(),
+        removeAnnotation: jest.fn(),
+        destroy: jest.fn(),
+    })),
+}));
+
+// Use global fetch mock provided by jest/jsdom environment
+const mockFetch = jest.fn();
+(global as any).fetch = mockFetch;
+
+function makeAnnotation(overrides: Record<string, any> = {}): any {
+    return {
+        id: 'ann-1',
+        '@context': 'http://www.w3.org/ns/anno.jsonld',
+        type: 'Annotation',
+        body: [{ type: 'TextualBody', value: 'test label', purpose: 'commenting' }],
+        target: {
+            source: 'slide-1',
+            selector: { type: 'FragmentSelector', value: 'xywh=100,100,50,50' },
+        },
+        ...overrides,
+    };
+}
+
+describe('WSIViewer — annotation helpers', () => {
+    const apiUrl = 'https://tiles.example.com/api';
+    let inst: any;
+
+    beforeEach(() => {
+        mockFetch.mockReset();
+        inst = new (WSIViewer as any)({
+            url: 'https://tiles.example.com/patient/P-1',
+            height: 500,
+            annotationApiUrl: apiUrl,
+        });
+        inst.selectedSlide = makeSlide({ image_id: 'slide-1' });
+        inst.studyId = 'study-1';
+    });
+
+    it('annotationApiBase returns the configured URL', () => {
+        assert.equal(inst.annotationApiBase, apiUrl);
+    });
+
+    it('loadAnnotations fetches and sets annotations', async () => {
+        // Server returns DB-format records; loadAnnotations converts to W3C shape
+        const serverRecord = {
+            id: 'ann-1',
+            slide_id: 'slide-1',
+            study_id: 'study-1',
+            body: { label: 'test label', comment: '', type: 'region' },
+            target: { selector: { type: 'FragmentSelector', value: 'xywh=100,100,50,50' } },
+            created_by: 'user-1',
+            created_at: '2024-01-01T00:00:00',
+            version: 1,
+        };
+        mockFetch.mockResolvedValueOnce({
+            ok: true,
+            json: async () => [serverRecord],
+        });
+
+        await inst.loadAnnotations('slide-1');
+
+        expect(mockFetch).toHaveBeenCalledWith(
+            expect.stringContaining('/annotations?slide_id=slide-1'),
+            expect.objectContaining({ headers: expect.any(Object) }),
+        );
+        assert.lengthOf(inst.annotations, 1);
+        assert.equal(inst.annotations[0].id, 'ann-1');
+        assert.equal(inst.annotations[0].body[0].value, 'test label');
+        assert.isFalse(inst.annotationsLoading);
+    });
+
+    it('loadAnnotations handles fetch error gracefully', async () => {
+        mockFetch.mockRejectedValueOnce(new Error('network error'));
+        // Should not throw
+        await inst.loadAnnotations('slide-1');
+        assert.deepEqual(inst.annotations, []);
+        assert.isFalse(inst.annotationsLoading);
+    });
+
+    it('saveNewAnnotation POSTs and adds returned annotation', async () => {
+        const ann = makeAnnotation();
+        const saved = { ...ann, id: 'ann-saved' };
+        mockFetch.mockResolvedValueOnce({
+            ok: true,
+            json: async () => saved,
+        });
+
+        await inst.saveNewAnnotation(ann);
+
+        expect(mockFetch).toHaveBeenCalledWith(
+            expect.stringContaining('/annotations'),
+            expect.objectContaining({ method: 'POST' }),
+        );
+        assert.isTrue(inst.annotations.some((a: any) => a.id === 'ann-saved'));
+    });
+
+    it('updateAnnotation PUTs to correct URL', async () => {
+        const ann = makeAnnotation({ id: 'ann-x', version: 2 });
+        inst.annotations = [ann];
+        mockFetch.mockResolvedValueOnce({
+            ok: true,
+            json: async () => ({ ...ann, version: 3 }),
+        });
+
+        await inst.updateAnnotation(ann);
+
+        expect(mockFetch).toHaveBeenCalledWith(
+            expect.stringContaining('/annotations/ann-x'),
+            expect.objectContaining({ method: 'PUT' }),
+        );
+    });
+
+    it('deleteAnnotation DELETEs from correct URL and removes locally', async () => {
+        const ann = makeAnnotation({ id: 'ann-del' });
+        inst.annotations = [ann];
+        mockFetch.mockResolvedValueOnce({ ok: true });
+
+        await inst.deleteAnnotation('ann-del');
+
+        expect(mockFetch).toHaveBeenCalledWith(
+            expect.stringContaining('/annotations/ann-del'),
+            expect.objectContaining({ method: 'DELETE' }),
+        );
+        assert.isFalse(inst.annotations.some((a: any) => a.id === 'ann-del'));
+    });
+
+    it('toggleAnnotationsVisible flips the flag', () => {
+        assert.isTrue(inst.annotationsVisible);
+        inst.toggleAnnotationsVisible();
+        assert.isFalse(inst.annotationsVisible);
+        inst.toggleAnnotationsVisible();
+        assert.isTrue(inst.annotationsVisible);
+    });
+
+    it('destroyViewer destroys annotorious if set', () => {
+        const mockAnno = { destroy: jest.fn(), setAnnotations: jest.fn(), on: jest.fn(), setVisible: jest.fn() };
+        inst.annotorious = mockAnno;
+        inst.osdViewer = { destroy: jest.fn(), addOnceHandler: jest.fn(), addHandler: jest.fn() };
+        inst.mouseTracker = { destroy: jest.fn() };
+        inst.destroyViewer();
+        expect(mockAnno.destroy).toHaveBeenCalled();
+        assert.isNull(inst.annotorious);
+    });
+});

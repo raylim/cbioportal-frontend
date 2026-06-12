@@ -255,6 +255,7 @@ export const ServerConfigDefaults: Partial<IServerConfig> = {
 
     skin_hide_clinical_data_tab_study_view: false,
     msk_wsi_tile_server_url: null,
+    msk_wsi_annotation_api_url: null,
 };
 
 export default ServerConfigDefaults;

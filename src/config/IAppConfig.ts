@@ -160,6 +160,13 @@ export interface IServerConfig {
      * Null/undefined = feature hidden.
      */
     msk_wsi_tile_server_url: string | null;
+    /**
+     * Base URL of the MSK native annotation API, e.g. https://tiles.mskcc.org
+     * When set, Annotorious read-write editing is enabled in the WSI viewer and
+     * annotations are stored in the tile server's embedded SQLite database.
+     * Null = annotation editing disabled.
+     */
+    msk_wsi_annotation_api_url: string | null;
     query_product_limit: number;
     clinical_attribute_product_limit: number;
     dat_method: string;

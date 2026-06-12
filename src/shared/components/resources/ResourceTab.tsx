@@ -19,6 +19,7 @@ import LoadingIndicator from 'shared/components/loadingIndicator/LoadingIndicato
 import { CUSTOM_URL_TRANSFORMERS } from 'shared/components/resources/customResourceHelpers';
 import { getResourceConfig } from 'shared/lib/ResourceConfig';
 import WSIViewer from 'shared/components/wsiViewer/WSIViewer';
+import { getServerConfig } from 'shared/lib/AppConfig';
 
 export interface IResourceTabProps {
     resourceDisplayName: string;
@@ -239,6 +240,7 @@ export default class ResourceTab extends React.Component<
                     <WSIViewer
                         url={this.currentResourceDatum.url}
                         height={this.iframeHeight}
+                        annotationApiUrl={getServerConfig().msk_wsi_annotation_api_url || undefined}
                     />
                 </div>
             );

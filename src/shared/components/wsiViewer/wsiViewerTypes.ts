@@ -52,3 +52,45 @@ export interface TileMetadata {
     mpp?: { x: number; y: number };
     objective_power?: number;
 }
+
+// ---------------------------------------------------------------------------
+// W3C Web Annotation types (Annotorious-compatible)
+// ---------------------------------------------------------------------------
+
+export interface FragmentSelector {
+    type: 'FragmentSelector';
+    conformsTo: 'http://www.w3.org/TR/media-frags/';
+    /** e.g. "xywh=pixel:100,200,300,400" */
+    value: string;
+}
+
+export interface SvgSelector {
+    type: 'SvgSelector';
+    /** e.g. '<svg><polygon points="100,200 300,400 500,600" /></svg>' */
+    value: string;
+}
+
+export type AnnotationSelector = FragmentSelector | SvgSelector;
+
+export interface AnnotationBody {
+    type: 'TextualBody';
+    value: string;
+    purpose: 'commenting' | 'tagging' | string;
+}
+
+export interface W3CAnnotation {
+    '@context': 'http://www.w3.org/ns/anno.jsonld';
+    type: 'Annotation';
+    id: string;
+    body: AnnotationBody[];
+    target: {
+        source: string;
+        selector: AnnotationSelector;
+    };
+    /** ISO datetime string from the annotation API */
+    created?: string;
+    /** Keycloak sub of the creator */
+    creator?: string;
+    /** Optimistic concurrency version from the annotation API */
+    version?: number;
+}

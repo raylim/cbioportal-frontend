@@ -3,11 +3,15 @@ import { observer } from 'mobx-react';
 import { observable, action, computed, makeObservable } from 'mobx';
 import LoadingIndicator from 'shared/components/loadingIndicator/LoadingIndicator';
 import * as OpenSeadragonLib from 'openseadragon';
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { createOSDAnnotator } = require('@annotorious/openseadragon');
+import '@annotorious/openseadragon/annotorious-openseadragon.css';
 import {
     Slide,
     Sample,
     PatientHierarchy,
     TileMetadata,
+    W3CAnnotation,
 } from './wsiViewerTypes';
 
 // ---- design tokens (matches iframe viewer) ----
@@ -37,6 +41,19 @@ interface Props {
     height: number;
     /** cBioPortal study ID — used to build sample links in the sidebar */
     studyId?: string;
+    /**
+     * Base URL of the native annotation API (e.g. https://tiles.mskcc.org).
+     * When set, Annotorious read-write editing is enabled and annotations are
+     * stored in the tile server's embedded SQLite database.
+     * Null/undefined = annotation editing disabled.
+     */
+    annotationApiUrl?: string | null;
+    /**
+     * Bearer token for the annotation API (Keycloak JWT).
+     * When null/undefined and annotationApiUrl is set, unauthenticated calls
+     * are made (works only if ANNOTATION_AUTH_ENABLED=false on the server).
+     */
+    authToken?: string | null;
 }
 
 @observer
@@ -55,11 +72,23 @@ export default class WSIViewer extends React.Component<Props, {}> {
     /** Current cursor position in image pixels (null when viewer not ready or cursor outside) */
     @observable cursorPos: { x: number; y: number } | null = null;
 
+    // ---- Annotation state ----
+    /** Annotations for the currently displayed slide */
+    @observable private annotations: W3CAnnotation[] = [];
+    /** Whether the annotation overlay is currently visible */
+    @observable private annotationsVisible = true;
+    /** True while fetching annotations from the API */
+    @observable private annotationsLoading = false;
+    /** Tooltip shown when clicking an annotation */
+    @observable private annotationTooltip: { x: number; y: number; text: string } | null = null;
+
     private viewerContainerRef = React.createRef<HTMLDivElement>();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     private osdViewer: any = null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     private osdMouseTracker: any = null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    private annotorious: any = null;
     /** In-memory cache of prefetched slide metadata keyed by image_id */
     private metaCache = new Map<string, TileMetadata>();
     /** Monotonically-increasing counter; each mountOSD call captures its value
@@ -259,9 +288,13 @@ export default class WSIViewer extends React.Component<Props, {}> {
         this.selectedMeta = null;
         this.viewerReady = false;
         this.error = null;
+        this.annotations = [];
+        this.annotationTooltip = null;
         // Bump the sequence so any in-flight mountOSD call can detect it's stale.
         const seq = ++this.mountSeq;
         await this.mountOSD(slide, seq);
+        // Load annotations for the new slide (fires after OSD is mounted but before 'open').
+        void this.loadAnnotations(slide.image_id);
         // NOTE: do NOT call writeHashState() here. mountOSD returns before the
         // OSD 'open' event fires, so the viewport has no tile source yet and
         // contentSize defaults to 1×1.  Writing at this point would clobber any
@@ -332,7 +365,152 @@ export default class WSIViewer extends React.Component<Props, {}> {
         }
     }
 
+    // ---- Annotation API helpers ----
+
+    private get annotationApiBase(): string | null {
+        return this.props.annotationApiUrl || null;
+    }
+
+    private annotationFetchHeaders(): HeadersInit {
+        const h: HeadersInit = { 'Content-Type': 'application/json' };
+        if (this.props.authToken) {
+            (h as Record<string, string>)['Authorization'] = `Bearer ${this.props.authToken}`;
+        }
+        return h;
+    }
+
+    /** Load annotations for the given slide from the annotation API. */
+    @action.bound
+    private async loadAnnotations(slideId: string) {
+        const apiBase = this.annotationApiBase;
+        if (!apiBase) return;
+        const studyId = this.props.studyId ?? '';
+        action(() => { this.annotationsLoading = true; })();
+        try {
+            const resp = await fetch(
+                `${apiBase}/annotations?slide_id=${encodeURIComponent(slideId)}&study_id=${encodeURIComponent(studyId)}`,
+                { headers: this.annotationFetchHeaders() }
+            );
+            if (!resp.ok) throw new Error(`${resp.status}`);
+            const raw: any[] = await resp.json();
+            // Convert API response to W3CAnnotation shape for Annotorious
+            const anns: W3CAnnotation[] = raw.map((item: any) => ({
+                '@context': 'http://www.w3.org/ns/anno.jsonld' as const,
+                type: 'Annotation' as const,
+                id: item.id,
+                body: item.body?.label
+                    ? [{ type: 'TextualBody' as const, value: item.body.label, purpose: 'commenting' as const }]
+                    : [],
+                target: { source: slideId, selector: item.target?.selector ?? item.target },
+                created: item.created_at,
+                creator: item.created_by,
+                version: item.version,
+            }));
+            action(() => {
+                this.annotations = anns;
+                this.annotationsLoading = false;
+            })();
+            if (this.annotorious) {
+                this.annotorious.setAnnotations(anns);
+            }
+        } catch (e) {
+            action(() => { this.annotationsLoading = false; })();
+            // eslint-disable-next-line no-console
+            console.warn('[WSIViewer] Failed to load annotations:', e);
+        }
+    }
+
+    /** POST a new annotation to the API and add it to local state. */
+    private async saveNewAnnotation(ann: W3CAnnotation) {
+        const apiBase = this.annotationApiBase;
+        if (!apiBase) return;
+        const slideId = this.selectedSlide?.image_id ?? '';
+        const studyId = this.props.studyId ?? '';
+        try {
+            const body = {
+                slide_id: slideId,
+                study_id: studyId,
+                body: { label: ann.body?.[0]?.value ?? '', comment: '', type: '' },
+                target: { selector: (ann.target as any).selector ?? ann.target },
+                visible_to: [],
+            };
+            const resp = await fetch(`${apiBase}/annotations`, {
+                method: 'POST',
+                headers: this.annotationFetchHeaders(),
+                body: JSON.stringify(body),
+            });
+            if (!resp.ok) throw new Error(`${resp.status}`);
+            const created = await resp.json();
+            action(() => {
+                this.annotations = [...this.annotations, { ...ann, id: created.id, version: created.version }];
+            })();
+        } catch (e) {
+            // eslint-disable-next-line no-console
+            console.warn('[WSIViewer] Failed to save annotation:', e);
+        }
+    }
+
+    /** PUT an updated annotation to the API. */
+    private async updateAnnotation(ann: W3CAnnotation) {
+        const apiBase = this.annotationApiBase;
+        if (!apiBase) return;
+        try {
+            const body = {
+                body: { label: ann.body?.[0]?.value ?? '', comment: '', type: '' },
+                target: { selector: (ann.target as any).selector ?? ann.target },
+                version: ann.version ?? 1,
+            };
+            const resp = await fetch(`${apiBase}/annotations/${encodeURIComponent(ann.id)}`, {
+                method: 'PUT',
+                headers: this.annotationFetchHeaders(),
+                body: JSON.stringify(body),
+            });
+            if (!resp.ok) throw new Error(`${resp.status}`);
+            const updated = await resp.json();
+            action(() => {
+                this.annotations = this.annotations.map(a =>
+                    a.id === ann.id ? { ...a, version: updated.version } : a
+                );
+            })();
+        } catch (e) {
+            // eslint-disable-next-line no-console
+            console.warn('[WSIViewer] Failed to update annotation:', e);
+        }
+    }
+
+    /** DELETE an annotation from the API and remove from local state. */
+    private async deleteAnnotation(annId: string) {
+        const apiBase = this.annotationApiBase;
+        if (!apiBase) return;
+        try {
+            const resp = await fetch(`${apiBase}/annotations/${encodeURIComponent(annId)}`, {
+                method: 'DELETE',
+                headers: this.annotationFetchHeaders(),
+            });
+            if (!resp.ok && resp.status !== 404) throw new Error(`${resp.status}`);
+            action(() => {
+                this.annotations = this.annotations.filter(a => a.id !== annId);
+            })();
+        } catch (e) {
+            // eslint-disable-next-line no-console
+            console.warn('[WSIViewer] Failed to delete annotation:', e);
+        }
+    }
+
+    @action.bound
+    toggleAnnotationsVisible() {
+        this.annotationsVisible = !this.annotationsVisible;
+        if (this.annotorious) {
+            this.annotorious.setVisible(this.annotationsVisible);
+        }
+    }
+
     private destroyViewer() {
+        // Clean up Annotorious before destroying OSD
+        if (this.annotorious) {
+            try { this.annotorious.destroy(); } catch (_) { /* ignore */ }
+            this.annotorious = null;
+        }
         if (this.osdMouseTracker) {
             try { this.osdMouseTracker.destroy(); } catch (_) { /* ignore */ }
             this.osdMouseTracker = null;
@@ -432,6 +610,46 @@ export default class WSIViewer extends React.Component<Props, {}> {
         this.osdViewer.addOnceHandler('open', () => {
             if (seq !== this.mountSeq) return;
             action(() => { this.viewerReady = true; })();
+
+            // Mount Annotorious (read-write) on top of OSD if annotation API is configured
+            if (this.annotationApiBase && this.osdViewer) {
+                try {
+                    this.annotorious = createOSDAnnotator(this.osdViewer, { drawingEnabled: true });
+
+                    this.annotorious.on('createAnnotation', (ann: W3CAnnotation) => {
+                        void this.saveNewAnnotation(ann);
+                    });
+                    this.annotorious.on('updateAnnotation', (ann: W3CAnnotation) => {
+                        void this.updateAnnotation(ann);
+                    });
+                    this.annotorious.on('deleteAnnotation', (ann: W3CAnnotation) => {
+                        void this.deleteAnnotation(ann.id);
+                    });
+                    this.annotorious.on('clickAnnotation', (ann: W3CAnnotation, originalEvent: MouseEvent) => {
+                        const label = ann.body?.[0]?.value ?? '';
+                        if (label) {
+                            action(() => {
+                                this.annotationTooltip = {
+                                    x: originalEvent.clientX,
+                                    y: originalEvent.clientY,
+                                    text: label,
+                                };
+                            })();
+                        }
+                    });
+
+                    // Push any already-loaded annotations into Annotorious
+                    if (this.annotations.length > 0) {
+                        this.annotorious.setAnnotations(this.annotations);
+                    }
+                    if (!this.annotationsVisible) {
+                        this.annotorious.setVisible(false);
+                    }
+                } catch (e) {
+                    // eslint-disable-next-line no-console
+                    console.warn('[WSIViewer] Annotorious init failed:', e);
+                }
+            }
 
             // Restore viewport position from URL hash if present for this slide,
             // otherwise center on the middle of the image.
@@ -553,7 +771,31 @@ export default class WSIViewer extends React.Component<Props, {}> {
                             onGo={this.goToCoordinates}
                             onCopyLink={() => this.copyViewLink()}
                             onDownload={() => this.downloadView()}
+                            annotationEnabled={!!this.annotationApiBase}
+                            annotationsVisible={this.annotationsVisible}
+                            onToggleAnnotations={this.toggleAnnotationsVisible}
                         />
+                    )}
+                    {this.annotationTooltip && (
+                        <div
+                            onClick={action(() => { this.annotationTooltip = null; })}
+                            style={{
+                                position: 'fixed',
+                                left: this.annotationTooltip.x + 12,
+                                top: this.annotationTooltip.y - 8,
+                                background: 'rgba(30,30,30,0.9)',
+                                color: '#fff',
+                                borderRadius: 4,
+                                padding: '4px 10px',
+                                fontSize: 12,
+                                pointerEvents: 'auto',
+                                cursor: 'pointer',
+                                zIndex: 9999,
+                                maxWidth: 260,
+                            }}
+                        >
+                            {this.annotationTooltip.text}
+                        </div>
                     )}
                 </div>
 
@@ -564,6 +806,10 @@ export default class WSIViewer extends React.Component<Props, {}> {
                     meta={selectedMeta}
                     tileServerBase={this.tileServerBase}
                     studyId={this.props.studyId}
+                    annotations={this.annotations}
+                    annotationsLoading={this.annotationsLoading}
+                    annotationEnabled={!!this.annotationApiBase}
+                    onDeleteAnnotation={(id) => { void this.deleteAnnotation(id); if (this.annotorious) this.annotorious.removeAnnotation(id); }}
                 />
             </div>
         );
@@ -589,9 +835,12 @@ interface CoordBarProps {
     onGo: () => void;
     onCopyLink: () => void;
     onDownload: () => void;
+    annotationEnabled?: boolean;
+    annotationsVisible?: boolean;
+    onToggleAnnotations?: () => void;
 }
 
-function CoordBar({ inputX, inputY, cursorPos, mpp, onChangeX, onChangeY, onGo, onCopyLink, onDownload }: CoordBarProps) {
+function CoordBar({ inputX, inputY, cursorPos, mpp, onChangeX, onChangeY, onGo, onCopyLink, onDownload, annotationEnabled, annotationsVisible, onToggleAnnotations }: CoordBarProps) {
     const handleKey = (e: React.KeyboardEvent) => { if (e.key === 'Enter') onGo(); };
     const [copied, setCopied] = React.useState(false);
 
@@ -681,6 +930,20 @@ function CoordBar({ inputX, inputY, cursorPos, mpp, onChangeX, onChangeY, onGo, 
             >
                 ⬇ Download
             </button>
+            {annotationEnabled && (
+                <button
+                    onClick={onToggleAnnotations}
+                    title={annotationsVisible ? 'Hide annotations' : 'Show annotations'}
+                    style={{
+                        ...btnStyle,
+                        border: `1px solid ${annotationsVisible ? C.blue : C.border}`,
+                        background: annotationsVisible ? '#e8f2ff' : '#fff',
+                        color: annotationsVisible ? C.blue : C.muted,
+                    }}
+                >
+                    {annotationsVisible ? '🔵 Annotations' : '○ Annotations'}
+                </button>
+            )}
             {cursorPos && (
                 <span style={{ marginLeft: 'auto', color: C.muted, fontFamily: 'monospace', fontSize: 11 }}>
                     📍 {cursorLabel}
@@ -950,9 +1213,13 @@ interface MetaSidebarProps {
     meta: TileMetadata | null;
     tileServerBase: string;
     studyId?: string;
+    annotations?: W3CAnnotation[];
+    annotationsLoading?: boolean;
+    annotationEnabled?: boolean;
+    onDeleteAnnotation?: (id: string) => void;
 }
 
-function MetaSidebar({ slide, sample, meta, tileServerBase, studyId }: MetaSidebarProps) {
+function MetaSidebar({ slide, sample, meta, tileServerBase, studyId, annotations = [], annotationsLoading = false, annotationEnabled = false, onDeleteAnnotation }: MetaSidebarProps) {
     const thumbSrc = slide ? `${tileServerBase}/tiles/${slide.image_id}/thumbnail` : null;
 
     return (
@@ -999,6 +1266,56 @@ function MetaSidebar({ slide, sample, meta, tileServerBase, studyId }: MetaSideb
                     <span style={{ color: '#bbb', fontSize: 11 }}>—</span>
                 )}
             </SbSection>
+
+            {/* Annotations panel */}
+            {annotationEnabled && (
+                <SbSection title={`Annotations (${annotations.length})`}>
+                    {annotationsLoading ? (
+                        <span style={{ color: '#bbb', fontSize: 11 }}>Loading…</span>
+                    ) : annotations.length === 0 ? (
+                        <span style={{ color: '#bbb', fontSize: 11 }}>No annotations yet. Draw on the slide to create one.</span>
+                    ) : (
+                        <div style={{ maxHeight: 260, overflowY: 'auto', marginTop: 6 }}>
+                            {annotations.map(ann => {
+                                const label = ann.body?.[0]?.value ?? '(unlabeled)';
+                                const creator = (ann as any).creator ?? '';
+                                const created = (ann as any).created ?? '';
+                                const dateStr = created ? new Date(created).toLocaleDateString() : '';
+                                return (
+                                    <div key={ann.id} style={{
+                                        padding: '4px 0', borderBottom: `1px solid ${C.border}`,
+                                        display: 'flex', alignItems: 'flex-start', gap: 4,
+                                    }}>
+                                        <div style={{ flex: 1, overflow: 'hidden' }}>
+                                            <div style={{ fontSize: 12, fontWeight: 500, color: C.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={label}>
+                                                {label}
+                                            </div>
+                                            {(creator || dateStr) && (
+                                                <div style={{ fontSize: 10, color: C.muted }}>
+                                                    {creator}{creator && dateStr ? ' · ' : ''}{dateStr}
+                                                </div>
+                                            )}
+                                        </div>
+                                        {onDeleteAnnotation && (
+                                            <button
+                                                onClick={() => onDeleteAnnotation(ann.id)}
+                                                title="Delete annotation"
+                                                style={{
+                                                    border: 'none', background: 'transparent',
+                                                    cursor: 'pointer', color: '#c0392b', fontSize: 13, padding: '0 2px',
+                                                    flexShrink: 0,
+                                                }}
+                                            >
+                                                ✕
+                                            </button>
+                                        )}
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    )}
+                </SbSection>
+            )}
         </div>
     );
 }
