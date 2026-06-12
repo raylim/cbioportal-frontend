@@ -19,7 +19,7 @@ import LoadingIndicator from 'shared/components/loadingIndicator/LoadingIndicato
 import { CUSTOM_URL_TRANSFORMERS } from 'shared/components/resources/customResourceHelpers';
 import { getResourceConfig } from 'shared/lib/ResourceConfig';
 import WSIViewer from 'shared/components/wsiViewer/WSIViewer';
-import { getServerConfig } from 'shared/lib/AppConfig';
+import { getServerConfig } from 'config/config';
 
 export interface IResourceTabProps {
     resourceDisplayName: string;
