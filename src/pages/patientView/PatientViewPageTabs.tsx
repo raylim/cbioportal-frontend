@@ -635,6 +635,7 @@ export function tabs(
                     url={`${getServerConfig().msk_wsi_tile_server_url}/patient/${pageComponent.patientViewPageStore.patientId}`}
                     height={WindowStore.size.height - 220}
                     studyId={pageComponent.patientViewPageStore.studyId}
+                    annotationApiUrl={getServerConfig().msk_wsi_annotation_api_url || undefined}
                 />
             </MSKTab>
         );

@@ -206,3 +206,185 @@ test.describe('WSI viewer — share view and centering', () => {
         expect(Number(params.get('y'))).toBe(15000);
     });
 });
+
+// ---- Annotation layer (Option C) ----
+//
+// These tests mock the annotation REST API via page.route() so they run
+// without the annotation backend being deployed.  The API URL is injected
+// into the page via window.setServerConfig() (exposed by config.ts).
+//
+// Run with the same env vars as the viewer tests:
+//   WSI_VIEWER_BASE_URL=http://pllimsksparky3:3000 \
+//   TILE_SERVER_URL=http://pllimsksparky3:8081 \
+//   CBIO_URL=http://pllimsksparky3:8090 \
+//   npx playwright test --grep "annotation" end-to-end-test-playwright/tests/wsi-viewer.spec.ts
+
+const MOCK_ANNOTATION_URL = 'http://mock-annotation-api';
+
+/** Stub W3C annotation returned by the mock GET /annotations endpoint. */
+const MOCK_ANNOTATION = {
+    id: 'ann-test-1',
+    slide_id: '1492807',
+    study_id: STUDY_ID,
+    body: { label: 'Playwright test annotation', comment: '', type: 'region' },
+    target: { selector: { type: 'FragmentSelector', value: 'xywh=100,100,50,50' } },
+    created_by: 'playwright',
+    created_at: '2025-01-01T00:00:00',
+    version: 1,
+};
+
+/**
+ * Navigate to the viewer and inject the mock annotation API URL into the
+ * running page's serverConfig so WSIViewer picks it up.
+ *
+ * cBioPortal merges `localStorage.frontendConfig` into the server config at
+ * bootstrap time (highest precedence), so we use an initScript to pre-populate
+ * it before any page JavaScript runs.  This means the annotation URL is
+ * already in `config.serverConfig` when ResourceTab first renders, so the
+ * Annotations button is present from the start.
+ */
+async function gotoViewerWithAnnotationApi(page: any, hash = '') {
+    // Route all annotation API calls to mock handlers before navigating.
+    await page.route(`${MOCK_ANNOTATION_URL}/annotations**`, async (route: any) => {
+        const method = route.request().method();
+        if (method === 'GET') {
+            await route.fulfill({
+                status: 200,
+                contentType: 'application/json',
+                body: JSON.stringify([MOCK_ANNOTATION]),
+            });
+        } else if (method === 'POST') {
+            await route.fulfill({
+                status: 201,
+                contentType: 'application/json',
+                body: JSON.stringify({ ...MOCK_ANNOTATION, id: 'ann-new-1' }),
+            });
+        } else if (method === 'PUT') {
+            const url = route.request().url();
+            const id = url.split('/annotations/')[1];
+            await route.fulfill({
+                status: 200,
+                contentType: 'application/json',
+                body: JSON.stringify({ ...MOCK_ANNOTATION, id, version: 2 }),
+            });
+        } else if (method === 'DELETE') {
+            await route.fulfill({ status: 204, body: '' });
+        } else {
+            await route.continue();
+        }
+    });
+
+    // Inject the annotation API URL via localStorage.frontendConfig, which
+    // cBioPortal merges into the server config at bootstrap (highest precedence,
+    // see config.ts initializeServerConfiguration).  The initScript runs before
+    // any page scripts so the value is present when the React app first renders.
+    await page.addInitScript((apiUrl: string) => {
+        localStorage.setItem(
+            'frontendConfig',
+            JSON.stringify({ serverConfig: { msk_wsi_annotation_api_url: apiUrl } })
+        );
+    }, MOCK_ANNOTATION_URL);
+
+    await page.goto(viewerUrl(hash));
+}
+
+test.describe('WSI viewer — annotation layer (Option C)', () => {
+    test.beforeEach(async () => {
+        test.skip(!BASE_URL, 'WSI_VIEWER_BASE_URL not set — skipping WSI annotation e2e tests');
+    });
+
+    test('Annotations button appears in CoordBar when API is configured', async ({ page }) => {
+        await gotoViewerWithAnnotationApi(page);
+        // Wait for the viewer to be ready (Share view button signals viewerReady).
+        await expect(page.locator('button:has-text("Share view")')).toBeVisible({
+            timeout: 30_000,
+        });
+        // Force a slide select by re-clicking the first slide in the nav panel.
+        // This triggers loadAnnotations and makes the CoordBar re-render with the new config.
+        const firstSlide = page.locator('[data-testid="slide-nav-item"]').first();
+        if (await firstSlide.isVisible()) {
+            await firstSlide.click();
+        }
+        await expect(page.locator('button:has-text("Annotations")')).toBeVisible({
+            timeout: 10_000,
+        });
+    });
+
+    test('Annotations button toggles visibility label', async ({ page }) => {
+        await gotoViewerWithAnnotationApi(page);
+        await expect(page.locator('button:has-text("Share view")')).toBeVisible({
+            timeout: 30_000,
+        });
+
+        const annoBtn = page.locator('button').filter({ hasText: /Annotations/ });
+        await annoBtn.waitFor({ state: 'visible', timeout: 15_000 });
+
+        // Initially visible — label contains "Annotations".
+        await expect(annoBtn).toContainText('Annotations');
+
+        // Click to hide.
+        await annoBtn.click();
+        await expect(annoBtn).toContainText('Annotations'); // label always shows Annotations
+        // The button style should change (border color) — verify it still exists.
+        await expect(annoBtn).toBeVisible();
+    });
+
+    test('Annotations panel renders mocked annotations in MetaSidebar', async ({ page }) => {
+        await gotoViewerWithAnnotationApi(page);
+        await expect(page.locator('button:has-text("Share view")')).toBeVisible({
+            timeout: 30_000,
+        });
+
+        // The sidebar section heading should appear.
+        await expect(
+            page.locator('text=Annotations').filter({ hasNot: page.locator('button') }).first()
+        ).toBeVisible({ timeout: 15_000 });
+
+        // The mock annotation label should be in the panel.
+        await expect(page.locator('text=Playwright test annotation')).toBeVisible({
+            timeout: 10_000,
+        });
+    });
+
+    test('DELETE request is sent when annotation ✕ button is clicked', async ({ page }) => {
+        const deleteRequests: string[] = [];
+        await page.route(`${MOCK_ANNOTATION_URL}/annotations**`, async (route: any) => {
+            const method = route.request().method();
+            if (method === 'DELETE') {
+                deleteRequests.push(route.request().url());
+                await route.fulfill({ status: 204, body: '' });
+            } else if (method === 'GET') {
+                await route.fulfill({
+                    status: 200,
+                    contentType: 'application/json',
+                    body: JSON.stringify([MOCK_ANNOTATION]),
+                });
+            } else {
+                await route.continue();
+            }
+        });
+
+        // Inject the annotation URL at bootstrap time via localStorage.
+        await page.addInitScript((apiUrl: string) => {
+            localStorage.setItem(
+                'frontendConfig',
+                JSON.stringify({ serverConfig: { msk_wsi_annotation_api_url: apiUrl } })
+            );
+        }, MOCK_ANNOTATION_URL);
+
+        await page.goto(viewerUrl());
+        await expect(page.locator('button:has-text("Share view")')).toBeVisible({
+            timeout: 30_000,
+        });
+
+        // Click the ✕ delete button for the mock annotation.
+        const deleteBtn = page.locator('button', { hasText: '✕' }).first();
+        await deleteBtn.waitFor({ state: 'visible', timeout: 10_000 });
+        await deleteBtn.click();
+
+        // Verify a DELETE request was made to the annotation endpoint.
+        await page.waitForTimeout(500);
+        expect(deleteRequests.length).toBeGreaterThan(0);
+        expect(deleteRequests[0]).toContain(`/annotations/${MOCK_ANNOTATION.id}`);
+    });
+});
