@@ -825,7 +825,7 @@ const overlayStyle: React.CSSProperties = {
 
 // ---- CoordBar ----
 
-interface CoordBarProps {
+export interface CoordBarProps {
     inputX: string;
     inputY: string;
     cursorPos: { x: number; y: number } | null;
@@ -840,7 +840,7 @@ interface CoordBarProps {
     onToggleAnnotations?: () => void;
 }
 
-function CoordBar({ inputX, inputY, cursorPos, mpp, onChangeX, onChangeY, onGo, onCopyLink, onDownload, annotationEnabled, annotationsVisible, onToggleAnnotations }: CoordBarProps) {
+export function CoordBar({ inputX, inputY, cursorPos, mpp, onChangeX, onChangeY, onGo, onCopyLink, onDownload, annotationEnabled, annotationsVisible, onToggleAnnotations }: CoordBarProps) {
     const handleKey = (e: React.KeyboardEvent) => { if (e.key === 'Enter') onGo(); };
     const [copied, setCopied] = React.useState(false);
 
@@ -1207,7 +1207,7 @@ function SlideItem({ slide, sample, blockBadge, selected, onSelectSlide }: Slide
 
 // ---- MetaSidebar ----
 
-interface MetaSidebarProps {
+export interface MetaSidebarProps {
     slide: Slide | null;
     sample: Sample | null;
     meta: TileMetadata | null;
@@ -1219,7 +1219,7 @@ interface MetaSidebarProps {
     onDeleteAnnotation?: (id: string) => void;
 }
 
-function MetaSidebar({ slide, sample, meta, tileServerBase, studyId, annotations = [], annotationsLoading = false, annotationEnabled = false, onDeleteAnnotation }: MetaSidebarProps) {
+export function MetaSidebar({ slide, sample, meta, tileServerBase, studyId, annotations = [], annotationsLoading = false, annotationEnabled = false, onDeleteAnnotation }: MetaSidebarProps) {
     const thumbSrc = slide ? `${tileServerBase}/tiles/${slide.image_id}/thumbnail` : null;
 
     return (

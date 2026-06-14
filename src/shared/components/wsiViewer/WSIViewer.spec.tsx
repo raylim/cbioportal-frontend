@@ -2,7 +2,9 @@
  * @jest-environment jsdom
  */
 import { assert } from 'chai';
-import WSIViewer from './WSIViewer';
+import * as React from 'react';
+import { render, screen, fireEvent } from '@testing-library/react';
+import WSIViewer, { MetaSidebar, CoordBar } from './WSIViewer';
 import {
     PatientHierarchy,
     Block,
@@ -736,5 +738,137 @@ describe('WSIViewer — annotation helpers', () => {
         inst.destroyViewer();
         expect(mockAnno.destroy).toHaveBeenCalled();
         assert.isNull(inst.annotorious);
+    });
+});
+
+// ---- CoordBar render tests ----
+
+describe('CoordBar — annotation button', () => {
+    const baseProps = {
+        inputX: '100',
+        inputY: '200',
+        cursorPos: null,
+        mpp: undefined,
+        onChangeX: jest.fn(),
+        onChangeY: jest.fn(),
+        onGo: jest.fn(),
+        onCopyLink: jest.fn(),
+        onDownload: jest.fn(),
+        annotationEnabled: false,
+        annotationsVisible: true,
+        onToggleAnnotations: jest.fn(),
+    };
+
+    it('does not render Annotations button when annotationEnabled=false', () => {
+        render(<CoordBar {...baseProps} annotationEnabled={false} />);
+        expect(screen.queryByTitle(/annotations/i)).toBeNull();
+    });
+
+    it('renders Annotations button when annotationEnabled=true', () => {
+        render(<CoordBar {...baseProps} annotationEnabled={true} />);
+        expect(screen.getByTitle(/annotations/i)).toBeTruthy();
+    });
+
+    it('button label reflects annotationsVisible=true', () => {
+        render(<CoordBar {...baseProps} annotationEnabled={true} annotationsVisible={true} />);
+        expect(screen.getByTitle('Hide annotations')).toBeTruthy();
+        expect(screen.getByText('🔵 Annotations')).toBeTruthy();
+    });
+
+    it('button label reflects annotationsVisible=false', () => {
+        render(<CoordBar {...baseProps} annotationEnabled={true} annotationsVisible={false} />);
+        expect(screen.getByTitle('Show annotations')).toBeTruthy();
+        expect(screen.getByText('○ Annotations')).toBeTruthy();
+    });
+
+    it('calls onToggleAnnotations when button is clicked', () => {
+        const onToggle = jest.fn();
+        render(<CoordBar {...baseProps} annotationEnabled={true} onToggleAnnotations={onToggle} />);
+        fireEvent.click(screen.getByTitle(/annotations/i));
+        expect(onToggle).toHaveBeenCalledTimes(1);
+    });
+});
+
+// ---- MetaSidebar render tests ----
+
+describe('MetaSidebar — annotation panel', () => {
+    const baseProps = {
+        slide: null,
+        sample: null,
+        meta: null,
+        tileServerBase: 'http://tiles.example.com',
+        studyId: 'study-1',
+    };
+
+    it('hides annotation section when annotationEnabled=false', () => {
+        render(
+            <MetaSidebar
+                {...baseProps}
+                annotationEnabled={false}
+                annotations={[makeAnnotation()]}
+            />
+        );
+        expect(screen.queryByText(/annotations/i)).toBeNull();
+    });
+
+    it('shows empty-state message when annotationEnabled=true and no annotations', () => {
+        render(<MetaSidebar {...baseProps} annotationEnabled={true} annotations={[]} />);
+        expect(screen.getByText(/No annotations yet/i)).toBeTruthy();
+    });
+
+    it('shows loading message when annotationsLoading=true', () => {
+        render(
+            <MetaSidebar
+                {...baseProps}
+                annotationEnabled={true}
+                annotationsLoading={true}
+                annotations={[]}
+            />
+        );
+        expect(screen.getByText('Loading…')).toBeTruthy();
+    });
+
+    it('renders annotation label', () => {
+        const ann = makeAnnotation({ id: 'ann-render', body: [{ type: 'TextualBody', value: 'My region', purpose: 'commenting' }] });
+        render(<MetaSidebar {...baseProps} annotationEnabled={true} annotations={[ann]} />);
+        expect(screen.getByText('My region')).toBeTruthy();
+    });
+
+    it('renders creator and date when present', () => {
+        const ann = makeAnnotation({
+            id: 'ann-meta',
+            body: [{ type: 'TextualBody', value: 'With meta', purpose: 'commenting' }],
+            creator: 'dr.smith',
+            created: '2024-03-15T12:00:00',
+        });
+        render(<MetaSidebar {...baseProps} annotationEnabled={true} annotations={[ann]} />);
+        expect(screen.getByText(/dr\.smith/)).toBeTruthy();
+    });
+
+    it('calls onDeleteAnnotation with the annotation id when ✕ is clicked', () => {
+        const onDelete = jest.fn();
+        const ann = makeAnnotation({ id: 'ann-del-ui' });
+        render(
+            <MetaSidebar
+                {...baseProps}
+                annotationEnabled={true}
+                annotations={[ann]}
+                onDeleteAnnotation={onDelete}
+            />
+        );
+        fireEvent.click(screen.getByTitle('Delete annotation'));
+        expect(onDelete).toHaveBeenCalledWith('ann-del-ui');
+    });
+
+    it('does not render delete button when onDeleteAnnotation is not provided', () => {
+        const ann = makeAnnotation({ id: 'ann-no-del' });
+        render(<MetaSidebar {...baseProps} annotationEnabled={true} annotations={[ann]} />);
+        expect(screen.queryByTitle('Delete annotation')).toBeNull();
+    });
+
+    it('shows annotation count in section title', () => {
+        const anns = [makeAnnotation({ id: 'a1' }), makeAnnotation({ id: 'a2' })];
+        render(<MetaSidebar {...baseProps} annotationEnabled={true} annotations={anns} />);
+        expect(screen.getByText('Annotations (2)')).toBeTruthy();
     });
 });
