@@ -387,4 +387,273 @@ test.describe('WSI viewer — annotation layer (Option C)', () => {
         expect(deleteRequests.length).toBeGreaterThan(0);
         expect(deleteRequests[0]).toContain(`/annotations/${MOCK_ANNOTATION.id}`);
     });
+
+    test('Annotations button is absent when API URL is not configured', async ({
+        page,
+    }) => {
+        // Navigate WITHOUT injecting the annotation API URL — plain viewer.
+        await page.goto(viewerUrl());
+        await expect(page.locator('button:has-text("Share view")')).toBeVisible({
+            timeout: 30_000,
+        });
+        // Annotations button must NOT appear.
+        await expect(
+            page.locator('button').filter({ hasText: /Annotations/ })
+        ).toHaveCount(0);
+    });
+
+    test('Annotations panel shows empty-state message when API returns no annotations', async ({
+        page,
+    }) => {
+        // Mock GET to return empty list.
+        await page.route(`${MOCK_ANNOTATION_URL}/annotations**`, async (route: any) => {
+            if (route.request().method() === 'GET') {
+                await route.fulfill({
+                    status: 200,
+                    contentType: 'application/json',
+                    body: JSON.stringify([]),
+                });
+            } else {
+                await route.continue();
+            }
+        });
+        await page.addInitScript((apiUrl: string) => {
+            localStorage.setItem(
+                'frontendConfig',
+                JSON.stringify({ serverConfig: { msk_wsi_annotation_api_url: apiUrl } })
+            );
+        }, MOCK_ANNOTATION_URL);
+
+        await page.goto(viewerUrl());
+        await expect(page.locator('button:has-text("Share view")')).toBeVisible({
+            timeout: 30_000,
+        });
+        await expect(
+            page.locator('button').filter({ hasText: /Annotations/ })
+        ).toBeVisible({ timeout: 15_000 });
+
+        await expect(
+            page.locator('text=No annotations yet')
+        ).toBeVisible({ timeout: 10_000 });
+    });
+
+    test('Annotations button cycles between filled and unfilled icon on toggle', async ({
+        page,
+    }) => {
+        await gotoViewerWithAnnotationApi(page);
+        await expect(page.locator('button:has-text("Share view")')).toBeVisible({
+            timeout: 30_000,
+        });
+
+        const annoBtn = page.locator('button').filter({ hasText: /Annotations/ });
+        await annoBtn.waitFor({ state: 'visible', timeout: 15_000 });
+
+        // Initially visible → filled blue circle emoji.
+        await expect(annoBtn).toContainText('🔵 Annotations');
+
+        // Toggle off.
+        await annoBtn.click();
+        await expect(annoBtn).toContainText('○ Annotations');
+
+        // Toggle on again.
+        await annoBtn.click();
+        await expect(annoBtn).toContainText('🔵 Annotations');
+    });
+});
+
+// ---- Live annotation API integration tests (Option C) ----
+//
+// These tests hit the REAL annotation API (no page.route() mocking).
+// They are gated on TILE_SERVER_URL being set; skip if not available.
+// Each test cleans up after itself via the DELETE endpoint.
+
+const LIVE_ANNO_API = process.env.TILE_SERVER_URL ?? '';
+const LIVE_SLIDE_ID = '1492807'; // first slide for P-0000678 in coad_msk_2025
+
+/** Labels used by live e2e tests — used to clean up leftover annotations. */
+const LIVE_TEST_LABELS = [
+    'e2e-lifecycle-test',
+    'e2e-viewer-load-test',
+    'e2e-delete-via-ui',
+];
+
+/** Delete all annotations whose body.label is in `labels` — used for test cleanup. */
+async function cleanupLiveAnnotations(
+    request: any,
+    apiUrl: string,
+    slideId: string,
+    studyId: string,
+    labels: string[]
+) {
+    const resp = await request.get(
+        `${apiUrl}/annotations?slide_id=${slideId}&study_id=${studyId}`
+    );
+    if (!resp.ok()) return;
+    const all = await resp.json();
+    for (const ann of all) {
+        if (labels.includes(ann.body?.label)) {
+            await request.delete(`${apiUrl}/annotations/${ann.id}`);
+        }
+    }
+}
+
+test.describe('WSI viewer — live annotation API (Option C)', () => {
+    test.beforeEach(async ({ request }) => {
+        test.skip(
+            !BASE_URL || !LIVE_ANNO_API,
+            'WSI_VIEWER_BASE_URL or TILE_SERVER_URL not set — skipping live annotation API tests'
+        );
+        // Clean up any leftover annotations from previous failed runs.
+        await cleanupLiveAnnotations(
+            request,
+            LIVE_ANNO_API,
+            LIVE_SLIDE_ID,
+            STUDY_ID,
+            LIVE_TEST_LABELS
+        );
+    });
+
+    test('live API: GET /annotations returns 200 with array', async ({ page }) => {
+        const resp = await page.request.get(
+            `${LIVE_ANNO_API}/annotations?slide_id=${LIVE_SLIDE_ID}&study_id=${STUDY_ID}`
+        );
+        expect(resp.status()).toBe(200);
+        const body = await resp.json();
+        expect(Array.isArray(body)).toBe(true);
+    });
+
+    test('live API: CRUD lifecycle — create, read, delete', async ({ page }) => {
+        // 1. Create annotation via POST.
+        const postResp = await page.request.post(`${LIVE_ANNO_API}/annotations`, {
+            data: {
+                slide_id: LIVE_SLIDE_ID,
+                study_id: STUDY_ID,
+                body: { label: 'e2e-lifecycle-test', comment: '', type: 'region' },
+                target: {
+                    selector: { type: 'FragmentSelector', value: 'xywh=10,10,20,20' },
+                },
+            },
+        });
+        expect(postResp.status()).toBe(201);
+        const created = await postResp.json();
+        expect(created.id).toBeTruthy();
+        expect(created.body.label).toBe('e2e-lifecycle-test');
+
+        // 2. GET should include the created annotation.
+        const getResp = await page.request.get(
+            `${LIVE_ANNO_API}/annotations?slide_id=${LIVE_SLIDE_ID}&study_id=${STUDY_ID}`
+        );
+        const annotations = await getResp.json();
+        expect(annotations.some((a: any) => a.id === created.id)).toBe(true);
+
+        // 3. DELETE.
+        const delResp = await page.request.delete(
+            `${LIVE_ANNO_API}/annotations/${created.id}`
+        );
+        expect(delResp.status()).toBe(204);
+
+        // 4. Confirm deleted.
+        const afterDel = await page.request.get(
+            `${LIVE_ANNO_API}/annotations?slide_id=${LIVE_SLIDE_ID}&study_id=${STUDY_ID}`
+        );
+        const remaining = await afterDel.json();
+        expect(remaining.some((a: any) => a.id === created.id)).toBe(false);
+    });
+
+    test('live API: viewer loads existing annotation from live API into sidebar', async ({
+        page,
+    }) => {
+        // 1. Pre-seed an annotation via the API.
+        const postResp = await page.request.post(`${LIVE_ANNO_API}/annotations`, {
+            data: {
+                slide_id: LIVE_SLIDE_ID,
+                study_id: STUDY_ID,
+                body: { label: 'e2e-viewer-load-test', comment: '', type: 'region' },
+                target: {
+                    selector: { type: 'FragmentSelector', value: 'xywh=5,5,10,10' },
+                },
+            },
+        });
+        expect(postResp.status()).toBe(201);
+        const created = await postResp.json();
+
+        try {
+            // 2. Navigate with live API URL injected.
+            await page.addInitScript((apiUrl: string) => {
+                localStorage.setItem(
+                    'frontendConfig',
+                    JSON.stringify({ serverConfig: { msk_wsi_annotation_api_url: apiUrl } })
+                );
+            }, LIVE_ANNO_API);
+
+            await page.goto(viewerUrl());
+            await expect(page.locator('button:has-text("Share view")')).toBeVisible({
+                timeout: 30_000,
+            });
+
+            // 3. Annotation label should appear in MetaSidebar.
+            await expect(
+                page.locator('text=e2e-viewer-load-test')
+            ).toBeVisible({ timeout: 15_000 });
+        } finally {
+            // 4. Cleanup — delete regardless of test outcome.
+            await page.request.delete(`${LIVE_ANNO_API}/annotations/${created.id}`);
+        }
+    });
+
+    test('live API: delete button in viewer removes annotation from sidebar and API', async ({
+        page,
+    }) => {
+        // 1. Pre-seed.
+        const postResp = await page.request.post(`${LIVE_ANNO_API}/annotations`, {
+            data: {
+                slide_id: LIVE_SLIDE_ID,
+                study_id: STUDY_ID,
+                body: { label: 'e2e-delete-via-ui', comment: '', type: 'region' },
+                target: {
+                    selector: { type: 'FragmentSelector', value: 'xywh=1,1,5,5' },
+                },
+            },
+        });
+        const created = await postResp.json();
+        expect(postResp.status()).toBe(201);
+
+        // 2. Navigate with live API URL.
+        await page.addInitScript((apiUrl: string) => {
+            localStorage.setItem(
+                'frontendConfig',
+                JSON.stringify({ serverConfig: { msk_wsi_annotation_api_url: apiUrl } })
+            );
+        }, LIVE_ANNO_API);
+
+        await page.goto(viewerUrl());
+        await expect(page.locator('button:has-text("Share view")')).toBeVisible({
+            timeout: 30_000,
+        });
+
+        // 3. Wait for the label to appear, then scope the ✕ button to that row.
+        // MetaSidebar renders <div title={label}> for each annotation label, and
+        // the delete <button title="Delete annotation"> is a sibling in the same row.
+        await expect(page.locator(`[title="e2e-delete-via-ui"]`)).toBeVisible({
+            timeout: 15_000,
+        });
+        // Navigate up two levels (label div → text container → row) to find the
+        // sibling delete button for exactly this annotation.
+        const annoRow = page
+            .locator(`[title="e2e-delete-via-ui"]`)
+            .locator('xpath=../..');
+        await annoRow.locator('button[title="Delete annotation"]').click();
+
+        // 4. Label must disappear from sidebar.
+        await expect(page.locator(`[title="e2e-delete-via-ui"]`)).toHaveCount(0, {
+            timeout: 10_000,
+        });
+
+        // 5. Confirm deleted from API.
+        const afterDel = await page.request.get(
+            `${LIVE_ANNO_API}/annotations?slide_id=${LIVE_SLIDE_ID}&study_id=${STUDY_ID}`
+        );
+        const remaining = await afterDel.json();
+        expect(remaining.some((a: any) => a.id === created.id)).toBe(false);
+    });
 });
