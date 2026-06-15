@@ -151,10 +151,6 @@ export default class WSIViewer extends React.Component<Props, {}> {
     @observable private activeColorName: string = loadNamedColors()[0]?.name ?? DEFAULT_NAMED_COLORS[0].name;
     /** Maps annotation ID → hex color for live Annotorious style lookup. */
     private annotationColorMap = new Map<string, string>();
-    /** Annotation drawn but not yet saved — waiting for user to confirm label. */
-    @observable private pendingAnnotation: W3CAnnotation | null = null;
-    /** Text typed into the "label new annotation" prompt. */
-    @observable private pendingLabelText = '';
     /** ID of the annotation currently being label-edited in the sidebar, or null. */
     @observable private editingAnnotationId: string | null = null;
     /** Current text in the sidebar inline label editor. */
@@ -624,36 +620,18 @@ export default class WSIViewer extends React.Component<Props, {}> {
     private handleKeyDown(e: KeyboardEvent) {
         if (e.key === 'Escape') {
             if (this.activeDrawingTool !== null) this.setDrawingTool(null);
-            if (this.pendingAnnotation !== null) this.cancelPendingAnnotation();
             if (this.editingAnnotationId !== null) this.cancelEditingLabel();
         }
     }
 
-    /** User confirmed the label prompt — save the pending annotation. */
-    @action.bound
-    confirmAnnotationLabel() {
-        if (!this.pendingAnnotation) return;
-        const label = this.pendingLabelText.trim();
-        const ann: W3CAnnotation = {
-            ...this.pendingAnnotation,
-            body: label
-                ? [{ type: 'TextualBody' as const, value: label, purpose: 'commenting' as const }]
-                : [],
-        };
-        void this.saveNewAnnotation(ann);
-        this.pendingAnnotation = null;
-        this.pendingLabelText = '';
-    }
-
-    /** User dismissed the label prompt without saving — remove the shape. */
-    @action.bound
-    cancelPendingAnnotation() {
-        if (this.pendingAnnotation) {
-            try { this.annotorious?.removeAnnotation(this.pendingAnnotation.id); } catch (_) {}
-            this.annotationColorMap.delete(this.pendingAnnotation.id);
-        }
-        this.pendingAnnotation = null;
-        this.pendingLabelText = '';
+    /**
+     * Generate an auto-label for a new annotation.
+     * Format: "{colorName} {N}" where N counts existing annotations with the same color name.
+     */
+    private nextAutoLabel(): string {
+        const base = this.activeColorName.trim() || this.activeColorHex;
+        const count = this.annotations.filter(a => (a.colorName ?? '') === this.activeColorName).length + 1;
+        return `${base} ${count}`;
     }
 
     /** Begin inline editing of an annotation label in the sidebar. */
@@ -847,19 +825,16 @@ export default class WSIViewer extends React.Component<Props, {}> {
                     this.annotorious = createOSDAnnotator(this.osdViewer, { drawingEnabled: false, drawingMode: 'drag' });
 
                     this.annotorious.on('createAnnotation', (ann: W3CAnnotation) => {
-                        // Stamp the active named color before saving.
+                        // Stamp color and auto-generate a sequential label, then save immediately.
                         ann.colorName = this.activeColorName;
                         ann.color = this.activeColorHex;
                         this.annotationColorMap.set(ann.id, ann.color);
-                        // Reset drawing mode and wait for user to confirm/label the annotation.
-                        action(() => {
-                            this.activeDrawingTool = null;
-                            this.pendingAnnotation = ann;
-                            this.pendingLabelText = '';
-                        })();
+                        const autoLabel = this.nextAutoLabel();
+                        ann.body = [{ type: 'TextualBody' as const, value: autoLabel, purpose: 'commenting' as const }];
+                        action(() => { this.activeDrawingTool = null; })();
                         this.annotorious.setDrawingEnabled(false);
                         this.refreshAnnotoriousStyle();
-                        // saveNewAnnotation is called by confirmAnnotationLabel
+                        void this.saveNewAnnotation(ann);
                     });
                     this.annotorious.on('updateAnnotation', (ann: W3CAnnotation) => {
                         void this.updateAnnotation(ann);
@@ -1027,15 +1002,6 @@ export default class WSIViewer extends React.Component<Props, {}> {
                             onRemoveNamedColor={this.removeNamedColor}
                         />
                     )}
-                    {/* Label prompt — floats above CoordBar after drawing a shape */}
-                    {this.pendingAnnotation && (
-                        <LabelPrompt
-                            labelText={this.pendingLabelText}
-                            onChangeLabel={action((v: string) => { this.pendingLabelText = v; })}
-                            onConfirm={this.confirmAnnotationLabel}
-                            onCancel={this.cancelPendingAnnotation}
-                        />
-                    )}
                     {this.annotationTooltip && (
                         <div
                             onClick={action(() => { this.annotationTooltip = null; })}
@@ -1069,6 +1035,8 @@ export default class WSIViewer extends React.Component<Props, {}> {
                     annotations={this.annotations}
                     annotationsLoading={this.annotationsLoading}
                     annotationEnabled={!!this.annotationApiBase}
+                    drawingTool={this.activeDrawingTool}
+                    onSetDrawingTool={this.setDrawingTool}
                     onDeleteAnnotation={(id) => { void this.deleteAnnotation(id); if (this.annotorious) this.annotorious.removeAnnotation(id); }}
                     editingAnnotationId={this.editingAnnotationId}
                     editingLabelText={this.editingLabelText}
@@ -1685,6 +1653,8 @@ export interface MetaSidebarProps {
     annotations?: W3CAnnotation[];
     annotationsLoading?: boolean;
     annotationEnabled?: boolean;
+    drawingTool?: 'rectangle' | 'polygon' | null;
+    onSetDrawingTool?: (tool: 'rectangle' | 'polygon' | null) => void;
     onDeleteAnnotation?: (id: string) => void;
     /** ID of the annotation whose label is currently being edited inline. */
     editingAnnotationId?: string | null;
@@ -1697,7 +1667,7 @@ export interface MetaSidebarProps {
     onCancelEditLabel?: () => void;
 }
 
-export function MetaSidebar({ slide, sample, meta, tileServerBase, studyId, annotations = [], annotationsLoading = false, annotationEnabled = false, onDeleteAnnotation, editingAnnotationId, editingLabelText = '', onStartEditAnnotation, onChangeEditLabel, onConfirmEditLabel, onCancelEditLabel }: MetaSidebarProps) {
+export function MetaSidebar({ slide, sample, meta, tileServerBase, studyId, annotations = [], annotationsLoading = false, annotationEnabled = false, drawingTool = null, onSetDrawingTool, onDeleteAnnotation, editingAnnotationId, editingLabelText = '', onStartEditAnnotation, onChangeEditLabel, onConfirmEditLabel, onCancelEditLabel }: MetaSidebarProps) {
     const thumbSrc = slide ? `${tileServerBase}/tiles/${slide.image_id}/thumbnail` : null;
 
     return (
@@ -1859,6 +1829,37 @@ export function MetaSidebar({ slide, sample, meta, tileServerBase, studyId, anno
                                     </div>
                                 );
                             })}
+                        </div>
+                    )}
+                    {/* Draw tools row — pinned at the bottom of the annotations section */}
+                    {onSetDrawingTool && (
+                        <div style={{ display: 'flex', gap: 4, marginTop: 8, paddingTop: 6, borderTop: `1px solid ${C.border}` }}>
+                            <button
+                                onClick={() => onSetDrawingTool(drawingTool === 'rectangle' ? null : 'rectangle')}
+                                title={drawingTool === 'rectangle' ? 'Cancel drawing (Esc)' : 'Draw a rectangle annotation'}
+                                style={{
+                                    flex: 1, fontSize: 11, padding: '3px 6px', borderRadius: 4, cursor: 'pointer',
+                                    border: `1px solid ${drawingTool === 'rectangle' ? '#c0392b' : C.border}`,
+                                    background: drawingTool === 'rectangle' ? '#fde8e8' : '#f7f7f7',
+                                    color: drawingTool === 'rectangle' ? '#c0392b' : C.muted,
+                                    fontWeight: drawingTool === 'rectangle' ? 600 : 400,
+                                }}
+                            >
+                                {drawingTool === 'rectangle' ? '✕ Cancel' : '◻ Draw rect'}
+                            </button>
+                            <button
+                                onClick={() => onSetDrawingTool(drawingTool === 'polygon' ? null : 'polygon')}
+                                title={drawingTool === 'polygon' ? 'Cancel drawing (Esc)' : 'Draw a polygon annotation — click to add points, double-click to close'}
+                                style={{
+                                    flex: 1, fontSize: 11, padding: '3px 6px', borderRadius: 4, cursor: 'pointer',
+                                    border: `1px solid ${drawingTool === 'polygon' ? '#c0392b' : C.border}`,
+                                    background: drawingTool === 'polygon' ? '#fde8e8' : '#f7f7f7',
+                                    color: drawingTool === 'polygon' ? '#c0392b' : C.muted,
+                                    fontWeight: drawingTool === 'polygon' ? 600 : 400,
+                                }}
+                            >
+                                {drawingTool === 'polygon' ? '✕ Cancel' : '⬡ Draw poly'}
+                            </button>
                         </div>
                     )}
                 </SbSection>
