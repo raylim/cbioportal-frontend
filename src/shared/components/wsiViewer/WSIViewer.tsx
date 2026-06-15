@@ -978,6 +978,18 @@ export default class WSIViewer extends React.Component<Props, {}> {
                             <span style={{ color: C.muted, fontSize: 13 }}>No servable slides for this patient</span>
                         </div>
                     )}
+                    {this.viewerReady && !!this.annotationApiBase && this.annotationsVisible && (
+                        <DrawToolbar
+                            drawingTool={this.activeDrawingTool}
+                            onSetDrawingTool={this.setDrawingTool}
+                            namedColors={this.namedColors}
+                            activeColorHex={this.activeColorHex}
+                            activeColorName={this.activeColorName}
+                            onSetActiveColor={this.setActiveColor}
+                            onAddNamedColor={this.addNamedColor}
+                            onRemoveNamedColor={this.removeNamedColor}
+                        />
+                    )}
                     {this.viewerReady && (
                         <CoordBar
                             inputX={this.coordInputX}
@@ -992,14 +1004,6 @@ export default class WSIViewer extends React.Component<Props, {}> {
                             annotationEnabled={!!this.annotationApiBase}
                             annotationsVisible={this.annotationsVisible}
                             onToggleAnnotations={this.toggleAnnotationsVisible}
-                            drawingTool={this.activeDrawingTool}
-                            onSetDrawingTool={this.setDrawingTool}
-                            activeColorHex={this.activeColorHex}
-                            activeColorName={this.activeColorName}
-                            namedColors={this.namedColors}
-                            onSetActiveColor={this.setActiveColor}
-                            onAddNamedColor={this.addNamedColor}
-                            onRemoveNamedColor={this.removeNamedColor}
                         />
                     )}
                     {this.annotationTooltip && (
@@ -1035,8 +1039,6 @@ export default class WSIViewer extends React.Component<Props, {}> {
                     annotations={this.annotations}
                     annotationsLoading={this.annotationsLoading}
                     annotationEnabled={!!this.annotationApiBase}
-                    drawingTool={this.activeDrawingTool}
-                    onSetDrawingTool={this.setDrawingTool}
                     onDeleteAnnotation={(id) => { void this.deleteAnnotation(id); if (this.annotorious) this.annotorious.removeAnnotation(id); }}
                     editingAnnotationId={this.editingAnnotationId}
                     editingLabelText={this.editingLabelText}
@@ -1139,45 +1141,18 @@ export interface CoordBarProps {
     annotationEnabled?: boolean;
     annotationsVisible?: boolean;
     onToggleAnnotations?: () => void;
-    drawingTool?: 'rectangle' | 'polygon' | null;
-    onSetDrawingTool?: (tool: 'rectangle' | 'polygon' | null) => void;
-    /** User's saved named colors. */
-    namedColors?: NamedColor[];
-    /** Active color hex for next annotation. */
-    activeColorHex?: string;
-    /** Active color name for next annotation. */
-    activeColorName?: string;
-    /** Called when user picks a color from the palette. */
-    onSetActiveColor?: (name: string, hex: string) => void;
-    /** Called when user adds a new named color to the palette. */
-    onAddNamedColor?: (name: string, hex: string) => void;
-    /** Called when user removes a named color from the palette. */
-    onRemoveNamedColor?: (hex: string, name: string) => void;
 }
 
 export function CoordBar({
     inputX, inputY, cursorPos, mpp, onChangeX, onChangeY, onGo, onCopyLink, onDownload,
-    annotationEnabled, annotationsVisible, onToggleAnnotations, drawingTool, onSetDrawingTool,
-    namedColors, activeColorHex, activeColorName, onSetActiveColor, onAddNamedColor, onRemoveNamedColor,
+    annotationEnabled, annotationsVisible, onToggleAnnotations,
 }: CoordBarProps) {
     const handleKey = (e: React.KeyboardEvent) => { if (e.key === 'Enter') onGo(); };
     const [copied, setCopied] = React.useState(false);
-    const [showAddForm, setShowAddForm] = React.useState(false);
-    const [newHex, setNewHex] = React.useState('#ff0000');
-    const [newName, setNewName] = React.useState('');
-
     const handleCopy = () => {
         onCopyLink();
         setCopied(true);
         setTimeout(() => setCopied(false), 2000);
-    };
-
-    const handleAddColor = () => {
-        if (onAddNamedColor && newHex) {
-            onAddNamedColor(newName.trim() || newHex, newHex);
-        }
-        setShowAddForm(false);
-        setNewName('');
     };
 
     let cursorLabel = '';
@@ -1273,113 +1248,6 @@ export function CoordBar({
                 >
                     {annotationsVisible ? '🔵 Annotations' : '○ Annotations'}
                 </button>
-            )}
-            {annotationEnabled && onSetDrawingTool && (
-                <>
-                    <button
-                        onClick={() => onSetDrawingTool(drawingTool === 'rectangle' ? null : 'rectangle')}
-                        title={drawingTool === 'rectangle' ? 'Cancel drawing (Esc)' : 'Draw a rectangle annotation — click and drag on the slide'}
-                        style={{
-                            ...btnStyle,
-                            border: `1px solid ${drawingTool === 'rectangle' ? '#c0392b' : C.border}`,
-                            background: drawingTool === 'rectangle' ? '#fde8e8' : '#fff',
-                            color: drawingTool === 'rectangle' ? '#c0392b' : C.muted,
-                        }}
-                    >
-                        {drawingTool === 'rectangle' ? '✕ Cancel draw' : '◻ Draw rect'}
-                    </button>
-                    <button
-                        onClick={() => onSetDrawingTool(drawingTool === 'polygon' ? null : 'polygon')}
-                        title={drawingTool === 'polygon' ? 'Cancel drawing (Esc)' : 'Draw a polygon annotation — click to add points, double-click to close'}
-                        style={{
-                            ...btnStyle,
-                            border: `1px solid ${drawingTool === 'polygon' ? '#c0392b' : C.border}`,
-                            background: drawingTool === 'polygon' ? '#fde8e8' : '#fff',
-                            color: drawingTool === 'polygon' ? '#c0392b' : C.muted,
-                        }}
-                    >
-                        {drawingTool === 'polygon' ? '✕ Cancel draw' : '⬡ Draw poly'}
-                    </button>
-                    {/* Named-color palette picker */}
-                    {onSetActiveColor && (
-                        <span style={{ display: 'flex', alignItems: 'center', gap: 3, marginLeft: 4 }}>
-                            <span style={{ fontSize: 10, color: C.muted, whiteSpace: 'nowrap' }}>Color:</span>
-                            {(namedColors ?? []).map(({ name, hex }) => {
-                                const isActive = activeColorHex === hex && activeColorName === name;
-                                return (
-                                    <span key={`${name}|${hex}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 1 }}>
-                                        <button
-                                            title={`Color: ${name || hex}`}
-                                            aria-pressed={isActive}
-                                            onClick={() => onSetActiveColor(name, hex)}
-                                            style={{
-                                                fontSize: 10, padding: '1px 6px', borderRadius: 10, cursor: 'pointer',
-                                                background: isActive ? hex : '#fff',
-                                                color: isActive ? '#fff' : hex,
-                                                border: `1.5px solid ${hex}`,
-                                                fontWeight: isActive ? 700 : 400,
-                                                whiteSpace: 'nowrap',
-                                            }}
-                                        >
-                                            {name || hex}
-                                        </button>
-                                        {onRemoveNamedColor && (
-                                            <button
-                                                title={`Remove "${name || hex}" from palette`}
-                                                onClick={() => onRemoveNamedColor(hex, name)}
-                                                style={{
-                                                    fontSize: 8, padding: '0 2px', border: 'none', background: 'transparent',
-                                                    cursor: 'pointer', color: '#bbb', lineHeight: 1,
-                                                }}
-                                            >×</button>
-                                        )}
-                                    </span>
-                                );
-                            })}
-                            {/* Add new named color */}
-                            {!showAddForm ? (
-                                <button
-                                    title="Add new named color to palette"
-                                    onClick={() => setShowAddForm(true)}
-                                    style={{
-                                        fontSize: 12, padding: '0 5px', border: `1px dashed ${C.border}`,
-                                        background: '#fff', color: C.muted, borderRadius: 10, cursor: 'pointer',
-                                    }}
-                                >+</button>
-                            ) : (
-                                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, padding: '1px 5px', border: `1px solid ${C.border}`, borderRadius: 10, background: '#fff' }}>
-                                    <input
-                                        type="color"
-                                        value={newHex}
-                                        title="Pick color"
-                                        onChange={e => setNewHex(e.target.value)}
-                                        style={{ width: 20, height: 16, border: 'none', padding: 0, cursor: 'pointer', background: 'transparent' }}
-                                    />
-                                    <input
-                                        type="text"
-                                        value={newName}
-                                        placeholder="Name (optional)"
-                                        maxLength={20}
-                                        autoFocus
-                                        onChange={e => setNewName(e.target.value)}
-                                        onKeyDown={e => { if (e.key === 'Enter') handleAddColor(); if (e.key === 'Escape') setShowAddForm(false); }}
-                                        style={{ fontSize: 10, border: 'none', outline: 'none', width: 90, background: 'transparent', color: C.text }}
-                                    />
-                                    <button
-                                        title="Add color to palette"
-                                        onClick={handleAddColor}
-                                        style={{ fontSize: 10, padding: '1px 5px', border: `1px solid ${C.blue}`, background: C.blue, color: '#fff', borderRadius: 8, cursor: 'pointer' }}
-                                    >Add</button>
-                                    <button
-                                        title="Cancel"
-                                        onClick={() => setShowAddForm(false)}
-                                        style={{ fontSize: 10, padding: '1px 4px', border: 'none', background: 'transparent', color: C.muted, cursor: 'pointer' }}
-                                    >✕</button>
-                                </span>
-                            )}
-                        </span>
-                    )}
-                </>
             )}
             {cursorPos && (
                 <span style={{ marginLeft: 'auto', color: C.muted, fontFamily: 'monospace', fontSize: 11 }}>
@@ -1653,8 +1521,6 @@ export interface MetaSidebarProps {
     annotations?: W3CAnnotation[];
     annotationsLoading?: boolean;
     annotationEnabled?: boolean;
-    drawingTool?: 'rectangle' | 'polygon' | null;
-    onSetDrawingTool?: (tool: 'rectangle' | 'polygon' | null) => void;
     onDeleteAnnotation?: (id: string) => void;
     /** ID of the annotation whose label is currently being edited inline. */
     editingAnnotationId?: string | null;
@@ -1667,7 +1533,7 @@ export interface MetaSidebarProps {
     onCancelEditLabel?: () => void;
 }
 
-export function MetaSidebar({ slide, sample, meta, tileServerBase, studyId, annotations = [], annotationsLoading = false, annotationEnabled = false, drawingTool = null, onSetDrawingTool, onDeleteAnnotation, editingAnnotationId, editingLabelText = '', onStartEditAnnotation, onChangeEditLabel, onConfirmEditLabel, onCancelEditLabel }: MetaSidebarProps) {
+export function MetaSidebar({ slide, sample, meta, tileServerBase, studyId, annotations = [], annotationsLoading = false, annotationEnabled = false, onDeleteAnnotation, editingAnnotationId, editingLabelText = '', onStartEditAnnotation, onChangeEditLabel, onConfirmEditLabel, onCancelEditLabel }: MetaSidebarProps) {
     const thumbSrc = slide ? `${tileServerBase}/tiles/${slide.image_id}/thumbnail` : null;
 
     return (
@@ -1831,38 +1697,130 @@ export function MetaSidebar({ slide, sample, meta, tileServerBase, studyId, anno
                             })}
                         </div>
                     )}
-                    {/* Draw tools row — pinned at the bottom of the annotations section */}
-                    {onSetDrawingTool && (
-                        <div style={{ display: 'flex', gap: 4, marginTop: 8, paddingTop: 6, borderTop: `1px solid ${C.border}` }}>
-                            <button
-                                onClick={() => onSetDrawingTool(drawingTool === 'rectangle' ? null : 'rectangle')}
-                                title={drawingTool === 'rectangle' ? 'Cancel drawing (Esc)' : 'Draw a rectangle annotation'}
-                                style={{
-                                    flex: 1, fontSize: 11, padding: '3px 6px', borderRadius: 4, cursor: 'pointer',
-                                    border: `1px solid ${drawingTool === 'rectangle' ? '#c0392b' : C.border}`,
-                                    background: drawingTool === 'rectangle' ? '#fde8e8' : '#f7f7f7',
-                                    color: drawingTool === 'rectangle' ? '#c0392b' : C.muted,
-                                    fontWeight: drawingTool === 'rectangle' ? 600 : 400,
-                                }}
-                            >
-                                {drawingTool === 'rectangle' ? '✕ Cancel' : '◻ Draw rect'}
-                            </button>
-                            <button
-                                onClick={() => onSetDrawingTool(drawingTool === 'polygon' ? null : 'polygon')}
-                                title={drawingTool === 'polygon' ? 'Cancel drawing (Esc)' : 'Draw a polygon annotation'}
-                                style={{
-                                    flex: 1, fontSize: 11, padding: '3px 6px', borderRadius: 4, cursor: 'pointer',
-                                    border: `1px solid ${drawingTool === 'polygon' ? '#c0392b' : C.border}`,
-                                    background: drawingTool === 'polygon' ? '#fde8e8' : '#f7f7f7',
-                                    color: drawingTool === 'polygon' ? '#c0392b' : C.muted,
-                                    fontWeight: drawingTool === 'polygon' ? 600 : 400,
-                                }}
-                            >
-                                {drawingTool === 'polygon' ? '✕ Cancel' : '⬡ Draw poly'}
-                            </button>
-                        </div>
-                    )}
                 </SbSection>
+            )}
+        </div>
+    );
+}
+
+// ---- DrawToolbar ----
+// Second toolbar row rendered below CoordBar; shown only when annotations are active.
+
+export interface DrawToolbarProps {
+    drawingTool: 'rectangle' | 'polygon' | null;
+    onSetDrawingTool: (tool: 'rectangle' | 'polygon' | null) => void;
+    namedColors: NamedColor[];
+    activeColorHex: string;
+    activeColorName: string;
+    onSetActiveColor: (name: string, hex: string) => void;
+    onAddNamedColor: (name: string, hex: string) => void;
+    onRemoveNamedColor: (hex: string, name: string) => void;
+}
+
+export function DrawToolbar({
+    drawingTool, onSetDrawingTool,
+    namedColors, activeColorHex, activeColorName,
+    onSetActiveColor, onAddNamedColor, onRemoveNamedColor,
+}: DrawToolbarProps) {
+    const [showAddForm, setShowAddForm] = React.useState(false);
+    const [newHex, setNewHex] = React.useState('#ff0000');
+    const [newName, setNewName] = React.useState('');
+
+    const handleAddColor = () => {
+        if (newHex) onAddNamedColor(newName.trim() || newHex, newHex);
+        setShowAddForm(false);
+        setNewName('');
+    };
+
+    return (
+        <div style={{
+            position: 'absolute', bottom: 32, left: 0, right: 0,
+            display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap',
+            padding: '4px 10px',
+            background: 'rgba(250,250,250,0.92)',
+            borderTop: `1px solid ${C.border}`,
+            fontSize: 11, backdropFilter: 'blur(2px)', zIndex: 10,
+        }}>
+            {/* Draw shape buttons */}
+            <button
+                onClick={() => onSetDrawingTool(drawingTool === 'rectangle' ? null : 'rectangle')}
+                title={drawingTool === 'rectangle' ? 'Cancel drawing (Esc)' : 'Draw a rectangle annotation — click and drag on the slide'}
+                style={{
+                    padding: '2px 9px', fontSize: 11, cursor: 'pointer', borderRadius: 3, lineHeight: '18px',
+                    border: `1px solid ${drawingTool === 'rectangle' ? '#c0392b' : C.border}`,
+                    background: drawingTool === 'rectangle' ? '#fde8e8' : '#fff',
+                    color: drawingTool === 'rectangle' ? '#c0392b' : C.muted,
+                    fontWeight: drawingTool === 'rectangle' ? 600 : 400,
+                }}
+            >
+                {drawingTool === 'rectangle' ? '✕ Cancel draw' : '◻ Draw rect'}
+            </button>
+            <button
+                onClick={() => onSetDrawingTool(drawingTool === 'polygon' ? null : 'polygon')}
+                title={drawingTool === 'polygon' ? 'Cancel drawing (Esc)' : 'Draw a polygon annotation — click to add points, double-click to close'}
+                style={{
+                    padding: '2px 9px', fontSize: 11, cursor: 'pointer', borderRadius: 3, lineHeight: '18px',
+                    border: `1px solid ${drawingTool === 'polygon' ? '#c0392b' : C.border}`,
+                    background: drawingTool === 'polygon' ? '#fde8e8' : '#fff',
+                    color: drawingTool === 'polygon' ? '#c0392b' : C.muted,
+                    fontWeight: drawingTool === 'polygon' ? 600 : 400,
+                }}
+            >
+                {drawingTool === 'polygon' ? '✕ Cancel draw' : '⬡ Draw poly'}
+            </button>
+
+            <span style={{ width: 1, height: 16, background: C.border, margin: '0 2px' }} />
+
+            {/* Color palette */}
+            <span style={{ fontSize: 10, color: C.muted, whiteSpace: 'nowrap' }}>Color:</span>
+            {namedColors.map(({ name, hex }) => {
+                const isActive = activeColorHex === hex && activeColorName === name;
+                return (
+                    <span key={`${name}|${hex}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 1 }}>
+                        <button
+                            title={`Color: ${name || hex}`}
+                            aria-pressed={isActive}
+                            onClick={() => onSetActiveColor(name, hex)}
+                            style={{
+                                fontSize: 10, padding: '1px 7px', borderRadius: 10, cursor: 'pointer',
+                                background: isActive ? hex : '#fff',
+                                color: isActive ? '#fff' : hex,
+                                border: `1.5px solid ${hex}`,
+                                fontWeight: isActive ? 700 : 400,
+                                whiteSpace: 'nowrap',
+                            }}
+                        >
+                            {name || hex}
+                        </button>
+                        <button
+                            title={`Remove "${name || hex}" from palette`}
+                            onClick={() => onRemoveNamedColor(hex, name)}
+                            style={{ fontSize: 8, padding: '0 2px', border: 'none', background: 'transparent', cursor: 'pointer', color: '#bbb', lineHeight: 1 }}
+                        >×</button>
+                    </span>
+                );
+            })}
+            {!showAddForm ? (
+                <button
+                    title="Add new named color to palette"
+                    onClick={() => setShowAddForm(true)}
+                    style={{ fontSize: 12, padding: '0 5px', border: `1px dashed ${C.border}`, background: '#fff', color: C.muted, borderRadius: 10, cursor: 'pointer' }}
+                >+</button>
+            ) : (
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, padding: '1px 5px', border: `1px solid ${C.border}`, borderRadius: 10, background: '#fff' }}>
+                    <input type="color" value={newHex} title="Pick color" onChange={e => setNewHex(e.target.value)}
+                        style={{ width: 20, height: 16, border: 'none', padding: 0, cursor: 'pointer', background: 'transparent' }} />
+                    <input type="text" value={newName} placeholder="Name (optional)" maxLength={20} autoFocus
+                        onChange={e => setNewName(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') handleAddColor(); if (e.key === 'Escape') setShowAddForm(false); }}
+                        style={{ fontSize: 10, border: 'none', outline: 'none', width: 90, background: 'transparent', color: C.text }} />
+                    <button title="Add color to palette" onClick={handleAddColor}
+                        style={{ fontSize: 10, padding: '1px 5px', border: `1px solid ${C.blue}`, background: C.blue, color: '#fff', borderRadius: 8, cursor: 'pointer' }}
+                    >Add</button>
+                    <button title="Cancel" onClick={() => setShowAddForm(false)}
+                        style={{ fontSize: 10, padding: '1px 4px', border: 'none', background: 'transparent', color: C.muted, cursor: 'pointer' }}
+                    >✕</button>
+                </span>
             )}
         </div>
     );

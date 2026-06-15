@@ -712,7 +712,7 @@ test.describe('WSI viewer — drawing tools (Option C)', () => {
         ).toBeVisible({ timeout: 5_000 });
     });
 
-    test('Draw rect and Draw poly buttons appear in sidebar annotations section', async ({
+    test('Draw rect and Draw poly buttons appear in DrawToolbar when annotations enabled', async ({
         page,
     }) => {
         await gotoViewerWithAnnotationApi(page);
@@ -720,28 +720,25 @@ test.describe('WSI viewer — drawing tools (Option C)', () => {
             timeout: 30_000,
         });
 
-        // Sidebar buttons have shorter titles (no "click and drag" / "double-click to close").
-        const sidebarRect = page.locator('button[title="Draw a rectangle annotation"]');
-        const sidebarPoly = page.locator('button[title="Draw a polygon annotation"]');
-        await expect(sidebarRect).toBeVisible({ timeout: 10_000 });
-        await expect(sidebarPoly).toBeVisible({ timeout: 10_000 });
+        // DrawToolbar shows below CoordBar when annotations are active.
+        // Buttons share title substring with the ones defined in DrawToolbar.
+        const rectBtn = page.locator('button[title*="click and drag"]');
+        const polyBtn = page.locator('button[title*="double-click to close"]').first();
+        await expect(rectBtn).toBeVisible({ timeout: 10_000 });
+        await expect(polyBtn).toBeVisible({ timeout: 10_000 });
     });
 
-    test('Sidebar draw rect button activates drawing mode', async ({ page }) => {
+    test('DrawToolbar draw rect button activates drawing mode', async ({ page }) => {
         await gotoViewerWithAnnotationApi(page);
         await expect(page.locator('button:has-text("Share view")')).toBeVisible({
             timeout: 30_000,
         });
 
-        const sidebarRect = page.locator('button[title="Draw a rectangle annotation"]');
-        await expect(sidebarRect).toBeVisible({ timeout: 10_000 });
-        await sidebarRect.click();
+        const rectBtn = page.locator('button[title*="click and drag"]');
+        await expect(rectBtn).toBeVisible({ timeout: 10_000 });
+        await rectBtn.click();
 
-        // Both CoordBar and sidebar should reflect active state.
         await expect(page.locator('button', { hasText: '✕ Cancel draw' })).toBeVisible({
-            timeout: 5_000,
-        });
-        await expect(page.locator('button', { hasText: '✕ Cancel' }).first()).toBeVisible({
             timeout: 5_000,
         });
     });
@@ -861,7 +858,7 @@ test.describe('WSI viewer — named color palette (Option C)', () => {
         test.skip(!BASE_URL, 'WSI_VIEWER_BASE_URL not set — skipping color palette tests');
     });
 
-    test('Default color palette buttons are shown in CoordBar when annotation API is configured', async ({
+    test('Default color palette buttons are shown in DrawToolbar when annotation API is configured', async ({
         page,
     }) => {
         await gotoViewerWithAnnotationApi(page);
