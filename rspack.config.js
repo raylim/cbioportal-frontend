@@ -468,15 +468,47 @@ var config = {
             publicPath: '/',
             stats: 'errors-only',
         },
+        // When ANNOTATION_API_URL is set, intercept /config_service and inject
+        // msk_wsi_annotation_api_url so the annotation layer activates automatically
+        // in the dev build without requiring a localStorage override.
+        setupMiddlewares: (() => {
+            const annotationApiUrl = process.env.ANNOTATION_API_URL;
+            if (!annotationApiUrl) return undefined;
+
+            return (middlewares, devServer) => {
+                const http = require('http');
+                devServer.app.use('/config_service', (req, res, next) => {
+                    const backendUrl = `http://localhost:8090/config_service${req.url === '/' ? '' : req.url}`;
+                    http.get(backendUrl, backendRes => {
+                        let body = '';
+                        backendRes.on('data', chunk => (body += chunk));
+                        backendRes.on('end', () => {
+                            try {
+                                const json = JSON.parse(body);
+                                json.msk_wsi_annotation_api_url = annotationApiUrl;
+                                res.setHeader('Content-Type', 'application/json');
+                                res.end(JSON.stringify(json));
+                            } catch {
+                                res.writeHead(backendRes.statusCode, backendRes.headers);
+                                res.end(body);
+                            }
+                        });
+                    }).on('error', next);
+                });
+                return middlewares;
+            };
+        })(),
         proxy: [
             // Proxy cBioPortal backend paths to local Docker instance.
             // CBIOPORTAL_URL must be "" so apiRoot is relative (avoids CORS).
             // Remove Origin header so Spring Security CORS filter doesn't reject
             // requests coming from a non-localhost hostname.
+            // /config_service is conditionally excluded when ANNOTATION_API_URL is set
+            // (handled by setupMiddlewares above to inject msk_wsi_annotation_api_url).
             {
                 context: [
                     '/api',
-                    '/config_service',
+                    ...(process.env.ANNOTATION_API_URL ? [] : ['/config_service']),
                     '/webservice.do',
                     '/proxy',
                     '/login',
