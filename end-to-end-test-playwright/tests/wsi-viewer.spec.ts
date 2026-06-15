@@ -822,14 +822,14 @@ test.describe('WSI viewer — drawing tools (Option C)', () => {
     });
 });
 
-// ---- Annotation layer tests (replaces color swatch tests) ----
+// ---- Named-color palette tests ----
 
-test.describe('WSI viewer — annotation layers (Option C)', () => {
+test.describe('WSI viewer — named color palette (Option C)', () => {
     test.beforeEach(async () => {
-        test.skip(!BASE_URL, 'WSI_VIEWER_BASE_URL not set — skipping layer tests');
+        test.skip(!BASE_URL, 'WSI_VIEWER_BASE_URL not set — skipping color palette tests');
     });
 
-    test('Six layer buttons are shown in CoordBar when annotation API is configured', async ({
+    test('Default color palette buttons are shown in CoordBar when annotation API is configured', async ({
         page,
     }) => {
         await gotoViewerWithAnnotationApi(page);
@@ -837,35 +837,53 @@ test.describe('WSI viewer — annotation layers (Option C)', () => {
             timeout: 30_000,
         });
 
-        // Layer buttons are identified by title "Annotate as: <Layer>".
-        const layerBtns = page.locator('button[title^="Annotate as:"]');
-        await expect(layerBtns).toHaveCount(6, { timeout: 5_000 });
+        // Palette buttons are identified by title "Color: <Name>".
+        const colorBtns = page.locator('button[title^="Color:"]');
+        // DEFAULT_NAMED_COLORS has 5 entries; localStorage may override but default is 5.
+        await expect(colorBtns).toHaveCount(5, { timeout: 5_000 });
     });
 
-    test('Clicking a layer button makes it active (aria-pressed)', async ({ page }) => {
+    test('Clicking a color button makes it active (aria-pressed)', async ({ page }) => {
         await gotoViewerWithAnnotationApi(page);
         await expect(page.locator('button:has-text("Share view")')).toBeVisible({
             timeout: 30_000,
         });
 
-        // "General" is the default layer — aria-pressed="true".
-        const generalBtn = page.locator('button[title="Annotate as: General"]');
-        const tumorBtn = page.locator('button[title="Annotate as: Tumor"]');
-        await expect(generalBtn).toBeVisible({ timeout: 5_000 });
-        await expect(generalBtn).toHaveAttribute('aria-pressed', 'true');
-        await expect(tumorBtn).toHaveAttribute('aria-pressed', 'false');
+        // "Default" is the first color — aria-pressed="true" initially.
+        const defaultBtn = page.locator('button[title="Color: Default"]');
+        const redBtn = page.locator('button[title="Color: Red"]');
+        await expect(defaultBtn).toBeVisible({ timeout: 5_000 });
+        await expect(defaultBtn).toHaveAttribute('aria-pressed', 'true');
+        await expect(redBtn).toHaveAttribute('aria-pressed', 'false');
 
-        // Click Tumor — it should become active.
-        await tumorBtn.click();
-        await expect(tumorBtn).toHaveAttribute('aria-pressed', 'true');
-        await expect(generalBtn).toHaveAttribute('aria-pressed', 'false');
+        // Click Red — it should become active.
+        await redBtn.click();
+        await expect(redBtn).toHaveAttribute('aria-pressed', 'true');
+        await expect(defaultBtn).toHaveAttribute('aria-pressed', 'false');
     });
 
-    test('Mock annotation with body.type="tumor" shows red dot in MetaSidebar', async ({
+    test('"+" button opens add-color form with color picker and name input', async ({ page }) => {
+        await gotoViewerWithAnnotationApi(page);
+        await expect(page.locator('button:has-text("Share view")')).toBeVisible({
+            timeout: 30_000,
+        });
+
+        const addBtn = page.locator('button[title="Add new named color to palette"]');
+        await expect(addBtn).toBeVisible({ timeout: 5_000 });
+        await addBtn.click();
+
+        // Form appears with color input, name text field, and Add button.
+        await expect(page.locator('input[type="color"]')).toBeVisible({ timeout: 3_000 });
+        await expect(page.locator('input[placeholder="Name (optional)"]')).toBeVisible();
+        await expect(page.locator('button[title="Add color to palette"]')).toBeVisible();
+    });
+
+    test('Mock annotation with body.type="name|#hex" shows correct color dot in MetaSidebar', async ({
         page,
     }) => {
-        // Tumor layer color is #ef4444 (red).
-        const TUMOR_COLOR = '#ef4444';
+        // Encode a custom named color in the new format.
+        const CUSTOM_HEX = '#ef4444';
+        const CUSTOM_NAME = 'My Region';
 
         await page.route(`${MOCK_ANNOTATION_URL}/annotations**`, async (route: any) => {
             if (route.request().method() === 'GET') {
@@ -875,7 +893,7 @@ test.describe('WSI viewer — annotation layers (Option C)', () => {
                     body: JSON.stringify([
                         {
                             ...MOCK_ANNOTATION,
-                            body: { ...MOCK_ANNOTATION.body, type: 'tumor' },
+                            body: { ...MOCK_ANNOTATION.body, type: `${CUSTOM_NAME}|${CUSTOM_HEX}` },
                         },
                     ]),
                 });
@@ -896,12 +914,46 @@ test.describe('WSI viewer — annotation layers (Option C)', () => {
             timeout: 30_000,
         });
 
-        // Colored dot uses data-annotation-color derived from layer type.
-        const dot = page.locator(`span[data-annotation-color="${TUMOR_COLOR}"]`).first();
+        // Colored dot uses the hex from the encoded body.type.
+        const dot = page.locator(`span[data-annotation-color="${CUSTOM_HEX}"]`).first();
         await expect(dot).toBeVisible({ timeout: 10_000 });
 
-        // Layer badge "Tumor" should also appear in the sidebar.
-        await expect(page.locator('text=Tumor').first()).toBeVisible({ timeout: 5_000 });
+        // Color name badge appears in the sidebar.
+        await expect(page.locator(`text=${CUSTOM_NAME}`).first()).toBeVisible({ timeout: 5_000 });
+    });
+
+    test('Legacy body.type="tumor" still renders with a color (backwards compat)', async ({
+        page,
+    }) => {
+        await page.route(`${MOCK_ANNOTATION_URL}/annotations**`, async (route: any) => {
+            if (route.request().method() === 'GET') {
+                await route.fulfill({
+                    status: 200,
+                    contentType: 'application/json',
+                    body: JSON.stringify([
+                        { ...MOCK_ANNOTATION, body: { ...MOCK_ANNOTATION.body, type: 'tumor' } },
+                    ]),
+                });
+            } else {
+                await route.continue();
+            }
+        });
+
+        await page.addInitScript((apiUrl: string) => {
+            localStorage.setItem(
+                'frontendConfig',
+                JSON.stringify({ serverConfig: { msk_wsi_annotation_api_url: apiUrl } })
+            );
+        }, MOCK_ANNOTATION_URL);
+
+        await page.goto(viewerUrl());
+        await expect(page.locator('button:has-text("Share view")')).toBeVisible({
+            timeout: 30_000,
+        });
+
+        // Legacy "tumor" → red (#ef4444) via the legacy fallback map.
+        const dot = page.locator('span[data-annotation-color="#ef4444"]').first();
+        await expect(dot).toBeVisible({ timeout: 10_000 });
     });
 });
 

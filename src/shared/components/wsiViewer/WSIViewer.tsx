@@ -33,25 +33,62 @@ const SIDEBAR_W = 220;
  * Annotation layers — semantic categories that also determine annotation color.
  * The `type` value is stored in `body.type` in the API so colors are persisted.
  */
-export const ANNOTATION_LAYERS = [
-    { type: 'general',    label: 'General',   color: '#3b82f6' },  // blue
-    { type: 'tumor',      label: 'Tumor',      color: '#ef4444' },  // red
-    { type: 'stroma',     label: 'Stroma',     color: '#22c55e' },  // green
-    { type: 'normal',     label: 'Normal',     color: '#14b8a6' },  // teal
-    { type: 'tils',       label: 'TILs',       color: '#8b5cf6' },  // purple
-    { type: 'necrosis',   label: 'Necrosis',   color: '#f97316' },  // orange
-] as const;
+// ---- Named-color palette ----
 
-export type AnnotationLayerType = typeof ANNOTATION_LAYERS[number]['type'];
+export interface NamedColor { name: string; hex: string; }
 
-/** Derive the hex color for an annotation given its stored layer type. */
-export function colorForLayer(layerType: string | undefined): string {
-    return ANNOTATION_LAYERS.find(l => l.type === layerType)?.color
-        ?? ANNOTATION_LAYERS[0].color;
+const LOCALSTORAGE_COLORS_KEY = 'wsi_annotation_colors';
+
+export const DEFAULT_NAMED_COLORS: NamedColor[] = [
+    { name: 'Default',  hex: '#3b82f6' },  // blue
+    { name: 'Red',      hex: '#ef4444' },
+    { name: 'Green',    hex: '#22c55e' },
+    { name: 'Orange',   hex: '#f97316' },
+    { name: 'Purple',   hex: '#8b5cf6' },
+];
+
+/**
+ * Parse the API's body.type field into a { name, hex } pair.
+ * Supports three formats:
+ *   "My Label|#ef4444"  → { name: "My Label", hex: "#ef4444" }
+ *   "#ef4444"           → { name: "", hex: "#ef4444" }
+ *   "tumor" (legacy)    → { name: "tumor", hex: <legacy map> }
+ */
+export function parseColorLabel(bodyType: string | undefined): { name: string; hex: string } {
+    const fallback = DEFAULT_NAMED_COLORS[0].hex;
+    if (!bodyType) return { name: '', hex: fallback };
+    if (bodyType.includes('|')) {
+        const idx = bodyType.indexOf('|');
+        return { name: bodyType.slice(0, idx), hex: bodyType.slice(idx + 1) || fallback };
+    }
+    if (bodyType.startsWith('#')) return { name: '', hex: bodyType };
+    // Legacy layer names from the previous implementation.
+    const LEGACY: Record<string, string> = {
+        general: '#3b82f6', tumor: '#ef4444', stroma: '#22c55e',
+        normal: '#14b8a6', tils: '#8b5cf6', necrosis: '#f97316',
+    };
+    return { name: bodyType, hex: LEGACY[bodyType] ?? fallback };
 }
 
-/** Keep the old ANNOTATION_COLORS export for any test that still references it. */
-export const ANNOTATION_COLORS = ANNOTATION_LAYERS.map(l => ({ hex: l.color, label: l.label }));
+/** Serialize { name, hex } back to body.type. */
+export function serializeColorLabel(name: string, hex: string): string {
+    return name.trim() ? `${name.trim()}|${hex}` : hex;
+}
+
+function loadNamedColors(): NamedColor[] {
+    try {
+        const raw = localStorage.getItem(LOCALSTORAGE_COLORS_KEY);
+        if (raw) {
+            const parsed = JSON.parse(raw) as NamedColor[];
+            if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        }
+    } catch (_) { /* ignore */ }
+    return [...DEFAULT_NAMED_COLORS];
+}
+
+function saveNamedColors(colors: NamedColor[]) {
+    try { localStorage.setItem(LOCALSTORAGE_COLORS_KEY, JSON.stringify(colors)); } catch (_) { /* ignore */ }
+}
 
 // OpenSeadragon is a CommonJS module; handle both CJS and ESM bundle shapes.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -106,8 +143,12 @@ export default class WSIViewer extends React.Component<Props, {}> {
     @observable private annotationTooltip: { x: number; y: number; text: string } | null = null;
     /** Active Annotorious drawing tool, or null when not drawing. */
     @observable private activeDrawingTool: 'rectangle' | 'polygon' | null = null;
-    /** Layer type selected for the next drawn annotation (e.g. "tumor"). */
-    @observable private activeLayerType: string = ANNOTATION_LAYERS[0].type;
+    /** User-managed palette of named colors (persisted to localStorage). */
+    @observable private namedColors: NamedColor[] = loadNamedColors();
+    /** Hex color selected for the next drawn annotation. */
+    @observable private activeColorHex: string = loadNamedColors()[0]?.hex ?? DEFAULT_NAMED_COLORS[0].hex;
+    /** Name associated with the active color (may be empty for ad-hoc colors). */
+    @observable private activeColorName: string = loadNamedColors()[0]?.name ?? DEFAULT_NAMED_COLORS[0].name;
     /** Maps annotation ID → hex color for live Annotorious style lookup. */
     private annotationColorMap = new Map<string, string>();
     /** Annotation drawn but not yet saved — waiting for user to confirm label. */
@@ -433,10 +474,9 @@ export default class WSIViewer extends React.Component<Props, {}> {
             if (!resp.ok) throw new Error(`${resp.status}`);
             const raw: any[] = await resp.json();
             // Convert API response to W3CAnnotation shape for Annotorious.
-            // Color derives from body.type (layer) so it persists through the API.
+            // Color derives from body.type (encoded as "name|#hex") so it persists through the API.
             const anns: W3CAnnotation[] = raw.map((item: any) => {
-                const layerType: string = item.body?.type ?? '';
-                const color = colorForLayer(layerType);
+                const { name: colorName, hex: color } = parseColorLabel(item.body?.type);
                 return {
                     '@context': 'http://www.w3.org/ns/anno.jsonld' as const,
                     type: 'Annotation' as const,
@@ -448,14 +488,14 @@ export default class WSIViewer extends React.Component<Props, {}> {
                     created: item.created_at,
                     creator: item.created_by,
                     version: item.version,
-                    layerType,
+                    colorName,
                     color,
                 };
             });
             // Populate color map for Annotorious style function
             this.annotationColorMap.clear();
             for (const ann of anns) {
-                this.annotationColorMap.set(ann.id, ann.color ?? colorForLayer(undefined));
+                this.annotationColorMap.set(ann.id, ann.color ?? DEFAULT_NAMED_COLORS[0].hex);
             }
             action(() => {
                 this.annotations = anns;
@@ -482,8 +522,8 @@ export default class WSIViewer extends React.Component<Props, {}> {
             const body = {
                 slide_id: slideId,
                 study_id: studyId,
-                // body.type stores the layer (e.g. "tumor") so color is reproduced on load.
-                body: { label: ann.body?.[0]?.value ?? '', comment: '', type: ann.layerType ?? '' },
+                // body.type encodes color as "name|#hex" so it survives the API round-trip.
+                body: { label: ann.body?.[0]?.value ?? '', comment: '', type: serializeColorLabel(ann.colorName ?? '', ann.color ?? DEFAULT_NAMED_COLORS[0].hex) },
                 target: { selector: (ann.target as any).selector ?? ann.target },
                 visible_to: [],
             };
@@ -495,7 +535,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
             if (!resp.ok) throw new Error(`${resp.status}`);
             const created = await resp.json();
             const savedAnn = { ...ann, id: created.id, version: created.version };
-            this.annotationColorMap.set(savedAnn.id, colorForLayer(savedAnn.layerType));
+            this.annotationColorMap.set(savedAnn.id, savedAnn.color ?? DEFAULT_NAMED_COLORS[0].hex);
             action(() => {
                 this.annotations = [...this.annotations, savedAnn];
             })();
@@ -512,7 +552,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
         if (!apiBase) return;
         try {
             const body = {
-                body: { label: ann.body?.[0]?.value ?? '', comment: '', type: ann.layerType ?? '' },
+                body: { label: ann.body?.[0]?.value ?? '', comment: '', type: serializeColorLabel(ann.colorName ?? '', ann.color ?? DEFAULT_NAMED_COLORS[0].hex) },
                 target: { selector: (ann.target as any).selector ?? ann.target },
                 version: ann.version ?? 1,
             };
@@ -655,8 +695,32 @@ export default class WSIViewer extends React.Component<Props, {}> {
     }
 
     @action.bound
-    setActiveLayerType(layerType: string) {
-        this.activeLayerType = layerType;
+    setActiveColor(name: string, hex: string) {
+        this.activeColorName = name;
+        this.activeColorHex = hex;
+        this.refreshAnnotoriousStyle();
+    }
+
+    @action.bound
+    addNamedColor(name: string, hex: string) {
+        // Avoid duplicates by hex
+        if (!this.namedColors.some(c => c.hex === hex && c.name === name)) {
+            this.namedColors = [...this.namedColors, { name, hex }];
+            saveNamedColors(this.namedColors);
+        }
+        this.setActiveColor(name, hex);
+    }
+
+    @action.bound
+    removeNamedColor(hex: string, name: string) {
+        this.namedColors = this.namedColors.filter(c => !(c.hex === hex && c.name === name));
+        saveNamedColors(this.namedColors);
+        // If removed color was active, switch to first remaining or default
+        if (this.activeColorHex === hex && this.activeColorName === name) {
+            const fallback = this.namedColors[0] ?? DEFAULT_NAMED_COLORS[0];
+            this.activeColorHex = fallback.hex;
+            this.activeColorName = fallback.name;
+        }
         this.refreshAnnotoriousStyle();
     }
 
@@ -664,7 +728,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
     private refreshAnnotoriousStyle() {
         if (!this.annotorious) return;
         const colorMap = this.annotationColorMap;
-        const activeColor = colorForLayer(this.activeLayerType);
+        const activeColor = this.activeColorHex;
         this.annotorious.setStyle((ann: { id: string }) => {
             const c = colorMap.get(ann.id) ?? activeColor;
             return { stroke: c, fill: c, fillOpacity: 0.2, strokeWidth: 2 };
@@ -783,9 +847,9 @@ export default class WSIViewer extends React.Component<Props, {}> {
                     this.annotorious = createOSDAnnotator(this.osdViewer, { drawingEnabled: false, drawingMode: 'drag' });
 
                     this.annotorious.on('createAnnotation', (ann: W3CAnnotation) => {
-                        // Stamp the active layer type + derived color before saving.
-                        ann.layerType = this.activeLayerType;
-                        ann.color = colorForLayer(this.activeLayerType);
+                        // Stamp the active named color before saving.
+                        ann.colorName = this.activeColorName;
+                        ann.color = this.activeColorHex;
                         this.annotationColorMap.set(ann.id, ann.color);
                         // Reset drawing mode and wait for user to confirm/label the annotation.
                         action(() => {
@@ -955,8 +1019,12 @@ export default class WSIViewer extends React.Component<Props, {}> {
                             onToggleAnnotations={this.toggleAnnotationsVisible}
                             drawingTool={this.activeDrawingTool}
                             onSetDrawingTool={this.setDrawingTool}
-                            activeLayerType={this.activeLayerType}
-                            onSetActiveLayerType={this.setActiveLayerType}
+                            activeColorHex={this.activeColorHex}
+                            activeColorName={this.activeColorName}
+                            namedColors={this.namedColors}
+                            onSetActiveColor={this.setActiveColor}
+                            onAddNamedColor={this.addNamedColor}
+                            onRemoveNamedColor={this.removeNamedColor}
                         />
                     )}
                     {/* Label prompt — floats above CoordBar after drawing a shape */}
@@ -1105,20 +1173,43 @@ export interface CoordBarProps {
     onToggleAnnotations?: () => void;
     drawingTool?: 'rectangle' | 'polygon' | null;
     onSetDrawingTool?: (tool: 'rectangle' | 'polygon' | null) => void;
-    /** Currently selected annotation layer type (e.g. "tumor"). */
-    activeLayerType?: string;
-    /** Called when user picks a new annotation layer. */
-    onSetActiveLayerType?: (layerType: string) => void;
+    /** User's saved named colors. */
+    namedColors?: NamedColor[];
+    /** Active color hex for next annotation. */
+    activeColorHex?: string;
+    /** Active color name for next annotation. */
+    activeColorName?: string;
+    /** Called when user picks a color from the palette. */
+    onSetActiveColor?: (name: string, hex: string) => void;
+    /** Called when user adds a new named color to the palette. */
+    onAddNamedColor?: (name: string, hex: string) => void;
+    /** Called when user removes a named color from the palette. */
+    onRemoveNamedColor?: (hex: string, name: string) => void;
 }
 
-export function CoordBar({ inputX, inputY, cursorPos, mpp, onChangeX, onChangeY, onGo, onCopyLink, onDownload, annotationEnabled, annotationsVisible, onToggleAnnotations, drawingTool, onSetDrawingTool, activeLayerType, onSetActiveLayerType }: CoordBarProps) {
+export function CoordBar({
+    inputX, inputY, cursorPos, mpp, onChangeX, onChangeY, onGo, onCopyLink, onDownload,
+    annotationEnabled, annotationsVisible, onToggleAnnotations, drawingTool, onSetDrawingTool,
+    namedColors, activeColorHex, activeColorName, onSetActiveColor, onAddNamedColor, onRemoveNamedColor,
+}: CoordBarProps) {
     const handleKey = (e: React.KeyboardEvent) => { if (e.key === 'Enter') onGo(); };
     const [copied, setCopied] = React.useState(false);
+    const [showAddForm, setShowAddForm] = React.useState(false);
+    const [newHex, setNewHex] = React.useState('#ff0000');
+    const [newName, setNewName] = React.useState('');
 
     const handleCopy = () => {
         onCopyLink();
         setCopied(true);
         setTimeout(() => setCopied(false), 2000);
+    };
+
+    const handleAddColor = () => {
+        if (onAddNamedColor && newHex) {
+            onAddNamedColor(newName.trim() || newHex, newHex);
+        }
+        setShowAddForm(false);
+        setNewName('');
     };
 
     let cursorLabel = '';
@@ -1241,28 +1332,83 @@ export function CoordBar({ inputX, inputY, cursorPos, mpp, onChangeX, onChangeY,
                     >
                         {drawingTool === 'polygon' ? '✕ Cancel draw' : '⬡ Draw poly'}
                     </button>
-                    {/* Layer picker — each layer has a semantic name and a fixed color. */}
-                    {onSetActiveLayerType && (
+                    {/* Named-color palette picker */}
+                    {onSetActiveColor && (
                         <span style={{ display: 'flex', alignItems: 'center', gap: 3, marginLeft: 4 }}>
-                            <span style={{ fontSize: 10, color: C.muted, whiteSpace: 'nowrap' }}>Layer:</span>
-                            {ANNOTATION_LAYERS.map(({ type, label, color }) => (
+                            <span style={{ fontSize: 10, color: C.muted, whiteSpace: 'nowrap' }}>Color:</span>
+                            {(namedColors ?? []).map(({ name, hex }) => {
+                                const isActive = activeColorHex === hex && activeColorName === name;
+                                return (
+                                    <span key={`${name}|${hex}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 1 }}>
+                                        <button
+                                            title={`Color: ${name || hex}`}
+                                            aria-pressed={isActive}
+                                            onClick={() => onSetActiveColor(name, hex)}
+                                            style={{
+                                                fontSize: 10, padding: '1px 6px', borderRadius: 10, cursor: 'pointer',
+                                                background: isActive ? hex : '#fff',
+                                                color: isActive ? '#fff' : hex,
+                                                border: `1.5px solid ${hex}`,
+                                                fontWeight: isActive ? 700 : 400,
+                                                whiteSpace: 'nowrap',
+                                            }}
+                                        >
+                                            {name || hex}
+                                        </button>
+                                        {onRemoveNamedColor && (
+                                            <button
+                                                title={`Remove "${name || hex}" from palette`}
+                                                onClick={() => onRemoveNamedColor(hex, name)}
+                                                style={{
+                                                    fontSize: 8, padding: '0 2px', border: 'none', background: 'transparent',
+                                                    cursor: 'pointer', color: '#bbb', lineHeight: 1,
+                                                }}
+                                            >×</button>
+                                        )}
+                                    </span>
+                                );
+                            })}
+                            {/* Add new named color */}
+                            {!showAddForm ? (
                                 <button
-                                    key={type}
-                                    title={`Annotate as: ${label}`}
-                                    aria-pressed={activeLayerType === type}
-                                    onClick={() => onSetActiveLayerType(type)}
+                                    title="Add new named color to palette"
+                                    onClick={() => setShowAddForm(true)}
                                     style={{
-                                        fontSize: 10, padding: '1px 6px', borderRadius: 10, cursor: 'pointer',
-                                        background: activeLayerType === type ? color : '#fff',
-                                        color: activeLayerType === type ? '#fff' : color,
-                                        border: `1px solid ${color}`,
-                                        fontWeight: activeLayerType === type ? 700 : 400,
-                                        whiteSpace: 'nowrap',
+                                        fontSize: 12, padding: '0 5px', border: `1px dashed ${C.border}`,
+                                        background: '#fff', color: C.muted, borderRadius: 10, cursor: 'pointer',
                                     }}
-                                >
-                                    {label}
-                                </button>
-                            ))}
+                                >+</button>
+                            ) : (
+                                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, padding: '1px 5px', border: `1px solid ${C.border}`, borderRadius: 10, background: '#fff' }}>
+                                    <input
+                                        type="color"
+                                        value={newHex}
+                                        title="Pick color"
+                                        onChange={e => setNewHex(e.target.value)}
+                                        style={{ width: 20, height: 16, border: 'none', padding: 0, cursor: 'pointer', background: 'transparent' }}
+                                    />
+                                    <input
+                                        type="text"
+                                        value={newName}
+                                        placeholder="Name (optional)"
+                                        maxLength={20}
+                                        autoFocus
+                                        onChange={e => setNewName(e.target.value)}
+                                        onKeyDown={e => { if (e.key === 'Enter') handleAddColor(); if (e.key === 'Escape') setShowAddForm(false); }}
+                                        style={{ fontSize: 10, border: 'none', outline: 'none', width: 90, background: 'transparent', color: C.text }}
+                                    />
+                                    <button
+                                        title="Add color to palette"
+                                        onClick={handleAddColor}
+                                        style={{ fontSize: 10, padding: '1px 5px', border: `1px solid ${C.blue}`, background: C.blue, color: '#fff', borderRadius: 8, cursor: 'pointer' }}
+                                    >Add</button>
+                                    <button
+                                        title="Cancel"
+                                        onClick={() => setShowAddForm(false)}
+                                        style={{ fontSize: 10, padding: '1px 4px', border: 'none', background: 'transparent', color: C.muted, cursor: 'pointer' }}
+                                    >✕</button>
+                                </span>
+                            )}
                         </span>
                     )}
                 </>
@@ -1614,8 +1760,8 @@ export function MetaSidebar({ slide, sample, meta, tileServerBase, studyId, anno
                                 const creator = (ann as any).creator ?? '';
                                 const created = (ann as any).created ?? '';
                                 const dateStr = created ? new Date(created).toLocaleDateString() : '';
-                                const dotColor = colorForLayer(ann.layerType);
-                                const layerLabel = ANNOTATION_LAYERS.find(l => l.type === ann.layerType)?.label ?? '';
+                                const dotColor = ann.color ?? DEFAULT_NAMED_COLORS[0].hex;
+                                const colorName = ann.colorName ?? '';
                                 const isEditing = editingAnnotationId === ann.id;
                                 return (
                                     <div key={ann.id} style={{
@@ -1626,8 +1772,8 @@ export function MetaSidebar({ slide, sample, meta, tileServerBase, studyId, anno
                                         {/* Colored dot + layer badge */}
                                         <span
                                             data-annotation-color={dotColor}
-                                            data-annotation-layer={ann.layerType}
-                                            title={layerLabel || 'General'}
+                                            data-annotation-layer={ann.colorName}
+                                            title={colorName || 'No color name'}
                                             style={{
                                                 display: 'inline-block', width: 8, height: 8, borderRadius: '50%',
                                                 background: dotColor, flexShrink: 0, marginTop: 4,
@@ -1667,12 +1813,12 @@ export function MetaSidebar({ slide, sample, meta, tileServerBase, studyId, anno
                                                     <div style={{ fontSize: 12, fontWeight: 500, color: C.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={displayLabel}>
                                                         {displayLabel}
                                                     </div>
-                                                    {layerLabel && (
+                                                    {colorName && (
                                                         <span style={{
                                                             fontSize: 9, fontWeight: 600, padding: '0 4px', borderRadius: 8,
                                                             background: dotColor, color: '#fff', display: 'inline-block', marginTop: 1,
                                                         }}>
-                                                            {layerLabel}
+                                                            {colorName}
                                                         </span>
                                                     )}
                                                 </>

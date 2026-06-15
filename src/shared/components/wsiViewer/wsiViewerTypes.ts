@@ -94,10 +94,10 @@ export interface W3CAnnotation {
     /** Optimistic concurrency version from the annotation API */
     version?: number;
     /**
-     * Annotation layer/type (e.g. "tumor", "stroma").
-     * Stored in body.type in the API — used to derive the display color.
+     * User-defined color name (e.g. "Tumor region").
+     * Stored in body.type as "name|#hex" in the API.
      */
-    layerType?: string;
+    colorName?: string;
     /** Hex color derived from layerType (not persisted directly — computed on load). */
     color?: string;
 }
