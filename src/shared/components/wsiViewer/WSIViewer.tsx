@@ -29,15 +29,29 @@ const C = {
 const NAV_W = 252;
 const SIDEBAR_W = 220;
 
-/** Preset annotation colors shown as swatches in the toolbar. */
-export const ANNOTATION_COLORS = [
-    { hex: '#3b82f6', label: 'Blue' },
-    { hex: '#ef4444', label: 'Red' },
-    { hex: '#22c55e', label: 'Green' },
-    { hex: '#f97316', label: 'Orange' },
-    { hex: '#a855f7', label: 'Purple' },
-    { hex: '#eab308', label: 'Yellow' },
+/**
+ * Annotation layers — semantic categories that also determine annotation color.
+ * The `type` value is stored in `body.type` in the API so colors are persisted.
+ */
+export const ANNOTATION_LAYERS = [
+    { type: 'general',    label: 'General',   color: '#3b82f6' },  // blue
+    { type: 'tumor',      label: 'Tumor',      color: '#ef4444' },  // red
+    { type: 'stroma',     label: 'Stroma',     color: '#22c55e' },  // green
+    { type: 'normal',     label: 'Normal',     color: '#14b8a6' },  // teal
+    { type: 'tils',       label: 'TILs',       color: '#8b5cf6' },  // purple
+    { type: 'necrosis',   label: 'Necrosis',   color: '#f97316' },  // orange
 ] as const;
+
+export type AnnotationLayerType = typeof ANNOTATION_LAYERS[number]['type'];
+
+/** Derive the hex color for an annotation given its stored layer type. */
+export function colorForLayer(layerType: string | undefined): string {
+    return ANNOTATION_LAYERS.find(l => l.type === layerType)?.color
+        ?? ANNOTATION_LAYERS[0].color;
+}
+
+/** Keep the old ANNOTATION_COLORS export for any test that still references it. */
+export const ANNOTATION_COLORS = ANNOTATION_LAYERS.map(l => ({ hex: l.color, label: l.label }));
 
 // OpenSeadragon is a CommonJS module; handle both CJS and ESM bundle shapes.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -92,9 +106,9 @@ export default class WSIViewer extends React.Component<Props, {}> {
     @observable private annotationTooltip: { x: number; y: number; text: string } | null = null;
     /** Active Annotorious drawing tool, or null when not drawing. */
     @observable private activeDrawingTool: 'rectangle' | 'polygon' | null = null;
-    /** Color selected for the next drawn annotation. */
-    @observable private activeColor: string = ANNOTATION_COLORS[0].hex;
-    /** Maps annotation ID → hex color for live style lookup. */
+    /** Layer type selected for the next drawn annotation (e.g. "tumor"). */
+    @observable private activeLayerType: string = ANNOTATION_LAYERS[0].type;
+    /** Maps annotation ID → hex color for live Annotorious style lookup. */
     private annotationColorMap = new Map<string, string>();
     /** Annotation drawn but not yet saved — waiting for user to confirm label. */
     @observable private pendingAnnotation: W3CAnnotation | null = null;
@@ -418,24 +432,30 @@ export default class WSIViewer extends React.Component<Props, {}> {
             );
             if (!resp.ok) throw new Error(`${resp.status}`);
             const raw: any[] = await resp.json();
-            // Convert API response to W3CAnnotation shape for Annotorious
-            const anns: W3CAnnotation[] = raw.map((item: any) => ({
-                '@context': 'http://www.w3.org/ns/anno.jsonld' as const,
-                type: 'Annotation' as const,
-                id: item.id,
-                body: item.body?.label
-                    ? [{ type: 'TextualBody' as const, value: item.body.label, purpose: 'commenting' as const }]
-                    : [],
-                target: { source: slideId, selector: item.target?.selector ?? item.target },
-                created: item.created_at,
-                creator: item.created_by,
-                version: item.version,
-                color: item.body?.color ?? undefined,
-            }));
+            // Convert API response to W3CAnnotation shape for Annotorious.
+            // Color derives from body.type (layer) so it persists through the API.
+            const anns: W3CAnnotation[] = raw.map((item: any) => {
+                const layerType: string = item.body?.type ?? '';
+                const color = colorForLayer(layerType);
+                return {
+                    '@context': 'http://www.w3.org/ns/anno.jsonld' as const,
+                    type: 'Annotation' as const,
+                    id: item.id,
+                    body: item.body?.label
+                        ? [{ type: 'TextualBody' as const, value: item.body.label, purpose: 'commenting' as const }]
+                        : [],
+                    target: { source: slideId, selector: item.target?.selector ?? item.target },
+                    created: item.created_at,
+                    creator: item.created_by,
+                    version: item.version,
+                    layerType,
+                    color,
+                };
+            });
             // Populate color map for Annotorious style function
             this.annotationColorMap.clear();
             for (const ann of anns) {
-                if (ann.color) this.annotationColorMap.set(ann.id, ann.color);
+                this.annotationColorMap.set(ann.id, ann.color ?? colorForLayer(undefined));
             }
             action(() => {
                 this.annotations = anns;
@@ -462,7 +482,8 @@ export default class WSIViewer extends React.Component<Props, {}> {
             const body = {
                 slide_id: slideId,
                 study_id: studyId,
-                body: { label: ann.body?.[0]?.value ?? '', comment: '', type: '', color: ann.color ?? '' },
+                // body.type stores the layer (e.g. "tumor") so color is reproduced on load.
+                body: { label: ann.body?.[0]?.value ?? '', comment: '', type: ann.layerType ?? '' },
                 target: { selector: (ann.target as any).selector ?? ann.target },
                 visible_to: [],
             };
@@ -474,7 +495,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
             if (!resp.ok) throw new Error(`${resp.status}`);
             const created = await resp.json();
             const savedAnn = { ...ann, id: created.id, version: created.version };
-            if (savedAnn.color) this.annotationColorMap.set(savedAnn.id, savedAnn.color);
+            this.annotationColorMap.set(savedAnn.id, colorForLayer(savedAnn.layerType));
             action(() => {
                 this.annotations = [...this.annotations, savedAnn];
             })();
@@ -491,7 +512,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
         if (!apiBase) return;
         try {
             const body = {
-                body: { label: ann.body?.[0]?.value ?? '', comment: '', type: '', color: ann.color ?? '' },
+                body: { label: ann.body?.[0]?.value ?? '', comment: '', type: ann.layerType ?? '' },
                 target: { selector: (ann.target as any).selector ?? ann.target },
                 version: ann.version ?? 1,
             };
@@ -634,8 +655,8 @@ export default class WSIViewer extends React.Component<Props, {}> {
     }
 
     @action.bound
-    setActiveColor(color: string) {
-        this.activeColor = color;
+    setActiveLayerType(layerType: string) {
+        this.activeLayerType = layerType;
         this.refreshAnnotoriousStyle();
     }
 
@@ -643,7 +664,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
     private refreshAnnotoriousStyle() {
         if (!this.annotorious) return;
         const colorMap = this.annotationColorMap;
-        const activeColor = this.activeColor;
+        const activeColor = colorForLayer(this.activeLayerType);
         this.annotorious.setStyle((ann: { id: string }) => {
             const c = colorMap.get(ann.id) ?? activeColor;
             return { stroke: c, fill: c, fillOpacity: 0.2, strokeWidth: 2 };
@@ -762,9 +783,10 @@ export default class WSIViewer extends React.Component<Props, {}> {
                     this.annotorious = createOSDAnnotator(this.osdViewer, { drawingEnabled: false, drawingMode: 'drag' });
 
                     this.annotorious.on('createAnnotation', (ann: W3CAnnotation) => {
-                        // Stamp the active color onto the annotation before saving.
-                        ann.color = this.activeColor;
-                        this.annotationColorMap.set(ann.id, this.activeColor);
+                        // Stamp the active layer type + derived color before saving.
+                        ann.layerType = this.activeLayerType;
+                        ann.color = colorForLayer(this.activeLayerType);
+                        this.annotationColorMap.set(ann.id, ann.color);
                         // Reset drawing mode and wait for user to confirm/label the annotation.
                         action(() => {
                             this.activeDrawingTool = null;
@@ -773,7 +795,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
                         })();
                         this.annotorious.setDrawingEnabled(false);
                         this.refreshAnnotoriousStyle();
-                        // saveNewAnnotation is called by confirmAnnotationLabel / confirmAnnotationSilent
+                        // saveNewAnnotation is called by confirmAnnotationLabel
                     });
                     this.annotorious.on('updateAnnotation', (ann: W3CAnnotation) => {
                         void this.updateAnnotation(ann);
@@ -933,8 +955,8 @@ export default class WSIViewer extends React.Component<Props, {}> {
                             onToggleAnnotations={this.toggleAnnotationsVisible}
                             drawingTool={this.activeDrawingTool}
                             onSetDrawingTool={this.setDrawingTool}
-                            activeColor={this.activeColor}
-                            onSetActiveColor={this.setActiveColor}
+                            activeLayerType={this.activeLayerType}
+                            onSetActiveLayerType={this.setActiveLayerType}
                         />
                     )}
                     {/* Label prompt — floats above CoordBar after drawing a shape */}
@@ -1083,13 +1105,13 @@ export interface CoordBarProps {
     onToggleAnnotations?: () => void;
     drawingTool?: 'rectangle' | 'polygon' | null;
     onSetDrawingTool?: (tool: 'rectangle' | 'polygon' | null) => void;
-    /** Currently selected draw color (hex string). */
-    activeColor?: string;
-    /** Called when user picks a new color swatch. */
-    onSetActiveColor?: (color: string) => void;
+    /** Currently selected annotation layer type (e.g. "tumor"). */
+    activeLayerType?: string;
+    /** Called when user picks a new annotation layer. */
+    onSetActiveLayerType?: (layerType: string) => void;
 }
 
-export function CoordBar({ inputX, inputY, cursorPos, mpp, onChangeX, onChangeY, onGo, onCopyLink, onDownload, annotationEnabled, annotationsVisible, onToggleAnnotations, drawingTool, onSetDrawingTool, activeColor, onSetActiveColor }: CoordBarProps) {
+export function CoordBar({ inputX, inputY, cursorPos, mpp, onChangeX, onChangeY, onGo, onCopyLink, onDownload, annotationEnabled, annotationsVisible, onToggleAnnotations, drawingTool, onSetDrawingTool, activeLayerType, onSetActiveLayerType }: CoordBarProps) {
     const handleKey = (e: React.KeyboardEvent) => { if (e.key === 'Enter') onGo(); };
     const [copied, setCopied] = React.useState(false);
 
@@ -1219,25 +1241,30 @@ export function CoordBar({ inputX, inputY, cursorPos, mpp, onChangeX, onChangeY,
                     >
                         {drawingTool === 'polygon' ? '✕ Cancel draw' : '⬡ Draw poly'}
                     </button>
-                    {/* Color swatches — pick annotation color before drawing */}
-                    {onSetActiveColor && ANNOTATION_COLORS.map(({ hex, label }) => (
-                        <button
-                            key={hex}
-                            title={`Draw color: ${label}`}
-                            aria-pressed={activeColor === hex}
-                            onClick={() => onSetActiveColor(hex)}
-                            style={{
-                                width: 18, height: 18, borderRadius: '50%', padding: 0, cursor: 'pointer',
-                                background: hex,
-                                border: activeColor === hex
-                                    ? '2px solid #333'
-                                    : '2px solid transparent',
-                                outline: activeColor === hex ? `2px solid ${hex}` : 'none',
-                                outlineOffset: 1,
-                                flexShrink: 0,
-                            }}
-                        />
-                    ))}
+                    {/* Layer picker — each layer has a semantic name and a fixed color. */}
+                    {onSetActiveLayerType && (
+                        <span style={{ display: 'flex', alignItems: 'center', gap: 3, marginLeft: 4 }}>
+                            <span style={{ fontSize: 10, color: C.muted, whiteSpace: 'nowrap' }}>Layer:</span>
+                            {ANNOTATION_LAYERS.map(({ type, label, color }) => (
+                                <button
+                                    key={type}
+                                    title={`Annotate as: ${label}`}
+                                    aria-pressed={activeLayerType === type}
+                                    onClick={() => onSetActiveLayerType(type)}
+                                    style={{
+                                        fontSize: 10, padding: '1px 6px', borderRadius: 10, cursor: 'pointer',
+                                        background: activeLayerType === type ? color : '#fff',
+                                        color: activeLayerType === type ? '#fff' : color,
+                                        border: `1px solid ${color}`,
+                                        fontWeight: activeLayerType === type ? 700 : 400,
+                                        whiteSpace: 'nowrap',
+                                    }}
+                                >
+                                    {label}
+                                </button>
+                            ))}
+                        </span>
+                    )}
                 </>
             )}
             {cursorPos && (
@@ -1587,7 +1614,8 @@ export function MetaSidebar({ slide, sample, meta, tileServerBase, studyId, anno
                                 const creator = (ann as any).creator ?? '';
                                 const created = (ann as any).created ?? '';
                                 const dateStr = created ? new Date(created).toLocaleDateString() : '';
-                                const dotColor = ann.color ?? ANNOTATION_COLORS[0].hex;
+                                const dotColor = colorForLayer(ann.layerType);
+                                const layerLabel = ANNOTATION_LAYERS.find(l => l.type === ann.layerType)?.label ?? '';
                                 const isEditing = editingAnnotationId === ann.id;
                                 return (
                                     <div key={ann.id} style={{
@@ -1595,8 +1623,11 @@ export function MetaSidebar({ slide, sample, meta, tileServerBase, studyId, anno
                                         display: 'flex', alignItems: 'flex-start', gap: 4,
                                     }}>
                                         {/* Colored dot indicates annotation color */}
+                                        {/* Colored dot + layer badge */}
                                         <span
                                             data-annotation-color={dotColor}
+                                            data-annotation-layer={ann.layerType}
+                                            title={layerLabel || 'General'}
                                             style={{
                                                 display: 'inline-block', width: 8, height: 8, borderRadius: '50%',
                                                 background: dotColor, flexShrink: 0, marginTop: 4,
@@ -1632,9 +1663,19 @@ export function MetaSidebar({ slide, sample, meta, tileServerBase, studyId, anno
                                                     >✕</button>
                                                 </div>
                                             ) : (
-                                                <div style={{ fontSize: 12, fontWeight: 500, color: C.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={displayLabel}>
-                                                    {displayLabel}
-                                                </div>
+                                                <>
+                                                    <div style={{ fontSize: 12, fontWeight: 500, color: C.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={displayLabel}>
+                                                        {displayLabel}
+                                                    </div>
+                                                    {layerLabel && (
+                                                        <span style={{
+                                                            fontSize: 9, fontWeight: 600, padding: '0 4px', borderRadius: 8,
+                                                            background: dotColor, color: '#fff', display: 'inline-block', marginTop: 1,
+                                                        }}>
+                                                            {layerLabel}
+                                                        </span>
+                                                    )}
+                                                </>
                                             )}
                                             {!isEditing && (creator || dateStr) && (
                                                 <div style={{ fontSize: 10, color: C.muted }}>

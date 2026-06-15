@@ -93,6 +93,11 @@ export interface W3CAnnotation {
     creator?: string;
     /** Optimistic concurrency version from the annotation API */
     version?: number;
-    /** Hex color chosen at draw time (e.g. "#ef4444") */
+    /**
+     * Annotation layer/type (e.g. "tumor", "stroma").
+     * Stored in body.type in the API — used to derive the display color.
+     */
+    layerType?: string;
+    /** Hex color derived from layerType (not persisted directly — computed on load). */
     color?: string;
 }
