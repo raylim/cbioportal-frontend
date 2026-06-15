@@ -93,4 +93,6 @@ export interface W3CAnnotation {
     creator?: string;
     /** Optimistic concurrency version from the annotation API */
     version?: number;
+    /** Hex color chosen at draw time (e.g. "#ef4444") */
+    color?: string;
 }

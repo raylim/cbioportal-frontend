@@ -29,6 +29,16 @@ const C = {
 const NAV_W = 252;
 const SIDEBAR_W = 220;
 
+/** Preset annotation colors shown as swatches in the toolbar. */
+export const ANNOTATION_COLORS = [
+    { hex: '#3b82f6', label: 'Blue' },
+    { hex: '#ef4444', label: 'Red' },
+    { hex: '#22c55e', label: 'Green' },
+    { hex: '#f97316', label: 'Orange' },
+    { hex: '#a855f7', label: 'Purple' },
+    { hex: '#eab308', label: 'Yellow' },
+] as const;
+
 // OpenSeadragon is a CommonJS module; handle both CJS and ESM bundle shapes.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const OpenSeadragon: typeof import('openseadragon') =
@@ -82,6 +92,10 @@ export default class WSIViewer extends React.Component<Props, {}> {
     @observable private annotationTooltip: { x: number; y: number; text: string } | null = null;
     /** Active Annotorious drawing tool, or null when not drawing. */
     @observable private activeDrawingTool: 'rectangle' | 'polygon' | null = null;
+    /** Color selected for the next drawn annotation. */
+    @observable private activeColor: string = ANNOTATION_COLORS[0].hex;
+    /** Maps annotation ID → hex color for live style lookup. */
+    private annotationColorMap = new Map<string, string>();
 
     private viewerContainerRef = React.createRef<HTMLDivElement>();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -408,13 +422,20 @@ export default class WSIViewer extends React.Component<Props, {}> {
                 created: item.created_at,
                 creator: item.created_by,
                 version: item.version,
+                color: item.body?.color ?? undefined,
             }));
+            // Populate color map for Annotorious style function
+            this.annotationColorMap.clear();
+            for (const ann of anns) {
+                if (ann.color) this.annotationColorMap.set(ann.id, ann.color);
+            }
             action(() => {
                 this.annotations = anns;
                 this.annotationsLoading = false;
             })();
             if (this.annotorious) {
                 this.annotorious.setAnnotations(anns);
+                this.refreshAnnotoriousStyle();
             }
         } catch (e) {
             action(() => { this.annotationsLoading = false; })();
@@ -433,7 +454,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
             const body = {
                 slide_id: slideId,
                 study_id: studyId,
-                body: { label: ann.body?.[0]?.value ?? '', comment: '', type: '' },
+                body: { label: ann.body?.[0]?.value ?? '', comment: '', type: '', color: ann.color ?? '' },
                 target: { selector: (ann.target as any).selector ?? ann.target },
                 visible_to: [],
             };
@@ -444,9 +465,12 @@ export default class WSIViewer extends React.Component<Props, {}> {
             });
             if (!resp.ok) throw new Error(`${resp.status}`);
             const created = await resp.json();
+            const savedAnn = { ...ann, id: created.id, version: created.version };
+            if (savedAnn.color) this.annotationColorMap.set(savedAnn.id, savedAnn.color);
             action(() => {
-                this.annotations = [...this.annotations, { ...ann, id: created.id, version: created.version }];
+                this.annotations = [...this.annotations, savedAnn];
             })();
+            this.refreshAnnotoriousStyle();
         } catch (e) {
             // eslint-disable-next-line no-console
             console.warn('[WSIViewer] Failed to save annotation:', e);
@@ -459,7 +483,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
         if (!apiBase) return;
         try {
             const body = {
-                body: { label: ann.body?.[0]?.value ?? '', comment: '', type: '' },
+                body: { label: ann.body?.[0]?.value ?? '', comment: '', type: '', color: ann.color ?? '' },
                 target: { selector: (ann.target as any).selector ?? ann.target },
                 version: ann.version ?? 1,
             };
@@ -532,6 +556,23 @@ export default class WSIViewer extends React.Component<Props, {}> {
         if (e.key === 'Escape' && this.activeDrawingTool !== null) {
             this.setDrawingTool(null);
         }
+    }
+
+    @action.bound
+    setActiveColor(color: string) {
+        this.activeColor = color;
+        this.refreshAnnotoriousStyle();
+    }
+
+    /** Push the per-annotation color function into Annotorious so shapes render with the right color. */
+    private refreshAnnotoriousStyle() {
+        if (!this.annotorious) return;
+        const colorMap = this.annotationColorMap;
+        const activeColor = this.activeColor;
+        this.annotorious.setStyle((ann: { id: string }) => {
+            const c = colorMap.get(ann.id) ?? activeColor;
+            return { stroke: c, fill: c, fillOpacity: 0.2, strokeWidth: 2 };
+        });
     }
 
     private destroyViewer() {
@@ -646,9 +687,13 @@ export default class WSIViewer extends React.Component<Props, {}> {
                     this.annotorious = createOSDAnnotator(this.osdViewer, { drawingEnabled: false, drawingMode: 'drag' });
 
                     this.annotorious.on('createAnnotation', (ann: W3CAnnotation) => {
+                        // Stamp the active color onto the annotation before saving.
+                        ann.color = this.activeColor;
+                        this.annotationColorMap.set(ann.id, this.activeColor);
                         // Reset drawing mode after shape is completed.
                         action(() => { this.activeDrawingTool = null; })();
                         this.annotorious.setDrawingEnabled(false);
+                        this.refreshAnnotoriousStyle();
                         void this.saveNewAnnotation(ann);
                     });
                     this.annotorious.on('updateAnnotation', (ann: W3CAnnotation) => {
@@ -674,6 +719,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
                     if (this.annotations.length > 0) {
                         this.annotorious.setAnnotations(this.annotations);
                     }
+                    this.refreshAnnotoriousStyle();
                     if (!this.annotationsVisible) {
                         this.annotorious.setVisible(false);
                     }
@@ -808,6 +854,8 @@ export default class WSIViewer extends React.Component<Props, {}> {
                             onToggleAnnotations={this.toggleAnnotationsVisible}
                             drawingTool={this.activeDrawingTool}
                             onSetDrawingTool={this.setDrawingTool}
+                            activeColor={this.activeColor}
+                            onSetActiveColor={this.setActiveColor}
                         />
                     )}
                     {this.annotationTooltip && (
@@ -874,9 +922,13 @@ export interface CoordBarProps {
     onToggleAnnotations?: () => void;
     drawingTool?: 'rectangle' | 'polygon' | null;
     onSetDrawingTool?: (tool: 'rectangle' | 'polygon' | null) => void;
+    /** Currently selected draw color (hex string). */
+    activeColor?: string;
+    /** Called when user picks a new color swatch. */
+    onSetActiveColor?: (color: string) => void;
 }
 
-export function CoordBar({ inputX, inputY, cursorPos, mpp, onChangeX, onChangeY, onGo, onCopyLink, onDownload, annotationEnabled, annotationsVisible, onToggleAnnotations, drawingTool, onSetDrawingTool }: CoordBarProps) {
+export function CoordBar({ inputX, inputY, cursorPos, mpp, onChangeX, onChangeY, onGo, onCopyLink, onDownload, annotationEnabled, annotationsVisible, onToggleAnnotations, drawingTool, onSetDrawingTool, activeColor, onSetActiveColor }: CoordBarProps) {
     const handleKey = (e: React.KeyboardEvent) => { if (e.key === 'Enter') onGo(); };
     const [copied, setCopied] = React.useState(false);
 
@@ -1006,6 +1058,25 @@ export function CoordBar({ inputX, inputY, cursorPos, mpp, onChangeX, onChangeY,
                     >
                         {drawingTool === 'polygon' ? '✕ Cancel draw' : '⬡ Draw poly'}
                     </button>
+                    {/* Color swatches — pick annotation color before drawing */}
+                    {onSetActiveColor && ANNOTATION_COLORS.map(({ hex, label }) => (
+                        <button
+                            key={hex}
+                            title={`Draw color: ${label}`}
+                            aria-pressed={activeColor === hex}
+                            onClick={() => onSetActiveColor(hex)}
+                            style={{
+                                width: 18, height: 18, borderRadius: '50%', padding: 0, cursor: 'pointer',
+                                background: hex,
+                                border: activeColor === hex
+                                    ? '2px solid #333'
+                                    : '2px solid transparent',
+                                outline: activeColor === hex ? `2px solid ${hex}` : 'none',
+                                outlineOffset: 1,
+                                flexShrink: 0,
+                            }}
+                        />
+                    ))}
                 </>
             )}
             {cursorPos && (
@@ -1345,11 +1416,20 @@ export function MetaSidebar({ slide, sample, meta, tileServerBase, studyId, anno
                                 const creator = (ann as any).creator ?? '';
                                 const created = (ann as any).created ?? '';
                                 const dateStr = created ? new Date(created).toLocaleDateString() : '';
+                                const dotColor = ann.color ?? ANNOTATION_COLORS[0].hex;
                                 return (
                                     <div key={ann.id} style={{
                                         padding: '4px 0', borderBottom: `1px solid ${C.border}`,
                                         display: 'flex', alignItems: 'flex-start', gap: 4,
                                     }}>
+                                        {/* Colored dot indicates annotation color */}
+                                        <span
+                                            data-annotation-color={dotColor}
+                                            style={{
+                                                display: 'inline-block', width: 8, height: 8, borderRadius: '50%',
+                                                background: dotColor, flexShrink: 0, marginTop: 4,
+                                            }}
+                                        />
                                         <div style={{ flex: 1, overflow: 'hidden' }}>
                                             <div style={{ fontSize: 12, fontWeight: 500, color: C.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={label}>
                                                 {label}

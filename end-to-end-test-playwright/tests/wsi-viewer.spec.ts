@@ -816,3 +816,87 @@ test.describe('WSI viewer — drawing tools (Option C)', () => {
         }
     });
 });
+
+// ---- Color annotations (Option C) ----
+
+test.describe('WSI viewer — annotation colors (Option C)', () => {
+    test.beforeEach(async () => {
+        test.skip(!BASE_URL, 'WSI_VIEWER_BASE_URL not set — skipping color tests');
+    });
+
+    test('Six color swatches are shown in CoordBar when annotation API is configured', async ({
+        page,
+    }) => {
+        await gotoViewerWithAnnotationApi(page);
+        await expect(page.locator('button:has-text("Share view")')).toBeVisible({
+            timeout: 30_000,
+        });
+
+        // The swatches are circular buttons adjacent to the draw tool buttons.
+        // We identify them by their round shape (borderRadius 50%) rendered
+        // inline — easiest to count by title attribute "Draw color: <Name>".
+        const swatches = page.locator('button[title^="Draw color:"]');
+        await expect(swatches).toHaveCount(6, { timeout: 5_000 });
+    });
+
+    test('Clicking a color swatch changes the active color (swatch gains outline)', async ({
+        page,
+    }) => {
+        await gotoViewerWithAnnotationApi(page);
+        await expect(page.locator('button:has-text("Share view")')).toBeVisible({
+            timeout: 30_000,
+        });
+
+        // The first swatch (Blue) is the default — it should start as aria-pressed="true".
+        const blueSwatch = page.locator('button[title="Draw color: Blue"]');
+        const redSwatch = page.locator('button[title="Draw color: Red"]');
+        await expect(blueSwatch).toBeVisible({ timeout: 5_000 });
+        await expect(blueSwatch).toHaveAttribute('aria-pressed', 'true');
+        await expect(redSwatch).toHaveAttribute('aria-pressed', 'false');
+
+        // Click Red — it should become the active swatch.
+        await redSwatch.click();
+        await expect(redSwatch).toHaveAttribute('aria-pressed', 'true');
+        await expect(blueSwatch).toHaveAttribute('aria-pressed', 'false');
+    });
+
+    test('Mock annotation with color field shows colored dot in MetaSidebar', async ({
+        page,
+    }) => {
+        const COLOR = '#ef4444'; // red
+
+        // Serve a mock annotation that includes a color in its body.
+        await page.route(`${MOCK_ANNOTATION_URL}/annotations**`, async (route: any) => {
+            if (route.request().method() === 'GET') {
+                await route.fulfill({
+                    status: 200,
+                    contentType: 'application/json',
+                    body: JSON.stringify([
+                        {
+                            ...MOCK_ANNOTATION,
+                            body: { ...MOCK_ANNOTATION.body, color: COLOR },
+                        },
+                    ]),
+                });
+            } else {
+                await route.continue();
+            }
+        });
+
+        await page.addInitScript((apiUrl: string) => {
+            localStorage.setItem(
+                'frontendConfig',
+                JSON.stringify({ serverConfig: { msk_wsi_annotation_api_url: apiUrl } })
+            );
+        }, MOCK_ANNOTATION_URL);
+
+        await page.goto(viewerUrl());
+        await expect(page.locator('button:has-text("Share view")')).toBeVisible({
+            timeout: 30_000,
+        });
+
+        // The colored dot is a <span> with data-annotation-color matching the annotation color.
+        const dot = page.locator(`span[data-annotation-color="${COLOR}"]`).first();
+        await expect(dot).toBeVisible({ timeout: 10_000 });
+    });
+});
