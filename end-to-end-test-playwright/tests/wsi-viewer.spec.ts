@@ -391,7 +391,14 @@ test.describe('WSI viewer — annotation layer (Option C)', () => {
     test('Annotations button is absent when API URL is not configured', async ({
         page,
     }) => {
-        // Navigate WITHOUT injecting the annotation API URL — plain viewer.
+        // The dev server injects msk_wsi_annotation_api_url via /config_service.
+        // Override it to null via localStorage so the button is suppressed.
+        await page.addInitScript(() => {
+            localStorage.setItem(
+                'frontendConfig',
+                JSON.stringify({ serverConfig: { msk_wsi_annotation_api_url: null } })
+            );
+        });
         await page.goto(viewerUrl());
         await expect(page.locator('button:has-text("Share view")')).toBeVisible({
             timeout: 30_000,
