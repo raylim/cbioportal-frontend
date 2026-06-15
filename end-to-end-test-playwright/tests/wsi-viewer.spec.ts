@@ -868,8 +868,9 @@ test.describe('WSI viewer — named color palette (Option C)', () => {
 
         // Palette buttons are identified by title "Color: <Name>".
         const colorBtns = page.locator('button[title^="Color:"]');
-        // DEFAULT_NAMED_COLORS has 5 entries; localStorage may override but default is 5.
-        await expect(colorBtns).toHaveCount(5, { timeout: 5_000 });
+        // Default palette has 5 entries; loaded annotations may add more.
+        const count = await colorBtns.count();
+        expect(count).toBeGreaterThanOrEqual(5);
     });
 
     test('Clicking a color button makes it active (aria-pressed)', async ({ page }) => {

@@ -493,7 +493,26 @@ export default class WSIViewer extends React.Component<Props, {}> {
             for (const ann of anns) {
                 this.annotationColorMap.set(ann.id, ann.color ?? DEFAULT_NAMED_COLORS[0].hex);
             }
+            // Auto-add any colors seen in loaded annotations that aren't already in the palette.
+            const seenColors = new Map<string, string>(); // hex → name
+            for (const ann of anns) {
+                const hex = ann.color ?? DEFAULT_NAMED_COLORS[0].hex;
+                const name = ann.colorName ?? '';
+                const key = `${name}|${hex}`;
+                if (!seenColors.has(key)) seenColors.set(key, name);
+            }
             action(() => {
+                let colors = this.namedColors;
+                for (const [key, name] of seenColors) {
+                    const hex = key.slice(key.indexOf('|') + 1);
+                    if (!colors.some(c => c.hex === hex && c.name === name)) {
+                        colors = [...colors, { name: name || hex, hex }];
+                    }
+                }
+                if (colors !== this.namedColors) {
+                    this.namedColors = colors;
+                    saveNamedColors(colors);
+                }
                 this.annotations = anns;
                 this.annotationsLoading = false;
             })();
