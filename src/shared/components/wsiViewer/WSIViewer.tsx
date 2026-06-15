@@ -143,8 +143,28 @@ export default class WSIViewer extends React.Component<Props, {}> {
     @observable private annotationTooltip: { x: number; y: number; text: string } | null = null;
     /** Active Annotorious drawing tool, or null when not drawing. */
     @observable private activeDrawingTool: 'rectangle' | 'polygon' | null = null;
-    /** User-managed palette of named colors (persisted to localStorage). */
-    @observable private namedColors: NamedColor[] = loadNamedColors();
+    /** User-added palette entries (persisted to localStorage). */
+    @observable private customColors: NamedColor[] = loadNamedColors();
+    /**
+     * Full palette = DEFAULT_NAMED_COLORS ∪ colors seen in loaded annotations ∪ user-custom colors.
+     * Always derived fresh so the palette stays in sync with annotations automatically.
+     */
+    @computed get namedColors(): NamedColor[] {
+        const seen = new Set<string>();
+        const result: NamedColor[] = [];
+        const add = (name: string, hex: string) => {
+            const key = `${name}|${hex}`;
+            if (!seen.has(key)) { seen.add(key); result.push({ name, hex }); }
+        };
+        for (const c of DEFAULT_NAMED_COLORS) add(c.name, c.hex);
+        for (const ann of this.annotations) {
+            const hex = ann.color ?? DEFAULT_NAMED_COLORS[0].hex;
+            const name = ann.colorName ?? '';
+            if (hex && name) add(name, hex);
+        }
+        for (const c of this.customColors) add(c.name, c.hex);
+        return result;
+    }
     /** Hex color selected for the next drawn annotation. */
     @observable private activeColorHex: string = loadNamedColors()[0]?.hex ?? DEFAULT_NAMED_COLORS[0].hex;
     /** Name associated with the active color (may be empty for ad-hoc colors). */
@@ -493,26 +513,8 @@ export default class WSIViewer extends React.Component<Props, {}> {
             for (const ann of anns) {
                 this.annotationColorMap.set(ann.id, ann.color ?? DEFAULT_NAMED_COLORS[0].hex);
             }
-            // Auto-add any colors seen in loaded annotations that aren't already in the palette.
-            const seenColors = new Map<string, string>(); // hex → name
-            for (const ann of anns) {
-                const hex = ann.color ?? DEFAULT_NAMED_COLORS[0].hex;
-                const name = ann.colorName ?? '';
-                const key = `${name}|${hex}`;
-                if (!seenColors.has(key)) seenColors.set(key, name);
-            }
+            // namedColors is @computed from this.annotations — just update annotations and it auto-updates.
             action(() => {
-                let colors = this.namedColors;
-                for (const [key, name] of seenColors) {
-                    const hex = key.slice(key.indexOf('|') + 1);
-                    if (!colors.some(c => c.hex === hex && c.name === name)) {
-                        colors = [...colors, { name: name || hex, hex }];
-                    }
-                }
-                if (colors !== this.namedColors) {
-                    this.namedColors = colors;
-                    saveNamedColors(colors);
-                }
                 this.annotations = anns;
                 this.annotationsLoading = false;
             })();
@@ -700,18 +702,18 @@ export default class WSIViewer extends React.Component<Props, {}> {
 
     @action.bound
     addNamedColor(name: string, hex: string) {
-        // Avoid duplicates by hex
-        if (!this.namedColors.some(c => c.hex === hex && c.name === name)) {
-            this.namedColors = [...this.namedColors, { name, hex }];
-            saveNamedColors(this.namedColors);
+        if (!this.customColors.some(c => c.hex === hex && c.name === name)) {
+            this.customColors = [...this.customColors, { name, hex }];
+            saveNamedColors(this.customColors);
         }
         this.setActiveColor(name, hex);
     }
 
     @action.bound
     removeNamedColor(hex: string, name: string) {
-        this.namedColors = this.namedColors.filter(c => !(c.hex === hex && c.name === name));
-        saveNamedColors(this.namedColors);
+        // Only allow removing from customColors; defaults and annotation-derived colors stay.
+        this.customColors = this.customColors.filter(c => !(c.hex === hex && c.name === name));
+        saveNamedColors(this.customColors);
         // If removed color was active, switch to first remaining or default
         if (this.activeColorHex === hex && this.activeColorName === name) {
             const fallback = this.namedColors[0] ?? DEFAULT_NAMED_COLORS[0];
