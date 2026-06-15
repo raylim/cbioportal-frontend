@@ -96,6 +96,14 @@ export default class WSIViewer extends React.Component<Props, {}> {
     @observable private activeColor: string = ANNOTATION_COLORS[0].hex;
     /** Maps annotation ID → hex color for live style lookup. */
     private annotationColorMap = new Map<string, string>();
+    /** Annotation drawn but not yet saved — waiting for user to confirm label. */
+    @observable private pendingAnnotation: W3CAnnotation | null = null;
+    /** Text typed into the "label new annotation" prompt. */
+    @observable private pendingLabelText = '';
+    /** ID of the annotation currently being label-edited in the sidebar, or null. */
+    @observable private editingAnnotationId: string | null = null;
+    /** Current text in the sidebar inline label editor. */
+    @observable private editingLabelText = '';
 
     private viewerContainerRef = React.createRef<HTMLDivElement>();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -553,9 +561,76 @@ export default class WSIViewer extends React.Component<Props, {}> {
 
     @action.bound
     private handleKeyDown(e: KeyboardEvent) {
-        if (e.key === 'Escape' && this.activeDrawingTool !== null) {
-            this.setDrawingTool(null);
+        if (e.key === 'Escape') {
+            if (this.activeDrawingTool !== null) this.setDrawingTool(null);
+            if (this.pendingAnnotation !== null) this.cancelPendingAnnotation();
+            if (this.editingAnnotationId !== null) this.cancelEditingLabel();
         }
+    }
+
+    /** User confirmed the label prompt — save the pending annotation. */
+    @action.bound
+    confirmAnnotationLabel() {
+        if (!this.pendingAnnotation) return;
+        const label = this.pendingLabelText.trim();
+        const ann: W3CAnnotation = {
+            ...this.pendingAnnotation,
+            body: label
+                ? [{ type: 'TextualBody' as const, value: label, purpose: 'commenting' as const }]
+                : [],
+        };
+        void this.saveNewAnnotation(ann);
+        this.pendingAnnotation = null;
+        this.pendingLabelText = '';
+    }
+
+    /** User dismissed the label prompt without saving — remove the shape. */
+    @action.bound
+    cancelPendingAnnotation() {
+        if (this.pendingAnnotation) {
+            try { this.annotorious?.removeAnnotation(this.pendingAnnotation.id); } catch (_) {}
+            this.annotationColorMap.delete(this.pendingAnnotation.id);
+        }
+        this.pendingAnnotation = null;
+        this.pendingLabelText = '';
+    }
+
+    /** Begin inline editing of an annotation label in the sidebar. */
+    @action.bound
+    startEditingLabel(id: string, currentLabel: string) {
+        this.editingAnnotationId = id;
+        this.editingLabelText = currentLabel;
+    }
+
+    /** Commit the edited label — PUT to API. */
+    @action.bound
+    confirmEditingLabel() {
+        const id = this.editingAnnotationId;
+        if (!id) return;
+        const ann = this.annotations.find(a => a.id === id);
+        if (!ann) { this.cancelEditingLabel(); return; }
+        const label = this.editingLabelText.trim();
+        const updated: W3CAnnotation = {
+            ...ann,
+            body: label
+                ? [{ type: 'TextualBody' as const, value: label, purpose: 'commenting' as const }]
+                : [],
+        };
+        // Optimistically update local state.
+        action(() => {
+            this.annotations = this.annotations.map(a => a.id === id ? updated : a);
+        })();
+        void this.updateAnnotation(updated);
+        // Also update the Annotorious overlay so the shape reflects the new body.
+        try { this.annotorious?.updateAnnotation(updated); } catch (_) {}
+        this.editingAnnotationId = null;
+        this.editingLabelText = '';
+    }
+
+    @action.bound
+    cancelEditingLabel() {
+        this.editingAnnotationId = null;
+        this.editingLabelText = '';
     }
 
     @action.bound
@@ -690,11 +765,15 @@ export default class WSIViewer extends React.Component<Props, {}> {
                         // Stamp the active color onto the annotation before saving.
                         ann.color = this.activeColor;
                         this.annotationColorMap.set(ann.id, this.activeColor);
-                        // Reset drawing mode after shape is completed.
-                        action(() => { this.activeDrawingTool = null; })();
+                        // Reset drawing mode and wait for user to confirm/label the annotation.
+                        action(() => {
+                            this.activeDrawingTool = null;
+                            this.pendingAnnotation = ann;
+                            this.pendingLabelText = '';
+                        })();
                         this.annotorious.setDrawingEnabled(false);
                         this.refreshAnnotoriousStyle();
-                        void this.saveNewAnnotation(ann);
+                        // saveNewAnnotation is called by confirmAnnotationLabel / confirmAnnotationSilent
                     });
                     this.annotorious.on('updateAnnotation', (ann: W3CAnnotation) => {
                         void this.updateAnnotation(ann);
@@ -858,6 +937,15 @@ export default class WSIViewer extends React.Component<Props, {}> {
                             onSetActiveColor={this.setActiveColor}
                         />
                     )}
+                    {/* Label prompt — floats above CoordBar after drawing a shape */}
+                    {this.pendingAnnotation && (
+                        <LabelPrompt
+                            labelText={this.pendingLabelText}
+                            onChangeLabel={action((v: string) => { this.pendingLabelText = v; })}
+                            onConfirm={this.confirmAnnotationLabel}
+                            onCancel={this.cancelPendingAnnotation}
+                        />
+                    )}
                     {this.annotationTooltip && (
                         <div
                             onClick={action(() => { this.annotationTooltip = null; })}
@@ -892,6 +980,12 @@ export default class WSIViewer extends React.Component<Props, {}> {
                     annotationsLoading={this.annotationsLoading}
                     annotationEnabled={!!this.annotationApiBase}
                     onDeleteAnnotation={(id) => { void this.deleteAnnotation(id); if (this.annotorious) this.annotorious.removeAnnotation(id); }}
+                    editingAnnotationId={this.editingAnnotationId}
+                    editingLabelText={this.editingLabelText}
+                    onStartEditAnnotation={this.startEditingLabel}
+                    onChangeEditLabel={action((v: string) => { this.editingLabelText = v; })}
+                    onConfirmEditLabel={this.confirmEditingLabel}
+                    onCancelEditLabel={this.cancelEditingLabel}
                 />
             </div>
         );
@@ -904,6 +998,73 @@ const overlayStyle: React.CSSProperties = {
     position: 'absolute', inset: 0, display: 'flex',
     alignItems: 'center', justifyContent: 'center', pointerEvents: 'none',
 };
+
+// ---- LabelPrompt ----
+
+interface LabelPromptProps {
+    labelText: string;
+    onChangeLabel: (v: string) => void;
+    onConfirm: () => void;
+    onCancel: () => void;
+}
+
+/** Floating card that appears after drawing a shape to add an optional label before saving. */
+export function LabelPrompt({ labelText, onChangeLabel, onConfirm, onCancel }: LabelPromptProps) {
+    return (
+        <div
+            data-testid="annotation-label-prompt"
+            style={{
+                position: 'absolute', bottom: 42, left: '50%', transform: 'translateX(-50%)',
+                background: '#fff', border: '1px solid #c2d9f5',
+                borderRadius: 6, boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+                padding: '10px 14px', zIndex: 50,
+                display: 'flex', flexDirection: 'column', gap: 8, minWidth: 260,
+            }}
+        >
+            <div style={{ fontSize: 12, fontWeight: 600, color: C.text }}>Add a label (optional)</div>
+            <input
+                data-testid="annotation-label-input"
+                autoFocus
+                type="text"
+                value={labelText}
+                placeholder="e.g. Tumor region"
+                onChange={e => onChangeLabel(e.target.value)}
+                onKeyDown={e => {
+                    if (e.key === 'Enter') onConfirm();
+                    if (e.key === 'Escape') onCancel();
+                }}
+                style={{
+                    fontSize: 12, padding: '4px 8px',
+                    border: `1px solid ${C.blue}`, borderRadius: 4, outline: 'none',
+                    width: '100%', boxSizing: 'border-box',
+                }}
+            />
+            <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                <button
+                    onClick={onCancel}
+                    title="Discard this annotation (Esc)"
+                    style={{
+                        fontSize: 11, padding: '3px 10px', borderRadius: 3,
+                        border: `1px solid ${C.border}`, background: '#fff', color: C.muted, cursor: 'pointer',
+                    }}
+                >
+                    Discard
+                </button>
+                <button
+                    data-testid="annotation-label-save"
+                    onClick={onConfirm}
+                    title="Save annotation (Enter)"
+                    style={{
+                        fontSize: 11, padding: '3px 10px', borderRadius: 3,
+                        border: `1px solid ${C.blue}`, background: C.blue, color: '#fff', cursor: 'pointer',
+                    }}
+                >
+                    Save
+                </button>
+            </div>
+        </div>
+    );
+}
 
 // ---- CoordBar ----
 
@@ -1352,9 +1513,18 @@ export interface MetaSidebarProps {
     annotationsLoading?: boolean;
     annotationEnabled?: boolean;
     onDeleteAnnotation?: (id: string) => void;
+    /** ID of the annotation whose label is currently being edited inline. */
+    editingAnnotationId?: string | null;
+    /** Current value of the inline label editor. */
+    editingLabelText?: string;
+    /** Begin editing the label for the given annotation ID. */
+    onStartEditAnnotation?: (id: string, currentLabel: string) => void;
+    onChangeEditLabel?: (v: string) => void;
+    onConfirmEditLabel?: () => void;
+    onCancelEditLabel?: () => void;
 }
 
-export function MetaSidebar({ slide, sample, meta, tileServerBase, studyId, annotations = [], annotationsLoading = false, annotationEnabled = false, onDeleteAnnotation }: MetaSidebarProps) {
+export function MetaSidebar({ slide, sample, meta, tileServerBase, studyId, annotations = [], annotationsLoading = false, annotationEnabled = false, onDeleteAnnotation, editingAnnotationId, editingLabelText = '', onStartEditAnnotation, onChangeEditLabel, onConfirmEditLabel, onCancelEditLabel }: MetaSidebarProps) {
     const thumbSrc = slide ? `${tileServerBase}/tiles/${slide.image_id}/thumbnail` : null;
 
     return (
@@ -1412,11 +1582,13 @@ export function MetaSidebar({ slide, sample, meta, tileServerBase, studyId, anno
                     ) : (
                         <div style={{ maxHeight: 260, overflowY: 'auto', marginTop: 6 }}>
                             {annotations.map(ann => {
-                                const label = ann.body?.[0]?.value ?? '(unlabeled)';
+                                const rawLabel = ann.body?.[0]?.value ?? '';
+                                const displayLabel = rawLabel || '(unlabeled)';
                                 const creator = (ann as any).creator ?? '';
                                 const created = (ann as any).created ?? '';
                                 const dateStr = created ? new Date(created).toLocaleDateString() : '';
                                 const dotColor = ann.color ?? ANNOTATION_COLORS[0].hex;
+                                const isEditing = editingAnnotationId === ann.id;
                                 return (
                                     <div key={ann.id} style={{
                                         padding: '4px 0', borderBottom: `1px solid ${C.border}`,
@@ -1431,15 +1603,59 @@ export function MetaSidebar({ slide, sample, meta, tileServerBase, studyId, anno
                                             }}
                                         />
                                         <div style={{ flex: 1, overflow: 'hidden' }}>
-                                            <div style={{ fontSize: 12, fontWeight: 500, color: C.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={label}>
-                                                {label}
-                                            </div>
-                                            {(creator || dateStr) && (
+                                            {isEditing ? (
+                                                <div style={{ display: 'flex', gap: 3, alignItems: 'center' }}>
+                                                    <input
+                                                        data-testid="annotation-label-edit-input"
+                                                        autoFocus
+                                                        type="text"
+                                                        value={editingLabelText}
+                                                        onChange={e => onChangeEditLabel?.(e.target.value)}
+                                                        onKeyDown={e => {
+                                                            if (e.key === 'Enter') onConfirmEditLabel?.();
+                                                            if (e.key === 'Escape') onCancelEditLabel?.();
+                                                        }}
+                                                        style={{
+                                                            flex: 1, fontSize: 11, padding: '1px 4px',
+                                                            border: `1px solid ${C.blue}`, borderRadius: 3, outline: 'none',
+                                                        }}
+                                                    />
+                                                    <button
+                                                        onClick={onConfirmEditLabel}
+                                                        title="Save label (Enter)"
+                                                        style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: '#2a7a2a', fontSize: 12, padding: '0 2px' }}
+                                                    >✓</button>
+                                                    <button
+                                                        onClick={onCancelEditLabel}
+                                                        title="Cancel (Esc)"
+                                                        style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: C.muted, fontSize: 12, padding: '0 2px' }}
+                                                    >✕</button>
+                                                </div>
+                                            ) : (
+                                                <div style={{ fontSize: 12, fontWeight: 500, color: C.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={displayLabel}>
+                                                    {displayLabel}
+                                                </div>
+                                            )}
+                                            {!isEditing && (creator || dateStr) && (
                                                 <div style={{ fontSize: 10, color: C.muted }}>
                                                     {creator}{creator && dateStr ? ' · ' : ''}{dateStr}
                                                 </div>
                                             )}
                                         </div>
+                                        {!isEditing && onStartEditAnnotation && (
+                                            <button
+                                                onClick={() => onStartEditAnnotation(ann.id, rawLabel)}
+                                                title="Edit label"
+                                                data-testid={`edit-label-${ann.id}`}
+                                                style={{
+                                                    border: 'none', background: 'transparent',
+                                                    cursor: 'pointer', color: C.muted, fontSize: 12, padding: '0 2px',
+                                                    flexShrink: 0,
+                                                }}
+                                            >
+                                                ✎
+                                            </button>
+                                        )}
                                         {onDeleteAnnotation && (
                                             <button
                                                 onClick={() => onDeleteAnnotation(ann.id)}
