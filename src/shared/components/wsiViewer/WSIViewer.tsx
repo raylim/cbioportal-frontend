@@ -3,8 +3,7 @@ import { observer } from 'mobx-react';
 import { observable, action, computed, makeObservable } from 'mobx';
 import LoadingIndicator from 'shared/components/loadingIndicator/LoadingIndicator';
 import * as OpenSeadragonLib from 'openseadragon';
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const { createOSDAnnotator } = require('@annotorious/openseadragon');
+import { createOSDAnnotator } from '@annotorious/openseadragon';
 import '@annotorious/openseadragon/annotorious-openseadragon.css';
 import {
     Slide,
@@ -81,6 +80,8 @@ export default class WSIViewer extends React.Component<Props, {}> {
     @observable private annotationsLoading = false;
     /** Tooltip shown when clicking an annotation */
     @observable private annotationTooltip: { x: number; y: number; text: string } | null = null;
+    /** Active Annotorious drawing tool, or null when not drawing. */
+    @observable private activeDrawingTool: 'rectangle' | 'polygon' | null = null;
 
     private viewerContainerRef = React.createRef<HTMLDivElement>();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -152,6 +153,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
 
     componentDidMount() {
         void this.loadHierarchy();
+        document.addEventListener('keydown', this.handleKeyDown);
     }
 
     componentDidUpdate(prev: Props) {
@@ -163,6 +165,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
 
     componentWillUnmount() {
         this.hierarchy = null; // stops the prefetchSlideMetadata loop
+        document.removeEventListener('keydown', this.handleKeyDown);
         this.destroyViewer();
     }
 
@@ -505,6 +508,32 @@ export default class WSIViewer extends React.Component<Props, {}> {
         }
     }
 
+    @action.bound
+    setDrawingTool(tool: 'rectangle' | 'polygon' | null) {
+        if (!this.annotorious) return;
+        if (tool === null || tool === this.activeDrawingTool) {
+            // Cancel any active drawing and deactivate.
+            try { this.annotorious.cancelDrawing(); } catch (_) { /* ignore */ }
+            this.annotorious.setDrawingEnabled(false);
+            this.activeDrawingTool = null;
+        } else {
+            this.annotorious.setDrawingTool(tool);
+            // 'drag' mode: click-drag to draw shape; also disables OSD pan so events reach Annotorious.
+            this.annotorious.setDrawingMode('drag');
+            this.annotorious.setDrawingEnabled(true);
+            this.activeDrawingTool = tool;
+            // Ensure annotations overlay is visible while drawing.
+            if (!this.annotationsVisible) this.toggleAnnotationsVisible();
+        }
+    }
+
+    @action.bound
+    private handleKeyDown(e: KeyboardEvent) {
+        if (e.key === 'Escape' && this.activeDrawingTool !== null) {
+            this.setDrawingTool(null);
+        }
+    }
+
     private destroyViewer() {
         // Clean up Annotorious before destroying OSD
         if (this.annotorious) {
@@ -614,9 +643,12 @@ export default class WSIViewer extends React.Component<Props, {}> {
             // Mount Annotorious (read-write) on top of OSD if annotation API is configured
             if (this.annotationApiBase && this.osdViewer) {
                 try {
-                    this.annotorious = createOSDAnnotator(this.osdViewer, { drawingEnabled: true });
+                    this.annotorious = createOSDAnnotator(this.osdViewer, { drawingEnabled: false, drawingMode: 'drag' });
 
                     this.annotorious.on('createAnnotation', (ann: W3CAnnotation) => {
+                        // Reset drawing mode after shape is completed.
+                        action(() => { this.activeDrawingTool = null; })();
+                        this.annotorious.setDrawingEnabled(false);
                         void this.saveNewAnnotation(ann);
                     });
                     this.annotorious.on('updateAnnotation', (ann: W3CAnnotation) => {
@@ -774,6 +806,8 @@ export default class WSIViewer extends React.Component<Props, {}> {
                             annotationEnabled={!!this.annotationApiBase}
                             annotationsVisible={this.annotationsVisible}
                             onToggleAnnotations={this.toggleAnnotationsVisible}
+                            drawingTool={this.activeDrawingTool}
+                            onSetDrawingTool={this.setDrawingTool}
                         />
                     )}
                     {this.annotationTooltip && (
@@ -838,9 +872,11 @@ export interface CoordBarProps {
     annotationEnabled?: boolean;
     annotationsVisible?: boolean;
     onToggleAnnotations?: () => void;
+    drawingTool?: 'rectangle' | 'polygon' | null;
+    onSetDrawingTool?: (tool: 'rectangle' | 'polygon' | null) => void;
 }
 
-export function CoordBar({ inputX, inputY, cursorPos, mpp, onChangeX, onChangeY, onGo, onCopyLink, onDownload, annotationEnabled, annotationsVisible, onToggleAnnotations }: CoordBarProps) {
+export function CoordBar({ inputX, inputY, cursorPos, mpp, onChangeX, onChangeY, onGo, onCopyLink, onDownload, annotationEnabled, annotationsVisible, onToggleAnnotations, drawingTool, onSetDrawingTool }: CoordBarProps) {
     const handleKey = (e: React.KeyboardEvent) => { if (e.key === 'Enter') onGo(); };
     const [copied, setCopied] = React.useState(false);
 
@@ -943,6 +979,34 @@ export function CoordBar({ inputX, inputY, cursorPos, mpp, onChangeX, onChangeY,
                 >
                     {annotationsVisible ? '🔵 Annotations' : '○ Annotations'}
                 </button>
+            )}
+            {annotationEnabled && onSetDrawingTool && (
+                <>
+                    <button
+                        onClick={() => onSetDrawingTool(drawingTool === 'rectangle' ? null : 'rectangle')}
+                        title={drawingTool === 'rectangle' ? 'Cancel drawing (Esc)' : 'Draw a rectangle annotation — click and drag on the slide'}
+                        style={{
+                            ...btnStyle,
+                            border: `1px solid ${drawingTool === 'rectangle' ? '#c0392b' : C.border}`,
+                            background: drawingTool === 'rectangle' ? '#fde8e8' : '#fff',
+                            color: drawingTool === 'rectangle' ? '#c0392b' : C.muted,
+                        }}
+                    >
+                        {drawingTool === 'rectangle' ? '✕ Cancel draw' : '◻ Draw rect'}
+                    </button>
+                    <button
+                        onClick={() => onSetDrawingTool(drawingTool === 'polygon' ? null : 'polygon')}
+                        title={drawingTool === 'polygon' ? 'Cancel drawing (Esc)' : 'Draw a polygon annotation — click to add points, double-click to close'}
+                        style={{
+                            ...btnStyle,
+                            border: `1px solid ${drawingTool === 'polygon' ? '#c0392b' : C.border}`,
+                            background: drawingTool === 'polygon' ? '#fde8e8' : '#fff',
+                            color: drawingTool === 'polygon' ? '#c0392b' : C.muted,
+                        }}
+                    >
+                        {drawingTool === 'polygon' ? '✕ Cancel draw' : '⬡ Draw poly'}
+                    </button>
+                </>
             )}
             {cursorPos && (
                 <span style={{ marginLeft: 'auto', color: C.muted, fontFamily: 'monospace', fontSize: 11 }}>

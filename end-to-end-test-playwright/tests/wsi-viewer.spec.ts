@@ -664,3 +664,155 @@ test.describe('WSI viewer — live annotation API (Option C)', () => {
         expect(remaining.some((a: any) => a.id === created.id)).toBe(false);
     });
 });
+
+// ---- Drawing tool tests (Option C) ----
+//
+// These tests verify that the Draw rect / Draw poly toolbar buttons activate
+// drawing mode (button state changes) and cancel on Escape or second click.
+// They use the mock annotation API so no live tile server is needed for the
+// button-state tests.  The actual drag-to-draw test does need the live Annotorious
+// overlay (which requires a real OSD canvas), so it is gated on BASE_URL.
+
+test.describe('WSI viewer — drawing tools (Option C)', () => {
+    test.beforeEach(async () => {
+        test.skip(!BASE_URL, 'WSI_VIEWER_BASE_URL not set — skipping drawing tool tests');
+    });
+
+    test('Draw rect button activates and shows cancel state', async ({ page }) => {
+        await gotoViewerWithAnnotationApi(page);
+        await expect(page.locator('button:has-text("Share view")')).toBeVisible({
+            timeout: 30_000,
+        });
+
+        const rectBtn = page.locator('button', { hasText: '◻ Draw rect' });
+        await expect(rectBtn).toBeVisible({ timeout: 10_000 });
+
+        // Click to activate — button should switch to cancel state.
+        await rectBtn.click();
+        await expect(
+            page.locator('button', { hasText: '✕ Cancel draw' }).first()
+        ).toBeVisible({ timeout: 5_000 });
+    });
+
+    test('Draw poly button activates and shows cancel state', async ({ page }) => {
+        await gotoViewerWithAnnotationApi(page);
+        await expect(page.locator('button:has-text("Share view")')).toBeVisible({
+            timeout: 30_000,
+        });
+
+        const polyBtn = page.locator('button', { hasText: '⬡ Draw poly' });
+        await expect(polyBtn).toBeVisible({ timeout: 10_000 });
+
+        await polyBtn.click();
+        await expect(
+            page.locator('button', { hasText: '✕ Cancel draw' }).first()
+        ).toBeVisible({ timeout: 5_000 });
+    });
+
+    test('Pressing Escape cancels active drawing mode', async ({ page }) => {
+        await gotoViewerWithAnnotationApi(page);
+        await expect(page.locator('button:has-text("Share view")')).toBeVisible({
+            timeout: 30_000,
+        });
+
+        // Activate rect drawing.
+        await page.locator('button', { hasText: '◻ Draw rect' }).click();
+        await expect(
+            page.locator('button', { hasText: '✕ Cancel draw' }).first()
+        ).toBeVisible({ timeout: 5_000 });
+
+        // Press Escape — should return to inactive state.
+        await page.keyboard.press('Escape');
+        await expect(
+            page.locator('button', { hasText: '◻ Draw rect' })
+        ).toBeVisible({ timeout: 5_000 });
+    });
+
+    test('Clicking active draw button a second time cancels drawing', async ({ page }) => {
+        await gotoViewerWithAnnotationApi(page);
+        await expect(page.locator('button:has-text("Share view")')).toBeVisible({
+            timeout: 30_000,
+        });
+
+        // Activate.
+        await page.locator('button', { hasText: '◻ Draw rect' }).click();
+        const cancelBtn = page.locator('button', { hasText: '✕ Cancel draw' }).first();
+        await expect(cancelBtn).toBeVisible({ timeout: 5_000 });
+
+        // Click cancel button → back to inactive.
+        await cancelBtn.click();
+        await expect(
+            page.locator('button', { hasText: '◻ Draw rect' })
+        ).toBeVisible({ timeout: 5_000 });
+    });
+
+    test('Draw rect: drag creates annotation saved to API', async ({ page }) => {
+        // Use live API so we can verify the annotation was POSTed.
+        test.skip(!LIVE_ANNO_API, 'TILE_SERVER_URL not set — skipping drag-to-draw test');
+
+        // Inject real live API URL via localStorage.
+        await page.addInitScript((apiUrl: string) => {
+            localStorage.setItem(
+                'frontendConfig',
+                JSON.stringify({ serverConfig: { msk_wsi_annotation_api_url: apiUrl } })
+            );
+        }, LIVE_ANNO_API);
+
+        // Capture POST requests to the annotation API.
+        const postRequests: string[] = [];
+        await page.route(`${LIVE_ANNO_API}/annotations`, async (route) => {
+            if (route.request().method() === 'POST') {
+                postRequests.push(route.request().url());
+                await route.continue();
+            } else {
+                await route.continue();
+            }
+        });
+
+        await page.goto(viewerUrl());
+        await expect(page.locator('button:has-text("Share view")')).toBeVisible({
+            timeout: 30_000,
+        });
+        // Extra wait for OSD to finish loading the tile and Annotorious to mount.
+        await page.waitForTimeout(4_000);
+
+        // Activate rectangle drawing.
+        await page.locator('button', { hasText: '◻ Draw rect' }).click();
+        await expect(
+            page.locator('button', { hasText: '✕ Cancel draw' }).first()
+        ).toBeVisible({ timeout: 5_000 });
+
+        // Drag across the OSD canvas to draw a rectangle.
+        const canvas = page.locator('.openseadragon-canvas').first();
+        const box = await canvas.boundingBox();
+        expect(box).not.toBeNull();
+        const cx = box!.x + box!.width * 0.35;
+        const cy = box!.y + box!.height * 0.35;
+        await page.mouse.move(cx, cy);
+        await page.mouse.down();
+        for (let i = 1; i <= 15; i++) {
+            await page.mouse.move(cx + i * 10, cy + i * 7);
+        }
+        await page.mouse.up();
+
+        // Annotorious fires a POST after the shape is completed.
+        // Give the API call a moment to arrive.
+        await page.waitForTimeout(3_000);
+
+        // Verify a POST was made to the annotation API.
+        expect(postRequests.length).toBeGreaterThan(0);
+
+        // Cleanup — delete any annotations seeded by this test.
+        try {
+            await cleanupLiveAnnotations(
+                page.request,
+                LIVE_ANNO_API,
+                LIVE_SLIDE_ID,
+                STUDY_ID,
+                [''] // empty label — Annotorious saves with no body label
+            );
+        } catch (_) {
+            // best-effort cleanup
+        }
+    });
+});
