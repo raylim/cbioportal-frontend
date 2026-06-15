@@ -1849,7 +1849,7 @@ export function MetaSidebar({ slide, sample, meta, tileServerBase, studyId, anno
                             </button>
                             <button
                                 onClick={() => onSetDrawingTool(drawingTool === 'polygon' ? null : 'polygon')}
-                                title={drawingTool === 'polygon' ? 'Cancel drawing (Esc)' : 'Draw a polygon annotation — click to add points, double-click to close'}
+                                title={drawingTool === 'polygon' ? 'Cancel drawing (Esc)' : 'Draw a polygon annotation'}
                                 style={{
                                     flex: 1, fontSize: 11, padding: '3px 6px', borderRadius: 4, cursor: 'pointer',
                                     border: `1px solid ${drawingTool === 'polygon' ? '#c0392b' : C.border}`,

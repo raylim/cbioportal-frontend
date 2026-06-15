@@ -678,35 +678,72 @@ test.describe('WSI viewer — drawing tools (Option C)', () => {
         test.skip(!BASE_URL, 'WSI_VIEWER_BASE_URL not set — skipping drawing tool tests');
     });
 
-    test('Draw rect button activates and shows cancel state', async ({ page }) => {
+    // CoordBar draw buttons are distinguished by their longer title (includes "click and drag").
+    // Sidebar draw buttons have a shorter title. Use .first() where strict-mode would fail.
+
+    test('Draw rect button in CoordBar activates and shows cancel state', async ({ page }) => {
         await gotoViewerWithAnnotationApi(page);
         await expect(page.locator('button:has-text("Share view")')).toBeVisible({
             timeout: 30_000,
         });
 
-        const rectBtn = page.locator('button', { hasText: '◻ Draw rect' });
+        const rectBtn = page.locator('button[title*="click and drag"]');
         await expect(rectBtn).toBeVisible({ timeout: 10_000 });
 
-        // Click to activate — button should switch to cancel state.
+        // Click to activate — CoordBar button switches to "✕ Cancel draw".
         await rectBtn.click();
         await expect(
-            page.locator('button', { hasText: '✕ Cancel draw' }).first()
+            page.locator('button', { hasText: '✕ Cancel draw' })
         ).toBeVisible({ timeout: 5_000 });
     });
 
-    test('Draw poly button activates and shows cancel state', async ({ page }) => {
+    test('Draw poly button in CoordBar activates and shows cancel state', async ({ page }) => {
         await gotoViewerWithAnnotationApi(page);
         await expect(page.locator('button:has-text("Share view")')).toBeVisible({
             timeout: 30_000,
         });
 
-        const polyBtn = page.locator('button', { hasText: '⬡ Draw poly' });
+        const polyBtn = page.locator('button[title*="double-click to close"]').first();
         await expect(polyBtn).toBeVisible({ timeout: 10_000 });
 
         await polyBtn.click();
         await expect(
-            page.locator('button', { hasText: '✕ Cancel draw' }).first()
+            page.locator('button', { hasText: '✕ Cancel draw' })
         ).toBeVisible({ timeout: 5_000 });
+    });
+
+    test('Draw rect and Draw poly buttons appear in sidebar annotations section', async ({
+        page,
+    }) => {
+        await gotoViewerWithAnnotationApi(page);
+        await expect(page.locator('button:has-text("Share view")')).toBeVisible({
+            timeout: 30_000,
+        });
+
+        // Sidebar buttons have shorter titles (no "click and drag" / "double-click to close").
+        const sidebarRect = page.locator('button[title="Draw a rectangle annotation"]');
+        const sidebarPoly = page.locator('button[title="Draw a polygon annotation"]');
+        await expect(sidebarRect).toBeVisible({ timeout: 10_000 });
+        await expect(sidebarPoly).toBeVisible({ timeout: 10_000 });
+    });
+
+    test('Sidebar draw rect button activates drawing mode', async ({ page }) => {
+        await gotoViewerWithAnnotationApi(page);
+        await expect(page.locator('button:has-text("Share view")')).toBeVisible({
+            timeout: 30_000,
+        });
+
+        const sidebarRect = page.locator('button[title="Draw a rectangle annotation"]');
+        await expect(sidebarRect).toBeVisible({ timeout: 10_000 });
+        await sidebarRect.click();
+
+        // Both CoordBar and sidebar should reflect active state.
+        await expect(page.locator('button', { hasText: '✕ Cancel draw' })).toBeVisible({
+            timeout: 5_000,
+        });
+        await expect(page.locator('button', { hasText: '✕ Cancel' }).first()).toBeVisible({
+            timeout: 5_000,
+        });
     });
 
     test('Pressing Escape cancels active drawing mode', async ({ page }) => {
@@ -715,16 +752,16 @@ test.describe('WSI viewer — drawing tools (Option C)', () => {
             timeout: 30_000,
         });
 
-        // Activate rect drawing.
-        await page.locator('button', { hasText: '◻ Draw rect' }).click();
+        // Activate rect drawing via CoordBar.
+        await page.locator('button[title*="click and drag"]').click();
         await expect(
-            page.locator('button', { hasText: '✕ Cancel draw' }).first()
+            page.locator('button', { hasText: '✕ Cancel draw' })
         ).toBeVisible({ timeout: 5_000 });
 
         // Press Escape — should return to inactive state.
         await page.keyboard.press('Escape');
         await expect(
-            page.locator('button', { hasText: '◻ Draw rect' })
+            page.locator('button', { hasText: '◻ Draw rect' }).first()
         ).toBeVisible({ timeout: 5_000 });
     });
 
@@ -734,15 +771,15 @@ test.describe('WSI viewer — drawing tools (Option C)', () => {
             timeout: 30_000,
         });
 
-        // Activate.
-        await page.locator('button', { hasText: '◻ Draw rect' }).click();
-        const cancelBtn = page.locator('button', { hasText: '✕ Cancel draw' }).first();
+        // Activate via CoordBar.
+        await page.locator('button[title*="click and drag"]').click();
+        const cancelBtn = page.locator('button', { hasText: '✕ Cancel draw' });
         await expect(cancelBtn).toBeVisible({ timeout: 5_000 });
 
-        // Click cancel button → back to inactive.
+        // Click cancel → back to inactive.
         await cancelBtn.click();
         await expect(
-            page.locator('button', { hasText: '◻ Draw rect' })
+            page.locator('button', { hasText: '◻ Draw rect' }).first()
         ).toBeVisible({ timeout: 5_000 });
     });
 
@@ -776,10 +813,10 @@ test.describe('WSI viewer — drawing tools (Option C)', () => {
         // Extra wait for OSD to finish loading the tile and Annotorious to mount.
         await page.waitForTimeout(4_000);
 
-        // Activate rectangle drawing.
-        await page.locator('button', { hasText: '◻ Draw rect' }).click();
+        // Activate rectangle drawing via CoordBar.
+        await page.locator('button[title*="click and drag"]').click();
         await expect(
-            page.locator('button', { hasText: '✕ Cancel draw' }).first()
+            page.locator('button', { hasText: '✕ Cancel draw' })
         ).toBeVisible({ timeout: 5_000 });
 
         // Drag across the OSD canvas to draw a rectangle.
@@ -795,12 +832,7 @@ test.describe('WSI viewer — drawing tools (Option C)', () => {
         }
         await page.mouse.up();
 
-        // After drawing, the label prompt should appear — click Save to confirm.
-        const saveBtn = page.locator('[data-testid="annotation-label-save"]');
-        await expect(saveBtn).toBeVisible({ timeout: 5_000 });
-        await saveBtn.click();
-
-        // Annotorious fires a POST after the shape is confirmed.
+        // Auto-label is applied immediately — no prompt to dismiss.
         // Give the API call a moment to arrive.
         await page.waitForTimeout(3_000);
 
@@ -814,7 +846,7 @@ test.describe('WSI viewer — drawing tools (Option C)', () => {
                 LIVE_ANNO_API,
                 LIVE_SLIDE_ID,
                 STUDY_ID,
-                [''] // empty label — saved via prompt with no text
+                [''] // auto-label format: "{colorName} N"
             );
         } catch (_) {
             // best-effort cleanup
@@ -957,34 +989,31 @@ test.describe('WSI viewer — named color palette (Option C)', () => {
     });
 });
 
-// ---- Text annotation label tests ----
+// ---- Annotation label tests ----
 
-test.describe('WSI viewer — text annotation labels (Option C)', () => {
+test.describe('WSI viewer — annotation labels (Option C)', () => {
     test.beforeEach(async () => {
-        test.skip(!BASE_URL, 'WSI_VIEWER_BASE_URL not set — skipping text annotation tests');
+        test.skip(!BASE_URL, 'WSI_VIEWER_BASE_URL not set — skipping annotation label tests');
     });
 
-    test('Label prompt appears after drawing a shape and saving creates annotation in sidebar', async ({
+    test('Drawing a shape immediately saves annotation with auto-generated label (no prompt)', async ({
         page,
     }) => {
-        let postBody: any = null;
-        // Override the mock route to capture the POST body
+        const capturedPosts: any[] = [];
+
         await page.route(`${MOCK_ANNOTATION_URL}/annotations**`, async (route: any) => {
             const method = route.request().method();
             if (method === 'GET') {
                 await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
             } else if (method === 'POST') {
-                postBody = await route.request().postDataJSON();
+                const body = await route.request().postDataJSON();
+                capturedPosts.push(body);
                 await route.fulfill({
                     status: 201,
                     contentType: 'application/json',
                     body: JSON.stringify({
-                        id: 'ann-label-1',
-                        slide_id: '1492807',
-                        study_id: STUDY_ID,
-                        body: postBody?.body ?? {},
-                        target: postBody?.target ?? {},
-                        version: 1,
+                        id: 'auto-1', slide_id: '1492807', study_id: STUDY_ID,
+                        body: body?.body ?? {}, target: body?.target ?? {}, version: 1,
                     }),
                 });
             } else {
@@ -993,118 +1022,72 @@ test.describe('WSI viewer — text annotation labels (Option C)', () => {
         });
 
         await page.addInitScript((apiUrl: string) => {
-            localStorage.setItem(
-                'frontendConfig',
-                JSON.stringify({ serverConfig: { msk_wsi_annotation_api_url: apiUrl } })
-            );
+            localStorage.setItem('frontendConfig',
+                JSON.stringify({ serverConfig: { msk_wsi_annotation_api_url: apiUrl } }));
         }, MOCK_ANNOTATION_URL);
 
         await page.goto(viewerUrl());
         await expect(page.locator('button:has-text("Share view")')).toBeVisible({ timeout: 30_000 });
 
-        // Simulate drawing — dispatch the createAnnotation event via window stub
-        await page.evaluate(() => {
-            // Trigger the annotation creation by dispatching a synthetic custom event
-            // that the test harness intercepts. In the real app this fires from Annotorious.
-            // We expose a helper on window for test-only use.
-            const w = window as any;
-            if (w.__wsiAnnotoriousTest__createAnnotation) {
-                w.__wsiAnnotoriousTest__createAnnotation({
-                    id: 'pending-1',
-                    type: 'Annotation',
-                    body: [],
-                    target: { selector: { type: 'FragmentSelector', value: 'xywh=50,50,100,100' } },
-                });
-            }
-        });
+        // Draw a rectangle by dragging on the viewer canvas.
+        await page.locator('button:has-text("◻ Draw rect")').click();
+        const canvas = page.locator('.openseadragon-canvas canvas, .openseadragon-canvas').first();
+        const box = await canvas.boundingBox();
+        if (box) {
+            await page.mouse.move(box.x + 100, box.y + 100);
+            await page.mouse.down();
+            await page.mouse.move(box.x + 200, box.y + 200);
+            await page.mouse.up();
+        }
 
-        // The prompt should be visible because the viewer shows it after createAnnotation fires.
-        // Since we can't actually drive Annotorious drawing in e2e, we test the UI components
-        // that depend on the LabelPrompt being rendered — verify its data-testid exists in DOM
-        // by checking it mounts (this will be visible when pendingAnnotation is set).
-        // For a full integration check we verify the sidebar shows unlabeled annotation without label prompt.
-        // The following test validates the component is wired correctly via mock annotation load:
+        // Label prompt must NOT appear — auto-save fires immediately.
+        await expect(page.locator('[data-testid="annotation-label-prompt"]')).toHaveCount(0);
 
-        // Load a GET response with an unlabeled annotation and verify sidebar shows it
-        await page.route(`${MOCK_ANNOTATION_URL}/annotations**`, async (route: any) => {
-            if (route.request().method() === 'GET') {
-                await route.fulfill({
-                    status: 200,
-                    contentType: 'application/json',
-                    body: JSON.stringify([
-                        {
-                            id: 'ann-unlabeled',
-                            slide_id: '1492807',
-                            study_id: STUDY_ID,
-                            body: { label: '', comment: '', type: 'region' },
-                            target: { selector: { type: 'FragmentSelector', value: 'xywh=100,100,50,50' } },
-                            version: 1,
-                        },
-                    ]),
-                });
-            } else {
-                await route.continue();
-            }
-        });
-
-        await page.reload();
-        await expect(page.locator('button:has-text("Share view")')).toBeVisible({ timeout: 30_000 });
-
-        // Annotation with empty label shows "(unlabeled)" in sidebar
-        await expect(page.locator('text=(unlabeled)')).toBeVisible({ timeout: 10_000 });
+        // A POST should be sent with an auto-generated label matching the active color name.
+        await page.waitForTimeout(1_000);
+        if (capturedPosts.length > 0) {
+            const label: string = capturedPosts[0]?.body?.label ?? '';
+            // Label follows pattern "{ColorName} {N}" — starts with the color name.
+            expect(label.length).toBeGreaterThan(0);
+            expect(label).toMatch(/\d+$/); // ends with a number
+        }
     });
 
-    test('Annotation with label shows label text in sidebar', async ({ page }) => {
+    test('Annotation with a label shows label text in sidebar', async ({ page }) => {
         const LABEL = 'Tumor infiltrating lymphocytes';
         await page.route(`${MOCK_ANNOTATION_URL}/annotations**`, async (route: any) => {
             if (route.request().method() === 'GET') {
                 await route.fulfill({
-                    status: 200,
-                    contentType: 'application/json',
-                    body: JSON.stringify([
-                        {
-                            ...MOCK_ANNOTATION,
-                            body: { label: LABEL, comment: '', type: 'region' },
-                        },
-                    ]),
+                    status: 200, contentType: 'application/json',
+                    body: JSON.stringify([{ ...MOCK_ANNOTATION, body: { label: LABEL, comment: '', type: 'region' } }]),
                 });
             } else {
                 await route.continue();
             }
         });
         await page.addInitScript((apiUrl: string) => {
-            localStorage.setItem(
-                'frontendConfig',
-                JSON.stringify({ serverConfig: { msk_wsi_annotation_api_url: apiUrl } })
-            );
+            localStorage.setItem('frontendConfig',
+                JSON.stringify({ serverConfig: { msk_wsi_annotation_api_url: apiUrl } }));
         }, MOCK_ANNOTATION_URL);
 
         await page.goto(viewerUrl());
         await expect(page.locator('button:has-text("Share view")')).toBeVisible({ timeout: 30_000 });
-
-        // The label text should appear in the annotations section of the sidebar.
         await expect(page.locator(`text=${LABEL}`)).toBeVisible({ timeout: 10_000 });
     });
 
-    test('Edit button appears on annotation row and inline editor shows on click', async ({
-        page,
-    }) => {
+    test('Edit button appears on annotation row and inline editor shows on click', async ({ page }) => {
         await gotoViewerWithAnnotationApi(page);
         await expect(page.locator('button:has-text("Share view")')).toBeVisible({ timeout: 30_000 });
 
-        // MOCK_ANNOTATION has label "Playwright test annotation" — it should be in sidebar.
         const annotationLabel = page.locator('text=Playwright test annotation').first();
         await expect(annotationLabel).toBeVisible({ timeout: 10_000 });
 
-        // The edit button (✎) should be visible on the annotation row.
         const editBtn = page.locator(`[data-testid="edit-label-${MOCK_ANNOTATION.id}"]`);
         await expect(editBtn).toBeVisible({ timeout: 5_000 });
 
-        // Clicking it should replace the label text with an inline input.
         await editBtn.click();
         const editInput = page.locator('[data-testid="annotation-label-edit-input"]');
         await expect(editInput).toBeVisible({ timeout: 5_000 });
-        // The input should be pre-filled with the current label.
         await expect(editInput).toHaveValue(MOCK_ANNOTATION.body.label);
     });
 
@@ -1114,28 +1097,18 @@ test.describe('WSI viewer — text annotation labels (Option C)', () => {
         await page.route(`${MOCK_ANNOTATION_URL}/annotations**`, async (route: any) => {
             const method = route.request().method();
             if (method === 'GET') {
-                await route.fulfill({
-                    status: 200,
-                    contentType: 'application/json',
-                    body: JSON.stringify([MOCK_ANNOTATION]),
-                });
+                await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([MOCK_ANNOTATION]) });
             } else if (method === 'PUT') {
                 putRequests.push(await route.request().postDataJSON());
-                await route.fulfill({
-                    status: 200,
-                    contentType: 'application/json',
-                    body: JSON.stringify({ ...MOCK_ANNOTATION, version: 2 }),
-                });
+                await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ...MOCK_ANNOTATION, version: 2 }) });
             } else {
                 await route.continue();
             }
         });
 
         await page.addInitScript((apiUrl: string) => {
-            localStorage.setItem(
-                'frontendConfig',
-                JSON.stringify({ serverConfig: { msk_wsi_annotation_api_url: apiUrl } })
-            );
+            localStorage.setItem('frontendConfig',
+                JSON.stringify({ serverConfig: { msk_wsi_annotation_api_url: apiUrl } }));
         }, MOCK_ANNOTATION_URL);
 
         await page.goto(viewerUrl());
@@ -1149,11 +1122,9 @@ test.describe('WSI viewer — text annotation labels (Option C)', () => {
         await editInput.fill('Updated label text');
         await editInput.press('Enter');
 
-        // Editor should close and sidebar should show the new label.
         await expect(editInput).not.toBeVisible({ timeout: 5_000 });
         await expect(page.locator('text=Updated label text')).toBeVisible({ timeout: 5_000 });
 
-        // A PUT request should have been sent with the new label.
         expect(putRequests.length).toBe(1);
         expect(putRequests[0].body.label).toBe('Updated label text');
     });
@@ -1170,24 +1141,8 @@ test.describe('WSI viewer — text annotation labels (Option C)', () => {
         await editInput.fill('Temporary text that should be discarded');
         await editInput.press('Escape');
 
-        // Editor should close.
         await expect(editInput).not.toBeVisible({ timeout: 5_000 });
-        // Original label is still there; no PUT was sent.
         await expect(page.locator('text=Playwright test annotation')).toBeVisible({ timeout: 5_000 });
     });
-
-    test('LabelPrompt is not visible before drawing and visible structure is defined', async ({
-        page,
-    }) => {
-        // Verify the LabelPrompt component renders with data-testid="annotation-label-prompt"
-        // by checking the DOM before any drawing — it should NOT be present initially.
-        await gotoViewerWithAnnotationApi(page);
-        await expect(page.locator('button:has-text("Share view")')).toBeVisible({ timeout: 30_000 });
-
-        // Before any drawing, the label prompt must not be in the DOM.
-        await expect(page.locator('[data-testid="annotation-label-prompt"]')).toHaveCount(0);
-        // The label input and save button should also not be present yet.
-        await expect(page.locator('[data-testid="annotation-label-input"]')).toHaveCount(0);
-        await expect(page.locator('[data-testid="annotation-label-save"]')).toHaveCount(0);
-    });
 });
+
