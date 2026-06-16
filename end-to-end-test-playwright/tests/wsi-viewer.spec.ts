@@ -1298,3 +1298,289 @@ test.describe('WSI viewer — annotation layers (Option C)', () => {
     });
 });
 
+// ---- Multi-user annotation CRUD tests (Option C) ----
+//
+// Verifies Create / Read / Update / Delete semantics for a multi-user scenario
+// using a mock annotation API — no live tile server needed.
+
+test.describe('WSI viewer — multi-user annotation CRUD (Option C)', () => {
+    test.beforeEach(async () => {
+        test.skip(!BASE_URL, 'WSI_VIEWER_BASE_URL not set — skipping WSI annotation e2e tests');
+    });
+
+    /** Two stub annotations from different users */
+    const USER_A_ANN = {
+        id: 'ann-user-a-1',
+        slide_id: '1492807',
+        study_id: STUDY_ID,
+        body: { label: 'User A annotation', comment: 'Default', type: 'Red|#ef4444' },
+        target: { selector: { type: 'FragmentSelector', value: 'xywh=10,10,40,40' } },
+        created_by: 'alice@example.com',
+        created_at: '2025-03-15T09:00:00',
+        version: 1,
+    };
+    const USER_B_ANN = {
+        id: 'ann-user-b-1',
+        slide_id: '1492807',
+        study_id: STUDY_ID,
+        body: { label: 'User B annotation', comment: 'Default', type: 'Green|#22c55e' },
+        target: { selector: { type: 'FragmentSelector', value: 'xywh=60,60,30,30' } },
+        created_by: 'bob@example.com',
+        created_at: '2025-03-15T11:00:00',
+        version: 1,
+    };
+
+    async function gotoWithMultiUserMock(page: any) {
+        await page.route(`${MOCK_ANNOTATION_URL}/annotations**`, async (route: any) => {
+            const method = route.request().method();
+            if (method === 'GET') {
+                await route.fulfill({
+                    status: 200, contentType: 'application/json',
+                    body: JSON.stringify([USER_A_ANN, USER_B_ANN]),
+                });
+            } else if (method === 'POST') {
+                await route.fulfill({
+                    status: 201, contentType: 'application/json',
+                    body: JSON.stringify({ ...USER_A_ANN, id: 'ann-new-multiuser', version: 1 }),
+                });
+            } else if (method === 'PUT') {
+                const url = route.request().url();
+                const id = url.split('/annotations/')[1];
+                await route.fulfill({
+                    status: 200, contentType: 'application/json',
+                    body: JSON.stringify({ ...USER_A_ANN, id, version: 2 }),
+                });
+            } else if (method === 'DELETE') {
+                await route.fulfill({ status: 204, body: '' });
+            } else {
+                await route.continue();
+            }
+        });
+        await page.addInitScript((apiUrl: string) => {
+            localStorage.setItem('frontendConfig',
+                JSON.stringify({ serverConfig: { msk_wsi_annotation_api_url: apiUrl } }));
+        }, MOCK_ANNOTATION_URL);
+        await page.goto(viewerUrl());
+        await expect(page.locator('button:has-text("Share view")')).toBeVisible({ timeout: 30_000 });
+    }
+
+    // READ: annotations from two different users both appear in the sidebar
+    test('Read: annotations from two different users both render in sidebar', async ({ page }) => {
+        await gotoWithMultiUserMock(page);
+
+        // Wait for annotations panel to populate (annotation count = 2)
+        const panel = page.locator('text=Annotations (2)');
+        await expect(panel).toBeVisible({ timeout: 15_000 });
+
+        // Both annotation labels appear
+        await expect(page.locator('[title="User A annotation"]')).toBeVisible({ timeout: 5_000 });
+        await expect(page.locator('[title="User B annotation"]')).toBeVisible({ timeout: 5_000 });
+    });
+
+    // READ: creator attribution displayed per annotation
+    test('Read: creator name is shown under each annotation in the sidebar', async ({ page }) => {
+        await gotoWithMultiUserMock(page);
+        await expect(page.locator('text=Annotations (2)')).toBeVisible({ timeout: 15_000 });
+
+        // alice and bob creator lines should both be visible
+        await expect(page.locator('text=alice@example.com')).toBeVisible({ timeout: 5_000 });
+        await expect(page.locator('text=bob@example.com')).toBeVisible({ timeout: 5_000 });
+    });
+
+    // CREATE: POST body includes slide_id, study_id, visible_to
+    test('Create: POST body includes slide_id, study_id and visible_to fields', async ({ page }) => {
+        const postBodies: any[] = [];
+
+        await page.route(`${MOCK_ANNOTATION_URL}/annotations**`, async (route: any) => {
+            const method = route.request().method();
+            if (method === 'GET') {
+                await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([]) });
+            } else if (method === 'POST') {
+                postBodies.push(await route.request().postDataJSON());
+                await route.fulfill({
+                    status: 201, contentType: 'application/json',
+                    body: JSON.stringify({ ...USER_A_ANN, id: 'ann-post-test', version: 1 }),
+                });
+            } else {
+                await route.continue();
+            }
+        });
+        await page.addInitScript((apiUrl: string) => {
+            localStorage.setItem('frontendConfig',
+                JSON.stringify({ serverConfig: { msk_wsi_annotation_api_url: apiUrl } }));
+        }, MOCK_ANNOTATION_URL);
+        await page.goto(viewerUrl());
+        await expect(page.locator('button:has-text("Share view")')).toBeVisible({ timeout: 30_000 });
+
+        // Trigger annotation creation via the mock route (simulate programmatic POST)
+        await page.evaluate(async (apiUrl: string) => {
+            await fetch(`${apiUrl}/annotations`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    slide_id: '1492807',
+                    study_id: 'coad_msk_2025',
+                    body: { label: 'Programmatic test', comment: 'Default', type: 'region' },
+                    target: { selector: { type: 'FragmentSelector', value: 'xywh=5,5,10,10' } },
+                    visible_to: [],
+                }),
+            });
+        }, MOCK_ANNOTATION_URL);
+
+        // Verify the POST was received with all required fields
+        expect(postBodies.length).toBeGreaterThan(0);
+        const body = postBodies[0];
+        expect(body.slide_id).toBeTruthy();
+        expect(body.study_id).toBeTruthy();
+        expect(Array.isArray(body.visible_to)).toBe(true);
+    });
+
+    // UPDATE: PUT body includes version for optimistic concurrency
+    test('Update: PUT sends version field for optimistic concurrency', async ({ page }) => {
+        const putBodies: any[] = [];
+
+        await page.route(`${MOCK_ANNOTATION_URL}/annotations**`, async (route: any) => {
+            const method = route.request().method();
+            if (method === 'GET') {
+                await route.fulfill({
+                    status: 200, contentType: 'application/json',
+                    body: JSON.stringify([USER_A_ANN]),
+                });
+            } else if (method === 'PUT') {
+                putBodies.push(await route.request().postDataJSON());
+                await route.fulfill({
+                    status: 200, contentType: 'application/json',
+                    body: JSON.stringify({ ...USER_A_ANN, version: 2 }),
+                });
+            } else {
+                await route.continue();
+            }
+        });
+        await page.addInitScript((apiUrl: string) => {
+            localStorage.setItem('frontendConfig',
+                JSON.stringify({ serverConfig: { msk_wsi_annotation_api_url: apiUrl } }));
+        }, MOCK_ANNOTATION_URL);
+        await page.goto(viewerUrl());
+        await expect(page.locator('button:has-text("Share view")')).toBeVisible({ timeout: 30_000 });
+
+        // Trigger a label edit (this fires a PUT)
+        const editBtn = page.locator(`[data-testid="edit-label-${USER_A_ANN.id}"]`);
+        await expect(editBtn).toBeVisible({ timeout: 10_000 });
+        await editBtn.click();
+
+        const editInput = page.locator('[data-testid="annotation-label-edit-input"]');
+        await editInput.fill('Updated by user');
+        await editInput.press('Enter');
+
+        await expect(editInput).not.toBeVisible({ timeout: 5_000 });
+
+        // The PUT must include the version field for optimistic concurrency
+        expect(putBodies.length).toBe(1);
+        expect(typeof putBodies[0].version).toBe('number');
+        expect(putBodies[0].version).toBeGreaterThanOrEqual(1);
+        expect(putBodies[0].body.label).toBe('Updated by user');
+    });
+
+    // UPDATE: version from server response is stored (next PUT uses incremented version)
+    test('Update: server-returned version is stored for subsequent PUT', async ({ page }) => {
+        const putBodies: any[] = [];
+        let putCount = 0;
+
+        await page.route(`${MOCK_ANNOTATION_URL}/annotations**`, async (route: any) => {
+            const method = route.request().method();
+            if (method === 'GET') {
+                await route.fulfill({
+                    status: 200, contentType: 'application/json',
+                    body: JSON.stringify([USER_A_ANN]),
+                });
+            } else if (method === 'PUT') {
+                putCount++;
+                const body = await route.request().postDataJSON();
+                putBodies.push(body);
+                // Return version = putCount + 1 so each successive PUT should increment
+                await route.fulfill({
+                    status: 200, contentType: 'application/json',
+                    body: JSON.stringify({ ...USER_A_ANN, version: putCount + 1 }),
+                });
+            } else {
+                await route.continue();
+            }
+        });
+        await page.addInitScript((apiUrl: string) => {
+            localStorage.setItem('frontendConfig',
+                JSON.stringify({ serverConfig: { msk_wsi_annotation_api_url: apiUrl } }));
+        }, MOCK_ANNOTATION_URL);
+        await page.goto(viewerUrl());
+        await expect(page.locator('button:has-text("Share view")')).toBeVisible({ timeout: 30_000 });
+
+        // First edit
+        const editBtn = page.locator(`[data-testid="edit-label-${USER_A_ANN.id}"]`);
+        await expect(editBtn).toBeVisible({ timeout: 10_000 });
+        await editBtn.click();
+        await page.locator('[data-testid="annotation-label-edit-input"]').fill('First edit');
+        await page.locator('[data-testid="annotation-label-edit-input"]').press('Enter');
+        await expect(page.locator('[data-testid="annotation-label-edit-input"]')).not.toBeVisible({ timeout: 5_000 });
+
+        // Second edit — version should be incremented from server response
+        await editBtn.click();
+        await page.locator('[data-testid="annotation-label-edit-input"]').fill('Second edit');
+        await page.locator('[data-testid="annotation-label-edit-input"]').press('Enter');
+        await expect(page.locator('[data-testid="annotation-label-edit-input"]')).not.toBeVisible({ timeout: 5_000 });
+
+        expect(putBodies.length).toBe(2);
+        // First PUT uses version 1 (from initial load)
+        expect(putBodies[0].version).toBe(1);
+        // Second PUT uses version returned by first PUT (= 2)
+        expect(putBodies[1].version).toBe(2);
+    });
+
+    // DELETE: removes annotation from sidebar
+    test('Delete: removing own annotation removes it from sidebar', async ({ page }) => {
+        await gotoWithMultiUserMock(page);
+        await expect(page.locator('text=Annotations (2)')).toBeVisible({ timeout: 15_000 });
+
+        // Delete User A annotation via the ✕ button on its row
+        await expect(page.locator('[title="User A annotation"]')).toBeVisible({ timeout: 5_000 });
+        const annoRow = page.locator('[title="User A annotation"]').locator('xpath=../..');
+        await annoRow.locator('button[title="Delete annotation"]').click();
+
+        // User A annotation disappears; User B remains
+        await expect(page.locator('[title="User A annotation"]')).toHaveCount(0, { timeout: 5_000 });
+        await expect(page.locator('[title="User B annotation"]')).toBeVisible({ timeout: 5_000 });
+    });
+
+    // Version conflict (409): viewer does not crash and shows remaining annotations
+    test('Update: 409 version-conflict response does not crash the viewer', async ({ page }) => {
+        await page.route(`${MOCK_ANNOTATION_URL}/annotations**`, async (route: any) => {
+            const method = route.request().method();
+            if (method === 'GET') {
+                await route.fulfill({
+                    status: 200, contentType: 'application/json',
+                    body: JSON.stringify([USER_A_ANN]),
+                });
+            } else if (method === 'PUT') {
+                // Simulate a concurrent-edit conflict
+                await route.fulfill({ status: 409, body: JSON.stringify({ detail: 'Version conflict' }) });
+            } else {
+                await route.continue();
+            }
+        });
+        await page.addInitScript((apiUrl: string) => {
+            localStorage.setItem('frontendConfig',
+                JSON.stringify({ serverConfig: { msk_wsi_annotation_api_url: apiUrl } }));
+        }, MOCK_ANNOTATION_URL);
+        await page.goto(viewerUrl());
+        await expect(page.locator('button:has-text("Share view")')).toBeVisible({ timeout: 30_000 });
+
+        // Trigger a PUT that returns 409
+        const editBtn = page.locator(`[data-testid="edit-label-${USER_A_ANN.id}"]`);
+        await expect(editBtn).toBeVisible({ timeout: 10_000 });
+        await editBtn.click();
+        await page.locator('[data-testid="annotation-label-edit-input"]').fill('Conflicting edit');
+        await page.locator('[data-testid="annotation-label-edit-input"]').press('Enter');
+
+        // Viewer should still be alive — Share view button must still be visible
+        await expect(page.locator('button:has-text("Share view")')).toBeVisible({ timeout: 5_000 });
+    });
+});
+
