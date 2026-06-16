@@ -71,14 +71,22 @@ function saveCustomLayerNames(names: string[]) {
  *   "#ef4444"           → { name: "", hex: "#ef4444" }
  *   "tumor" (legacy)    → { name: "tumor", hex: <legacy map> }
  */
+/** Returns true only for a valid CSS hex color (#rgb, #rrggbb, #rgba, #rrggbbaa). */
+const HEX_COLOR_RE = /^#[0-9a-fA-F]{3,8}$/;
+function sanitizeHex(hex: string, fallback: string): string {
+    return HEX_COLOR_RE.test(hex) ? hex : fallback;
+}
+
 export function parseColorLabel(bodyType: string | undefined): { name: string; hex: string } {
     const fallback = DEFAULT_NAMED_COLORS[0].hex;
     if (!bodyType) return { name: '', hex: fallback };
     if (bodyType.includes('|')) {
         const idx = bodyType.indexOf('|');
-        return { name: bodyType.slice(0, idx), hex: bodyType.slice(idx + 1) || fallback };
+        const rawHex = bodyType.slice(idx + 1) || fallback;
+        // Validate hex so an API-controlled value cannot inject CSS (e.g. url(...)).
+        return { name: bodyType.slice(0, idx), hex: sanitizeHex(rawHex, fallback) };
     }
-    if (bodyType.startsWith('#')) return { name: '', hex: bodyType };
+    if (bodyType.startsWith('#')) return { name: '', hex: sanitizeHex(bodyType, fallback) };
     // Legacy layer names from the previous implementation.
     const LEGACY: Record<string, string> = {
         general: '#3b82f6', tumor: '#ef4444', stroma: '#22c55e',
@@ -89,7 +97,9 @@ export function parseColorLabel(bodyType: string | undefined): { name: string; h
 
 /** Serialize { name, hex } back to body.type. */
 export function serializeColorLabel(name: string, hex: string): string {
-    return name.trim() ? `${name.trim()}|${hex}` : hex;
+    // Strip pipe from the name to prevent corrupting the "name|hex" encoding.
+    const safeName = name.trim().replace(/\|/g, '');
+    return safeName ? `${safeName}|${hex}` : hex;
 }
 
 function loadNamedColors(): NamedColor[] {
@@ -377,16 +387,17 @@ export default class WSIViewer extends React.Component<Props, {}> {
         for (const sl of slides) {
             if (!this.hierarchy) return;
             const base = this.tileServerBase;
+            const encId = encodeURIComponent(sl.image_id);
             const warmupCalls = Array.from({ length: this.nWorkers }, () =>
-                fetch(`${base}/tiles/${sl.image_id}/warmup`).catch(() => {})
+                fetch(`${base}/tiles/${encId}/warmup`).catch(() => {})
             );
             await Promise.allSettled([
-                fetch(`${base}/tiles/${sl.image_id}/metadata`)
+                fetch(`${base}/tiles/${encId}/metadata`)
                     .then(r => r.ok ? r.json() : Promise.reject(r.status))
                     .then((meta: TileMetadata) => { this.metaCache.set(sl.image_id, meta); }),
                 // Thumbnail fetch warms the Redis cache so the sidebar img is
                 // served from Redis (no SVS open) on the first user click.
-                fetch(`${base}/tiles/${sl.image_id}/thumbnail`),
+                fetch(`${base}/tiles/${encId}/thumbnail`),
                 ...warmupCalls,
             ]);
             // Brief pause between slides to avoid S3 connection pile-up.
@@ -831,7 +842,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
         // Use prefetched metadata if available, otherwise fetch now
         let meta = this.metaCache.get(slide.image_id);
         if (!meta) {
-            const metaUrl = `${this.tileServerBase}/tiles/${slide.image_id}/metadata`;
+            const metaUrl = `${this.tileServerBase}/tiles/${encodeURIComponent(slide.image_id)}/metadata`;
             try {
                 const resp = await fetch(metaUrl);
                 if (!resp.ok) throw new Error(`${resp.status} ${resp.statusText}`);
@@ -1642,7 +1653,7 @@ export interface MetaSidebarProps {
 }
 
 export function MetaSidebar({ slide, sample, meta, tileServerBase, studyId, annotations = [], annotationsLoading = false, annotationEnabled = false, onDeleteAnnotation, editingAnnotationId, editingLabelText = '', onStartEditAnnotation, onChangeEditLabel, onConfirmEditLabel, onCancelEditLabel, layerNames = [], hiddenLayerNames = new Set(), onToggleLayerVisibility }: MetaSidebarProps) {
-    const thumbSrc = slide ? `${tileServerBase}/tiles/${slide.image_id}/thumbnail` : null;
+    const thumbSrc = slide ? `${tileServerBase}/tiles/${encodeURIComponent(slide.image_id)}/thumbnail` : null;
 
     return (
         <div style={{
@@ -1758,6 +1769,7 @@ export function MetaSidebar({ slide, sample, meta, tileServerBase, studyId, anno
                                                         data-testid="annotation-label-edit-input"
                                                         autoFocus
                                                         type="text"
+                                                        maxLength={200}
                                                         value={editingLabelText}
                                                         onChange={e => onChangeEditLabel?.(e.target.value)}
                                                         onKeyDown={e => {
