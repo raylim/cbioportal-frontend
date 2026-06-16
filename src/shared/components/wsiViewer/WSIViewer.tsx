@@ -40,11 +40,7 @@ export interface NamedColor { name: string; hex: string; }
 const LOCALSTORAGE_COLORS_KEY = 'wsi_annotation_colors';
 
 export const DEFAULT_NAMED_COLORS: NamedColor[] = [
-    { name: 'Default',  hex: '#3b82f6' },  // blue
-    { name: 'Red',      hex: '#ef4444' },
-    { name: 'Green',    hex: '#22c55e' },
-    { name: 'Orange',   hex: '#f97316' },
-    { name: 'Purple',   hex: '#8b5cf6' },
+    { name: 'Default', hex: '#3b82f6' }, // fallback color for drawing when no annotations exist yet
 ];
 
 /**

@@ -868,9 +868,9 @@ test.describe('WSI viewer — named color palette (Option C)', () => {
 
         // Palette buttons are identified by title "Color: <Name>".
         const colorBtns = page.locator('button[title^="Color:"]');
-        // Default palette has 5 entries; loaded annotations may add more.
+        // Only "Default" is hardcoded; additional swatches come from loaded annotations.
         const count = await colorBtns.count();
-        expect(count).toBeGreaterThanOrEqual(5);
+        expect(count).toBeGreaterThanOrEqual(1);
     });
 
     test('Clicking a color button makes it active (aria-pressed)', async ({ page }) => {
@@ -879,16 +879,16 @@ test.describe('WSI viewer — named color palette (Option C)', () => {
             timeout: 30_000,
         });
 
-        // "Default" is the first color — aria-pressed="true" initially.
+        // "Default" is always present. The mock annotation adds a second swatch.
         const defaultBtn = page.locator('button[title="Color: Default"]');
-        const redBtn = page.locator('button[title="Color: Red"]');
         await expect(defaultBtn).toBeVisible({ timeout: 5_000 });
         await expect(defaultBtn).toHaveAttribute('aria-pressed', 'true');
-        await expect(redBtn).toHaveAttribute('aria-pressed', 'false');
 
-        // Click Red — it should become active.
-        await redBtn.click();
-        await expect(redBtn).toHaveAttribute('aria-pressed', 'true');
+        // Pick the second color button (annotation-derived) and activate it.
+        const secondBtn = page.locator('button[title^="Color:"]').nth(1);
+        await expect(secondBtn).toBeVisible({ timeout: 5_000 });
+        await secondBtn.click();
+        await expect(secondBtn).toHaveAttribute('aria-pressed', 'true');
         await expect(defaultBtn).toHaveAttribute('aria-pressed', 'false');
     });
 
