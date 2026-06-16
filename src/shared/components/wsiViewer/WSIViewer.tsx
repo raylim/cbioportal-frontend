@@ -43,6 +43,27 @@ export const DEFAULT_NAMED_COLORS: NamedColor[] = [
     { name: 'Default', hex: '#3b82f6' }, // fallback color for drawing when no annotations exist yet
 ];
 
+// ---- Annotation layers ----
+
+const LOCALSTORAGE_LAYERS_KEY = 'wsi_annotation_layers_v1';
+
+export const DEFAULT_LAYER_NAME = 'Default';
+
+function loadCustomLayerNames(): string[] {
+    try {
+        const raw = localStorage.getItem(LOCALSTORAGE_LAYERS_KEY);
+        if (raw) {
+            const parsed = JSON.parse(raw) as string[];
+            if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        }
+    } catch (_) { /* ignore */ }
+    return [DEFAULT_LAYER_NAME];
+}
+
+function saveCustomLayerNames(names: string[]) {
+    try { localStorage.setItem(LOCALSTORAGE_LAYERS_KEY, JSON.stringify(names)); } catch (_) { /* ignore */ }
+}
+
 /**
  * Parse the API's body.type field into a { name, hex } pair.
  * Supports three formats:
@@ -165,6 +186,26 @@ export default class WSIViewer extends React.Component<Props, {}> {
     @observable private activeColorHex: string = loadNamedColors()[0]?.hex ?? DEFAULT_NAMED_COLORS[0].hex;
     /** Name associated with the active color (may be empty for ad-hoc colors). */
     @observable private activeColorName: string = loadNamedColors()[0]?.name ?? DEFAULT_NAMED_COLORS[0].name;
+
+    // ---- Layer state ----
+    /** User-created layer names (persisted to localStorage). */
+    @observable private customLayerNames: string[] = loadCustomLayerNames();
+    /** Layer new annotations are assigned to. */
+    @observable private activeLayerName: string = loadCustomLayerNames()[0] ?? DEFAULT_LAYER_NAME;
+    /** Layer names currently hidden from the Annotorious overlay. */
+    @observable private hiddenLayerNames: Set<string> = new Set();
+    /**
+     * All unique layer names = custom ∪ annotation-derived (same reactive pattern as namedColors).
+     */
+    @computed get layerNames(): string[] {
+        const seen = new Set<string>();
+        const result: string[] = [];
+        const add = (n: string) => { if (!seen.has(n)) { seen.add(n); result.push(n); } };
+        for (const name of this.customLayerNames) add(name);
+        for (const ann of this.annotations) add((ann as any).layerName ?? DEFAULT_LAYER_NAME);
+        return result;
+    }
+
     /** Maps annotation ID → hex color for live Annotorious style lookup. */
     private annotationColorMap = new Map<string, string>();
     /** ID of the annotation currently being label-edited in the sidebar, or null. */
@@ -486,9 +527,10 @@ export default class WSIViewer extends React.Component<Props, {}> {
             if (!resp.ok) throw new Error(`${resp.status}`);
             const raw: any[] = await resp.json();
             // Convert API response to W3CAnnotation shape for Annotorious.
-            // Color derives from body.type (encoded as "name|#hex") so it persists through the API.
+            // Color derives from body.type (encoded as "name|#hex"); layer from body.comment.
             const anns: W3CAnnotation[] = raw.map((item: any) => {
                 const { name: colorName, hex: color } = parseColorLabel(item.body?.type);
+                const layerName: string = item.body?.comment || DEFAULT_LAYER_NAME;
                 return {
                     '@context': 'http://www.w3.org/ns/anno.jsonld' as const,
                     type: 'Annotation' as const,
@@ -502,6 +544,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
                     version: item.version,
                     colorName,
                     color,
+                    layerName,
                 };
             });
             // Populate color map for Annotorious style function
@@ -535,8 +578,8 @@ export default class WSIViewer extends React.Component<Props, {}> {
             const body = {
                 slide_id: slideId,
                 study_id: studyId,
-                // body.type encodes color as "name|#hex" so it survives the API round-trip.
-                body: { label: ann.body?.[0]?.value ?? '', comment: '', type: serializeColorLabel(ann.colorName ?? '', ann.color ?? DEFAULT_NAMED_COLORS[0].hex) },
+                // body.type = color encoding; body.comment = layer name for round-trip persistence.
+                body: { label: ann.body?.[0]?.value ?? '', comment: (ann as any).layerName ?? DEFAULT_LAYER_NAME, type: serializeColorLabel(ann.colorName ?? '', ann.color ?? DEFAULT_NAMED_COLORS[0].hex) },
                 target: { selector: (ann.target as any).selector ?? ann.target },
                 visible_to: [],
             };
@@ -565,7 +608,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
         if (!apiBase) return;
         try {
             const body = {
-                body: { label: ann.body?.[0]?.value ?? '', comment: '', type: serializeColorLabel(ann.colorName ?? '', ann.color ?? DEFAULT_NAMED_COLORS[0].hex) },
+                body: { label: ann.body?.[0]?.value ?? '', comment: (ann as any).layerName ?? DEFAULT_LAYER_NAME, type: serializeColorLabel(ann.colorName ?? '', ann.color ?? DEFAULT_NAMED_COLORS[0].hex) },
                 target: { selector: (ann.target as any).selector ?? ann.target },
                 version: ann.version ?? 1,
             };
@@ -719,6 +762,39 @@ export default class WSIViewer extends React.Component<Props, {}> {
         this.refreshAnnotoriousStyle();
     }
 
+    // ---- Layer actions ----
+
+    @action.bound
+    addLayer(name: string) {
+        const n = name.trim();
+        if (!n || this.customLayerNames.includes(n)) return;
+        this.customLayerNames = [...this.customLayerNames, n];
+        saveCustomLayerNames(this.customLayerNames);
+    }
+
+    @action.bound
+    setActiveLayer(name: string) {
+        this.activeLayerName = name;
+    }
+
+    @action.bound
+    toggleLayerVisibility(name: string) {
+        const next = new Set(this.hiddenLayerNames);
+        if (next.has(name)) next.delete(name); else next.add(name);
+        this.hiddenLayerNames = next;
+        this.applyLayerFilter();
+    }
+
+    private applyLayerFilter() {
+        if (!this.annotorious) return;
+        const hidden = this.hiddenLayerNames;
+        this.annotorious.setFilter(
+            hidden.size === 0
+                ? undefined
+                : (ann: any) => !hidden.has(ann.layerName ?? DEFAULT_LAYER_NAME)
+        );
+    }
+
     /** Push the per-annotation color function into Annotorious so shapes render with the right color. */
     private refreshAnnotoriousStyle() {
         if (!this.annotorious) return;
@@ -842,9 +918,10 @@ export default class WSIViewer extends React.Component<Props, {}> {
                     this.annotorious = createOSDAnnotator(this.osdViewer, { drawingEnabled: false, drawingMode: 'drag' });
 
                     this.annotorious.on('createAnnotation', (ann: W3CAnnotation) => {
-                        // Stamp color and auto-generate a sequential label, then save immediately.
+                        // Stamp color, layer, and auto-generate a sequential label, then save immediately.
                         ann.colorName = this.activeColorName;
                         ann.color = this.activeColorHex;
+                        (ann as any).layerName = this.activeLayerName;
                         this.annotationColorMap.set(ann.id, ann.color);
                         const autoLabel = this.nextAutoLabel();
                         ann.body = [{ type: 'TextualBody' as const, value: autoLabel, purpose: 'commenting' as const }];
@@ -1005,6 +1082,12 @@ export default class WSIViewer extends React.Component<Props, {}> {
                             onSetActiveColor={this.setActiveColor}
                             onAddNamedColor={this.addNamedColor}
                             onRemoveNamedColor={this.removeNamedColor}
+                            layerNames={this.layerNames}
+                            activeLayerName={this.activeLayerName}
+                            hiddenLayerNames={this.hiddenLayerNames}
+                            onSetActiveLayer={this.setActiveLayer}
+                            onAddLayer={this.addLayer}
+                            onToggleLayerVisibility={this.toggleLayerVisibility}
                         />
                     )}
                     {this.viewerReady && (
@@ -1063,6 +1146,9 @@ export default class WSIViewer extends React.Component<Props, {}> {
                     onChangeEditLabel={action((v: string) => { this.editingLabelText = v; })}
                     onConfirmEditLabel={this.confirmEditingLabel}
                     onCancelEditLabel={this.cancelEditingLabel}
+                    layerNames={this.layerNames}
+                    hiddenLayerNames={this.hiddenLayerNames}
+                    onToggleLayerVisibility={this.toggleLayerVisibility}
                 />
             </div>
         );
@@ -1548,9 +1634,14 @@ export interface MetaSidebarProps {
     onChangeEditLabel?: (v: string) => void;
     onConfirmEditLabel?: () => void;
     onCancelEditLabel?: () => void;
+    /** Layer names to show in the Layers panel. */
+    layerNames?: string[];
+    /** Currently hidden layer names. */
+    hiddenLayerNames?: Set<string>;
+    onToggleLayerVisibility?: (name: string) => void;
 }
 
-export function MetaSidebar({ slide, sample, meta, tileServerBase, studyId, annotations = [], annotationsLoading = false, annotationEnabled = false, onDeleteAnnotation, editingAnnotationId, editingLabelText = '', onStartEditAnnotation, onChangeEditLabel, onConfirmEditLabel, onCancelEditLabel }: MetaSidebarProps) {
+export function MetaSidebar({ slide, sample, meta, tileServerBase, studyId, annotations = [], annotationsLoading = false, annotationEnabled = false, onDeleteAnnotation, editingAnnotationId, editingLabelText = '', onStartEditAnnotation, onChangeEditLabel, onConfirmEditLabel, onCancelEditLabel, layerNames = [], hiddenLayerNames = new Set(), onToggleLayerVisibility }: MetaSidebarProps) {
     const thumbSrc = slide ? `${tileServerBase}/tiles/${slide.image_id}/thumbnail` : null;
 
     return (
@@ -1598,6 +1689,34 @@ export function MetaSidebar({ slide, sample, meta, tileServerBase, studyId, anno
                 )}
             </SbSection>
 
+            {/* Layers panel */}
+            {annotationEnabled && layerNames.length > 0 && (
+                <SbSection title="Layers">
+                    <div style={{ marginTop: 6 }}>
+                        {layerNames.map(name => {
+                            const isHidden = hiddenLayerNames.has(name);
+                            const count = annotations.filter(a => ((a as any).layerName ?? DEFAULT_LAYER_NAME) === name).length;
+                            return (
+                                <div key={name} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '2px 0' }}>
+                                    <button
+                                        data-testid={`sidebar-layer-toggle-${name}`}
+                                        onClick={() => onToggleLayerVisibility?.(name)}
+                                        title={isHidden ? `Show layer "${name}"` : `Hide layer "${name}"`}
+                                        style={{ border: 'none', background: 'transparent', cursor: 'pointer', fontSize: 13, padding: '0 2px', color: isHidden ? '#e74c3c' : C.blue, lineHeight: 1 }}
+                                    >
+                                        {isHidden ? '○' : '●'}
+                                    </button>
+                                    <span style={{ fontSize: 12, color: isHidden ? C.muted : C.text, flex: 1, textDecoration: isHidden ? 'line-through' : 'none' }}>
+                                        {name}
+                                    </span>
+                                    <span style={{ fontSize: 10, color: C.muted }}>{count}</span>
+                                </div>
+                            );
+                        })}
+                    </div>
+                </SbSection>
+            )}
+
             {/* Annotations panel */}
             {annotationEnabled && (
                 <SbSection title={`Annotations (${annotations.length})`}>
@@ -1615,17 +1734,17 @@ export function MetaSidebar({ slide, sample, meta, tileServerBase, studyId, anno
                                 const dateStr = created ? new Date(created).toLocaleDateString() : '';
                                 const dotColor = ann.color ?? DEFAULT_NAMED_COLORS[0].hex;
                                 const colorName = ann.colorName ?? '';
+                                const annLayerName: string = (ann as any).layerName ?? DEFAULT_LAYER_NAME;
                                 const isEditing = editingAnnotationId === ann.id;
                                 return (
                                     <div key={ann.id} style={{
                                         padding: '4px 0', borderBottom: `1px solid ${C.border}`,
                                         display: 'flex', alignItems: 'flex-start', gap: 4,
                                     }}>
-                                        {/* Colored dot indicates annotation color */}
-                                        {/* Colored dot + layer badge */}
+                                        {/* Colored dot */}
                                         <span
                                             data-annotation-color={dotColor}
-                                            data-annotation-layer={ann.colorName}
+                                            data-annotation-layer={annLayerName}
                                             title={colorName || 'No color name'}
                                             style={{
                                                 display: 'inline-block', width: 8, height: 8, borderRadius: '50%',
@@ -1666,14 +1785,24 @@ export function MetaSidebar({ slide, sample, meta, tileServerBase, studyId, anno
                                                     <div style={{ fontSize: 12, fontWeight: 500, color: C.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={displayLabel}>
                                                         {displayLabel}
                                                     </div>
-                                                    {colorName && (
-                                                        <span style={{
-                                                            fontSize: 9, fontWeight: 600, padding: '0 4px', borderRadius: 8,
-                                                            background: dotColor, color: '#fff', display: 'inline-block', marginTop: 1,
-                                                        }}>
-                                                            {colorName}
-                                                        </span>
-                                                    )}
+                                                    <div style={{ display: 'flex', gap: 3, marginTop: 1, flexWrap: 'wrap' }}>
+                                                        {annLayerName && (
+                                                            <span style={{
+                                                                fontSize: 9, fontWeight: 600, padding: '0 4px', borderRadius: 8,
+                                                                background: '#e8e8e8', color: '#555', display: 'inline-block',
+                                                            }}>
+                                                                {annLayerName}
+                                                            </span>
+                                                        )}
+                                                        {colorName && (
+                                                            <span style={{
+                                                                fontSize: 9, fontWeight: 600, padding: '0 4px', borderRadius: 8,
+                                                                background: dotColor, color: '#fff', display: 'inline-block',
+                                                            }}>
+                                                                {colorName}
+                                                            </span>
+                                                        )}
+                                                    </div>
                                                 </>
                                             )}
                                             {!isEditing && (creator || dateStr) && (
@@ -1742,21 +1871,31 @@ export interface DrawToolbarProps {
     onSetActiveColor: (name: string, hex: string) => void;
     onAddNamedColor: (name: string, hex: string) => void;
     onRemoveNamedColor: (hex: string, name: string) => void;
+    layerNames: string[];
+    activeLayerName: string;
+    hiddenLayerNames: Set<string>;
+    onSetActiveLayer: (name: string) => void;
+    onAddLayer: (name: string) => void;
+    onToggleLayerVisibility: (name: string) => void;
 }
 
 export function DrawToolbar({
     drawingTool, onSetDrawingTool,
     namedColors, activeColorHex, activeColorName,
     onSetActiveColor, onAddNamedColor, onRemoveNamedColor,
+    layerNames, activeLayerName, hiddenLayerNames,
+    onSetActiveLayer, onAddLayer, onToggleLayerVisibility,
 }: DrawToolbarProps) {
-    const [showAddForm, setShowAddForm] = React.useState(false);
+    const [showAddColorForm, setShowAddColorForm] = React.useState(false);
     const [newHex, setNewHex] = React.useState('#ff0000');
-    const [newName, setNewName] = React.useState('');
+    const [newColorName, setNewColorName] = React.useState('');
+    const [showAddLayerForm, setShowAddLayerForm] = React.useState(false);
+    const [newLayerName, setNewLayerName] = React.useState('');
 
     const handleAddColor = () => {
-        if (newHex) onAddNamedColor(newName.trim() || newHex, newHex);
-        setShowAddForm(false);
-        setNewName('');
+        if (newHex) onAddNamedColor(newColorName.trim() || newHex, newHex);
+        setShowAddColorForm(false);
+        setNewColorName('');
     };
 
     return (
@@ -1790,6 +1929,74 @@ export function DrawToolbar({
 
             <span style={{ width: 1, height: 16, background: C.border, margin: '0 2px' }} />
 
+            {/* Layer selector */}
+            <span style={{ fontSize: 10, color: C.muted, whiteSpace: 'nowrap' }}>Layer:</span>
+            {layerNames.map(name => {
+                const isActive = activeLayerName === name;
+                const isHidden = hiddenLayerNames.has(name);
+                return (
+                    <span key={name} style={{ display: 'inline-flex', alignItems: 'center', gap: 1 }}>
+                        <button
+                            data-testid={`layer-select-${name}`}
+                            title={`Draw on layer "${name}"${isHidden ? ' (currently hidden)' : ''}`}
+                            aria-pressed={isActive}
+                            onClick={() => onSetActiveLayer(name)}
+                            style={{
+                                fontSize: 10, padding: '1px 7px', borderRadius: 10, cursor: 'pointer',
+                                background: isActive ? C.blue : '#fff',
+                                color: isActive ? '#fff' : C.text,
+                                border: `1.5px solid ${isActive ? C.blue : C.border}`,
+                                fontWeight: isActive ? 700 : 400,
+                                opacity: isHidden ? 0.45 : 1,
+                                whiteSpace: 'nowrap',
+                            }}
+                        >
+                            {name}
+                        </button>
+                        <button
+                            data-testid={`layer-toggle-${name}`}
+                            title={isHidden ? `Show layer "${name}"` : `Hide layer "${name}"`}
+                            onClick={() => onToggleLayerVisibility(name)}
+                            style={{ fontSize: 10, padding: '0 2px', border: 'none', background: 'transparent', cursor: 'pointer', color: isHidden ? '#e74c3c' : '#bbb', lineHeight: 1 }}
+                        >
+                            {isHidden ? '○' : '●'}
+                        </button>
+                    </span>
+                );
+            })}
+            {!showAddLayerForm ? (
+                <button
+                    data-testid="add-layer-btn"
+                    title="Add new annotation layer"
+                    onClick={() => setShowAddLayerForm(true)}
+                    style={{ fontSize: 12, padding: '0 5px', border: `1px dashed ${C.border}`, background: '#fff', color: C.muted, borderRadius: 10, cursor: 'pointer' }}
+                >+</button>
+            ) : (
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, padding: '1px 5px', border: `1px solid ${C.border}`, borderRadius: 10, background: '#fff' }}>
+                    <input
+                        data-testid="add-layer-input"
+                        type="text" value={newLayerName} placeholder="Layer name" maxLength={30} autoFocus
+                        onChange={e => setNewLayerName(e.target.value)}
+                        onKeyDown={e => {
+                            if (e.key === 'Enter') { onAddLayer(newLayerName); setShowAddLayerForm(false); setNewLayerName(''); }
+                            if (e.key === 'Escape') { setShowAddLayerForm(false); setNewLayerName(''); }
+                        }}
+                        style={{ fontSize: 10, border: 'none', outline: 'none', width: 90, background: 'transparent', color: C.text }}
+                    />
+                    <button
+                        data-testid="add-layer-confirm"
+                        title="Add layer"
+                        onClick={() => { onAddLayer(newLayerName); setShowAddLayerForm(false); setNewLayerName(''); }}
+                        style={{ fontSize: 10, padding: '1px 5px', border: `1px solid ${C.blue}`, background: C.blue, color: '#fff', borderRadius: 8, cursor: 'pointer' }}
+                    >Add</button>
+                    <button title="Cancel" onClick={() => { setShowAddLayerForm(false); setNewLayerName(''); }}
+                        style={{ fontSize: 10, padding: '1px 4px', border: 'none', background: 'transparent', color: C.muted, cursor: 'pointer' }}
+                    >✕</button>
+                </span>
+            )}
+
+            <span style={{ width: 1, height: 16, background: C.border, margin: '0 2px' }} />
+
             {/* Color palette */}
             <span style={{ fontSize: 10, color: C.muted, whiteSpace: 'nowrap' }}>Color:</span>
             {namedColors.map(({ name, hex }) => {
@@ -1819,24 +2026,24 @@ export function DrawToolbar({
                     </span>
                 );
             })}
-            {!showAddForm ? (
+            {!showAddColorForm ? (
                 <button
                     title="Add new named color to palette"
-                    onClick={() => setShowAddForm(true)}
+                    onClick={() => setShowAddColorForm(true)}
                     style={{ fontSize: 12, padding: '0 5px', border: `1px dashed ${C.border}`, background: '#fff', color: C.muted, borderRadius: 10, cursor: 'pointer' }}
                 >+</button>
             ) : (
                 <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, padding: '1px 5px', border: `1px solid ${C.border}`, borderRadius: 10, background: '#fff' }}>
                     <input type="color" value={newHex} title="Pick color" onChange={e => setNewHex(e.target.value)}
                         style={{ width: 20, height: 16, border: 'none', padding: 0, cursor: 'pointer', background: 'transparent' }} />
-                    <input type="text" value={newName} placeholder="Name (optional)" maxLength={20} autoFocus
-                        onChange={e => setNewName(e.target.value)}
-                        onKeyDown={e => { if (e.key === 'Enter') handleAddColor(); if (e.key === 'Escape') setShowAddForm(false); }}
+                    <input type="text" value={newColorName} placeholder="Name (optional)" maxLength={20} autoFocus
+                        onChange={e => setNewColorName(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') handleAddColor(); if (e.key === 'Escape') setShowAddColorForm(false); }}
                         style={{ fontSize: 10, border: 'none', outline: 'none', width: 90, background: 'transparent', color: C.text }} />
                     <button title="Add color to palette" onClick={handleAddColor}
                         style={{ fontSize: 10, padding: '1px 5px', border: `1px solid ${C.blue}`, background: C.blue, color: '#fff', borderRadius: 8, cursor: 'pointer' }}
                     >Add</button>
-                    <button title="Cancel" onClick={() => setShowAddForm(false)}
+                    <button title="Cancel" onClick={() => setShowAddColorForm(false)}
                         style={{ fontSize: 10, padding: '1px 4px', border: 'none', background: 'transparent', color: C.muted, cursor: 'pointer' }}
                     >✕</button>
                 </span>

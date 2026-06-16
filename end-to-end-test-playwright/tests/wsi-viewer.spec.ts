@@ -1143,3 +1143,158 @@ test.describe('WSI viewer — annotation labels (Option C)', () => {
     });
 });
 
+// ---- Layer tests (Option C) ----
+
+test.describe('WSI viewer — annotation layers (Option C)', () => {
+    test.beforeEach(async () => {
+        test.skip(!BASE_URL, 'WSI_VIEWER_BASE_URL not set — skipping WSI layer e2e tests');
+    });
+
+    test('Default layer pill appears in DrawToolbar when annotations enabled', async ({ page }) => {
+        await gotoViewerWithAnnotationApi(page);
+        await expect(page.locator('button:has-text("Share view")')).toBeVisible({ timeout: 30_000 });
+        // DrawToolbar is rendered when annotation API is configured and annotations are visible.
+        // It should show at least one layer pill (the "Default" layer).
+        const defaultLayerBtn = page.locator('[data-testid="layer-select-Default"]');
+        await expect(defaultLayerBtn).toBeVisible({ timeout: 10_000 });
+        // It should be active (aria-pressed=true) since it's the only layer.
+        await expect(defaultLayerBtn).toHaveAttribute('aria-pressed', 'true');
+    });
+
+    test('Clicking layer pill sets it as active layer', async ({ page }) => {
+        await gotoViewerWithAnnotationApi(page);
+        await expect(page.locator('button:has-text("Share view")')).toBeVisible({ timeout: 30_000 });
+
+        const defaultLayerBtn = page.locator('[data-testid="layer-select-Default"]');
+        await expect(defaultLayerBtn).toBeVisible({ timeout: 10_000 });
+        // Initially active.
+        await expect(defaultLayerBtn).toHaveAttribute('aria-pressed', 'true');
+        // Click it (re-select) — still active.
+        await defaultLayerBtn.click();
+        await expect(defaultLayerBtn).toHaveAttribute('aria-pressed', 'true');
+    });
+
+    test('"+" button in layer section opens add-layer form', async ({ page }) => {
+        await gotoViewerWithAnnotationApi(page);
+        await expect(page.locator('button:has-text("Share view")')).toBeVisible({ timeout: 30_000 });
+
+        const addBtn = page.locator('[data-testid="add-layer-btn"]');
+        await expect(addBtn).toBeVisible({ timeout: 10_000 });
+        await addBtn.click();
+
+        // Input field should appear.
+        const layerInput = page.locator('[data-testid="add-layer-input"]');
+        await expect(layerInput).toBeVisible({ timeout: 5_000 });
+        await expect(page.locator('[data-testid="add-layer-confirm"]')).toBeVisible();
+    });
+
+    test('Adding a new layer creates a new pill in DrawToolbar', async ({ page }) => {
+        await gotoViewerWithAnnotationApi(page);
+        await expect(page.locator('button:has-text("Share view")')).toBeVisible({ timeout: 30_000 });
+
+        // Open add-layer form.
+        const addBtn = page.locator('[data-testid="add-layer-btn"]');
+        await expect(addBtn).toBeVisible({ timeout: 10_000 });
+        await addBtn.click();
+
+        const layerInput = page.locator('[data-testid="add-layer-input"]');
+        await layerInput.fill('Tumor');
+        await page.locator('[data-testid="add-layer-confirm"]').click();
+
+        // New "Tumor" layer pill should appear.
+        const tumorBtn = page.locator('[data-testid="layer-select-Tumor"]');
+        await expect(tumorBtn).toBeVisible({ timeout: 5_000 });
+    });
+
+    test('New layer becomes active on selection', async ({ page }) => {
+        await gotoViewerWithAnnotationApi(page);
+        await expect(page.locator('button:has-text("Share view")')).toBeVisible({ timeout: 30_000 });
+
+        // Add a new layer.
+        const addBtn = page.locator('[data-testid="add-layer-btn"]');
+        await expect(addBtn).toBeVisible({ timeout: 10_000 });
+        await addBtn.click();
+        await page.locator('[data-testid="add-layer-input"]').fill('Stroma');
+        await page.locator('[data-testid="add-layer-confirm"]').click();
+
+        // Click the Stroma layer pill.
+        const stromaBtn = page.locator('[data-testid="layer-select-Stroma"]');
+        await expect(stromaBtn).toBeVisible({ timeout: 5_000 });
+        await stromaBtn.click();
+
+        await expect(stromaBtn).toHaveAttribute('aria-pressed', 'true');
+        // Default should no longer be active.
+        await expect(page.locator('[data-testid="layer-select-Default"]')).toHaveAttribute('aria-pressed', 'false');
+    });
+
+    test('Eye toggle hides layer (toggle button changes appearance)', async ({ page }) => {
+        await gotoViewerWithAnnotationApi(page);
+        await expect(page.locator('button:has-text("Share view")')).toBeVisible({ timeout: 30_000 });
+
+        const toggleBtn = page.locator('[data-testid="layer-toggle-Default"]');
+        await expect(toggleBtn).toBeVisible({ timeout: 10_000 });
+        // Initially visible — button shows filled circle.
+        await expect(toggleBtn).toContainText('●');
+
+        // Hide the layer.
+        await toggleBtn.click();
+        // Should switch to empty circle (hidden state).
+        await expect(toggleBtn).toContainText('○');
+    });
+
+    test('Sidebar shows Layers section when annotations enabled', async ({ page }) => {
+        await gotoViewerWithAnnotationApi(page);
+        await expect(page.locator('button:has-text("Share view")')).toBeVisible({ timeout: 30_000 });
+
+        // The sidebar layers section should be rendered.
+        const sidebarToggle = page.locator('[data-testid="sidebar-layer-toggle-Default"]');
+        await expect(sidebarToggle).toBeVisible({ timeout: 10_000 });
+    });
+
+    test('Sidebar layer toggle syncs with DrawToolbar toggle', async ({ page }) => {
+        await gotoViewerWithAnnotationApi(page);
+        await expect(page.locator('button:has-text("Share view")')).toBeVisible({ timeout: 30_000 });
+
+        // Toggle from sidebar.
+        const sidebarToggle = page.locator('[data-testid="sidebar-layer-toggle-Default"]');
+        await expect(sidebarToggle).toBeVisible({ timeout: 10_000 });
+        await sidebarToggle.click();
+
+        // DrawToolbar toggle should also reflect hidden state.
+        const toolbarToggle = page.locator('[data-testid="layer-toggle-Default"]');
+        await expect(toolbarToggle).toContainText('○');
+    });
+
+    test('Mock annotation body.comment is used as layer name in sidebar', async ({ page }) => {
+        // Inject annotation with a non-default layer name in body.comment.
+        await page.route(`${MOCK_ANNOTATION_URL}/annotations**`, async (route: any) => {
+            const method = route.request().method();
+            if (method === 'GET') {
+                await route.fulfill({
+                    status: 200,
+                    contentType: 'application/json',
+                    body: JSON.stringify([{
+                        ...MOCK_ANNOTATION,
+                        body: { label: 'Layered annotation', comment: 'Tumor', type: 'Default|#3b82f6' },
+                    }]),
+                });
+            } else {
+                await route.continue();
+            }
+        });
+        await page.addInitScript((apiUrl: string) => {
+            localStorage.setItem('frontendConfig', JSON.stringify({ serverConfig: { msk_wsi_annotation_api_url: apiUrl } }));
+        }, MOCK_ANNOTATION_URL);
+        await page.goto(viewerUrl());
+        await expect(page.locator('button:has-text("Share view")')).toBeVisible({ timeout: 30_000 });
+
+        // The "Tumor" layer should auto-appear in both DrawToolbar and sidebar.
+        const tumorLayerBtn = page.locator('[data-testid="layer-select-Tumor"]');
+        await expect(tumorLayerBtn).toBeVisible({ timeout: 10_000 });
+
+        // Sidebar: annotation dot should have data-annotation-layer="Tumor".
+        const dot = page.locator('[data-annotation-layer="Tumor"]');
+        await expect(dot).toBeVisible({ timeout: 5_000 });
+    });
+});
+
