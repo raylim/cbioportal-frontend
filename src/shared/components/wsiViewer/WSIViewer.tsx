@@ -37,7 +37,7 @@ const SIDEBAR_W = 220;
 
 export interface NamedColor { name: string; hex: string; }
 
-const LOCALSTORAGE_COLORS_KEY = 'wsi_annotation_colors';
+const LOCALSTORAGE_COLORS_KEY = 'wsi_annotation_colors_v2';
 
 export const DEFAULT_NAMED_COLORS: NamedColor[] = [
     { name: 'Default', hex: '#3b82f6' }, // fallback color for drawing when no annotations exist yet
