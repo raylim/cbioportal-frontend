@@ -138,7 +138,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
     /** Tooltip shown when clicking an annotation */
     @observable private annotationTooltip: { x: number; y: number; text: string } | null = null;
     /** Active Annotorious drawing tool, or null when not drawing. */
-    @observable private activeDrawingTool: 'rectangle' | 'polygon' | null = null;
+    @observable private activeDrawingTool: 'rectangle' | 'ellipse' | 'circle' | 'line' | 'polygon' | null = null;
     /** User-added palette entries (persisted to localStorage). */
     @observable private customColors: NamedColor[] = loadNamedColors();
     /**
@@ -615,7 +615,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
     }
 
     @action.bound
-    setDrawingTool(tool: 'rectangle' | 'polygon' | null) {
+    setDrawingTool(tool: 'rectangle' | 'ellipse' | 'circle' | 'line' | 'polygon' | null) {
         if (!this.annotorious) return;
         if (tool === null || tool === this.activeDrawingTool) {
             // Cancel any active drawing and deactivate.
@@ -624,8 +624,8 @@ export default class WSIViewer extends React.Component<Props, {}> {
             this.activeDrawingTool = null;
         } else {
             this.annotorious.setDrawingTool(tool);
-            // 'drag' mode: click-drag to draw shape; also disables OSD pan so events reach Annotorious.
-            this.annotorious.setDrawingMode('drag');
+            // polygon uses click-to-add-points mode; all others use drag.
+            this.annotorious.setDrawingMode(tool === 'polygon' ? 'click' : 'drag');
             this.annotorious.setDrawingEnabled(true);
             this.activeDrawingTool = tool;
             // Ensure annotations overlay is visible while drawing.
@@ -1723,9 +1723,19 @@ export function MetaSidebar({ slide, sample, meta, tileServerBase, studyId, anno
 // ---- DrawToolbar ----
 // Second toolbar row rendered below CoordBar; shown only when annotations are active.
 
+export type DrawingToolId = 'rectangle' | 'ellipse' | 'circle' | 'line' | 'polygon';
+
+const DRAW_TOOLS: { id: DrawingToolId; label: string; icon: string; hint: string }[] = [
+    { id: 'rectangle', icon: '◻', label: 'Rect',    hint: 'Draw a rectangle — click and drag on the slide' },
+    { id: 'ellipse',   icon: '⬭', label: 'Ellipse', hint: 'Draw an ellipse — click and drag on the slide' },
+    { id: 'circle',    icon: '○', label: 'Circle',  hint: 'Draw a circle — click and drag from center' },
+    { id: 'line',      icon: '╱', label: 'Line',    hint: 'Draw a line — click and drag on the slide' },
+    { id: 'polygon',   icon: '⬡', label: 'Poly',    hint: 'Draw a polygon — click to add points, double-click to close' },
+];
+
 export interface DrawToolbarProps {
-    drawingTool: 'rectangle' | 'polygon' | null;
-    onSetDrawingTool: (tool: 'rectangle' | 'polygon' | null) => void;
+    drawingTool: DrawingToolId | null;
+    onSetDrawingTool: (tool: DrawingToolId | null) => void;
     namedColors: NamedColor[];
     activeColorHex: string;
     activeColorName: string;
@@ -1759,32 +1769,24 @@ export function DrawToolbar({
             fontSize: 11, backdropFilter: 'blur(2px)', zIndex: 10,
         }}>
             {/* Draw shape buttons */}
-            <button
-                onClick={() => onSetDrawingTool(drawingTool === 'rectangle' ? null : 'rectangle')}
-                title={drawingTool === 'rectangle' ? 'Cancel drawing (Esc)' : 'Draw a rectangle annotation — click and drag on the slide'}
-                style={{
-                    padding: '2px 9px', fontSize: 11, cursor: 'pointer', borderRadius: 3, lineHeight: '18px',
-                    border: `1px solid ${drawingTool === 'rectangle' ? '#c0392b' : C.border}`,
-                    background: drawingTool === 'rectangle' ? '#fde8e8' : '#fff',
-                    color: drawingTool === 'rectangle' ? '#c0392b' : C.muted,
-                    fontWeight: drawingTool === 'rectangle' ? 600 : 400,
-                }}
-            >
-                {drawingTool === 'rectangle' ? '✕ Cancel draw' : '◻ Draw rect'}
-            </button>
-            <button
-                onClick={() => onSetDrawingTool(drawingTool === 'polygon' ? null : 'polygon')}
-                title={drawingTool === 'polygon' ? 'Cancel drawing (Esc)' : 'Draw a polygon annotation — click to add points, double-click to close'}
-                style={{
-                    padding: '2px 9px', fontSize: 11, cursor: 'pointer', borderRadius: 3, lineHeight: '18px',
-                    border: `1px solid ${drawingTool === 'polygon' ? '#c0392b' : C.border}`,
-                    background: drawingTool === 'polygon' ? '#fde8e8' : '#fff',
-                    color: drawingTool === 'polygon' ? '#c0392b' : C.muted,
-                    fontWeight: drawingTool === 'polygon' ? 600 : 400,
-                }}
-            >
-                {drawingTool === 'polygon' ? '✕ Cancel draw' : '⬡ Draw poly'}
-            </button>
+            {DRAW_TOOLS.map(({ id, icon, label, hint }) => {
+                const isActive = drawingTool === id;
+                return (
+                    <button key={id}
+                        onClick={() => onSetDrawingTool(isActive ? null : id)}
+                        title={isActive ? 'Cancel drawing (Esc)' : hint}
+                        style={{
+                            padding: '2px 9px', fontSize: 11, cursor: 'pointer', borderRadius: 3, lineHeight: '18px',
+                            border: `1px solid ${isActive ? '#c0392b' : C.border}`,
+                            background: isActive ? '#fde8e8' : '#fff',
+                            color: isActive ? '#c0392b' : C.muted,
+                            fontWeight: isActive ? 600 : 400,
+                        }}
+                    >
+                        {isActive ? '✕ Cancel draw' : `${icon} ${label}`}
+                    </button>
+                );
+            })}
 
             <span style={{ width: 1, height: 16, background: C.border, margin: '0 2px' }} />
 

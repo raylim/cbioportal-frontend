@@ -667,7 +667,7 @@ test.describe('WSI viewer — live annotation API (Option C)', () => {
 
 // ---- Drawing tool tests (Option C) ----
 //
-// These tests verify that the Draw rect / Draw poly toolbar buttons activate
+// These tests verify that the drawing tool toolbar buttons activate
 // drawing mode (button state changes) and cancel on Escape or second click.
 // They use the mock annotation API so no live tile server is needed for the
 // button-state tests.  The actual drag-to-draw test does need the live Annotorious
@@ -678,8 +678,7 @@ test.describe('WSI viewer — drawing tools (Option C)', () => {
         test.skip(!BASE_URL, 'WSI_VIEWER_BASE_URL not set — skipping drawing tool tests');
     });
 
-    // CoordBar draw buttons are distinguished by their longer title (includes "click and drag").
-    // Sidebar draw buttons have a shorter title. Use .first() where strict-mode would fail.
+    // Rect button is selected by title containing "Draw a rectangle" (unique among tools).
 
     test('Draw rect button in CoordBar activates and shows cancel state', async ({ page }) => {
         await gotoViewerWithAnnotationApi(page);
@@ -687,7 +686,7 @@ test.describe('WSI viewer — drawing tools (Option C)', () => {
             timeout: 30_000,
         });
 
-        const rectBtn = page.locator('button[title*="click and drag"]');
+        const rectBtn = page.locator('button[title*="Draw a rectangle"]');
         await expect(rectBtn).toBeVisible({ timeout: 10_000 });
 
         // Click to activate — CoordBar button switches to "✕ Cancel draw".
@@ -722,7 +721,7 @@ test.describe('WSI viewer — drawing tools (Option C)', () => {
 
         // DrawToolbar shows below CoordBar when annotations are active.
         // Buttons share title substring with the ones defined in DrawToolbar.
-        const rectBtn = page.locator('button[title*="click and drag"]');
+        const rectBtn = page.locator('button[title*="Draw a rectangle"]');
         const polyBtn = page.locator('button[title*="double-click to close"]').first();
         await expect(rectBtn).toBeVisible({ timeout: 10_000 });
         await expect(polyBtn).toBeVisible({ timeout: 10_000 });
@@ -734,7 +733,7 @@ test.describe('WSI viewer — drawing tools (Option C)', () => {
             timeout: 30_000,
         });
 
-        const rectBtn = page.locator('button[title*="click and drag"]');
+        const rectBtn = page.locator('button[title*="Draw a rectangle"]');
         await expect(rectBtn).toBeVisible({ timeout: 10_000 });
         await rectBtn.click();
 
@@ -750,7 +749,7 @@ test.describe('WSI viewer — drawing tools (Option C)', () => {
         });
 
         // Activate rect drawing via CoordBar.
-        await page.locator('button[title*="click and drag"]').click();
+        await page.locator('button[title*="Draw a rectangle"]').click();
         await expect(
             page.locator('button', { hasText: '✕ Cancel draw' })
         ).toBeVisible({ timeout: 5_000 });
@@ -758,7 +757,7 @@ test.describe('WSI viewer — drawing tools (Option C)', () => {
         // Press Escape — should return to inactive state.
         await page.keyboard.press('Escape');
         await expect(
-            page.locator('button', { hasText: '◻ Draw rect' }).first()
+            page.locator('button', { hasText: '◻ Rect' }).first()
         ).toBeVisible({ timeout: 5_000 });
     });
 
@@ -769,14 +768,14 @@ test.describe('WSI viewer — drawing tools (Option C)', () => {
         });
 
         // Activate via CoordBar.
-        await page.locator('button[title*="click and drag"]').click();
+        await page.locator('button[title*="Draw a rectangle"]').click();
         const cancelBtn = page.locator('button', { hasText: '✕ Cancel draw' });
         await expect(cancelBtn).toBeVisible({ timeout: 5_000 });
 
         // Click cancel → back to inactive.
         await cancelBtn.click();
         await expect(
-            page.locator('button', { hasText: '◻ Draw rect' }).first()
+            page.locator('button', { hasText: '◻ Rect' }).first()
         ).toBeVisible({ timeout: 5_000 });
     });
 
@@ -811,7 +810,7 @@ test.describe('WSI viewer — drawing tools (Option C)', () => {
         await page.waitForTimeout(4_000);
 
         // Activate rectangle drawing via CoordBar.
-        await page.locator('button[title*="click and drag"]').click();
+        await page.locator('button[title*="Draw a rectangle"]').click();
         await expect(
             page.locator('button', { hasText: '✕ Cancel draw' })
         ).toBeVisible({ timeout: 5_000 });
@@ -1028,7 +1027,7 @@ test.describe('WSI viewer — annotation labels (Option C)', () => {
         await expect(page.locator('button:has-text("Share view")')).toBeVisible({ timeout: 30_000 });
 
         // Draw a rectangle by dragging on the viewer canvas.
-        await page.locator('button:has-text("◻ Draw rect")').click();
+        await page.locator('button:has-text("◻ Rect")').click();
         const canvas = page.locator('.openseadragon-canvas canvas, .openseadragon-canvas').first();
         const box = await canvas.boundingBox();
         if (box) {
