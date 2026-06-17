@@ -2097,6 +2097,11 @@ export default class WSIViewer extends React.Component<Props, {}> {
             return;
         }
 
+        // Push navigator thumbnail above the CoordBar (~40px tall) at the bottom.
+        // OSD v6 BOTTOM_RIGHT sets `bottom:0`; we override to clear the bar.
+        const navEl = this.osdViewer.navigator?.element as HTMLElement | undefined;
+        if (navEl) navEl.style.bottom = '48px';
+
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         this.osdViewer.addOnceHandler('open', () => {
             if (seq !== this.mountSeq) return;
