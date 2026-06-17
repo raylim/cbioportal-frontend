@@ -848,6 +848,253 @@ test.describe('WSI viewer — drawing tools (Option C)', () => {
             // best-effort cleanup
         }
     });
+
+    test('Ellipse tool button activates drawing mode', async ({ page }) => {
+        await gotoViewerWithAnnotationApi(page);
+        await expect(page.locator('button:has-text("Share view")')).toBeVisible({
+            timeout: 30_000,
+        });
+
+        const ellipseBtn = page.locator('button[title*="Draw an ellipse"]');
+        await expect(ellipseBtn).toBeVisible({ timeout: 10_000 });
+        await ellipseBtn.click();
+
+        await expect(page.locator('button', { hasText: '✕ Cancel draw' })).toBeVisible({
+            timeout: 5_000,
+        });
+    });
+
+    test('Circle tool button activates drawing mode', async ({ page }) => {
+        await gotoViewerWithAnnotationApi(page);
+        await expect(page.locator('button:has-text("Share view")')).toBeVisible({
+            timeout: 30_000,
+        });
+
+        const circleBtn = page.locator('button[title*="Draw a circle"]');
+        await expect(circleBtn).toBeVisible({ timeout: 10_000 });
+        await circleBtn.click();
+
+        await expect(page.locator('button', { hasText: '✕ Cancel draw' })).toBeVisible({
+            timeout: 5_000,
+        });
+    });
+
+    test('Line tool button activates drawing mode', async ({ page }) => {
+        await gotoViewerWithAnnotationApi(page);
+        await expect(page.locator('button:has-text("Share view")')).toBeVisible({
+            timeout: 30_000,
+        });
+
+        const lineBtn = page.locator('button[title*="Draw a line"]');
+        await expect(lineBtn).toBeVisible({ timeout: 10_000 });
+        await lineBtn.click();
+
+        await expect(page.locator('button', { hasText: '✕ Cancel draw' })).toBeVisible({
+            timeout: 5_000,
+        });
+    });
+
+    test('Draw ellipse: drag creates annotation saved to API', async ({ page }) => {
+        test.skip(!LIVE_ANNO_API, 'TILE_SERVER_URL not set — skipping ellipse draw test');
+
+        // Listen for console logs to debug
+        page.on('console', msg => {
+            if (msg.text().includes('WSIViewer')) {
+                console.log('[Browser console]', msg.text());
+            }
+        });
+
+        await page.addInitScript((apiUrl: string) => {
+            localStorage.setItem(
+                'frontendConfig',
+                JSON.stringify({ serverConfig: { msk_wsi_annotation_api_url: apiUrl } })
+            );
+        }, LIVE_ANNO_API);
+
+        const postRequests: string[] = [];
+        await page.route(`${LIVE_ANNO_API}/annotations`, async (route) => {
+            if (route.request().method() === 'POST') {
+                postRequests.push(route.request().url());
+                await route.continue();
+            } else {
+                await route.continue();
+            }
+        });
+
+        await page.goto(viewerUrl());
+        await expect(page.locator('button:has-text("Share view")')).toBeVisible({
+            timeout: 30_000,
+        });
+        await page.waitForTimeout(4_000);
+
+        // Activate ellipse drawing.
+        await page.locator('button[title*="Draw an ellipse"]').click();
+        await expect(
+            page.locator('button', { hasText: '✕ Cancel draw' })
+        ).toBeVisible({ timeout: 5_000 });
+
+        // Drag across the OSD canvas to draw an ellipse.
+        const canvas = page.locator('.openseadragon-canvas').first();
+        const box = await canvas.boundingBox();
+        expect(box).not.toBeNull();
+        const cx = box!.x + box!.width * 0.4;
+        const cy = box!.y + box!.height * 0.4;
+        await page.mouse.move(cx, cy);
+        await page.mouse.down();
+        for (let i = 1; i <= 15; i++) {
+            await page.mouse.move(cx + i * 10, cy + i * 7);
+        }
+        await page.mouse.up();
+
+        await page.waitForTimeout(3_000);
+
+        // Verify a POST was made to the annotation API.
+        expect(postRequests.length).toBeGreaterThan(0);
+
+        try {
+            await cleanupLiveAnnotations(
+                page.request,
+                LIVE_ANNO_API,
+                LIVE_SLIDE_ID,
+                STUDY_ID,
+                ['']
+            );
+        } catch (_) {
+            // best-effort cleanup
+        }
+    });
+
+    test('Draw circle: drag creates annotation saved to API', async ({ page }) => {
+        test.skip(!LIVE_ANNO_API, 'TILE_SERVER_URL not set — skipping circle draw test');
+
+        page.on('console', msg => {
+            if (msg.text().includes('WSIViewer')) {
+                console.log('[Browser console]', msg.text());
+            }
+        });
+
+        await page.addInitScript((apiUrl: string) => {
+            localStorage.setItem(
+                'frontendConfig',
+                JSON.stringify({ serverConfig: { msk_wsi_annotation_api_url: apiUrl } })
+            );
+        }, LIVE_ANNO_API);
+
+        const postRequests: string[] = [];
+        await page.route(`${LIVE_ANNO_API}/annotations`, async (route) => {
+            if (route.request().method() === 'POST') {
+                postRequests.push(route.request().url());
+                await route.continue();
+            } else {
+                await route.continue();
+            }
+        });
+
+        await page.goto(viewerUrl());
+        await expect(page.locator('button:has-text("Share view")')).toBeVisible({
+            timeout: 30_000,
+        });
+        await page.waitForTimeout(4_000);
+
+        await page.locator('button[title*="Draw a circle"]').click();
+        await expect(
+            page.locator('button', { hasText: '✕ Cancel draw' })
+        ).toBeVisible({ timeout: 5_000 });
+
+        const canvas = page.locator('.openseadragon-canvas').first();
+        const box = await canvas.boundingBox();
+        expect(box).not.toBeNull();
+        const cx = box!.x + box!.width * 0.4;
+        const cy = box!.y + box!.height * 0.4;
+        await page.mouse.move(cx, cy);
+        await page.mouse.down();
+        for (let i = 1; i <= 15; i++) {
+            await page.mouse.move(cx + i * 10, cy + i * 7);
+        }
+        await page.mouse.up();
+
+        await page.waitForTimeout(3_000);
+
+        expect(postRequests.length).toBeGreaterThan(0);
+
+        try {
+            await cleanupLiveAnnotations(
+                page.request,
+                LIVE_ANNO_API,
+                LIVE_SLIDE_ID,
+                STUDY_ID,
+                ['']
+            );
+        } catch (_) {
+            // best-effort cleanup
+        }
+    });
+
+    test('Draw line: drag creates annotation saved to API', async ({ page }) => {
+        test.skip(!LIVE_ANNO_API, 'TILE_SERVER_URL not set — skipping line draw test');
+
+        page.on('console', msg => {
+            if (msg.text().includes('WSIViewer')) {
+                console.log('[Browser console]', msg.text());
+            }
+        });
+
+        await page.addInitScript((apiUrl: string) => {
+            localStorage.setItem(
+                'frontendConfig',
+                JSON.stringify({ serverConfig: { msk_wsi_annotation_api_url: apiUrl } })
+            );
+        }, LIVE_ANNO_API);
+
+        const postRequests: string[] = [];
+        await page.route(`${LIVE_ANNO_API}/annotations`, async (route) => {
+            if (route.request().method() === 'POST') {
+                postRequests.push(route.request().url());
+                await route.continue();
+            } else {
+                await route.continue();
+            }
+        });
+
+        await page.goto(viewerUrl());
+        await expect(page.locator('button:has-text("Share view")')).toBeVisible({
+            timeout: 30_000,
+        });
+        await page.waitForTimeout(4_000);
+
+        await page.locator('button[title*="Draw a line"]').click();
+        await expect(
+            page.locator('button', { hasText: '✕ Cancel draw' })
+        ).toBeVisible({ timeout: 5_000 });
+
+        const canvas = page.locator('.openseadragon-canvas').first();
+        const box = await canvas.boundingBox();
+        expect(box).not.toBeNull();
+        const cx = box!.x + box!.width * 0.4;
+        const cy = box!.y + box!.height * 0.4;
+        await page.mouse.move(cx, cy);
+        await page.mouse.down();
+        for (let i = 1; i <= 15; i++) {
+            await page.mouse.move(cx + i * 10, cy + i * 7);
+        }
+        await page.mouse.up();
+
+        await page.waitForTimeout(3_000);
+
+        expect(postRequests.length).toBeGreaterThan(0);
+
+        try {
+            await cleanupLiveAnnotations(
+                page.request,
+                LIVE_ANNO_API,
+                LIVE_SLIDE_ID,
+                STUDY_ID,
+                ['']
+            );
+        } catch (_) {
+            // best-effort cleanup
+        }
+    });
 });
 
 // ---- Named-color palette tests ----

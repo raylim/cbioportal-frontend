@@ -239,6 +239,8 @@ export default class WSIViewer extends React.Component<Props, {}> {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     private osdMouseTracker: any = null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    private customDrawTracker: any = null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     private annotorious: any = null;
     /** In-memory cache of prefetched slide metadata keyed by image_id */
     private metaCache = new Map<string, TileMetadata>();
@@ -1004,16 +1006,17 @@ export default class WSIViewer extends React.Component<Props, {}> {
             if (seq !== this.mountSeq) return;
             action(() => { this.viewerReady = true; })();
 
-            // Register OSD canvas event handlers for custom drawing tools FIRST
-            // (ellipse, circle, line) that Annotorious doesn't support natively.
-            // Must register BEFORE Annotorious to intercept mouse events.
+            // Create a dedicated MouseTracker for custom drawing tools (ellipse, circle, line)
+            // that Annotorious doesn't support natively. MouseTracker gets events before
+            // Annotorious since we create it first.
             const osdForDraw = this.osdViewer;
-            const customDrawHandler = {
-                press: action((event: any) => {
+            this.customDrawTracker = new (OpenSeadragon as any).MouseTracker({
+                element: osdForDraw.canvas,
+                pressHandler: action((event: any) => {
                     const tool = this.activeDrawingTool;
-                    if (tool !== 'ellipse' && tool !== 'circle' && tool !== 'line') return false;
-                    if (!osdForDraw.viewport) return false;
-                    console.log('[WSIViewer] canvas-press for', tool, event);
+                    if (tool !== 'ellipse' && tool !== 'circle' && tool !== 'line') return;
+                    if (!osdForDraw.viewport) return;
+                    console.log('[WSIViewer] MouseTracker press for', tool, event);
                     const px = event.position;
                     const vpPoint = osdForDraw.viewport.pointFromPixel(px);
                     const imgPoint = osdForDraw.viewport.viewportToImageCoordinates(vpPoint);
@@ -1025,11 +1028,10 @@ export default class WSIViewer extends React.Component<Props, {}> {
                         currentImg: { x: imgPoint.x, y: imgPoint.y },
                     };
                     event.preventDefaultAction = true;
-                    return true;
                 }),
-                drag: action((event: any) => {
-                    if (!this.customDrawState) return false;
-                    if (!osdForDraw.viewport) return false;
+                dragHandler: action((event: any) => {
+                    if (!this.customDrawState) return;
+                    if (!osdForDraw.viewport) return;
                     const px = event.position;
                     const vpPoint = osdForDraw.viewport.pointFromPixel(px);
                     const imgPoint = osdForDraw.viewport.viewportToImageCoordinates(vpPoint);
@@ -1039,21 +1041,16 @@ export default class WSIViewer extends React.Component<Props, {}> {
                         currentImg: { x: imgPoint.x, y: imgPoint.y },
                     };
                     event.preventDefaultAction = true;
-                    return true;
                 }),
-                release: action((event: any) => {
-                    if (!this.customDrawState) return false;
-                    console.log('[WSIViewer] canvas-release, finalizing shape');
+                releaseHandler: action((event: any) => {
+                    if (!this.customDrawState) return;
+                    console.log('[WSIViewer] MouseTracker release, finalizing shape');
                     const state = this.customDrawState;
                     this.customDrawState = null;
                     void this.finalizeCustomShape(state);
                     event.preventDefaultAction = true;
-                    return true;
                 }),
-            };
-            osdForDraw.addHandler('canvas-press', customDrawHandler.press);
-            osdForDraw.addHandler('canvas-drag', customDrawHandler.drag);
-            osdForDraw.addHandler('canvas-release', customDrawHandler.release);
+            });
 
             // Mount Annotorious (read-write) on top of OSD if annotation API is configured
             if (this.annotationApiBase && this.osdViewer) {
