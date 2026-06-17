@@ -924,14 +924,23 @@ export default class WSIViewer extends React.Component<Props, {}> {
         if (next.has(name)) next.delete(name); else next.add(name);
         this.hiddenLayerNames = next;
         this.applyLayerFilter();
-        // Deselect any annotation whose layer is now hidden — a hidden annotation
-        // should not remain in a selected/editable state on the canvas.
-        if (next.has(name) && this.annotorious) {
-            const selected = this.annotorious.getSelected();
-            const hasHiddenSelected = selected.some(
-                (ann: any) => (ann.layerName ?? DEFAULT_LAYER_NAME) === name
-            );
-            if (hasHiddenSelected) this.annotorious.cancelSelected();
+        // When hiding a layer: deselect canvas selection and cancel any in-progress
+        // label edit for annotations that belong to the now-hidden layer.
+        if (next.has(name)) {
+            if (this.annotorious) {
+                const selected = this.annotorious.getSelected();
+                const hasHiddenSelected = selected.some(
+                    (ann: any) => (ann.layerName ?? DEFAULT_LAYER_NAME) === name
+                );
+                if (hasHiddenSelected) this.annotorious.cancelSelected();
+            }
+            if (this.editingAnnotationId !== null) {
+                const editingAnn = this.annotations.find(a => a.id === this.editingAnnotationId);
+                if ((editingAnn as any)?.layerName === name ||
+                    (!((editingAnn as any)?.layerName) && name === DEFAULT_LAYER_NAME)) {
+                    this.cancelEditingLabel();
+                }
+            }
         }
     }
 
@@ -1974,7 +1983,7 @@ export function MetaSidebar({ slide, sample, meta, tileServerBase, studyId, anno
 
             {/* Annotations panel */}
             {annotationEnabled && (
-                <SbSection title={`Annotations (${annotations.length})`}>
+                <SbSection title={`Annotations (${annotations.filter(a => !hiddenLayerNames.has((a as any).layerName ?? DEFAULT_LAYER_NAME)).length})`}>
                     {annotationsLoading ? (
                         <span style={{ color: '#bbb', fontSize: 11 }}>Loading…</span>
                     ) : annotations.length === 0 ? (
@@ -1994,6 +2003,8 @@ export function MetaSidebar({ slide, sample, meta, tileServerBase, studyId, anno
                                 const colorName = ann.colorName ?? '';
                                 const annLayerName: string = (ann as any).layerName ?? DEFAULT_LAYER_NAME;
                                 const isEditing = editingAnnotationId === ann.id;
+                                // Hide annotations whose layer is currently hidden
+                                if (hiddenLayerNames.has(annLayerName)) return null;
                                 return (
                                     <div key={ann.id} style={{
                                         padding: '4px 0', borderBottom: `1px solid ${C.border}`,
