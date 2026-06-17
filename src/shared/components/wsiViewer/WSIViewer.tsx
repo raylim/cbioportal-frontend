@@ -3,7 +3,7 @@ import { observer } from 'mobx-react';
 import { observable, action, computed, makeObservable } from 'mobx';
 import LoadingIndicator from 'shared/components/loadingIndicator/LoadingIndicator';
 import * as OpenSeadragonLib from 'openseadragon';
-import { createOSDAnnotator } from '@annotorious/openseadragon';
+import { createOSDAnnotator, W3CImageFormat } from '@annotorious/openseadragon';
 import '@annotorious/openseadragon/annotorious-openseadragon.css';
 import {
     Slide,
@@ -1120,7 +1120,14 @@ export default class WSIViewer extends React.Component<Props, {}> {
             // Mount Annotorious (read-write) on top of OSD if annotation API is configured
             if (this.annotationApiBase && this.osdViewer) {
                 try {
-                    this.annotorious = createOSDAnnotator(this.osdViewer, { drawingEnabled: false, drawingMode: 'drag' });
+                    // W3CImageFormat adapter enables addAnnotation() / setAnnotations() to
+                    // accept W3C annotations with SvgSelector / FragmentSelector directly —
+                    // without it the selector is stored as-is and skipped by the renderer.
+                    this.annotorious = createOSDAnnotator(this.osdViewer, {
+                        drawingEnabled: false,
+                        drawingMode: 'drag',
+                        adapter: W3CImageFormat(this.selectedSlide?.image_id ?? ''),
+                    });
 
                     this.annotorious.on('createAnnotation', (ann: W3CAnnotation) => {
                         // Stamp color, layer, and auto-generate a sequential label, then save immediately.

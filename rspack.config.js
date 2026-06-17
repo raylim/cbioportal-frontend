@@ -486,6 +486,13 @@ var config = {
                             try {
                                 const json = JSON.parse(body);
                                 json.msk_wsi_annotation_api_url = annotationApiUrl;
+                                // Empty string tells the frontend to use the rspack proxy
+                                // for tile requests (proxied to WSI_TILE_SERVER, port 8081).
+                                // This makes the WSI H&E Slides tab visible without requiring
+                                // the backend config_service to have this key configured.
+                                if (json.msk_wsi_tile_server_url == null) {
+                                    json.msk_wsi_tile_server_url = '';
+                                }
                                 res.setHeader('Content-Type', 'application/json');
                                 res.end(JSON.stringify(json));
                             } catch {

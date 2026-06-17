@@ -278,10 +278,18 @@ async function gotoViewerWithAnnotationApi(page: any, hash = '') {
     // cBioPortal merges into the server config at bootstrap (highest precedence,
     // see config.ts initializeServerConfiguration).  The initScript runs before
     // any page scripts so the value is present when the React app first renders.
+    // msk_wsi_tile_server_url is set to '' (empty string = use rspack proxy to
+    // port 8081) so the WSI H&E Slides tab is added to the patient view even when
+    // the backend config_service doesn't have it configured.
     await page.addInitScript((apiUrl: string) => {
         localStorage.setItem(
             'frontendConfig',
-            JSON.stringify({ serverConfig: { msk_wsi_annotation_api_url: apiUrl } })
+            JSON.stringify({
+                serverConfig: {
+                    msk_wsi_annotation_api_url: apiUrl,
+                    msk_wsi_tile_server_url: '',
+                },
+            })
         );
     }, MOCK_ANNOTATION_URL);
 
