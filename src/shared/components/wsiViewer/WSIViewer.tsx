@@ -2533,7 +2533,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
                     <div
                         style={{
                             position: 'absolute',
-                            top: 8,
+                            top: 44,
                             left: 8,
                             display: 'flex',
                             flexDirection: 'column',
@@ -4603,6 +4603,7 @@ export function DrawToolbar({
                 alignItems: 'center',
                 gap: 6,
                 flexWrap: 'wrap',
+                // paddingLeft leaves space for the zoom/home button column (28px + 8px margin + gap)
                 padding: '4px 10px',
                 background: 'rgba(250,250,250,0.92)',
                 borderBottom: `1px solid ${C.border}`,
