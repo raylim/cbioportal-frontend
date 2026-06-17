@@ -1547,36 +1547,37 @@ test.describe('WSI viewer — annotation layers (Option C)', () => {
         await expect(toolbarToggle).toContainText('○');
     });
 
-    test('Hiding a layer with a selected annotation deselects it (no error thrown)', async ({ page }) => {
-        // Spy on console errors — cancelSelected() must not throw when the
-        // selected annotation's layer is hidden.
+    test('Hiding a layer removes its annotations from the sidebar and deselects on canvas', async ({ page }) => {
         const errors: string[] = [];
-        page.on('console', msg => {
-            if (msg.type() === 'error') errors.push(msg.text());
-        });
+        page.on('console', msg => { if (msg.type() === 'error') errors.push(msg.text()); });
         page.on('pageerror', err => errors.push(err.message));
 
         await gotoViewerWithAnnotationApi(page);
         await expect(page.locator('button:has-text("Share view")')).toBeVisible({ timeout: 30_000 });
 
-        // Show the draw toolbar, then toggle the Default layer off.
+        // MOCK_ANNOTATION is on the Default layer and must appear in the sidebar.
+        const annotationDot = page.locator('[data-annotation-layer="Default"]').first();
+        await expect(annotationDot).toBeVisible({ timeout: 10_000 });
+
         const toggleBtn = page.locator('[data-testid="layer-toggle-Default"]');
-        await expect(toggleBtn).toBeVisible({ timeout: 10_000 });
+        await expect(toggleBtn).toBeVisible({ timeout: 5_000 });
 
-        // Toggle the layer twice (hide, then show) — this exercises the branch
-        // that calls cancelSelected() when hiding a layer that may have a selection.
+        // Hide the Default layer → sidebar entry must disappear.
         await toggleBtn.click();
-        await expect(toggleBtn).toContainText('○');  // hidden
-        await toggleBtn.click();
-        await expect(toggleBtn).toContainText('●');  // visible again
+        await expect(toggleBtn).toContainText('○');
+        await expect(annotationDot).not.toBeVisible({ timeout: 3_000 });
 
-        // No JS errors should have been emitted during toggle.
-        const relevantErrors = errors.filter(e =>
+        // Show again → sidebar entry must reappear.
+        await toggleBtn.click();
+        await expect(toggleBtn).toContainText('●');
+        await expect(annotationDot).toBeVisible({ timeout: 3_000 });
+
+        // No JS errors during either toggle.
+        expect(errors.filter(e =>
             e.toLowerCase().includes('annotorious') ||
             e.toLowerCase().includes('cancelselected') ||
             e.toLowerCase().includes('undefined is not')
-        );
-        expect(relevantErrors).toHaveLength(0);
+        )).toHaveLength(0);
     });
 
     test('Mock annotation body.comment is used as layer name in sidebar', async ({ page }) => {

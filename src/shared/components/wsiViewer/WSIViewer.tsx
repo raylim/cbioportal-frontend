@@ -923,24 +923,19 @@ export default class WSIViewer extends React.Component<Props, {}> {
         const next = new Set(this.hiddenLayerNames);
         if (next.has(name)) next.delete(name); else next.add(name);
         this.hiddenLayerNames = next;
+        // Cancel selection BEFORE applying the filter: Annotorious renders the
+        // selection layer independently of setFilter, so a selected annotation
+        // from a hidden layer would still show handles and label popup unless we
+        // explicitly deselect it first.
+        if (next.has(name) && this.annotorious) {
+            this.annotorious.cancelSelected();
+        }
         this.applyLayerFilter();
-        // When hiding a layer: deselect canvas selection and cancel any in-progress
-        // label edit for annotations that belong to the now-hidden layer.
-        if (next.has(name)) {
-            if (this.annotorious) {
-                const selected = this.annotorious.getSelected();
-                const hasHiddenSelected = selected.some(
-                    (ann: any) => (ann.layerName ?? DEFAULT_LAYER_NAME) === name
-                );
-                if (hasHiddenSelected) this.annotorious.cancelSelected();
-            }
-            if (this.editingAnnotationId !== null) {
-                const editingAnn = this.annotations.find(a => a.id === this.editingAnnotationId);
-                if ((editingAnn as any)?.layerName === name ||
-                    (!((editingAnn as any)?.layerName) && name === DEFAULT_LAYER_NAME)) {
-                    this.cancelEditingLabel();
-                }
-            }
+        // Also cancel any in-progress label edit for the hidden layer.
+        if (next.has(name) && this.editingAnnotationId !== null) {
+            const editingAnn = this.annotations.find(a => a.id === this.editingAnnotationId);
+            const editingLayer = (editingAnn as any)?.layerName ?? DEFAULT_LAYER_NAME;
+            if (editingLayer === name) this.cancelEditingLabel();
         }
     }
 
