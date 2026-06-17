@@ -927,16 +927,23 @@ export default class WSIViewer extends React.Component<Props, {}> {
         // selection layer independently of setFilter, so a selected annotation
         // from a hidden layer would still show handles and label popup unless we
         // explicitly deselect it first.
-        if (next.has(name) && this.annotorious) {
-            this.annotorious.cancelSelected();
+        if (next.has(name)) {
+            // Clear the click-to-show tooltip popup regardless of which layer's
+            // annotation it belongs to — we can't cheaply check ownership here.
+            this.annotationTooltip = null;
+            // Clear Annotorious canvas selection handles + label popup.
+            if (this.annotorious) this.annotorious.cancelSelected();
+            // Cancel any in-progress label edit for the hidden layer.
+            if (this.editingAnnotationId !== null) {
+                const editingAnn = this.annotations.find(
+                    a => a.id === this.editingAnnotationId
+                );
+                const editingLayer =
+                    (editingAnn as any)?.layerName ?? DEFAULT_LAYER_NAME;
+                if (editingLayer === name) this.cancelEditingLabel();
+            }
         }
         this.applyLayerFilter();
-        // Also cancel any in-progress label edit for the hidden layer.
-        if (next.has(name) && this.editingAnnotationId !== null) {
-            const editingAnn = this.annotations.find(a => a.id === this.editingAnnotationId);
-            const editingLayer = (editingAnn as any)?.layerName ?? DEFAULT_LAYER_NAME;
-            if (editingLayer === name) this.cancelEditingLabel();
-        }
     }
 
     private applyLayerFilter() {
@@ -1187,6 +1194,15 @@ export default class WSIViewer extends React.Component<Props, {}> {
                             })();
                         }
                     });
+                    // Expose a test hook so Playwright tests can simulate clickAnnotation.
+                    (window as any).__wsiAnnotoriousClickHook = (ann: W3CAnnotation, originalEvent: { clientX: number; clientY: number }) => {
+                        const label = ann.body?.[0]?.value ?? '';
+                        if (label) {
+                            action(() => {
+                                this.annotationTooltip = { x: originalEvent.clientX, y: originalEvent.clientY, text: label };
+                            })();
+                        }
+                    };
 
                     // Push any already-loaded annotations into Annotorious
                     if (this.annotations.length > 0) {
@@ -1367,6 +1383,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
                     )}
                     {this.annotationTooltip && (
                         <div
+                            data-testid="annotation-tooltip"
                             onClick={action(() => { this.annotationTooltip = null; })}
                             style={{
                                 position: 'fixed',
