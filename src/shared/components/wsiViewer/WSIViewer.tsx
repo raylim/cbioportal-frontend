@@ -352,6 +352,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
         x: number;
         y: number;
         text: string;
+        layerName?: string;
     } | null = null;
     /** Active Annotorious drawing tool, or null when not drawing. */
     @observable private activeDrawingTool:
@@ -2284,6 +2285,9 @@ export default class WSIViewer extends React.Component<Props, {}> {
                                         x: originalEvent.clientX,
                                         y: originalEvent.clientY,
                                         text: label,
+                                        layerName:
+                                            (ann as any).layerName ||
+                                            undefined,
                                     };
                                 })();
                             }
@@ -2301,6 +2305,8 @@ export default class WSIViewer extends React.Component<Props, {}> {
                                     x: originalEvent.clientX,
                                     y: originalEvent.clientY,
                                     text: label,
+                                    layerName:
+                                        (ann as any).layerName || undefined,
                                 };
                             })();
                         }
@@ -2714,6 +2720,17 @@ export default class WSIViewer extends React.Component<Props, {}> {
                             }}
                         >
                             {this.annotationTooltip.text}
+                            {this.annotationTooltip.layerName && (
+                                <div
+                                    style={{
+                                        marginTop: 2,
+                                        fontSize: 10,
+                                        opacity: 0.7,
+                                    }}
+                                >
+                                    Layer: {this.annotationTooltip.layerName}
+                                </div>
+                            )}
                         </div>
                     )}
                 </div>
