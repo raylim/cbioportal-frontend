@@ -1057,45 +1057,54 @@ export default class WSIViewer extends React.Component<Props, {}> {
 
             // Register OSD canvas event handlers for custom drawing tools
             // (ellipse, circle, line) that Annotorious doesn't support natively.
-            // These intercept press/drag/release to draw a shape preview and
-            // finalize it as a W3C annotation on mouse release.
+            // NOTE: Must be registered BEFORE Annotorious handlers to take precedence.
             const osdForDraw = this.osdViewer;
-            osdForDraw.addHandler('canvas-press', action((event: any) => {
-                const tool = this.activeDrawingTool;
-                if (tool !== 'ellipse' && tool !== 'circle' && tool !== 'line') return;
-                if (!osdForDraw.viewport) return;
-                const px = event.position;
-                const vpPoint = osdForDraw.viewport.pointFromPixel(px);
-                const imgPoint = osdForDraw.viewport.viewportToImageCoordinates(vpPoint);
-                this.customDrawState = {
-                    tool,
-                    startPx: { x: px.x, y: px.y },
-                    currentPx: { x: px.x, y: px.y },
-                    startImg: { x: imgPoint.x, y: imgPoint.y },
-                    currentImg: { x: imgPoint.x, y: imgPoint.y },
-                };
-                event.preventDefaultAction = true;
-            }));
-            osdForDraw.addHandler('canvas-drag', action((event: any) => {
-                if (!this.customDrawState) return;
-                if (!osdForDraw.viewport) return;
-                const px = event.position;
-                const vpPoint = osdForDraw.viewport.pointFromPixel(px);
-                const imgPoint = osdForDraw.viewport.viewportToImageCoordinates(vpPoint);
-                this.customDrawState = {
-                    ...this.customDrawState,
-                    currentPx: { x: px.x, y: px.y },
-                    currentImg: { x: imgPoint.x, y: imgPoint.y },
-                };
-                event.preventDefaultAction = true;
-            }));
-            osdForDraw.addHandler('canvas-release', action((event: any) => {
-                if (!this.customDrawState) return;
-                const state = this.customDrawState;
-                this.customDrawState = null;
-                void this.finalizeCustomShape(state);
-                event.preventDefaultAction = true;
-            }));
+            const customDrawHandler = {
+                press: action((event: any) => {
+                    const tool = this.activeDrawingTool;
+                    if (tool !== 'ellipse' && tool !== 'circle' && tool !== 'line') return false;
+                    if (!osdForDraw.viewport) return false;
+                    console.log('[WSIViewer] canvas-press for', tool, event);
+                    const px = event.position;
+                    const vpPoint = osdForDraw.viewport.pointFromPixel(px);
+                    const imgPoint = osdForDraw.viewport.viewportToImageCoordinates(vpPoint);
+                    this.customDrawState = {
+                        tool,
+                        startPx: { x: px.x, y: px.y },
+                        currentPx: { x: px.x, y: px.y },
+                        startImg: { x: imgPoint.x, y: imgPoint.y },
+                        currentImg: { x: imgPoint.x, y: imgPoint.y },
+                    };
+                    event.preventDefaultAction = true;
+                    return true;
+                }),
+                drag: action((event: any) => {
+                    if (!this.customDrawState) return false;
+                    if (!osdForDraw.viewport) return false;
+                    const px = event.position;
+                    const vpPoint = osdForDraw.viewport.pointFromPixel(px);
+                    const imgPoint = osdForDraw.viewport.viewportToImageCoordinates(vpPoint);
+                    this.customDrawState = {
+                        ...this.customDrawState,
+                        currentPx: { x: px.x, y: px.y },
+                        currentImg: { x: imgPoint.x, y: imgPoint.y },
+                    };
+                    event.preventDefaultAction = true;
+                    return true;
+                }),
+                release: action((event: any) => {
+                    if (!this.customDrawState) return false;
+                    console.log('[WSIViewer] canvas-release, finalizing shape');
+                    const state = this.customDrawState;
+                    this.customDrawState = null;
+                    void this.finalizeCustomShape(state);
+                    event.preventDefaultAction = true;
+                    return true;
+                }),
+            };
+            osdForDraw.addHandler('canvas-press', customDrawHandler.press);
+            osdForDraw.addHandler('canvas-drag', customDrawHandler.drag);
+            osdForDraw.addHandler('canvas-release', customDrawHandler.release);
 
             // Restore viewport position from URL hash if present for this slide,
             // otherwise center on the middle of the image.
