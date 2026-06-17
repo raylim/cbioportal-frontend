@@ -446,6 +446,26 @@ export default class WSIViewer extends React.Component<Props, {}> {
         return result;
     }
 
+    /** Annotations grouped by layer name — memoized to avoid O(n×layers) filter in render. */
+    @computed get annotationsByLayer(): Map<string, W3CAnnotation[]> {
+        const result = new Map<string, W3CAnnotation[]>();
+        for (const ann of this.annotations) {
+            const layer = (ann as any).layerName ?? DEFAULT_LAYER_NAME;
+            if (!result.has(layer)) result.set(layer, []);
+            result.get(layer)!.push(ann);
+        }
+        return result;
+    }
+
+    /** Count of annotations not in a hidden layer — memoized. */
+    @computed get visibleAnnotationCount(): number {
+        let count = 0;
+        for (const [layer, anns] of this.annotationsByLayer) {
+            if (!this.hiddenLayerNames.has(layer)) count += anns.length;
+        }
+        return count;
+    }
+
     /** Maps annotation ID → hex color for live Annotorious style lookup. */
     private annotationColorMap = new Map<string, string>();
     /** ID of the annotation currently being label-edited in the sidebar, or null. */
@@ -1635,6 +1655,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
                 throw new Error(`${resp.status}`);
             action(() => {
                 this.annotations = this.annotations.filter(a => a.id !== annId);
+                this.annotationColorMap.delete(annId);
             })();
         } catch (e) {
             // eslint-disable-next-line no-console
@@ -3975,6 +3996,24 @@ export function MetaSidebar({
         setNewLayerName('');
     };
 
+    // Group annotations by layer once; avoids O(n×layers) filter calls in render.
+    const annotationsByLayer = React.useMemo(() => {
+        const result = new Map<string, number>();
+        for (const ann of annotations) {
+            const layer = (ann as any).layerName ?? DEFAULT_LAYER_NAME;
+            result.set(layer, (result.get(layer) ?? 0) + 1);
+        }
+        return result;
+    }, [annotations]);
+
+    const visibleAnnotationCount = React.useMemo(() => {
+        let count = 0;
+        for (const [layer, n] of annotationsByLayer) {
+            if (!hiddenLayerNames.has(layer)) count += n;
+        }
+        return count;
+    }, [annotationsByLayer, hiddenLayerNames]);
+
     return (
         <div
             style={{
@@ -4032,11 +4071,7 @@ export function MetaSidebar({
                         {layerNames.map(name => {
                             const isHidden = hiddenLayerNames.has(name);
                             const isActive = activeLayerName === name;
-                            const count = annotations.filter(
-                                a =>
-                                    ((a as any).layerName ??
-                                        DEFAULT_LAYER_NAME) === name
-                            ).length;
+                            const count = annotationsByLayer.get(name) ?? 0;
                             return (
                                 <div
                                     key={name}
@@ -4240,14 +4275,7 @@ export function MetaSidebar({
             {/* Annotations panel */}
             {annotationEnabled && (
                 <SbSection
-                    title={`Annotations (${
-                        annotations.filter(
-                            a =>
-                                !hiddenLayerNames.has(
-                                    (a as any).layerName ?? DEFAULT_LAYER_NAME
-                                )
-                        ).length
-                    })`}
+                    title={`Annotations (${visibleAnnotationCount})`}
                 >
                     {annotationsLoading ? (
                         <span style={emptyStateStyle}>
@@ -5207,6 +5235,12 @@ function MutationTable({
     const details = sample.oncogenic_mutation_details;
     if (!muts.length || details === undefined) return null;
 
+    const cnaByGene = React.useMemo(() => {
+        const map = new Map<string, NonNullable<typeof sample.cna_alterations>[0]>();
+        for (const cna of sample.cna_alterations ?? []) map.set(cna.gene, cna);
+        return map;
+    }, [sample.cna_alterations]);
+
     const [tooltip, setTooltip] = React.useState<{
         idx: number;
         x: number;
@@ -5259,9 +5293,7 @@ function MutationTable({
                         const hasOncoKbData = !!(
                             d?.oncogenic || d?.mutationEffect
                         );
-                        const cnaForGene = sample.cna_alterations?.find(
-                            c => c.gene === gene
-                        );
+                        const cnaForGene = cnaByGene.get(gene);
                         const variantTitleParts: string[] = [];
                         if (d?.vaf != null)
                             variantTitleParts.push(`VAF: ${d.vaf}%`);
