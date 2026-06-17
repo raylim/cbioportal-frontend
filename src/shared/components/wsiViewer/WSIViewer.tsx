@@ -222,6 +222,16 @@ export default class WSIViewer extends React.Component<Props, {}> {
     @observable private editingAnnotationId: string | null = null;
     /** Current text in the sidebar inline label editor. */
     @observable private editingLabelText = '';
+    /** In-progress custom shape draw (ellipse/circle/line) — both screen and image coords. */
+    @observable.ref private customDrawState: {
+        tool: 'ellipse' | 'circle' | 'line';
+        /** Screen pixels relative to the OSD viewer element (for SVG preview). */
+        startPx: { x: number; y: number };
+        currentPx: { x: number; y: number };
+        /** Image pixels (for annotation target). */
+        startImg: { x: number; y: number };
+        currentImg: { x: number; y: number };
+    } | null = null;
 
     private viewerContainerRef = React.createRef<HTMLDivElement>();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -676,6 +686,14 @@ export default class WSIViewer extends React.Component<Props, {}> {
             try { this.annotorious.cancelDrawing(); } catch (_) { /* ignore */ }
             this.annotorious.setDrawingEnabled(false);
             this.activeDrawingTool = null;
+            this.customDrawState = null;
+        } else if (tool === 'ellipse' || tool === 'circle' || tool === 'line') {
+            // Annotorious doesn't bundle these shapes as drawing tools.
+            // OSD canvas-press/drag/release handlers take over (see mountOSD).
+            try { this.annotorious.cancelDrawing(); } catch (_) { /* ignore */ }
+            this.annotorious.setDrawingEnabled(false);
+            this.activeDrawingTool = tool;
+            if (!this.annotationsVisible) this.toggleAnnotationsVisible();
         } else {
             this.annotorious.setDrawingTool(tool);
             // polygon uses click-to-add-points mode; all others use drag.
@@ -693,6 +711,60 @@ export default class WSIViewer extends React.Component<Props, {}> {
             if (this.activeDrawingTool !== null) this.setDrawingTool(null);
             if (this.editingAnnotationId !== null) this.cancelEditingLabel();
         }
+    }
+
+    /**
+     * Finalize a custom-drawn shape (ellipse / circle / line) after the user
+     * releases the mouse. Builds a W3C annotation with an SVG selector,
+     * adds it to Annotorious for immediate display, then persists it to the API.
+     */
+    private async finalizeCustomShape(state: {
+        tool: 'ellipse' | 'circle' | 'line';
+        startImg: { x: number; y: number };
+        currentImg: { x: number; y: number };
+    }) {
+        const { tool, startImg, currentImg } = state;
+        const x1 = startImg.x, y1 = startImg.y;
+        const x2 = currentImg.x, y2 = currentImg.y;
+
+        let svgValue: string;
+        if (tool === 'ellipse') {
+            const cx = (x1 + x2) / 2, cy = (y1 + y2) / 2;
+            const rx = Math.abs(x2 - x1) / 2, ry = Math.abs(y2 - y1) / 2;
+            if (rx < 3 || ry < 3) return;
+            svgValue = `<svg><ellipse cx="${cx.toFixed(2)}" cy="${cy.toFixed(2)}" rx="${rx.toFixed(2)}" ry="${ry.toFixed(2)}" /></svg>`;
+        } else if (tool === 'circle') {
+            const cx = (x1 + x2) / 2, cy = (y1 + y2) / 2;
+            const r = Math.min(Math.abs(x2 - x1), Math.abs(y2 - y1)) / 2;
+            if (r < 3) return;
+            svgValue = `<svg><circle cx="${cx.toFixed(2)}" cy="${cy.toFixed(2)}" r="${r.toFixed(2)}" /></svg>`;
+        } else {
+            const len = Math.hypot(x2 - x1, y2 - y1);
+            if (len < 3) return;
+            svgValue = `<svg><line x1="${x1.toFixed(2)}" y1="${y1.toFixed(2)}" x2="${x2.toFixed(2)}" y2="${y2.toFixed(2)}" /></svg>`;
+        }
+
+        const id = `ann-custom-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+        const autoLabel = this.nextAutoLabel();
+        const ann: W3CAnnotation = {
+            id,
+            type: 'Annotation',
+            body: [{ type: 'TextualBody' as const, value: autoLabel, purpose: 'commenting' as const }],
+            target: {
+                source: this.selectedSlide?.image_id ?? '',
+                selector: { type: 'SvgSelector', value: svgValue },
+            },
+        } as any;
+        (ann as any).colorName = this.activeColorName;
+        (ann as any).color = this.activeColorHex;
+        (ann as any).layerName = this.activeLayerName;
+        this.annotationColorMap.set(id, this.activeColorHex);
+
+        // Add to Annotorious so the shape renders immediately.
+        try { this.annotorious?.addAnnotation(ann); } catch (_) { /* ignore */ }
+
+        action(() => { this.activeDrawingTool = null; })();
+        void this.saveNewAnnotation(ann);
     }
 
     /**
@@ -983,6 +1055,48 @@ export default class WSIViewer extends React.Component<Props, {}> {
                 }
             }
 
+            // Register OSD canvas event handlers for custom drawing tools
+            // (ellipse, circle, line) that Annotorious doesn't support natively.
+            // These intercept press/drag/release to draw a shape preview and
+            // finalize it as a W3C annotation on mouse release.
+            const osdForDraw = this.osdViewer;
+            osdForDraw.addHandler('canvas-press', action((event: any) => {
+                const tool = this.activeDrawingTool;
+                if (tool !== 'ellipse' && tool !== 'circle' && tool !== 'line') return;
+                if (!osdForDraw.viewport) return;
+                const px = event.position;
+                const vpPoint = osdForDraw.viewport.pointFromPixel(px);
+                const imgPoint = osdForDraw.viewport.viewportToImageCoordinates(vpPoint);
+                this.customDrawState = {
+                    tool,
+                    startPx: { x: px.x, y: px.y },
+                    currentPx: { x: px.x, y: px.y },
+                    startImg: { x: imgPoint.x, y: imgPoint.y },
+                    currentImg: { x: imgPoint.x, y: imgPoint.y },
+                };
+                event.preventDefaultAction = true;
+            }));
+            osdForDraw.addHandler('canvas-drag', action((event: any) => {
+                if (!this.customDrawState) return;
+                if (!osdForDraw.viewport) return;
+                const px = event.position;
+                const vpPoint = osdForDraw.viewport.pointFromPixel(px);
+                const imgPoint = osdForDraw.viewport.viewportToImageCoordinates(vpPoint);
+                this.customDrawState = {
+                    ...this.customDrawState,
+                    currentPx: { x: px.x, y: px.y },
+                    currentImg: { x: imgPoint.x, y: imgPoint.y },
+                };
+                event.preventDefaultAction = true;
+            }));
+            osdForDraw.addHandler('canvas-release', action((event: any) => {
+                if (!this.customDrawState) return;
+                const state = this.customDrawState;
+                this.customDrawState = null;
+                void this.finalizeCustomShape(state);
+                event.preventDefaultAction = true;
+            }));
+
             // Restore viewport position from URL hash if present for this slide,
             // otherwise center on the middle of the image.
             //
@@ -1082,6 +1196,26 @@ export default class WSIViewer extends React.Component<Props, {}> {
                 {/* OSD viewer */}
                 <div style={{ flex: 1, position: 'relative', background: '#e8e8e8' }}>
                     <div ref={this.viewerContainerRef} style={{ width: '100%', height: '100%' }} />
+                    {/* SVG overlay: live preview while drawing ellipse / circle / line */}
+                    {this.customDrawState && (() => {
+                        const s = this.customDrawState!;
+                        const x1 = s.startPx.x, y1 = s.startPx.y;
+                        const x2 = s.currentPx.x, y2 = s.currentPx.y;
+                        const stroke = this.activeColorHex;
+                        let shapeEl: React.ReactNode;
+                        if (s.tool === 'ellipse') {
+                            shapeEl = <ellipse cx={(x1 + x2) / 2} cy={(y1 + y2) / 2} rx={Math.abs(x2 - x1) / 2} ry={Math.abs(y2 - y1) / 2} fill="none" stroke={stroke} strokeWidth={2} strokeDasharray="6 3" />;
+                        } else if (s.tool === 'circle') {
+                            shapeEl = <circle cx={(x1 + x2) / 2} cy={(y1 + y2) / 2} r={Math.min(Math.abs(x2 - x1), Math.abs(y2 - y1)) / 2} fill="none" stroke={stroke} strokeWidth={2} strokeDasharray="6 3" />;
+                        } else {
+                            shapeEl = <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={stroke} strokeWidth={2} strokeDasharray="6 3" />;
+                        }
+                        return (
+                            <svg style={{ position: 'absolute', left: 0, top: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 10 }}>
+                                {shapeEl}
+                            </svg>
+                        );
+                    })()}
                     {!this.viewerReady && selectedSlide && (
                         <div style={overlayStyle}>
                             <LoadingIndicator isLoading={true} center={true} size="big" />
