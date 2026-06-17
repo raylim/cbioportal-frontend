@@ -1961,7 +1961,10 @@ export function MetaSidebar({ slide, sample, meta, tileServerBase, studyId, anno
                             {annotations.map(ann => {
                                 const rawLabel = ann.body?.[0]?.value ?? '';
                                 const displayLabel = rawLabel || '(unlabeled)';
-                                const creator = (ann as any).creator ?? '';
+                                const rawCreator = (ann as any).creator;
+                                const creator = typeof rawCreator === 'string'
+                                    ? rawCreator
+                                    : (rawCreator?.id ?? rawCreator?.name ?? '');
                                 const created = (ann as any).created ?? '';
                                 const dateStr = created ? new Date(created).toLocaleDateString() : '';
                                 const dotColor = ann.color ?? DEFAULT_NAMED_COLORS[0].hex;
