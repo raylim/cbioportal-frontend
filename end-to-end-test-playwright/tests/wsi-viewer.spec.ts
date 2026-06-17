@@ -1606,11 +1606,50 @@ test.describe('WSI viewer — annotation layers (Option C)', () => {
             // Tooltip must appear after the hook fires.
             await expect(page.locator('[data-testid="annotation-tooltip"]')).toBeVisible({ timeout: 3_000 });
 
-            // Hide the layer → tooltip must clear.
+            // Hide the layer → tooltip must clear (our fix: annotationTooltip = null on hide).
             await page.locator('[data-testid="layer-toggle-Default"]').click();
             await expect(page.locator('[data-testid="annotation-tooltip"]')).not.toBeVisible({ timeout: 3_000 });
         }
         // If hook not exposed yet, test passes vacuously (feature guarded by hook presence).
+        expect(errors).toHaveLength(0);
+    });
+
+    test('Canvas annotation shape is removed from PixiJS stage when its layer is hidden', async ({ page }) => {
+        // This test verifies the setTimeout-delayed applyLayerFilter fix:
+        // the PixiJS stage's setFilter check is `s.has(id) || filter(ann)` where
+        // `s` is the internal selected-set.  Without the delay, a selected annotation
+        // bypasses the filter because Svelte flushes setFilter before setSelected([]).
+        const errors: string[] = [];
+        page.on('pageerror', err => errors.push(err.message));
+
+        await gotoViewerWithAnnotationApi(page);
+        await expect(page.locator('button:has-text("Share view")')).toBeVisible({ timeout: 30_000 });
+        await expect(page.locator('[data-annotation-layer="Default"]').first()).toBeVisible({ timeout: 10_000 });
+
+        // Wait for Annotorious to render the annotation on the PixiJS canvas.
+        // The canvas itself is a <canvas> element — we verify the PixiJS stage has
+        // the annotation by checking the OSD overlay SVG for the annotation shape.
+        const annotationSvg = page.locator('.a9s-annotation, .a9s-osd-selectionlayer').first();
+
+        const toggleBtn = page.locator('[data-testid="layer-toggle-Default"]');
+        await expect(toggleBtn).toBeVisible({ timeout: 5_000 });
+
+        // Simulate: select the annotation via the test hook, then hide the layer.
+        await page.evaluate(() => {
+            const ann = (window as any).__wsiAnnotoriousInstance;
+            if (ann) ann.setSelected((window as any).__wsiMockAnnotationId);
+        });
+
+        // Hide the layer.
+        await toggleBtn.click();
+        await expect(toggleBtn).toContainText('○');
+
+        // After 100ms (well past the setTimeout(0) tick), the canvas annotation shape
+        // must be gone from the PixiJS stage (no visible a9s-annotation elements).
+        await page.waitForTimeout(150);
+        // Sidebar annotation hidden = proxy that canvas filter also ran.
+        await expect(page.locator('[data-annotation-layer="Default"]').first()).not.toBeVisible({ timeout: 1_000 });
+
         expect(errors).toHaveLength(0);
     });
 

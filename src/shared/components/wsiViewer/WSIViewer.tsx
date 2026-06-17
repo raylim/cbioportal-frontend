@@ -923,17 +923,24 @@ export default class WSIViewer extends React.Component<Props, {}> {
         const next = new Set(this.hiddenLayerNames);
         if (next.has(name)) next.delete(name); else next.add(name);
         this.hiddenLayerNames = next;
-        // Cancel selection BEFORE applying the filter: Annotorious renders the
-        // selection layer independently of setFilter, so a selected annotation
-        // from a hidden layer would still show handles and label popup unless we
-        // explicitly deselect it first.
+
         if (next.has(name)) {
-            // Clear the click-to-show tooltip popup regardless of which layer's
-            // annotation it belongs to — we can't cheaply check ownership here.
+            // Layer is being hidden.
             this.annotationTooltip = null;
-            // Clear Annotorious canvas selection handles + label popup.
-            if (this.annotorious) this.annotorious.cancelSelected();
-            // Cancel any in-progress label edit for the hidden layer.
+
+            if (this.annotorious) {
+                this.annotorious.cancelSelected();
+                // The PixiJS stage's setFilter check is `s.has(id) || filter(ann)`
+                // where `s` is its internal selected-set.  cancelSelected() triggers
+                // a Svelte store update that clears `s` — but Svelte batches that
+                // together with our setFilter call and processes setFilter FIRST
+                // (lower dirty-bit index).  Result: selected annotations bypass the
+                // filter even though our predicate returns false for them.
+                // Delaying applyLayerFilter by one macrotask lets the Svelte flush
+                // that clears `s` finish before we re-evaluate the filter.
+                setTimeout(action(() => { if (this.annotorious) this.applyLayerFilter(); }), 0);
+            }
+
             if (this.editingAnnotationId !== null) {
                 const editingAnn = this.annotations.find(
                     a => a.id === this.editingAnnotationId
@@ -942,8 +949,10 @@ export default class WSIViewer extends React.Component<Props, {}> {
                     (editingAnn as any)?.layerName ?? DEFAULT_LAYER_NAME;
                 if (editingLayer === name) this.cancelEditingLabel();
             }
+        } else {
+            // Layer is being shown — no pending selection to worry about.
+            this.applyLayerFilter();
         }
-        this.applyLayerFilter();
     }
 
     private applyLayerFilter() {
