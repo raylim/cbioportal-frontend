@@ -59,6 +59,61 @@ test.describe('WSI viewer — share view and centering', () => {
         );
     });
 
+    test('spinner appears while loading and hides promptly when first tile arrives', async ({ page }) => {
+        await page.goto(viewerUrl());
+
+        // Spinner must appear while the first slide is loading (before tiles arrive).
+        await expect(page.locator('[data-testid="wsi-loading-spinner"]')).toBeVisible({
+            timeout: 8_000,
+        });
+
+        // CoordBar (share button) only renders after tilesReady=true, which is set
+        // by the tile-loaded handler.  Asserting it appears within 18s (well under
+        // the 20s fallback) proves tile-loaded fired and the spinner hid promptly.
+        await expect(page.locator('[data-testid="share-view-button"]')).toBeVisible({
+            timeout: 18_000,
+        });
+
+        // Spinner must be gone once tiles are ready.
+        await expect(page.locator('[data-testid="wsi-loading-spinner"]')).not.toBeVisible();
+    });
+
+    test('rapid slide selection: debounce prevents multiple concurrent loads', async ({ page }) => {
+        await page.goto(viewerUrl());
+        // Wait for the initial slide to fully load first.
+        await expect(page.locator('[data-testid="share-view-button"]')).toBeVisible({
+            timeout: 30_000,
+        });
+
+        // Dispatch three click events synchronously from JS (no async gap between
+        // them) — all within the 150ms debounce window.  Only the last slide should
+        // actually trigger a tile-server fetch.
+        const rapidSlideIds = ['1492748', '1492739', '1492729'];
+        await page.evaluate((ids: string[]) => {
+            ids.forEach(id => {
+                const el = document.querySelector(`[data-testid="wsi-slide-item-${id}"]`);
+                el?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            });
+        }, rapidSlideIds);
+
+        // Spinner should appear (last slide selected) then disappear when tiles load.
+        await expect(page.locator('[data-testid="wsi-loading-spinner"]')).toBeVisible({
+            timeout: 5_000,
+        });
+        await expect(page.locator('[data-testid="wsi-loading-spinner"]')).not.toBeVisible({
+            timeout: 30_000,
+        });
+
+        // CoordBar must come back — viewer loaded the last selected slide correctly.
+        await expect(page.locator('[data-testid="share-view-button"]')).toBeVisible({
+            timeout: 5_000,
+        });
+
+        // Hash must reference the last-clicked slide (debounce discarded the others).
+        const hash = await page.evaluate(() => window.location.hash);
+        expect(hash).toContain('slide=1492729');
+    });
+
     test('loads slide at home position, not at (1,1)', async ({ page }) => {
         await page.goto(viewerUrl());
         await expect(shareViewButton(page)).toBeVisible({
@@ -249,6 +304,52 @@ test.describe('WSI viewer — share view and centering', () => {
         expect(params.get('slide')).toBe('1492807');
         expect(Number(params.get('x'))).toBe(20000);
         expect(Number(params.get('y'))).toBe(15000);
+    });
+
+    test('RHS sidebar shows correct per-mutation OncoKB links', async ({ page }) => {
+        await page.goto(viewerUrl());
+        // Wait for sidebar to load
+        await expect(page.locator('[data-testid="share-view-button"]')).toBeVisible({
+            timeout: 30_000,
+        });
+
+        // Wait for MSK-IMPACT section to appear
+        const seqSection = page.locator('text=MSK-IMPACT').first();
+        await expect(seqSection).toBeVisible({ timeout: 15_000 });
+
+        // Wait for the mutations table to appear — the gene links inside it are NOT rendered
+        // until oncogenic_mutation_details is populated (after the mutations API call).
+        const oncokbLinks = page.locator('a[href*="oncokb.org/gene/"]');
+        await expect(oncokbLinks.first()).toBeVisible({ timeout: 15_000 });
+
+        // The mutations API returns 11 mutations for P-0000678-T01-IM3; all should have links.
+        const count = await oncokbLinks.count();
+        expect(count).toBe(11);
+
+        // KRAS, ETV1, and SOX9 should all be visible in the table (ETV1 + SOX9 were previously
+        // missing when CVR_ONCOGENIC_MUTATIONS was used as the source).
+        await expect(page.locator('text=KRAS').first()).toBeVisible();
+        await expect(page.locator('text=ETV1').first()).toBeVisible();
+        await expect(page.locator('text=SOX9').first()).toBeVisible();
+
+        // Variant column strips the "p." prefix for space saving.
+        await expect(page.locator('text=G13D').first()).toBeVisible();
+
+        // Every link should be a single-gene OncoKB URL.
+        const allHrefs = await oncokbLinks.evaluateAll(
+            (links: HTMLAnchorElement[]) => links.map(a => a.getAttribute('href') ?? '')
+        );
+        for (const href of allHrefs) {
+            expect(href).not.toContain('%3B');
+            expect(href).toMatch(/oncokb\.org\/gene\/[A-Z0-9]+\/p\./);
+        }
+
+        // Mutations are sorted by VAF descending; TP53 p.V173L has the highest VAF (~63%).
+        const firstHref = await oncokbLinks.first().getAttribute('href');
+        expect(firstHref).toContain('/gene/TP53/p.V173L');
+
+        // Type column should show short abbreviations (MS = Missense, NS = Nonsense, etc.).
+        await expect(page.locator('text=MS').first()).toBeVisible();
     });
 });
 

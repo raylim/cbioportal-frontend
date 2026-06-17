@@ -10,6 +10,10 @@ export interface Slide {
     barcode: string;
     block_label: string;
     block_number: string;
+    /** Anatomical site / part description propagated from the parent Part (e.g. "Lung, left") */
+    part_description?: string;
+    /** Pathological diagnosis title from the part (may differ from part_description) */
+    path_dx_title?: string;
 }
 
 export interface Block {
@@ -28,6 +32,33 @@ export interface Part {
     blocks: Block[];
 }
 
+export interface MutationDetail {
+    token: string;
+    type?: string;      // human-readable mutation type, e.g. "Missense"
+    vaf?: number;       // 0–100 percent
+    annotation?: string; // driverFilterAnnotation, e.g. "KRAS G13D is a hotspot"
+    cohortFrequency?: number; // fraction 0–1: how often this position mutated in study cohort
+    // OncoKB annotation fields (populated by fetchAndMergeOncoKbAnnotations)
+    oncogenic?: string;      // "Oncogenic" | "Likely Oncogenic" | "Likely Neutral" | "Unknown"
+    mutationEffect?: string; // "Gain-of-function" | "Loss-of-function" | "Unknown"
+    hotspot?: boolean;
+    hasCivic?: boolean;   // true when OncoKB variantExist=true (CIViC DB has an entry)
+    geneSummary?: string;
+    variantSummary?: string;
+    // Fields used internally to build the OncoKB batch request (not displayed)
+    entrezGeneId?: number;
+    consequence?: string;    // e.g. "Missense_Mutation"
+    proteinStart?: number;
+    proteinEnd?: number;
+}
+
+/** Single discrete copy-number alteration event from MSK-IMPACT. */
+export interface CNADetail {
+    gene: string;
+    /** GISTIC value: -2=DeepDel, -1=ShallowDel, 1=Gain, 2=Amp */
+    cnaValue: number;
+}
+
 export interface Sample {
     sample_id: string;
     cancer_type: string;
@@ -35,6 +66,15 @@ export interface Sample {
     oncotree_code: string;
     primary_site: string;
     sample_type: string;
+    metastatic_site?: string;
+    tumor_purity?: string;
+    oncogenic_mutations?: string;
+    oncogenic_mutation_details?: MutationDetail[];
+    num_oncogenic_mutations?: string;
+    tmb_score?: string;
+    msi_type?: string;
+    /** Significant CNA events (value ≠ 0) from the study's GISTIC/CNA profile. */
+    cna_alterations?: CNADetail[];
     parts: Part[];
 }
 

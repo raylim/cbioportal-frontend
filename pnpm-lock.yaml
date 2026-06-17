@@ -960,7 +960,7 @@ importers:
         version: 0.31.5(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
       react-collapse:
         specifier: ^4.0.3
-        version: 4.0.3(react-motion@0.5.2(react@16.14.0))(react@16.14.0)
+        version: 4.0.3(react-motion@0.5.2(react@18.3.1))(react@18.3.1)
       react-if:
         specifier: ^2.1.0
         version: 2.2.2(prop-types@15.7.2)(react@18.3.1)
@@ -3392,9 +3392,6 @@ packages:
 
   '@types/earcut@2.1.4':
     resolution: {integrity: sha512-qp3m9PPz4gULB9MhjGID7wpo3gJ4bTGXm7ltNDsmOvsPduTeHp8wSW9YckBj3mljeOh4F0m2z/0JKAALRKbmLQ==}
-
-  '@types/enzyme-adapter-react-16@1.0.9':
-    resolution: {integrity: sha512-z24MMxGtUL8HhXdye3tWzjp+19QTsABqLaX2oOZpxMPHRJgLfahQmOeTTrEBQd9ogW20+UmPBXD9j+XOasFHvw==}
 
   '@types/enzyme@3.10.19':
     resolution: {integrity: sha512-kIfCo6/DdpgCHgmrLgPTugjzbZ46BUK8S2IP0kYo8+62LD2l1k8mSVsc+zQYNTdjDRoh2E9Spxu6F1NnEiW38Q==}
@@ -15938,10 +15935,6 @@ snapshots:
       '@types/ms': 2.1.0
 
   '@types/earcut@2.1.4': {}
-
-  '@types/enzyme-adapter-react-16@1.0.9':
-    dependencies:
-      '@types/enzyme': 3.10.19
 
   '@types/enzyme@3.10.19':
     dependencies:
