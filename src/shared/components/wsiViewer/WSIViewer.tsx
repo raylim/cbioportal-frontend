@@ -615,6 +615,11 @@ export default class WSIViewer extends React.Component<Props, {}> {
             const created = await resp.json();
             const savedAnn = { ...ann, id: created.id, version: created.version };
             this.annotationColorMap.set(savedAnn.id, savedAnn.color ?? DEFAULT_NAMED_COLORS[0].hex);
+            // Swap the temp-ID annotation for the server-assigned ID in Annotorious.
+            if (this.annotorious && ann.id !== savedAnn.id) {
+                try { this.annotorious.removeAnnotation(ann.id); } catch (_) { /* ignore */ }
+                try { this.annotorious.addAnnotation(savedAnn); } catch (_) { /* ignore */ }
+            }
             action(() => {
                 this.annotations = [...this.annotations, savedAnn];
             })();
@@ -787,10 +792,13 @@ export default class WSIViewer extends React.Component<Props, {}> {
         (ann as any).layerName = this.activeLayerName;
         this.annotationColorMap.set(id, this.activeColorHex);
 
-        // Add to Annotorious so the shape renders immediately.
+        // Re-enable Annotorious (was disabled for custom tools) before adding the annotation,
+        // otherwise setEnabled(false) prevents the shape from rendering.
+        this.setDrawingTool(null);
+
+        // Add to Annotorious so the shape renders immediately with a temp ID.
         try { this.annotorious?.addAnnotation(ann); } catch (_) { /* ignore */ }
 
-        action(() => { this.activeDrawingTool = null; })();
         void this.saveNewAnnotation(ann);
     }
 
