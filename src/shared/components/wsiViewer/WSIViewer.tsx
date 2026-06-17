@@ -162,6 +162,18 @@ const sectionTitleStyle: React.CSSProperties = {
     textTransform: 'uppercase',
     letterSpacing: '.8px',
 };
+const emptyStateStyle: React.CSSProperties = { color: '#bbb', fontSize: 11 };
+const annBadgeBase: React.CSSProperties = {
+    fontSize: 9,
+    fontWeight: 600,
+    padding: '0 4px',
+    borderRadius: 8,
+    display: 'inline-block',
+};
+/** Strip leading "p." from a variant string (e.g. "p.G13D" → "G13D"). */
+function normalizeAlteration(variant: string): string {
+    return variant.startsWith('p.') ? variant.slice(2) : variant;
+}
 /** Shared header/cell base styles for the compact sidebar tables. */
 const compactThStyle: React.CSSProperties = {
     fontSize: 10,
@@ -1041,11 +1053,8 @@ export default class WSIViewer extends React.Component<Props, {}> {
         const seen = new Set<string>();
         const items: OncoKbItem[] = [];
         for (const d of allDetails) {
-            // Strip the "p." prefix to get raw alteration (e.g. "G13D")
             const { variant: variantRaw } = parseMutationToken(d.token);
-            const alteration = variantRaw.startsWith('p.')
-                ? variantRaw.slice(2)
-                : variantRaw;
+            const alteration = normalizeAlteration(variantRaw);
             const id = `${d.entrezGeneId}_${alteration}_${d.consequence ?? ''}`;
             if (seen.has(id)) continue;
             seen.add(id);
@@ -1094,9 +1103,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
         action(() => {
             for (const d of allDetails) {
                 const { variant: variantRaw2 } = parseMutationToken(d.token);
-                const alteration = variantRaw2.startsWith('p.')
-                    ? variantRaw2.slice(2)
-                    : variantRaw2;
+                const alteration = normalizeAlteration(variantRaw2);
                 const id = `${d.entrezGeneId}_${alteration}_${d.consequence ??
                     ''}`;
                 const ann = byId.get(id);
@@ -1620,6 +1627,24 @@ export default class WSIViewer extends React.Component<Props, {}> {
             console.warn('[WSIViewer] Failed to delete annotation:', e);
         }
     }
+
+    @action
+    private showAnnotationTooltip(
+        ann: W3CAnnotation,
+        clientX: number,
+        clientY: number
+    ) {
+        const label = ann.body?.[0]?.value ?? '';
+        if (label) {
+            this.annotationTooltip = {
+                x: clientX,
+                y: clientY,
+                text: label,
+                layerName: (ann as any).layerName || undefined,
+            };
+        }
+    }
+
 
     @action.bound
     toggleAnnotationsVisible() {
@@ -2284,19 +2309,11 @@ export default class WSIViewer extends React.Component<Props, {}> {
                     this.annotorious.on(
                         'clickAnnotation',
                         (ann: W3CAnnotation, originalEvent: MouseEvent) => {
-                            const label = ann.body?.[0]?.value ?? '';
-                            if (label) {
-                                action(() => {
-                                    this.annotationTooltip = {
-                                        x: originalEvent.clientX,
-                                        y: originalEvent.clientY,
-                                        text: label,
-                                        layerName:
-                                            (ann as any).layerName ||
-                                            undefined,
-                                    };
-                                })();
-                            }
+                            this.showAnnotationTooltip(
+                                ann,
+                                originalEvent.clientX,
+                                originalEvent.clientY
+                            );
                         }
                     );
                     // Expose a test hook so Playwright tests can simulate clickAnnotation.
@@ -2304,18 +2321,11 @@ export default class WSIViewer extends React.Component<Props, {}> {
                         ann: W3CAnnotation,
                         originalEvent: { clientX: number; clientY: number }
                     ) => {
-                        const label = ann.body?.[0]?.value ?? '';
-                        if (label) {
-                            action(() => {
-                                this.annotationTooltip = {
-                                    x: originalEvent.clientX,
-                                    y: originalEvent.clientY,
-                                    text: label,
-                                    layerName:
-                                        (ann as any).layerName || undefined,
-                                };
-                            })();
-                        }
+                        this.showAnnotationTooltip(
+                            ann,
+                            originalEvent.clientX,
+                            originalEvent.clientY
+                        );
                     };
 
                     // Push any already-loaded annotations into Annotorious
@@ -3938,6 +3948,10 @@ export function MetaSidebar({
     );
     const [showAddLayerForm, setShowAddLayerForm] = React.useState(false);
     const [newLayerName, setNewLayerName] = React.useState('');
+    const resetAddLayerForm = () => {
+        setShowAddLayerForm(false);
+        setNewLayerName('');
+    };
 
     return (
         <div
@@ -4147,13 +4161,10 @@ export function MetaSidebar({
                                         onKeyDown={e => {
                                             if (e.key === 'Enter') {
                                                 onAddLayer?.(newLayerName);
-                                                setShowAddLayerForm(false);
-                                                setNewLayerName('');
+                                                resetAddLayerForm();
                                             }
-                                            if (e.key === 'Escape') {
-                                                setShowAddLayerForm(false);
-                                                setNewLayerName('');
-                                            }
+                                            if (e.key === 'Escape')
+                                                resetAddLayerForm();
                                         }}
                                         style={{
                                             flex: 1,
@@ -4170,8 +4181,7 @@ export function MetaSidebar({
                                         data-testid="add-layer-confirm"
                                         onClick={() => {
                                             onAddLayer?.(newLayerName);
-                                            setShowAddLayerForm(false);
-                                            setNewLayerName('');
+                                            resetAddLayerForm();
                                         }}
                                         style={{
                                             fontSize: 11,
@@ -4186,10 +4196,7 @@ export function MetaSidebar({
                                         Add
                                     </button>
                                     <button
-                                        onClick={() => {
-                                            setShowAddLayerForm(false);
-                                            setNewLayerName('');
-                                        }}
+                                        onClick={resetAddLayerForm}
                                         style={{
                                             fontSize: 11,
                                             padding: '1px 4px',
@@ -4221,11 +4228,11 @@ export function MetaSidebar({
                     })`}
                 >
                     {annotationsLoading ? (
-                        <span style={{ color: '#bbb', fontSize: 11 }}>
+                        <span style={emptyStateStyle}>
                             Loading…
                         </span>
                     ) : annotations.length === 0 ? (
-                        <span style={{ color: '#bbb', fontSize: 11 }}>
+                        <span style={emptyStateStyle}>
                             No annotations yet. Draw on the slide to create one.
                         </span>
                     ) : (
@@ -4396,17 +4403,9 @@ export function MetaSidebar({
                                                         {annLayerName && (
                                                             <span
                                                                 style={{
-                                                                    fontSize: 9,
-                                                                    fontWeight: 600,
-                                                                    padding:
-                                                                        '0 4px',
-                                                                    borderRadius: 8,
-                                                                    background:
-                                                                        '#e8e8e8',
-                                                                    color:
-                                                                        '#555',
-                                                                    display:
-                                                                        'inline-block',
+                                                                    ...annBadgeBase,
+                                                                    background: '#e8e8e8',
+                                                                    color: '#555',
                                                                 }}
                                                             >
                                                                 {annLayerName}
@@ -4415,16 +4414,9 @@ export function MetaSidebar({
                                                         {colorName && (
                                                             <span
                                                                 style={{
-                                                                    fontSize: 9,
-                                                                    fontWeight: 600,
-                                                                    padding:
-                                                                        '0 4px',
-                                                                    borderRadius: 8,
+                                                                    ...annBadgeBase,
                                                                     background: dotColor,
-                                                                    color:
-                                                                        '#fff',
-                                                                    display:
-                                                                        'inline-block',
+                                                                    color: '#fff',
                                                                 }}
                                                             >
                                                                 {colorName}
