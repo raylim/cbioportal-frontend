@@ -1627,6 +1627,9 @@ export default class WSIViewer extends React.Component<Props, {}> {
         if (this.annotorious) {
             this.annotorious.setVisible(this.annotationsVisible);
         }
+        if (!this.annotationsVisible) {
+            this.annotationTooltip = null;
+        }
     }
 
     @action.bound
