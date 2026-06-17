@@ -682,14 +682,11 @@ export default class WSIViewer extends React.Component<Props, {}> {
 
     @action.bound
     setDrawingTool(tool: 'rectangle' | 'ellipse' | 'circle' | 'line' | 'polygon' | null) {
-        console.log('[WSIViewer] setDrawingTool called with:', tool);
         if (!this.annotorious) {
-            console.warn('[WSIViewer] setDrawingTool: annotorious not ready');
             return;
         }
         if (tool === null || tool === this.activeDrawingTool) {
             // Cancel any active drawing and deactivate.
-            console.log('[WSIViewer] canceling drawing, tool was:', this.activeDrawingTool);
             try { this.annotorious.cancelDrawing(); } catch (_) { /* ignore */ }
             this.annotorious.setDrawingEnabled(false);
             // Re-enable Annotorious for viewing/selecting annotations
@@ -701,32 +698,26 @@ export default class WSIViewer extends React.Component<Props, {}> {
                 const annoCanvas = this.osdViewer.element.querySelector('canvas.a9s-gl-canvas');
                 if (annoCanvas && annoCanvas instanceof HTMLElement) {
                     annoCanvas.style.pointerEvents = 'auto';
-                    console.log('[WSIViewer] Re-enabled pointer-events on Annotorious canvas overlay');
                 }
             }
             this.activeDrawingTool = null;
             this.customDrawState = null;
         } else if (tool === 'ellipse' || tool === 'circle' || tool === 'line') {
             // Annotorious doesn't bundle these shapes as drawing tools.
-            // Custom DOM event handlers take over (see mountOSD).
-            console.log('[WSIViewer] activating CUSTOM tool:', tool);
-            console.log('[WSIViewer] customDrawTracker exists?', !!this.customDrawTracker);
-            console.log('[WSIViewer] osdViewer exists?', !!this.osdViewer);
+            // Custom pointer event handlers take over (see mountOSD).
             try { this.annotorious.cancelDrawing(); } catch (_) { /* ignore */ }
             this.annotorious.setDrawingEnabled(false);
-            // Completely disable Annotorious so it doesn't intercept mouse events
+            // Disable Annotorious so it doesn't intercept pointer events
             if (this.annotorious.setEnabled) {
                 this.annotorious.setEnabled(false);
-                console.log('[WSIViewer] Disabled Annotorious for custom tool');
             }
-            // Disable pointer-events on Annotorious canvas overlay so OSD canvas can receive events
+            // Disable pointer-events on Annotorious canvas overlay
             if (this.customDrawTracker && 'disableAnnotoriousOverlay' in this.customDrawTracker) {
                 this.customDrawTracker.disableAnnotoriousOverlay();
             }
             this.activeDrawingTool = tool;
             if (!this.annotationsVisible) this.toggleAnnotationsVisible();
         } else {
-            console.log('[WSIViewer] activating ANNOTORIOUS tool:', tool);
             // Re-enable Annotorious if it was disabled
             if (this.annotorious.setEnabled) {
                 this.annotorious.setEnabled(true);
@@ -739,7 +730,6 @@ export default class WSIViewer extends React.Component<Props, {}> {
             // Ensure annotations overlay is visible while drawing.
             if (!this.annotationsVisible) this.toggleAnnotationsVisible();
         }
-        console.log('[WSIViewer] activeDrawingTool is now:', this.activeDrawingTool);
     }
 
     @action.bound
@@ -1045,20 +1035,16 @@ export default class WSIViewer extends React.Component<Props, {}> {
             if (seq !== this.mountSeq) return;
             action(() => { this.viewerReady = true; })();
 
-            // Create custom drawing handlers using plain DOM events on the container element
-            // (not canvas, since canvas has pointer-events:none and Annotorious overlay is on top)
-            // for ellipse, circle, line tools that Annotorious doesn't support.
+            // Create custom drawing handlers using POINTER EVENTS (not mouse events!)
+            // Annotorious uses the Pointer Events API
             const osdForDraw = this.osdViewer;
-            const container = osdForDraw.element;  // Use container, not canvas
-            const canvas = osdForDraw.canvas;       // Still need canvas for coordinate calculations
-            console.log('[WSIViewer] Setting up DOM event listeners for custom drawing on container');
+            const container = osdForDraw.element;
+            const canvas = osdForDraw.canvas;
             
-            const handleMouseDown = action((e: MouseEvent) => {
+            const handlePointerDown = action((e: PointerEvent) => {
                 const tool = this.activeDrawingTool;
                 if (tool !== 'ellipse' && tool !== 'circle' && tool !== 'line') return;
-                console.log('[WSIViewer] Container mousedown for', tool);
                 
-                // Get mouse position relative to the canvas element
                 const rect = canvas.getBoundingClientRect();
                 const px = { x: e.clientX - rect.left, y: e.clientY - rect.top };
                 const vpPoint = osdForDraw.viewport.pointFromPixel(new (OpenSeadragon as any).Point(px.x, px.y));
@@ -1071,12 +1057,11 @@ export default class WSIViewer extends React.Component<Props, {}> {
                     startImg: { x: imgPoint.x, y: imgPoint.y },
                     currentImg: { x: imgPoint.x, y: imgPoint.y },
                 };
-                console.log('[WSIViewer] customDrawState initialized:', this.customDrawState);
                 e.preventDefault();
                 e.stopPropagation();
             });
             
-            const handleMouseMove = action((e: MouseEvent) => {
+            const handlePointerMove = action((e: PointerEvent) => {
                 if (!this.customDrawState) return;
                 
                 const rect = canvas.getBoundingClientRect();
@@ -1093,10 +1078,8 @@ export default class WSIViewer extends React.Component<Props, {}> {
                 e.stopPropagation();
             });
             
-            const handleMouseUp = action((e: MouseEvent) => {
-                console.log('[WSIViewer] Container mouseup, customDrawState:', !!this.customDrawState);
+            const handlePointerUp = action((e: PointerEvent) => {
                 if (!this.customDrawState) return;
-                console.log('[WSIViewer] Finalizing custom shape:', this.customDrawState.tool);
                 const state = this.customDrawState;
                 this.customDrawState = null;
                 void this.finalizeCustomShape(state);
@@ -1104,35 +1087,24 @@ export default class WSIViewer extends React.Component<Props, {}> {
                 e.stopPropagation();
             });
             
-            container.addEventListener('mousedown', handleMouseDown, { capture: true });
-            container.addEventListener('mousemove', handleMouseMove, { capture: true });
-            container.addEventListener('mouseup', handleMouseUp, { capture: true });
-            console.log('[WSIViewer] Event listeners attached to container:', container.className);
-            console.log('[WSIViewer] Container has', container.children.length, 'children');
+            container.addEventListener('pointerdown', handlePointerDown as EventListener, { capture: true });
+            container.addEventListener('pointermove', handlePointerMove as EventListener, { capture: true });
+            container.addEventListener('pointerup', handlePointerUp as EventListener, { capture: true });
             
-            // Debug: add a test listener to see if ANY events reach the container
-            container.addEventListener('click', (e) => {
-                console.log('[WSIViewer] TEST: Container click event fired!', e.target);
-            }, { capture: true });
-            
-            // Disable pointer-events on Annotorious canvas overlay to let events through to OSD canvas
-            // Annotorious creates a canvas.a9s-gl-canvas as an overlay for annotations
+            // Disable pointer-events on Annotorious canvas overlay when custom tools are active
             const disableAnnotoriousCanvasPointerEvents = () => {
                 const annoCanvas = container.querySelector('canvas.a9s-gl-canvas');
                 if (annoCanvas && annoCanvas instanceof HTMLElement) {
                     annoCanvas.style.pointerEvents = 'none';
-                    console.log('[WSIViewer] Disabled pointer-events on Annotorious canvas overlay');
-                } else {
-                    console.warn('[WSIViewer] Could not find Annotorious canvas overlay (canvas.a9s-gl-canvas)');
                 }
             };
             
             // Store cleanup function
             this.customDrawTracker = {
                 destroy: () => {
-                    container.removeEventListener('mousedown', handleMouseDown, { capture: true });
-                    container.removeEventListener('mousemove', handleMouseMove, { capture: true });
-                    container.removeEventListener('mouseup', handleMouseUp, { capture: true });
+                    container.removeEventListener('pointerdown', handlePointerDown as EventListener, { capture: true });
+                    container.removeEventListener('pointermove', handlePointerMove as EventListener, { capture: true });
+                    container.removeEventListener('pointerup', handlePointerUp as EventListener, { capture: true });
                 },
                 disableAnnotoriousOverlay: disableAnnotoriousCanvasPointerEvents,
             };
