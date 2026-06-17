@@ -794,6 +794,15 @@ export default class WSIViewer extends React.Component<Props, {}> {
         if (next.has(name)) next.delete(name); else next.add(name);
         this.hiddenLayerNames = next;
         this.applyLayerFilter();
+        // Deselect any annotation whose layer is now hidden — a hidden annotation
+        // should not remain in a selected/editable state on the canvas.
+        if (next.has(name) && this.annotorious) {
+            const selected = this.annotorious.getSelected();
+            const hasHiddenSelected = selected.some(
+                (ann: any) => (ann.layerName ?? DEFAULT_LAYER_NAME) === name
+            );
+            if (hasHiddenSelected) this.annotorious.cancelSelected();
+        }
     }
 
     private applyLayerFilter() {

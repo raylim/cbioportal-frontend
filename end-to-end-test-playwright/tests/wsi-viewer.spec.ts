@@ -1265,6 +1265,38 @@ test.describe('WSI viewer — annotation layers (Option C)', () => {
         await expect(toolbarToggle).toContainText('○');
     });
 
+    test('Hiding a layer with a selected annotation deselects it (no error thrown)', async ({ page }) => {
+        // Spy on console errors — cancelSelected() must not throw when the
+        // selected annotation's layer is hidden.
+        const errors: string[] = [];
+        page.on('console', msg => {
+            if (msg.type() === 'error') errors.push(msg.text());
+        });
+        page.on('pageerror', err => errors.push(err.message));
+
+        await gotoViewerWithAnnotationApi(page);
+        await expect(page.locator('button:has-text("Share view")')).toBeVisible({ timeout: 30_000 });
+
+        // Show the draw toolbar, then toggle the Default layer off.
+        const toggleBtn = page.locator('[data-testid="layer-toggle-Default"]');
+        await expect(toggleBtn).toBeVisible({ timeout: 10_000 });
+
+        // Toggle the layer twice (hide, then show) — this exercises the branch
+        // that calls cancelSelected() when hiding a layer that may have a selection.
+        await toggleBtn.click();
+        await expect(toggleBtn).toContainText('○');  // hidden
+        await toggleBtn.click();
+        await expect(toggleBtn).toContainText('●');  // visible again
+
+        // No JS errors should have been emitted during toggle.
+        const relevantErrors = errors.filter(e =>
+            e.toLowerCase().includes('annotorious') ||
+            e.toLowerCase().includes('cancelselected') ||
+            e.toLowerCase().includes('undefined is not')
+        );
+        expect(relevantErrors).toHaveLength(0);
+    });
+
     test('Mock annotation body.comment is used as layer name in sidebar', async ({ page }) => {
         // Inject annotation with a non-default layer name in body.comment.
         await page.route(`${MOCK_ANNOTATION_URL}/annotations**`, async (route: any) => {
