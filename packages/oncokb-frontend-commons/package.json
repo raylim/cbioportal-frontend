@@ -1,6 +1,6 @@
 {
   "name": "oncokb-frontend-commons",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "OncoKB Frontend Modules",
   "main": "dist/index.js",
   "module": "dist/index.es.js",
@@ -30,8 +30,8 @@
     "test:watch": "pnpm run test --watch"
   },
   "peerDependencies": {
-    "react": "^15.0.0 || ^16.0.0",
-    "react-dom": "^15.0.0 || ^16.0.0"
+    "react": "^15.0.0 || ^16.0.0 || ^17.0.0 || ^18.0.0",
+    "react-dom": "^15.0.0 || ^16.0.0 || ^17.0.0 || ^18.0.0"
   },
   "dependencies": {
     "cbioportal-utils": "workspace:*",

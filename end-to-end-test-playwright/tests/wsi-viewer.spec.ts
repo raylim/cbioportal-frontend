@@ -36,15 +36,32 @@ function viewerUrl(hash = ''): string {
     return hash ? `${base}${hash}` : base;
 }
 
+function shareViewButton(page: any) {
+    return page.getByTestId('share-view-button');
+}
+
+function copiedShareViewButton(page: any) {
+    return page.locator(
+        '[data-testid="share-view-button"][aria-label="Copied"]'
+    );
+}
+
+function downloadViewButton(page: any) {
+    return page.getByTestId('download-view-button');
+}
+
 // Skip all tests when the env var is not set (public CI / public portal).
 test.describe('WSI viewer — share view and centering', () => {
     test.beforeEach(async () => {
-        test.skip(!BASE_URL, 'WSI_VIEWER_BASE_URL not set — skipping WSI viewer e2e tests');
+        test.skip(
+            !BASE_URL,
+            'WSI_VIEWER_BASE_URL not set — skipping WSI viewer e2e tests'
+        );
     });
 
     test('loads slide at home position, not at (1,1)', async ({ page }) => {
         await page.goto(viewerUrl());
-        await expect(page.locator('button:has-text("Share view")')).toBeVisible({
+        await expect(shareViewButton(page)).toBeVisible({
             timeout: 30_000,
         });
 
@@ -66,46 +83,62 @@ test.describe('WSI viewer — share view and centering', () => {
     test('share view URL preserves position on reload', async ({ page }) => {
         // 1. Open the viewer fresh (no hash).
         await page.goto(viewerUrl());
-        await expect(page.locator('button:has-text("Share view")')).toBeVisible({
+        await expect(shareViewButton(page)).toBeVisible({
             timeout: 30_000,
         });
 
         // 2. Navigate to a known position via the coord bar.
-        await page.locator('input[placeholder="px"]').nth(0).fill('15000');
-        await page.locator('input[placeholder="px"]').nth(1).fill('10000');
+        await page
+            .locator('input[placeholder="px"]')
+            .nth(0)
+            .fill('15000');
+        await page
+            .locator('input[placeholder="px"]')
+            .nth(1)
+            .fill('10000');
         await page.locator('button:has-text("Go")').click();
 
         // Wait for hash to reflect the new position.
         await expect
-            .poll(() => page.evaluate(() => window.location.hash), { timeout: 5_000 })
+            .poll(() => page.evaluate(() => window.location.hash), {
+                timeout: 5_000,
+            })
             .toMatch(/x=15000/);
 
         // 3. Capture share URL (intercept clipboard).
         await page.evaluate(() => {
             Object.defineProperty(navigator, 'clipboard', {
-                value: { writeText: async (t: string) => { (window as any)._copiedUrl = t; } },
+                value: {
+                    writeText: async (t: string) => {
+                        (window as any)._copiedUrl = t;
+                    },
+                },
                 configurable: true,
                 writable: true,
             });
         });
-        await page.locator('button:has-text("Share view")').click();
-        await expect(page.locator('button:has-text("✓ Copied")')).toBeVisible({
+        await shareViewButton(page).click();
+        await expect(copiedShareViewButton(page)).toBeVisible({
             timeout: 3_000,
         });
 
-        const copiedUrl: string = await page.evaluate(() => (window as any)._copiedUrl);
+        const copiedUrl: string = await page.evaluate(
+            () => (window as any)._copiedUrl
+        );
         expect(copiedUrl).toContain('x=15000');
         expect(copiedUrl).toContain('y=10000');
 
         // 4. Open the share URL in a new tab and verify position is restored.
         const newPage = await page.context().newPage();
         await newPage.goto(copiedUrl);
-        await expect(newPage.locator('button:has-text("Share view")')).toBeVisible({
+        await expect(shareViewButton(newPage)).toBeVisible({
             timeout: 30_000,
         });
 
         const restoredHash = await newPage.evaluate(() => window.location.hash);
-        const restoredParams = new URLSearchParams(restoredHash.replace(/^#wsi:/, ''));
+        const restoredParams = new URLSearchParams(
+            restoredHash.replace(/^#wsi:/, '')
+        );
 
         // Position must be preserved — not reset to (1,1) or home.
         expect(Number(restoredParams.get('x'))).toBe(15000);
@@ -116,7 +149,7 @@ test.describe('WSI viewer — share view and centering', () => {
 
     test('share view button shows "✓ Copied" feedback', async ({ page }) => {
         await page.goto(viewerUrl());
-        await expect(page.locator('button:has-text("Share view")')).toBeVisible({
+        await expect(shareViewButton(page)).toBeVisible({
             timeout: 30_000,
         });
 
@@ -129,26 +162,34 @@ test.describe('WSI viewer — share view and centering', () => {
             });
         });
 
-        await page.locator('button:has-text("Share view")').click();
-        await expect(page.locator('button:has-text("✓ Copied")')).toBeVisible();
+        await shareViewButton(page).click();
+        await expect(copiedShareViewButton(page)).toBeVisible();
         // Button reverts after 2 s.
-        await expect(page.locator('button:has-text("Share view")')).toBeVisible({
+        await expect(shareViewButton(page)).toBeVisible({
             timeout: 4_000,
         });
     });
 
     test('coord nav jumps to entered pixel coordinates', async ({ page }) => {
         await page.goto(viewerUrl());
-        await expect(page.locator('button:has-text("Share view")')).toBeVisible({
+        await expect(shareViewButton(page)).toBeVisible({
             timeout: 30_000,
         });
 
-        await page.locator('input[placeholder="px"]').nth(0).fill('5000');
-        await page.locator('input[placeholder="px"]').nth(1).fill('3000');
+        await page
+            .locator('input[placeholder="px"]')
+            .nth(0)
+            .fill('5000');
+        await page
+            .locator('input[placeholder="px"]')
+            .nth(1)
+            .fill('3000');
         await page.locator('button:has-text("Go")').click();
 
         await expect
-            .poll(() => page.evaluate(() => window.location.hash), { timeout: 5_000 })
+            .poll(() => page.evaluate(() => window.location.hash), {
+                timeout: 5_000,
+            })
             .toMatch(/x=5000/);
 
         const hash = await page.evaluate(() => window.location.hash);
@@ -161,7 +202,7 @@ test.describe('WSI viewer — share view and centering', () => {
         page,
     }) => {
         await page.goto(viewerUrl());
-        await expect(page.locator('button:has-text("Download")')).toBeVisible({
+        await expect(downloadViewButton(page)).toBeVisible({
             timeout: 30_000,
         });
 
@@ -172,16 +213,20 @@ test.describe('WSI viewer — share view and centering', () => {
             (document as any).createElement = (tag: string) => {
                 const el = origCreate(tag);
                 if (tag === 'a') {
-                    el.click = () => { (window as any)._downloadName = (el as HTMLAnchorElement).download; };
+                    el.click = () => {
+                        (window as any)._downloadName = (el as HTMLAnchorElement).download;
+                    };
                 }
                 return el;
             };
         });
 
-        await page.locator('button:has-text("Download")').click();
+        await downloadViewButton(page).click();
         await page.waitForTimeout(500); // toBlob is async
 
-        const filename: string = await page.evaluate(() => (window as any)._downloadName ?? '');
+        const filename: string = await page.evaluate(
+            () => (window as any)._downloadName ?? ''
+        );
         // Filename pattern: wsi-<patientId>-<slideId>-x<n>-y<n>.jpg
         expect(filename).toMatch(/^wsi-.+-\d+-x\d+-y\d+\.jpg$/);
         expect(filename).toContain('P-0000678');
@@ -194,7 +239,7 @@ test.describe('WSI viewer — share view and centering', () => {
         // Navigate with a hash specifying the first slide.
         const hashWithSlide = '#wsi:slide=1492807&x=20000&y=15000&z=1.2';
         await page.goto(viewerUrl(hashWithSlide));
-        await expect(page.locator('button:has-text("Share view")')).toBeVisible({
+        await expect(shareViewButton(page)).toBeVisible({
             timeout: 30_000,
         });
 
@@ -227,7 +272,9 @@ const MOCK_ANNOTATION = {
     slide_id: '1492807',
     study_id: STUDY_ID,
     body: { label: 'Playwright test annotation', comment: '', type: 'region' },
-    target: { selector: { type: 'FragmentSelector', value: 'xywh=100,100,50,50' } },
+    target: {
+        selector: { type: 'FragmentSelector', value: 'xywh=100,100,50,50' },
+    },
     created_by: 'playwright',
     created_at: '2025-01-01T00:00:00',
     version: 1,
@@ -245,34 +292,44 @@ const MOCK_ANNOTATION = {
  */
 async function gotoViewerWithAnnotationApi(page: any, hash = '') {
     // Route all annotation API calls to mock handlers before navigating.
-    await page.route(`${MOCK_ANNOTATION_URL}/annotations**`, async (route: any) => {
-        const method = route.request().method();
-        if (method === 'GET') {
-            await route.fulfill({
-                status: 200,
-                contentType: 'application/json',
-                body: JSON.stringify([MOCK_ANNOTATION]),
-            });
-        } else if (method === 'POST') {
-            await route.fulfill({
-                status: 201,
-                contentType: 'application/json',
-                body: JSON.stringify({ ...MOCK_ANNOTATION, id: 'ann-new-1' }),
-            });
-        } else if (method === 'PUT') {
-            const url = route.request().url();
-            const id = url.split('/annotations/')[1];
-            await route.fulfill({
-                status: 200,
-                contentType: 'application/json',
-                body: JSON.stringify({ ...MOCK_ANNOTATION, id, version: 2 }),
-            });
-        } else if (method === 'DELETE') {
-            await route.fulfill({ status: 204, body: '' });
-        } else {
-            await route.continue();
+    await page.route(
+        `${MOCK_ANNOTATION_URL}/annotations**`,
+        async (route: any) => {
+            const method = route.request().method();
+            if (method === 'GET') {
+                await route.fulfill({
+                    status: 200,
+                    contentType: 'application/json',
+                    body: JSON.stringify([MOCK_ANNOTATION]),
+                });
+            } else if (method === 'POST') {
+                await route.fulfill({
+                    status: 201,
+                    contentType: 'application/json',
+                    body: JSON.stringify({
+                        ...MOCK_ANNOTATION,
+                        id: 'ann-new-1',
+                    }),
+                });
+            } else if (method === 'PUT') {
+                const url = route.request().url();
+                const id = url.split('/annotations/')[1];
+                await route.fulfill({
+                    status: 200,
+                    contentType: 'application/json',
+                    body: JSON.stringify({
+                        ...MOCK_ANNOTATION,
+                        id,
+                        version: 2,
+                    }),
+                });
+            } else if (method === 'DELETE') {
+                await route.fulfill({ status: 204, body: '' });
+            } else {
+                await route.continue();
+            }
         }
-    });
+    );
 
     // Inject the annotation API URL via localStorage.frontendConfig, which
     // cBioPortal merges into the server config at bootstrap (highest precedence,
@@ -298,33 +355,44 @@ async function gotoViewerWithAnnotationApi(page: any, hash = '') {
 
 test.describe('WSI viewer — annotation layer (Option C)', () => {
     test.beforeEach(async () => {
-        test.skip(!BASE_URL, 'WSI_VIEWER_BASE_URL not set — skipping WSI annotation e2e tests');
+        test.skip(
+            !BASE_URL,
+            'WSI_VIEWER_BASE_URL not set — skipping WSI annotation e2e tests'
+        );
     });
 
-    test('Annotations button appears in CoordBar when API is configured', async ({ page }) => {
+    test('Annotations button appears in CoordBar when API is configured', async ({
+        page,
+    }) => {
         await gotoViewerWithAnnotationApi(page);
         // Wait for the viewer to be ready (Share view button signals viewerReady).
-        await expect(page.locator('button:has-text("Share view")')).toBeVisible({
+        await expect(shareViewButton(page)).toBeVisible({
             timeout: 30_000,
         });
         // Force a slide select by re-clicking the first slide in the nav panel.
         // This triggers loadAnnotations and makes the CoordBar re-render with the new config.
-        const firstSlide = page.locator('[data-testid="slide-nav-item"]').first();
+        const firstSlide = page
+            .locator('[data-testid="slide-nav-item"]')
+            .first();
         if (await firstSlide.isVisible()) {
             await firstSlide.click();
         }
-        await expect(page.locator('button:has-text("Annotations")')).toBeVisible({
+        await expect(
+            page.locator('button:has-text("Annotations")')
+        ).toBeVisible({
             timeout: 10_000,
         });
     });
 
     test('Annotations button toggles visibility label', async ({ page }) => {
         await gotoViewerWithAnnotationApi(page);
-        await expect(page.locator('button:has-text("Share view")')).toBeVisible({
+        await expect(shareViewButton(page)).toBeVisible({
             timeout: 30_000,
         });
 
-        const annoBtn = page.locator('button').filter({ hasText: /Annotations/ });
+        const annoBtn = page
+            .locator('button')
+            .filter({ hasText: /Annotations/ });
         await annoBtn.waitFor({ state: 'visible', timeout: 15_000 });
 
         // Initially visible — label contains "Annotations".
@@ -337,51 +405,65 @@ test.describe('WSI viewer — annotation layer (Option C)', () => {
         await expect(annoBtn).toBeVisible();
     });
 
-    test('Annotations panel renders mocked annotations in MetaSidebar', async ({ page }) => {
+    test('Annotations panel renders mocked annotations in MetaSidebar', async ({
+        page,
+    }) => {
         await gotoViewerWithAnnotationApi(page);
-        await expect(page.locator('button:has-text("Share view")')).toBeVisible({
+        await expect(shareViewButton(page)).toBeVisible({
             timeout: 30_000,
         });
 
         // The sidebar section heading should appear.
         await expect(
-            page.locator('text=Annotations').filter({ hasNot: page.locator('button') }).first()
+            page
+                .locator('text=Annotations')
+                .filter({ hasNot: page.locator('button') })
+                .first()
         ).toBeVisible({ timeout: 15_000 });
 
         // The mock annotation label should be in the panel.
-        await expect(page.locator('text=Playwright test annotation')).toBeVisible({
+        await expect(
+            page.locator('text=Playwright test annotation')
+        ).toBeVisible({
             timeout: 10_000,
         });
     });
 
-    test('DELETE request is sent when annotation ✕ button is clicked', async ({ page }) => {
+    test('DELETE request is sent when annotation ✕ button is clicked', async ({
+        page,
+    }) => {
         const deleteRequests: string[] = [];
-        await page.route(`${MOCK_ANNOTATION_URL}/annotations**`, async (route: any) => {
-            const method = route.request().method();
-            if (method === 'DELETE') {
-                deleteRequests.push(route.request().url());
-                await route.fulfill({ status: 204, body: '' });
-            } else if (method === 'GET') {
-                await route.fulfill({
-                    status: 200,
-                    contentType: 'application/json',
-                    body: JSON.stringify([MOCK_ANNOTATION]),
-                });
-            } else {
-                await route.continue();
+        await page.route(
+            `${MOCK_ANNOTATION_URL}/annotations**`,
+            async (route: any) => {
+                const method = route.request().method();
+                if (method === 'DELETE') {
+                    deleteRequests.push(route.request().url());
+                    await route.fulfill({ status: 204, body: '' });
+                } else if (method === 'GET') {
+                    await route.fulfill({
+                        status: 200,
+                        contentType: 'application/json',
+                        body: JSON.stringify([MOCK_ANNOTATION]),
+                    });
+                } else {
+                    await route.continue();
+                }
             }
-        });
+        );
 
         // Inject the annotation URL at bootstrap time via localStorage.
         await page.addInitScript((apiUrl: string) => {
             localStorage.setItem(
                 'frontendConfig',
-                JSON.stringify({ serverConfig: { msk_wsi_annotation_api_url: apiUrl } })
+                JSON.stringify({
+                    serverConfig: { msk_wsi_annotation_api_url: apiUrl },
+                })
             );
         }, MOCK_ANNOTATION_URL);
 
         await page.goto(viewerUrl());
-        await expect(page.locator('button:has-text("Share view")')).toBeVisible({
+        await expect(shareViewButton(page)).toBeVisible({
             timeout: 30_000,
         });
 
@@ -393,7 +475,9 @@ test.describe('WSI viewer — annotation layer (Option C)', () => {
         // Verify a DELETE request was made to the annotation endpoint.
         await page.waitForTimeout(500);
         expect(deleteRequests.length).toBeGreaterThan(0);
-        expect(deleteRequests[0]).toContain(`/annotations/${MOCK_ANNOTATION.id}`);
+        expect(deleteRequests[0]).toContain(
+            `/annotations/${MOCK_ANNOTATION.id}`
+        );
     });
 
     test('Annotations button is absent when API URL is not configured', async ({
@@ -404,11 +488,13 @@ test.describe('WSI viewer — annotation layer (Option C)', () => {
         await page.addInitScript(() => {
             localStorage.setItem(
                 'frontendConfig',
-                JSON.stringify({ serverConfig: { msk_wsi_annotation_api_url: null } })
+                JSON.stringify({
+                    serverConfig: { msk_wsi_annotation_api_url: null },
+                })
             );
         });
         await page.goto(viewerUrl());
-        await expect(page.locator('button:has-text("Share view")')).toBeVisible({
+        await expect(shareViewButton(page)).toBeVisible({
             timeout: 30_000,
         });
         // Annotations button must NOT appear.
@@ -421,46 +507,53 @@ test.describe('WSI viewer — annotation layer (Option C)', () => {
         page,
     }) => {
         // Mock GET to return empty list.
-        await page.route(`${MOCK_ANNOTATION_URL}/annotations**`, async (route: any) => {
-            if (route.request().method() === 'GET') {
-                await route.fulfill({
-                    status: 200,
-                    contentType: 'application/json',
-                    body: JSON.stringify([]),
-                });
-            } else {
-                await route.continue();
+        await page.route(
+            `${MOCK_ANNOTATION_URL}/annotations**`,
+            async (route: any) => {
+                if (route.request().method() === 'GET') {
+                    await route.fulfill({
+                        status: 200,
+                        contentType: 'application/json',
+                        body: JSON.stringify([]),
+                    });
+                } else {
+                    await route.continue();
+                }
             }
-        });
+        );
         await page.addInitScript((apiUrl: string) => {
             localStorage.setItem(
                 'frontendConfig',
-                JSON.stringify({ serverConfig: { msk_wsi_annotation_api_url: apiUrl } })
+                JSON.stringify({
+                    serverConfig: { msk_wsi_annotation_api_url: apiUrl },
+                })
             );
         }, MOCK_ANNOTATION_URL);
 
         await page.goto(viewerUrl());
-        await expect(page.locator('button:has-text("Share view")')).toBeVisible({
+        await expect(shareViewButton(page)).toBeVisible({
             timeout: 30_000,
         });
         await expect(
             page.locator('button').filter({ hasText: /Annotations/ })
         ).toBeVisible({ timeout: 15_000 });
 
-        await expect(
-            page.locator('text=No annotations yet')
-        ).toBeVisible({ timeout: 10_000 });
+        await expect(page.locator('text=No annotations yet')).toBeVisible({
+            timeout: 10_000,
+        });
     });
 
     test('Annotations button cycles between filled and unfilled icon on toggle', async ({
         page,
     }) => {
         await gotoViewerWithAnnotationApi(page);
-        await expect(page.locator('button:has-text("Share view")')).toBeVisible({
+        await expect(shareViewButton(page)).toBeVisible({
             timeout: 30_000,
         });
 
-        const annoBtn = page.locator('button').filter({ hasText: /Annotations/ });
+        const annoBtn = page
+            .locator('button')
+            .filter({ hasText: /Annotations/ });
         await annoBtn.waitFor({ state: 'visible', timeout: 15_000 });
 
         // Initially visible → filled blue circle emoji.
@@ -528,7 +621,9 @@ test.describe('WSI viewer — live annotation API (Option C)', () => {
         );
     });
 
-    test('live API: GET /annotations returns 200 with array', async ({ page }) => {
+    test('live API: GET /annotations returns 200 with array', async ({
+        page,
+    }) => {
         const resp = await page.request.get(
             `${LIVE_ANNO_API}/annotations?slide_id=${LIVE_SLIDE_ID}&study_id=${STUDY_ID}`
         );
@@ -537,18 +632,30 @@ test.describe('WSI viewer — live annotation API (Option C)', () => {
         expect(Array.isArray(body)).toBe(true);
     });
 
-    test('live API: CRUD lifecycle — create, read, delete', async ({ page }) => {
+    test('live API: CRUD lifecycle — create, read, delete', async ({
+        page,
+    }) => {
         // 1. Create annotation via POST.
-        const postResp = await page.request.post(`${LIVE_ANNO_API}/annotations`, {
-            data: {
-                slide_id: LIVE_SLIDE_ID,
-                study_id: STUDY_ID,
-                body: { label: 'e2e-lifecycle-test', comment: '', type: 'region' },
-                target: {
-                    selector: { type: 'FragmentSelector', value: 'xywh=10,10,20,20' },
+        const postResp = await page.request.post(
+            `${LIVE_ANNO_API}/annotations`,
+            {
+                data: {
+                    slide_id: LIVE_SLIDE_ID,
+                    study_id: STUDY_ID,
+                    body: {
+                        label: 'e2e-lifecycle-test',
+                        comment: '',
+                        type: 'region',
+                    },
+                    target: {
+                        selector: {
+                            type: 'FragmentSelector',
+                            value: 'xywh=10,10,20,20',
+                        },
+                    },
                 },
-            },
-        });
+            }
+        );
         expect(postResp.status()).toBe(201);
         const created = await postResp.json();
         expect(created.id).toBeTruthy();
@@ -579,16 +686,26 @@ test.describe('WSI viewer — live annotation API (Option C)', () => {
         page,
     }) => {
         // 1. Pre-seed an annotation via the API.
-        const postResp = await page.request.post(`${LIVE_ANNO_API}/annotations`, {
-            data: {
-                slide_id: LIVE_SLIDE_ID,
-                study_id: STUDY_ID,
-                body: { label: 'e2e-viewer-load-test', comment: '', type: 'region' },
-                target: {
-                    selector: { type: 'FragmentSelector', value: 'xywh=5,5,10,10' },
+        const postResp = await page.request.post(
+            `${LIVE_ANNO_API}/annotations`,
+            {
+                data: {
+                    slide_id: LIVE_SLIDE_ID,
+                    study_id: STUDY_ID,
+                    body: {
+                        label: 'e2e-viewer-load-test',
+                        comment: '',
+                        type: 'region',
+                    },
+                    target: {
+                        selector: {
+                            type: 'FragmentSelector',
+                            value: 'xywh=5,5,10,10',
+                        },
+                    },
                 },
-            },
-        });
+            }
+        );
         expect(postResp.status()).toBe(201);
         const created = await postResp.json();
 
@@ -597,12 +714,14 @@ test.describe('WSI viewer — live annotation API (Option C)', () => {
             await page.addInitScript((apiUrl: string) => {
                 localStorage.setItem(
                     'frontendConfig',
-                    JSON.stringify({ serverConfig: { msk_wsi_annotation_api_url: apiUrl } })
+                    JSON.stringify({
+                        serverConfig: { msk_wsi_annotation_api_url: apiUrl },
+                    })
                 );
             }, LIVE_ANNO_API);
 
             await page.goto(viewerUrl());
-            await expect(page.locator('button:has-text("Share view")')).toBeVisible({
+            await expect(shareViewButton(page)).toBeVisible({
                 timeout: 30_000,
             });
 
@@ -612,7 +731,9 @@ test.describe('WSI viewer — live annotation API (Option C)', () => {
             ).toBeVisible({ timeout: 15_000 });
         } finally {
             // 4. Cleanup — delete regardless of test outcome.
-            await page.request.delete(`${LIVE_ANNO_API}/annotations/${created.id}`);
+            await page.request.delete(
+                `${LIVE_ANNO_API}/annotations/${created.id}`
+            );
         }
     });
 
@@ -620,16 +741,26 @@ test.describe('WSI viewer — live annotation API (Option C)', () => {
         page,
     }) => {
         // 1. Pre-seed.
-        const postResp = await page.request.post(`${LIVE_ANNO_API}/annotations`, {
-            data: {
-                slide_id: LIVE_SLIDE_ID,
-                study_id: STUDY_ID,
-                body: { label: 'e2e-delete-via-ui', comment: '', type: 'region' },
-                target: {
-                    selector: { type: 'FragmentSelector', value: 'xywh=1,1,5,5' },
+        const postResp = await page.request.post(
+            `${LIVE_ANNO_API}/annotations`,
+            {
+                data: {
+                    slide_id: LIVE_SLIDE_ID,
+                    study_id: STUDY_ID,
+                    body: {
+                        label: 'e2e-delete-via-ui',
+                        comment: '',
+                        type: 'region',
+                    },
+                    target: {
+                        selector: {
+                            type: 'FragmentSelector',
+                            value: 'xywh=1,1,5,5',
+                        },
+                    },
                 },
-            },
-        });
+            }
+        );
         const created = await postResp.json();
         expect(postResp.status()).toBe(201);
 
@@ -637,12 +768,14 @@ test.describe('WSI viewer — live annotation API (Option C)', () => {
         await page.addInitScript((apiUrl: string) => {
             localStorage.setItem(
                 'frontendConfig',
-                JSON.stringify({ serverConfig: { msk_wsi_annotation_api_url: apiUrl } })
+                JSON.stringify({
+                    serverConfig: { msk_wsi_annotation_api_url: apiUrl },
+                })
             );
         }, LIVE_ANNO_API);
 
         await page.goto(viewerUrl());
-        await expect(page.locator('button:has-text("Share view")')).toBeVisible({
+        await expect(shareViewButton(page)).toBeVisible({
             timeout: 30_000,
         });
 
@@ -660,9 +793,12 @@ test.describe('WSI viewer — live annotation API (Option C)', () => {
         await annoRow.locator('button[title="Delete annotation"]').click();
 
         // 4. Label must disappear from sidebar.
-        await expect(page.locator(`[title="e2e-delete-via-ui"]`)).toHaveCount(0, {
-            timeout: 10_000,
-        });
+        await expect(page.locator(`[title="e2e-delete-via-ui"]`)).toHaveCount(
+            0,
+            {
+                timeout: 10_000,
+            }
+        );
 
         // 5. Confirm deleted from API.
         const afterDel = await page.request.get(
@@ -683,14 +819,19 @@ test.describe('WSI viewer — live annotation API (Option C)', () => {
 
 test.describe('WSI viewer — drawing tools (Option C)', () => {
     test.beforeEach(async () => {
-        test.skip(!BASE_URL, 'WSI_VIEWER_BASE_URL not set — skipping drawing tool tests');
+        test.skip(
+            !BASE_URL,
+            'WSI_VIEWER_BASE_URL not set — skipping drawing tool tests'
+        );
     });
 
     // Rect button is selected by title containing "Draw a rectangle" (unique among tools).
 
-    test('Draw rect button in CoordBar activates and shows cancel state', async ({ page }) => {
+    test('Draw rect button in CoordBar activates and shows cancel state', async ({
+        page,
+    }) => {
         await gotoViewerWithAnnotationApi(page);
-        await expect(page.locator('button:has-text("Share view")')).toBeVisible({
+        await expect(shareViewButton(page)).toBeVisible({
             timeout: 30_000,
         });
 
@@ -704,13 +845,17 @@ test.describe('WSI viewer — drawing tools (Option C)', () => {
         ).toBeVisible({ timeout: 5_000 });
     });
 
-    test('Draw poly button in CoordBar activates and shows cancel state', async ({ page }) => {
+    test('Draw poly button in CoordBar activates and shows cancel state', async ({
+        page,
+    }) => {
         await gotoViewerWithAnnotationApi(page);
-        await expect(page.locator('button:has-text("Share view")')).toBeVisible({
+        await expect(shareViewButton(page)).toBeVisible({
             timeout: 30_000,
         });
 
-        const polyBtn = page.locator('button[title*="double-click to close"]').first();
+        const polyBtn = page
+            .locator('button[title*="double-click to close"]')
+            .first();
         await expect(polyBtn).toBeVisible({ timeout: 10_000 });
 
         await polyBtn.click();
@@ -723,21 +868,25 @@ test.describe('WSI viewer — drawing tools (Option C)', () => {
         page,
     }) => {
         await gotoViewerWithAnnotationApi(page);
-        await expect(page.locator('button:has-text("Share view")')).toBeVisible({
+        await expect(shareViewButton(page)).toBeVisible({
             timeout: 30_000,
         });
 
         // DrawToolbar shows below CoordBar when annotations are active.
         // Buttons share title substring with the ones defined in DrawToolbar.
         const rectBtn = page.locator('button[title*="Draw a rectangle"]');
-        const polyBtn = page.locator('button[title*="double-click to close"]').first();
+        const polyBtn = page
+            .locator('button[title*="double-click to close"]')
+            .first();
         await expect(rectBtn).toBeVisible({ timeout: 10_000 });
         await expect(polyBtn).toBeVisible({ timeout: 10_000 });
     });
 
-    test('DrawToolbar draw rect button activates drawing mode', async ({ page }) => {
+    test('DrawToolbar draw rect button activates drawing mode', async ({
+        page,
+    }) => {
         await gotoViewerWithAnnotationApi(page);
-        await expect(page.locator('button:has-text("Share view")')).toBeVisible({
+        await expect(shareViewButton(page)).toBeVisible({
             timeout: 30_000,
         });
 
@@ -745,14 +894,16 @@ test.describe('WSI viewer — drawing tools (Option C)', () => {
         await expect(rectBtn).toBeVisible({ timeout: 10_000 });
         await rectBtn.click();
 
-        await expect(page.locator('button', { hasText: '✕ Cancel draw' })).toBeVisible({
+        await expect(
+            page.locator('button', { hasText: '✕ Cancel draw' })
+        ).toBeVisible({
             timeout: 5_000,
         });
     });
 
     test('Pressing Escape cancels active drawing mode', async ({ page }) => {
         await gotoViewerWithAnnotationApi(page);
-        await expect(page.locator('button:has-text("Share view")')).toBeVisible({
+        await expect(shareViewButton(page)).toBeVisible({
             timeout: 30_000,
         });
 
@@ -769,9 +920,11 @@ test.describe('WSI viewer — drawing tools (Option C)', () => {
         ).toBeVisible({ timeout: 5_000 });
     });
 
-    test('Clicking active draw button a second time cancels drawing', async ({ page }) => {
+    test('Clicking active draw button a second time cancels drawing', async ({
+        page,
+    }) => {
         await gotoViewerWithAnnotationApi(page);
-        await expect(page.locator('button:has-text("Share view")')).toBeVisible({
+        await expect(shareViewButton(page)).toBeVisible({
             timeout: 30_000,
         });
 
@@ -787,21 +940,28 @@ test.describe('WSI viewer — drawing tools (Option C)', () => {
         ).toBeVisible({ timeout: 5_000 });
     });
 
-    test('Draw rect: drag creates annotation saved to API', async ({ page }) => {
+    test('Draw rect: drag creates annotation saved to API', async ({
+        page,
+    }) => {
         // Use live API so we can verify the annotation was POSTed.
-        test.skip(!LIVE_ANNO_API, 'TILE_SERVER_URL not set — skipping drag-to-draw test');
+        test.skip(
+            !LIVE_ANNO_API,
+            'TILE_SERVER_URL not set — skipping drag-to-draw test'
+        );
 
         // Inject real live API URL via localStorage.
         await page.addInitScript((apiUrl: string) => {
             localStorage.setItem(
                 'frontendConfig',
-                JSON.stringify({ serverConfig: { msk_wsi_annotation_api_url: apiUrl } })
+                JSON.stringify({
+                    serverConfig: { msk_wsi_annotation_api_url: apiUrl },
+                })
             );
         }, LIVE_ANNO_API);
 
         // Capture POST requests to the annotation API.
         const postRequests: string[] = [];
-        await page.route(`${LIVE_ANNO_API}/annotations`, async (route) => {
+        await page.route(`${LIVE_ANNO_API}/annotations`, async route => {
             if (route.request().method() === 'POST') {
                 postRequests.push(route.request().url());
                 await route.continue();
@@ -811,7 +971,7 @@ test.describe('WSI viewer — drawing tools (Option C)', () => {
         });
 
         await page.goto(viewerUrl());
-        await expect(page.locator('button:has-text("Share view")')).toBeVisible({
+        await expect(shareViewButton(page)).toBeVisible({
             timeout: 30_000,
         });
         // Extra wait for OSD to finish loading the tile and Annotorious to mount.
@@ -859,7 +1019,7 @@ test.describe('WSI viewer — drawing tools (Option C)', () => {
 
     test('Ellipse tool button activates drawing mode', async ({ page }) => {
         await gotoViewerWithAnnotationApi(page);
-        await expect(page.locator('button:has-text("Share view")')).toBeVisible({
+        await expect(shareViewButton(page)).toBeVisible({
             timeout: 30_000,
         });
 
@@ -867,14 +1027,16 @@ test.describe('WSI viewer — drawing tools (Option C)', () => {
         await expect(ellipseBtn).toBeVisible({ timeout: 10_000 });
         await ellipseBtn.click();
 
-        await expect(page.locator('button', { hasText: '✕ Cancel draw' })).toBeVisible({
+        await expect(
+            page.locator('button', { hasText: '✕ Cancel draw' })
+        ).toBeVisible({
             timeout: 5_000,
         });
     });
 
     test('Circle tool button activates drawing mode', async ({ page }) => {
         await gotoViewerWithAnnotationApi(page);
-        await expect(page.locator('button:has-text("Share view")')).toBeVisible({
+        await expect(shareViewButton(page)).toBeVisible({
             timeout: 30_000,
         });
 
@@ -882,14 +1044,16 @@ test.describe('WSI viewer — drawing tools (Option C)', () => {
         await expect(circleBtn).toBeVisible({ timeout: 10_000 });
         await circleBtn.click();
 
-        await expect(page.locator('button', { hasText: '✕ Cancel draw' })).toBeVisible({
+        await expect(
+            page.locator('button', { hasText: '✕ Cancel draw' })
+        ).toBeVisible({
             timeout: 5_000,
         });
     });
 
     test('Line tool button activates drawing mode', async ({ page }) => {
         await gotoViewerWithAnnotationApi(page);
-        await expect(page.locator('button:has-text("Share view")')).toBeVisible({
+        await expect(shareViewButton(page)).toBeVisible({
             timeout: 30_000,
         });
 
@@ -897,13 +1061,20 @@ test.describe('WSI viewer — drawing tools (Option C)', () => {
         await expect(lineBtn).toBeVisible({ timeout: 10_000 });
         await lineBtn.click();
 
-        await expect(page.locator('button', { hasText: '✕ Cancel draw' })).toBeVisible({
+        await expect(
+            page.locator('button', { hasText: '✕ Cancel draw' })
+        ).toBeVisible({
             timeout: 5_000,
         });
     });
 
-    test('Draw ellipse: drag creates annotation saved to API', async ({ page }) => {
-        test.skip(!LIVE_ANNO_API, 'TILE_SERVER_URL not set — skipping ellipse draw test');
+    test('Draw ellipse: drag creates annotation saved to API', async ({
+        page,
+    }) => {
+        test.skip(
+            !LIVE_ANNO_API,
+            'TILE_SERVER_URL not set — skipping ellipse draw test'
+        );
 
         // Listen for console logs to debug
         page.on('console', msg => {
@@ -915,12 +1086,14 @@ test.describe('WSI viewer — drawing tools (Option C)', () => {
         await page.addInitScript((apiUrl: string) => {
             localStorage.setItem(
                 'frontendConfig',
-                JSON.stringify({ serverConfig: { msk_wsi_annotation_api_url: apiUrl } })
+                JSON.stringify({
+                    serverConfig: { msk_wsi_annotation_api_url: apiUrl },
+                })
             );
         }, LIVE_ANNO_API);
 
         const postRequests: string[] = [];
-        await page.route(`${LIVE_ANNO_API}/annotations`, async (route) => {
+        await page.route(`${LIVE_ANNO_API}/annotations`, async route => {
             if (route.request().method() === 'POST') {
                 postRequests.push(route.request().url());
                 await route.continue();
@@ -930,7 +1103,7 @@ test.describe('WSI viewer — drawing tools (Option C)', () => {
         });
 
         await page.goto(viewerUrl());
-        await expect(page.locator('button:has-text("Share view")')).toBeVisible({
+        await expect(shareViewButton(page)).toBeVisible({
             timeout: 30_000,
         });
         await page.waitForTimeout(4_000);
@@ -972,8 +1145,13 @@ test.describe('WSI viewer — drawing tools (Option C)', () => {
         }
     });
 
-    test('Draw circle: drag creates annotation saved to API', async ({ page }) => {
-        test.skip(!LIVE_ANNO_API, 'TILE_SERVER_URL not set — skipping circle draw test');
+    test('Draw circle: drag creates annotation saved to API', async ({
+        page,
+    }) => {
+        test.skip(
+            !LIVE_ANNO_API,
+            'TILE_SERVER_URL not set — skipping circle draw test'
+        );
 
         page.on('console', msg => {
             if (msg.text().includes('WSIViewer')) {
@@ -984,12 +1162,14 @@ test.describe('WSI viewer — drawing tools (Option C)', () => {
         await page.addInitScript((apiUrl: string) => {
             localStorage.setItem(
                 'frontendConfig',
-                JSON.stringify({ serverConfig: { msk_wsi_annotation_api_url: apiUrl } })
+                JSON.stringify({
+                    serverConfig: { msk_wsi_annotation_api_url: apiUrl },
+                })
             );
         }, LIVE_ANNO_API);
 
         const postRequests: string[] = [];
-        await page.route(`${LIVE_ANNO_API}/annotations`, async (route) => {
+        await page.route(`${LIVE_ANNO_API}/annotations`, async route => {
             if (route.request().method() === 'POST') {
                 postRequests.push(route.request().url());
                 await route.continue();
@@ -999,7 +1179,7 @@ test.describe('WSI viewer — drawing tools (Option C)', () => {
         });
 
         await page.goto(viewerUrl());
-        await expect(page.locator('button:has-text("Share view")')).toBeVisible({
+        await expect(shareViewButton(page)).toBeVisible({
             timeout: 30_000,
         });
         await page.waitForTimeout(4_000);
@@ -1038,8 +1218,13 @@ test.describe('WSI viewer — drawing tools (Option C)', () => {
         }
     });
 
-    test('Draw line: drag creates annotation saved to API', async ({ page }) => {
-        test.skip(!LIVE_ANNO_API, 'TILE_SERVER_URL not set — skipping line draw test');
+    test('Draw line: drag creates annotation saved to API', async ({
+        page,
+    }) => {
+        test.skip(
+            !LIVE_ANNO_API,
+            'TILE_SERVER_URL not set — skipping line draw test'
+        );
 
         page.on('console', msg => {
             if (msg.text().includes('WSIViewer')) {
@@ -1050,12 +1235,14 @@ test.describe('WSI viewer — drawing tools (Option C)', () => {
         await page.addInitScript((apiUrl: string) => {
             localStorage.setItem(
                 'frontendConfig',
-                JSON.stringify({ serverConfig: { msk_wsi_annotation_api_url: apiUrl } })
+                JSON.stringify({
+                    serverConfig: { msk_wsi_annotation_api_url: apiUrl },
+                })
             );
         }, LIVE_ANNO_API);
 
         const postRequests: string[] = [];
-        await page.route(`${LIVE_ANNO_API}/annotations`, async (route) => {
+        await page.route(`${LIVE_ANNO_API}/annotations`, async route => {
             if (route.request().method() === 'POST') {
                 postRequests.push(route.request().url());
                 await route.continue();
@@ -1065,7 +1252,7 @@ test.describe('WSI viewer — drawing tools (Option C)', () => {
         });
 
         await page.goto(viewerUrl());
-        await expect(page.locator('button:has-text("Share view")')).toBeVisible({
+        await expect(shareViewButton(page)).toBeVisible({
             timeout: 30_000,
         });
         await page.waitForTimeout(4_000);
@@ -1104,13 +1291,17 @@ test.describe('WSI viewer — drawing tools (Option C)', () => {
         }
     });
 
-    test('Draw ellipse: annotation persists in sidebar after drawing', async ({ page }) => {
+    test('Draw ellipse: annotation persists in sidebar after drawing', async ({
+        page,
+    }) => {
         await gotoViewerWithAnnotationApi(page);
-        await expect(page.locator('button:has-text("Share view")')).toBeVisible({ timeout: 30_000 });
+        await expect(shareViewButton(page)).toBeVisible({ timeout: 30_000 });
         await page.waitForTimeout(4_000);
 
         await page.locator('button[title*="Draw an ellipse"]').click();
-        await expect(page.locator('button', { hasText: '✕ Cancel draw' })).toBeVisible({ timeout: 5_000 });
+        await expect(
+            page.locator('button', { hasText: '✕ Cancel draw' })
+        ).toBeVisible({ timeout: 5_000 });
 
         const canvas = page.locator('.openseadragon-canvas').first();
         const box = await canvas.boundingBox();
@@ -1125,10 +1316,14 @@ test.describe('WSI viewer — drawing tools (Option C)', () => {
         await page.mouse.up();
 
         // Tool should auto-deactivate after drawing
-        await expect(page.locator('button', { hasText: '✕ Cancel draw' })).not.toBeVisible({ timeout: 5_000 });
+        await expect(
+            page.locator('button', { hasText: '✕ Cancel draw' })
+        ).not.toBeVisible({ timeout: 5_000 });
 
         // Mock POST returns id: 'ann-new-1'; sidebar should show its edit button
-        await expect(page.locator('[data-testid="edit-label-ann-new-1"]')).toBeVisible({ timeout: 5_000 });
+        await expect(
+            page.locator('[data-testid="edit-label-ann-new-1"]')
+        ).toBeVisible({ timeout: 5_000 });
     });
 });
 
@@ -1136,14 +1331,17 @@ test.describe('WSI viewer — drawing tools (Option C)', () => {
 
 test.describe('WSI viewer — named color palette (Option C)', () => {
     test.beforeEach(async () => {
-        test.skip(!BASE_URL, 'WSI_VIEWER_BASE_URL not set — skipping color palette tests');
+        test.skip(
+            !BASE_URL,
+            'WSI_VIEWER_BASE_URL not set — skipping color palette tests'
+        );
     });
 
     test('Default color palette buttons are shown in DrawToolbar when annotation API is configured', async ({
         page,
     }) => {
         await gotoViewerWithAnnotationApi(page);
-        await expect(page.locator('button:has-text("Share view")')).toBeVisible({
+        await expect(shareViewButton(page)).toBeVisible({
             timeout: 30_000,
         });
 
@@ -1154,9 +1352,11 @@ test.describe('WSI viewer — named color palette (Option C)', () => {
         expect(count).toBeGreaterThanOrEqual(1);
     });
 
-    test('Clicking a color button makes it active (aria-pressed)', async ({ page }) => {
+    test('Clicking a color button makes it active (aria-pressed)', async ({
+        page,
+    }) => {
         await gotoViewerWithAnnotationApi(page);
-        await expect(page.locator('button:has-text("Share view")')).toBeVisible({
+        await expect(shareViewButton(page)).toBeVisible({
             timeout: 30_000,
         });
 
@@ -1173,20 +1373,30 @@ test.describe('WSI viewer — named color palette (Option C)', () => {
         await expect(defaultBtn).toHaveAttribute('aria-pressed', 'false');
     });
 
-    test('"+" button opens add-color form with color picker and name input', async ({ page }) => {
+    test('"+" button opens add-color form with color picker and name input', async ({
+        page,
+    }) => {
         await gotoViewerWithAnnotationApi(page);
-        await expect(page.locator('button:has-text("Share view")')).toBeVisible({
+        await expect(shareViewButton(page)).toBeVisible({
             timeout: 30_000,
         });
 
-        const addBtn = page.locator('button[title="Add new named color to palette"]');
+        const addBtn = page.locator(
+            'button[title="Add new named color to palette"]'
+        );
         await expect(addBtn).toBeVisible({ timeout: 5_000 });
         await addBtn.click();
 
         // Form appears with color input, name text field, and Add button.
-        await expect(page.locator('input[type="color"]')).toBeVisible({ timeout: 3_000 });
-        await expect(page.locator('input[placeholder="Name (optional)"]')).toBeVisible();
-        await expect(page.locator('button[title="Add color to palette"]')).toBeVisible();
+        await expect(page.locator('input[type="color"]')).toBeVisible({
+            timeout: 3_000,
+        });
+        await expect(
+            page.locator('input[placeholder="Name (optional)"]')
+        ).toBeVisible();
+        await expect(
+            page.locator('button[title="Add color to palette"]')
+        ).toBeVisible();
     });
 
     test('Mock annotation with body.type="name|#hex" shows correct color dot in MetaSidebar', async ({
@@ -1196,74 +1406,99 @@ test.describe('WSI viewer — named color palette (Option C)', () => {
         const CUSTOM_HEX = '#ef4444';
         const CUSTOM_NAME = 'My Region';
 
-        await page.route(`${MOCK_ANNOTATION_URL}/annotations**`, async (route: any) => {
-            if (route.request().method() === 'GET') {
-                await route.fulfill({
-                    status: 200,
-                    contentType: 'application/json',
-                    body: JSON.stringify([
-                        {
-                            ...MOCK_ANNOTATION,
-                            body: { ...MOCK_ANNOTATION.body, type: `${CUSTOM_NAME}|${CUSTOM_HEX}` },
-                        },
-                    ]),
-                });
-            } else {
-                await route.continue();
+        await page.route(
+            `${MOCK_ANNOTATION_URL}/annotations**`,
+            async (route: any) => {
+                if (route.request().method() === 'GET') {
+                    await route.fulfill({
+                        status: 200,
+                        contentType: 'application/json',
+                        body: JSON.stringify([
+                            {
+                                ...MOCK_ANNOTATION,
+                                body: {
+                                    ...MOCK_ANNOTATION.body,
+                                    type: `${CUSTOM_NAME}|${CUSTOM_HEX}`,
+                                },
+                            },
+                        ]),
+                    });
+                } else {
+                    await route.continue();
+                }
             }
-        });
+        );
 
         await page.addInitScript((apiUrl: string) => {
             localStorage.setItem(
                 'frontendConfig',
-                JSON.stringify({ serverConfig: { msk_wsi_annotation_api_url: apiUrl } })
+                JSON.stringify({
+                    serverConfig: { msk_wsi_annotation_api_url: apiUrl },
+                })
             );
         }, MOCK_ANNOTATION_URL);
 
         await page.goto(viewerUrl());
-        await expect(page.locator('button:has-text("Share view")')).toBeVisible({
+        await expect(shareViewButton(page)).toBeVisible({
             timeout: 30_000,
         });
 
         // Colored dot uses the hex from the encoded body.type.
-        const dot = page.locator(`span[data-annotation-color="${CUSTOM_HEX}"]`).first();
+        const dot = page
+            .locator(`span[data-annotation-color="${CUSTOM_HEX}"]`)
+            .first();
         await expect(dot).toBeVisible({ timeout: 10_000 });
 
         // Color name badge appears in the sidebar.
-        await expect(page.locator(`text=${CUSTOM_NAME}`).first()).toBeVisible({ timeout: 5_000 });
+        await expect(page.locator(`text=${CUSTOM_NAME}`).first()).toBeVisible({
+            timeout: 5_000,
+        });
     });
 
     test('Legacy body.type="tumor" still renders with a color (backwards compat)', async ({
         page,
     }) => {
-        await page.route(`${MOCK_ANNOTATION_URL}/annotations**`, async (route: any) => {
-            if (route.request().method() === 'GET') {
-                await route.fulfill({
-                    status: 200,
-                    contentType: 'application/json',
-                    body: JSON.stringify([
-                        { ...MOCK_ANNOTATION, body: { ...MOCK_ANNOTATION.body, type: 'tumor' } },
-                    ]),
-                });
-            } else {
-                await route.continue();
+        await page.route(
+            `${MOCK_ANNOTATION_URL}/annotations**`,
+            async (route: any) => {
+                if (route.request().method() === 'GET') {
+                    await route.fulfill({
+                        status: 200,
+                        contentType: 'application/json',
+                        body: JSON.stringify([
+                            {
+                                ...MOCK_ANNOTATION,
+                                body: {
+                                    ...MOCK_ANNOTATION.body,
+                                    type: 'tumor',
+                                },
+                            },
+                        ]),
+                    });
+                } else {
+                    await route.continue();
+                }
             }
-        });
+        );
 
         await page.addInitScript((apiUrl: string) => {
             localStorage.setItem(
                 'frontendConfig',
-                JSON.stringify({ serverConfig: { msk_wsi_annotation_api_url: apiUrl } })
+                JSON.stringify({
+                    serverConfig: { msk_wsi_annotation_api_url: apiUrl },
+                })
             );
         }, MOCK_ANNOTATION_URL);
 
         await page.goto(viewerUrl());
-        await expect(page.locator('button:has-text("Share view")')).toBeVisible({
+        await expect(shareViewButton(page)).toBeVisible({
             timeout: 30_000,
         });
 
         // Legacy "tumor" → red (#ef4444) via the legacy fallback map.
-        const dot = page.locator('span[data-annotation-color="#ef4444"]').first();
+        const dot = page
+            .locator('span[data-annotation-color="#ef4444"]')
+            .first();
         await expect(dot).toBeVisible({ timeout: 10_000 });
     });
 });
@@ -1272,7 +1507,10 @@ test.describe('WSI viewer — named color palette (Option C)', () => {
 
 test.describe('WSI viewer — annotation labels (Option C)', () => {
     test.beforeEach(async () => {
-        test.skip(!BASE_URL, 'WSI_VIEWER_BASE_URL not set — skipping annotation label tests');
+        test.skip(
+            !BASE_URL,
+            'WSI_VIEWER_BASE_URL not set — skipping annotation label tests'
+        );
     });
 
     test('Drawing a shape immediately saves annotation with auto-generated label (no prompt)', async ({
@@ -1280,37 +1518,54 @@ test.describe('WSI viewer — annotation labels (Option C)', () => {
     }) => {
         const capturedPosts: any[] = [];
 
-        await page.route(`${MOCK_ANNOTATION_URL}/annotations**`, async (route: any) => {
-            const method = route.request().method();
-            if (method === 'GET') {
-                await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
-            } else if (method === 'POST') {
-                const body = await route.request().postDataJSON();
-                capturedPosts.push(body);
-                await route.fulfill({
-                    status: 201,
-                    contentType: 'application/json',
-                    body: JSON.stringify({
-                        id: 'auto-1', slide_id: '1492807', study_id: STUDY_ID,
-                        body: body?.body ?? {}, target: body?.target ?? {}, version: 1,
-                    }),
-                });
-            } else {
-                await route.continue();
+        await page.route(
+            `${MOCK_ANNOTATION_URL}/annotations**`,
+            async (route: any) => {
+                const method = route.request().method();
+                if (method === 'GET') {
+                    await route.fulfill({
+                        status: 200,
+                        contentType: 'application/json',
+                        body: '[]',
+                    });
+                } else if (method === 'POST') {
+                    const body = await route.request().postDataJSON();
+                    capturedPosts.push(body);
+                    await route.fulfill({
+                        status: 201,
+                        contentType: 'application/json',
+                        body: JSON.stringify({
+                            id: 'auto-1',
+                            slide_id: '1492807',
+                            study_id: STUDY_ID,
+                            body: body?.body ?? {},
+                            target: body?.target ?? {},
+                            version: 1,
+                        }),
+                    });
+                } else {
+                    await route.continue();
+                }
             }
-        });
+        );
 
         await page.addInitScript((apiUrl: string) => {
-            localStorage.setItem('frontendConfig',
-                JSON.stringify({ serverConfig: { msk_wsi_annotation_api_url: apiUrl } }));
+            localStorage.setItem(
+                'frontendConfig',
+                JSON.stringify({
+                    serverConfig: { msk_wsi_annotation_api_url: apiUrl },
+                })
+            );
         }, MOCK_ANNOTATION_URL);
 
         await page.goto(viewerUrl());
-        await expect(page.locator('button:has-text("Share view")')).toBeVisible({ timeout: 30_000 });
+        await expect(shareViewButton(page)).toBeVisible({ timeout: 30_000 });
 
         // Draw a rectangle by dragging on the viewer canvas.
         await page.locator('button:has-text("◻ Rect")').click();
-        const canvas = page.locator('.openseadragon-canvas canvas, .openseadragon-canvas').first();
+        const canvas = page
+            .locator('.openseadragon-canvas canvas, .openseadragon-canvas')
+            .first();
         const box = await canvas.boundingBox();
         if (box) {
             await page.mouse.move(box.x + 100, box.y + 100);
@@ -1320,7 +1575,9 @@ test.describe('WSI viewer — annotation labels (Option C)', () => {
         }
 
         // Label prompt must NOT appear — auto-save fires immediately.
-        await expect(page.locator('[data-testid="annotation-label-prompt"]')).toHaveCount(0);
+        await expect(
+            page.locator('[data-testid="annotation-label-prompt"]')
+        ).toHaveCount(0);
 
         // A POST should be sent with an auto-generated label matching the active color name.
         await page.waitForTimeout(1_000);
@@ -1332,96 +1589,159 @@ test.describe('WSI viewer — annotation labels (Option C)', () => {
         }
     });
 
-    test('Annotation with a label shows label text in sidebar', async ({ page }) => {
+    test('Annotation with a label shows label text in sidebar', async ({
+        page,
+    }) => {
         const LABEL = 'Tumor infiltrating lymphocytes';
-        await page.route(`${MOCK_ANNOTATION_URL}/annotations**`, async (route: any) => {
-            if (route.request().method() === 'GET') {
-                await route.fulfill({
-                    status: 200, contentType: 'application/json',
-                    body: JSON.stringify([{ ...MOCK_ANNOTATION, body: { label: LABEL, comment: '', type: 'region' } }]),
-                });
-            } else {
-                await route.continue();
+        await page.route(
+            `${MOCK_ANNOTATION_URL}/annotations**`,
+            async (route: any) => {
+                if (route.request().method() === 'GET') {
+                    await route.fulfill({
+                        status: 200,
+                        contentType: 'application/json',
+                        body: JSON.stringify([
+                            {
+                                ...MOCK_ANNOTATION,
+                                body: {
+                                    label: LABEL,
+                                    comment: '',
+                                    type: 'region',
+                                },
+                            },
+                        ]),
+                    });
+                } else {
+                    await route.continue();
+                }
             }
-        });
+        );
         await page.addInitScript((apiUrl: string) => {
-            localStorage.setItem('frontendConfig',
-                JSON.stringify({ serverConfig: { msk_wsi_annotation_api_url: apiUrl } }));
+            localStorage.setItem(
+                'frontendConfig',
+                JSON.stringify({
+                    serverConfig: { msk_wsi_annotation_api_url: apiUrl },
+                })
+            );
         }, MOCK_ANNOTATION_URL);
 
         await page.goto(viewerUrl());
-        await expect(page.locator('button:has-text("Share view")')).toBeVisible({ timeout: 30_000 });
-        await expect(page.locator(`text=${LABEL}`)).toBeVisible({ timeout: 10_000 });
+        await expect(shareViewButton(page)).toBeVisible({ timeout: 30_000 });
+        await expect(page.locator(`text=${LABEL}`)).toBeVisible({
+            timeout: 10_000,
+        });
     });
 
-    test('Edit button appears on annotation row and inline editor shows on click', async ({ page }) => {
+    test('Edit button appears on annotation row and inline editor shows on click', async ({
+        page,
+    }) => {
         await gotoViewerWithAnnotationApi(page);
-        await expect(page.locator('button:has-text("Share view")')).toBeVisible({ timeout: 30_000 });
+        await expect(shareViewButton(page)).toBeVisible({ timeout: 30_000 });
 
-        const annotationLabel = page.locator('text=Playwright test annotation').first();
+        const annotationLabel = page
+            .locator('text=Playwright test annotation')
+            .first();
         await expect(annotationLabel).toBeVisible({ timeout: 10_000 });
 
-        const editBtn = page.locator(`[data-testid="edit-label-${MOCK_ANNOTATION.id}"]`);
+        const editBtn = page.locator(
+            `[data-testid="edit-label-${MOCK_ANNOTATION.id}"]`
+        );
         await expect(editBtn).toBeVisible({ timeout: 5_000 });
 
         await editBtn.click();
-        const editInput = page.locator('[data-testid="annotation-label-edit-input"]');
+        const editInput = page.locator(
+            '[data-testid="annotation-label-edit-input"]'
+        );
         await expect(editInput).toBeVisible({ timeout: 5_000 });
         await expect(editInput).toHaveValue(MOCK_ANNOTATION.body.label);
     });
 
-    test('Confirming inline label edit sends PUT request with new label', async ({ page }) => {
+    test('Confirming inline label edit sends PUT request with new label', async ({
+        page,
+    }) => {
         const putRequests: any[] = [];
 
-        await page.route(`${MOCK_ANNOTATION_URL}/annotations**`, async (route: any) => {
-            const method = route.request().method();
-            if (method === 'GET') {
-                await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([MOCK_ANNOTATION]) });
-            } else if (method === 'PUT') {
-                putRequests.push(await route.request().postDataJSON());
-                await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ...MOCK_ANNOTATION, version: 2 }) });
-            } else {
-                await route.continue();
+        await page.route(
+            `${MOCK_ANNOTATION_URL}/annotations**`,
+            async (route: any) => {
+                const method = route.request().method();
+                if (method === 'GET') {
+                    await route.fulfill({
+                        status: 200,
+                        contentType: 'application/json',
+                        body: JSON.stringify([MOCK_ANNOTATION]),
+                    });
+                } else if (method === 'PUT') {
+                    putRequests.push(await route.request().postDataJSON());
+                    await route.fulfill({
+                        status: 200,
+                        contentType: 'application/json',
+                        body: JSON.stringify({
+                            ...MOCK_ANNOTATION,
+                            version: 2,
+                        }),
+                    });
+                } else {
+                    await route.continue();
+                }
             }
-        });
+        );
 
         await page.addInitScript((apiUrl: string) => {
-            localStorage.setItem('frontendConfig',
-                JSON.stringify({ serverConfig: { msk_wsi_annotation_api_url: apiUrl } }));
+            localStorage.setItem(
+                'frontendConfig',
+                JSON.stringify({
+                    serverConfig: { msk_wsi_annotation_api_url: apiUrl },
+                })
+            );
         }, MOCK_ANNOTATION_URL);
 
         await page.goto(viewerUrl());
-        await expect(page.locator('button:has-text("Share view")')).toBeVisible({ timeout: 30_000 });
+        await expect(shareViewButton(page)).toBeVisible({ timeout: 30_000 });
 
-        const editBtn = page.locator(`[data-testid="edit-label-${MOCK_ANNOTATION.id}"]`);
+        const editBtn = page.locator(
+            `[data-testid="edit-label-${MOCK_ANNOTATION.id}"]`
+        );
         await expect(editBtn).toBeVisible({ timeout: 10_000 });
         await editBtn.click();
 
-        const editInput = page.locator('[data-testid="annotation-label-edit-input"]');
+        const editInput = page.locator(
+            '[data-testid="annotation-label-edit-input"]'
+        );
         await editInput.fill('Updated label text');
         await editInput.press('Enter');
 
         await expect(editInput).not.toBeVisible({ timeout: 5_000 });
-        await expect(page.locator('text=Updated label text')).toBeVisible({ timeout: 5_000 });
+        await expect(page.locator('text=Updated label text')).toBeVisible({
+            timeout: 5_000,
+        });
 
         expect(putRequests.length).toBe(1);
         expect(putRequests[0].body.label).toBe('Updated label text');
     });
 
-    test('Cancelling inline label edit with Escape restores original label', async ({ page }) => {
+    test('Cancelling inline label edit with Escape restores original label', async ({
+        page,
+    }) => {
         await gotoViewerWithAnnotationApi(page);
-        await expect(page.locator('button:has-text("Share view")')).toBeVisible({ timeout: 30_000 });
+        await expect(shareViewButton(page)).toBeVisible({ timeout: 30_000 });
 
-        const editBtn = page.locator(`[data-testid="edit-label-${MOCK_ANNOTATION.id}"]`);
+        const editBtn = page.locator(
+            `[data-testid="edit-label-${MOCK_ANNOTATION.id}"]`
+        );
         await expect(editBtn).toBeVisible({ timeout: 10_000 });
         await editBtn.click();
 
-        const editInput = page.locator('[data-testid="annotation-label-edit-input"]');
+        const editInput = page.locator(
+            '[data-testid="annotation-label-edit-input"]'
+        );
         await editInput.fill('Temporary text that should be discarded');
         await editInput.press('Escape');
 
         await expect(editInput).not.toBeVisible({ timeout: 5_000 });
-        await expect(page.locator('text=Playwright test annotation')).toBeVisible({ timeout: 5_000 });
+        await expect(
+            page.locator('text=Playwright test annotation')
+        ).toBeVisible({ timeout: 5_000 });
     });
 });
 
@@ -1429,14 +1749,21 @@ test.describe('WSI viewer — annotation labels (Option C)', () => {
 
 test.describe('WSI viewer — annotation layers (Option C)', () => {
     test.beforeEach(async () => {
-        test.skip(!BASE_URL, 'WSI_VIEWER_BASE_URL not set — skipping WSI layer e2e tests');
+        test.skip(
+            !BASE_URL,
+            'WSI_VIEWER_BASE_URL not set — skipping WSI layer e2e tests'
+        );
     });
 
-    test('Default layer pill appears in sidebar when annotations enabled', async ({ page }) => {
+    test('Default layer pill appears in sidebar when annotations enabled', async ({
+        page,
+    }) => {
         await gotoViewerWithAnnotationApi(page);
-        await expect(page.locator('button:has-text("Share view")')).toBeVisible({ timeout: 30_000 });
+        await expect(shareViewButton(page)).toBeVisible({ timeout: 30_000 });
         // The sidebar Layers section should show at least the "Default" layer.
-        const defaultLayerBtn = page.locator('[data-testid="layer-select-Default"]');
+        const defaultLayerBtn = page.locator(
+            '[data-testid="layer-select-Default"]'
+        );
         await expect(defaultLayerBtn).toBeVisible({ timeout: 10_000 });
         // It should be active (aria-pressed=true) since it's the only layer.
         await expect(defaultLayerBtn).toHaveAttribute('aria-pressed', 'true');
@@ -1444,9 +1771,11 @@ test.describe('WSI viewer — annotation layers (Option C)', () => {
 
     test('Clicking layer pill sets it as active layer', async ({ page }) => {
         await gotoViewerWithAnnotationApi(page);
-        await expect(page.locator('button:has-text("Share view")')).toBeVisible({ timeout: 30_000 });
+        await expect(shareViewButton(page)).toBeVisible({ timeout: 30_000 });
 
-        const defaultLayerBtn = page.locator('[data-testid="layer-select-Default"]');
+        const defaultLayerBtn = page.locator(
+            '[data-testid="layer-select-Default"]'
+        );
         await expect(defaultLayerBtn).toBeVisible({ timeout: 10_000 });
         // Initially active.
         await expect(defaultLayerBtn).toHaveAttribute('aria-pressed', 'true');
@@ -1455,9 +1784,11 @@ test.describe('WSI viewer — annotation layers (Option C)', () => {
         await expect(defaultLayerBtn).toHaveAttribute('aria-pressed', 'true');
     });
 
-    test('"+" button in layer section opens add-layer form', async ({ page }) => {
+    test('"+" button in layer section opens add-layer form', async ({
+        page,
+    }) => {
         await gotoViewerWithAnnotationApi(page);
-        await expect(page.locator('button:has-text("Share view")')).toBeVisible({ timeout: 30_000 });
+        await expect(shareViewButton(page)).toBeVisible({ timeout: 30_000 });
 
         const addBtn = page.locator('[data-testid="add-layer-btn"]');
         await expect(addBtn).toBeVisible({ timeout: 10_000 });
@@ -1466,12 +1797,16 @@ test.describe('WSI viewer — annotation layers (Option C)', () => {
         // Input field should appear.
         const layerInput = page.locator('[data-testid="add-layer-input"]');
         await expect(layerInput).toBeVisible({ timeout: 5_000 });
-        await expect(page.locator('[data-testid="add-layer-confirm"]')).toBeVisible();
+        await expect(
+            page.locator('[data-testid="add-layer-confirm"]')
+        ).toBeVisible();
     });
 
-    test('Adding a new layer creates a new pill in the sidebar', async ({ page }) => {
+    test('Adding a new layer creates a new pill in the sidebar', async ({
+        page,
+    }) => {
         await gotoViewerWithAnnotationApi(page);
-        await expect(page.locator('button:has-text("Share view")')).toBeVisible({ timeout: 30_000 });
+        await expect(shareViewButton(page)).toBeVisible({ timeout: 30_000 });
 
         // Open add-layer form.
         const addBtn = page.locator('[data-testid="add-layer-btn"]');
@@ -1489,7 +1824,7 @@ test.describe('WSI viewer — annotation layers (Option C)', () => {
 
     test('New layer becomes active on selection', async ({ page }) => {
         await gotoViewerWithAnnotationApi(page);
-        await expect(page.locator('button:has-text("Share view")')).toBeVisible({ timeout: 30_000 });
+        await expect(shareViewButton(page)).toBeVisible({ timeout: 30_000 });
 
         // Add a new layer.
         const addBtn = page.locator('[data-testid="add-layer-btn"]');
@@ -1505,12 +1840,16 @@ test.describe('WSI viewer — annotation layers (Option C)', () => {
 
         await expect(stromaBtn).toHaveAttribute('aria-pressed', 'true');
         // Default should no longer be active.
-        await expect(page.locator('[data-testid="layer-select-Default"]')).toHaveAttribute('aria-pressed', 'false');
+        await expect(
+            page.locator('[data-testid="layer-select-Default"]')
+        ).toHaveAttribute('aria-pressed', 'false');
     });
 
-    test('Eye toggle hides layer (toggle button changes appearance)', async ({ page }) => {
+    test('Eye toggle hides layer (toggle button changes appearance)', async ({
+        page,
+    }) => {
         await gotoViewerWithAnnotationApi(page);
-        await expect(page.locator('button:has-text("Share view")')).toBeVisible({ timeout: 30_000 });
+        await expect(shareViewButton(page)).toBeVisible({ timeout: 30_000 });
 
         const toggleBtn = page.locator('[data-testid="layer-toggle-Default"]');
         await expect(toggleBtn).toBeVisible({ timeout: 10_000 });
@@ -1523,18 +1862,22 @@ test.describe('WSI viewer — annotation layers (Option C)', () => {
         await expect(toggleBtn).toHaveAttribute('title', /^Show layer/);
     });
 
-    test('Sidebar shows Layers section when annotations enabled', async ({ page }) => {
+    test('Sidebar shows Layers section when annotations enabled', async ({
+        page,
+    }) => {
         await gotoViewerWithAnnotationApi(page);
-        await expect(page.locator('button:has-text("Share view")')).toBeVisible({ timeout: 30_000 });
+        await expect(shareViewButton(page)).toBeVisible({ timeout: 30_000 });
 
         // The sidebar layers section should be rendered.
         const toggleBtn = page.locator('[data-testid="layer-toggle-Default"]');
         await expect(toggleBtn).toBeVisible({ timeout: 10_000 });
     });
 
-    test('Sidebar layer toggle button changes appearance when clicked', async ({ page }) => {
+    test('Sidebar layer toggle button changes appearance when clicked', async ({
+        page,
+    }) => {
         await gotoViewerWithAnnotationApi(page);
-        await expect(page.locator('button:has-text("Share view")')).toBeVisible({ timeout: 30_000 });
+        await expect(shareViewButton(page)).toBeVisible({ timeout: 30_000 });
 
         const toggleBtn = page.locator('[data-testid="layer-toggle-Default"]');
         await expect(toggleBtn).toBeVisible({ timeout: 10_000 });
@@ -1550,29 +1893,39 @@ test.describe('WSI viewer — annotation layers (Option C)', () => {
         await expect(toggleBtn).toHaveAttribute('title', /^Hide layer/);
     });
 
-    test('Hiding a layer removes its annotations from the sidebar and clears tooltip/selection', async ({ page }) => {
+    test('Hiding a layer removes its annotations from the sidebar and clears tooltip/selection', async ({
+        page,
+    }) => {
         const errors: string[] = [];
-        page.on('console', msg => { if (msg.type() === 'error') errors.push(msg.text()); });
+        page.on('console', msg => {
+            if (msg.type() === 'error') errors.push(msg.text());
+        });
         page.on('pageerror', err => errors.push(err.message));
 
         await gotoViewerWithAnnotationApi(page);
-        await expect(page.locator('button:has-text("Share view")')).toBeVisible({ timeout: 30_000 });
+        await expect(shareViewButton(page)).toBeVisible({ timeout: 30_000 });
 
         // MOCK_ANNOTATION is on the Default layer and must appear in the sidebar.
-        const annotationDot = page.locator('[data-annotation-layer="Default"]').first();
+        const annotationDot = page
+            .locator('[data-annotation-layer="Default"]')
+            .first();
         await expect(annotationDot).toBeVisible({ timeout: 10_000 });
 
         const toggleBtn = page.locator('[data-testid="layer-toggle-Default"]');
         await expect(toggleBtn).toBeVisible({ timeout: 5_000 });
 
         // Verify tooltip is absent before any toggle (baseline).
-        await expect(page.locator('[data-testid="annotation-tooltip"]')).not.toBeVisible();
+        await expect(
+            page.locator('[data-testid="annotation-tooltip"]')
+        ).not.toBeVisible();
 
         // Hide the Default layer → sidebar entry must disappear, tooltip must stay absent.
         await toggleBtn.click();
         await expect(toggleBtn).toHaveAttribute('title', /^Show layer/);
         await expect(annotationDot).not.toBeVisible({ timeout: 3_000 });
-        await expect(page.locator('[data-testid="annotation-tooltip"]')).not.toBeVisible();
+        await expect(
+            page.locator('[data-testid="annotation-tooltip"]')
+        ).not.toBeVisible();
 
         // Show again → sidebar entry must reappear.
         await toggleBtn.click();
@@ -1580,44 +1933,60 @@ test.describe('WSI viewer — annotation layers (Option C)', () => {
         await expect(annotationDot).toBeVisible({ timeout: 3_000 });
 
         // No JS errors during either toggle.
-        expect(errors.filter(e =>
-            e.toLowerCase().includes('annotorious') ||
-            e.toLowerCase().includes('cancelselected') ||
-            e.toLowerCase().includes('undefined is not')
-        )).toHaveLength(0);
+        expect(
+            errors.filter(
+                e =>
+                    e.toLowerCase().includes('annotorious') ||
+                    e.toLowerCase().includes('cancelselected') ||
+                    e.toLowerCase().includes('undefined is not')
+            )
+        ).toHaveLength(0);
     });
 
-    test('Annotation tooltip is cleared when its layer is hidden', async ({ page }) => {
+    test('Annotation tooltip is cleared when its layer is hidden', async ({
+        page,
+    }) => {
         // Inject the tooltip via the Annotorious clickAnnotation event that our
         // code wires up in setupAnnotorious(). We expose a test hook on window.
         const errors: string[] = [];
         page.on('pageerror', err => errors.push(err.message));
 
         await gotoViewerWithAnnotationApi(page);
-        await expect(page.locator('button:has-text("Share view")')).toBeVisible({ timeout: 30_000 });
-        await expect(page.locator('[data-annotation-layer="Default"]').first()).toBeVisible({ timeout: 10_000 });
+        await expect(shareViewButton(page)).toBeVisible({ timeout: 30_000 });
+        await expect(
+            page.locator('[data-annotation-layer="Default"]').first()
+        ).toBeVisible({ timeout: 10_000 });
 
         // Fire a synthetic clickAnnotation by dispatching through the exposed hook.
         const injected = await page.evaluate(() => {
             const hook = (window as any).__wsiAnnotoriousClickHook;
             if (!hook) return false;
-            hook({ body: [{ value: 'Test tooltip label' }] }, { clientX: 200, clientY: 200 });
+            hook(
+                { body: [{ value: 'Test tooltip label' }] },
+                { clientX: 200, clientY: 200 }
+            );
             return true;
         });
 
         if (injected) {
             // Tooltip must appear after the hook fires.
-            await expect(page.locator('[data-testid="annotation-tooltip"]')).toBeVisible({ timeout: 3_000 });
+            await expect(
+                page.locator('[data-testid="annotation-tooltip"]')
+            ).toBeVisible({ timeout: 3_000 });
 
             // Hide the layer → tooltip must clear (our fix: annotationTooltip = null on hide).
             await page.locator('[data-testid="layer-toggle-Default"]').click();
-            await expect(page.locator('[data-testid="annotation-tooltip"]')).not.toBeVisible({ timeout: 3_000 });
+            await expect(
+                page.locator('[data-testid="annotation-tooltip"]')
+            ).not.toBeVisible({ timeout: 3_000 });
         }
         // If hook not exposed yet, test passes vacuously (feature guarded by hook presence).
         expect(errors).toHaveLength(0);
     });
 
-    test('Canvas annotation shape is removed from PixiJS stage when its layer is hidden', async ({ page }) => {
+    test('Canvas annotation shape is removed from PixiJS stage when its layer is hidden', async ({
+        page,
+    }) => {
         // This test verifies the setTimeout-delayed applyLayerFilter fix:
         // the PixiJS stage's setFilter check is `s.has(id) || filter(ann)` where
         // `s` is the internal selected-set.  Without the delay, a selected annotation
@@ -1626,13 +1995,17 @@ test.describe('WSI viewer — annotation layers (Option C)', () => {
         page.on('pageerror', err => errors.push(err.message));
 
         await gotoViewerWithAnnotationApi(page);
-        await expect(page.locator('button:has-text("Share view")')).toBeVisible({ timeout: 30_000 });
-        await expect(page.locator('[data-annotation-layer="Default"]').first()).toBeVisible({ timeout: 10_000 });
+        await expect(shareViewButton(page)).toBeVisible({ timeout: 30_000 });
+        await expect(
+            page.locator('[data-annotation-layer="Default"]').first()
+        ).toBeVisible({ timeout: 10_000 });
 
         // Wait for Annotorious to render the annotation on the PixiJS canvas.
         // The canvas itself is a <canvas> element — we verify the PixiJS stage has
         // the annotation by checking the OSD overlay SVG for the annotation shape.
-        const annotationSvg = page.locator('.a9s-annotation, .a9s-osd-selectionlayer').first();
+        const annotationSvg = page
+            .locator('.a9s-annotation, .a9s-osd-selectionlayer')
+            .first();
 
         const toggleBtn = page.locator('[data-testid="layer-toggle-Default"]');
         await expect(toggleBtn).toBeVisible({ timeout: 5_000 });
@@ -1651,47 +2024,71 @@ test.describe('WSI viewer — annotation layers (Option C)', () => {
         // must be gone from the PixiJS stage (no visible a9s-annotation elements).
         await page.waitForTimeout(150);
         // Sidebar annotation hidden = proxy that canvas filter also ran.
-        await expect(page.locator('[data-annotation-layer="Default"]').first()).not.toBeVisible({ timeout: 1_000 });
+        await expect(
+            page.locator('[data-annotation-layer="Default"]').first()
+        ).not.toBeVisible({ timeout: 1_000 });
 
         expect(errors).toHaveLength(0);
     });
 
-    test('Mock annotation body.comment is used as layer name in sidebar', async ({ page }) => {
+    test('Mock annotation body.comment is used as layer name in sidebar', async ({
+        page,
+    }) => {
         // Inject annotation with a non-default layer name in body.comment.
-        await page.route(`${MOCK_ANNOTATION_URL}/annotations**`, async (route: any) => {
-            const method = route.request().method();
-            if (method === 'GET') {
-                await route.fulfill({
-                    status: 200,
-                    contentType: 'application/json',
-                    body: JSON.stringify([{
-                        ...MOCK_ANNOTATION,
-                        body: { label: 'Layered annotation', comment: 'Tumor', type: 'Default|#3b82f6' },
-                    }]),
-                });
-            } else {
-                await route.continue();
+        await page.route(
+            `${MOCK_ANNOTATION_URL}/annotations**`,
+            async (route: any) => {
+                const method = route.request().method();
+                if (method === 'GET') {
+                    await route.fulfill({
+                        status: 200,
+                        contentType: 'application/json',
+                        body: JSON.stringify([
+                            {
+                                ...MOCK_ANNOTATION,
+                                body: {
+                                    label: 'Layered annotation',
+                                    comment: 'Tumor',
+                                    type: 'Default|#3b82f6',
+                                },
+                            },
+                        ]),
+                    });
+                } else {
+                    await route.continue();
+                }
             }
-        });
+        );
         await page.addInitScript((apiUrl: string) => {
-            localStorage.setItem('frontendConfig', JSON.stringify({ serverConfig: { msk_wsi_annotation_api_url: apiUrl } }));
+            localStorage.setItem(
+                'frontendConfig',
+                JSON.stringify({
+                    serverConfig: { msk_wsi_annotation_api_url: apiUrl },
+                })
+            );
         }, MOCK_ANNOTATION_URL);
         await page.goto(viewerUrl());
-        await expect(page.locator('button:has-text("Share view")')).toBeVisible({ timeout: 30_000 });
+        await expect(shareViewButton(page)).toBeVisible({ timeout: 30_000 });
 
         // The "Tumor" layer should auto-appear in the sidebar.
-        const tumorLayerBtn = page.locator('[data-testid="layer-select-Tumor"]');
+        const tumorLayerBtn = page.locator(
+            '[data-testid="layer-select-Tumor"]'
+        );
         await expect(tumorLayerBtn).toBeVisible({ timeout: 10_000 });
 
         // Sidebar: annotation dot should have data-annotation-layer="Tumor".
         const dot = page.locator('[data-annotation-layer="Tumor"]');
         await expect(dot).toBeVisible({ timeout: 5_000 });
     });
-    test('Hidden layer stays hidden after slide is re-loaded', async ({ page }) => {
+    test('Hidden layer stays hidden after slide is re-loaded', async ({
+        page,
+    }) => {
         await gotoViewerWithAnnotationApi(page);
-        await expect(page.locator('button:has-text("Share view")')).toBeVisible({ timeout: 30_000 });
+        await expect(shareViewButton(page)).toBeVisible({ timeout: 30_000 });
 
-        const annotationDot = page.locator('[data-annotation-layer="Default"]').first();
+        const annotationDot = page
+            .locator('[data-annotation-layer="Default"]')
+            .first();
         await expect(annotationDot).toBeVisible({ timeout: 10_000 });
 
         // Hide the Default layer.
@@ -1701,7 +2098,9 @@ test.describe('WSI viewer — annotation layers (Option C)', () => {
         await expect(annotationDot).not.toBeVisible({ timeout: 3_000 });
 
         // Re-select the current slide (triggers loadAnnotations → setAnnotations).
-        const firstSlide = page.locator('[data-testid="slide-nav-item"]').first();
+        const firstSlide = page
+            .locator('[data-testid="slide-nav-item"]')
+            .first();
         if (await firstSlide.isVisible()) {
             await firstSlide.click();
             // Wait for annotations to reload.
@@ -1721,7 +2120,10 @@ test.describe('WSI viewer — annotation layers (Option C)', () => {
 
 test.describe('WSI viewer — multi-user annotation CRUD (Option C)', () => {
     test.beforeEach(async () => {
-        test.skip(!BASE_URL, 'WSI_VIEWER_BASE_URL not set — skipping WSI annotation e2e tests');
+        test.skip(
+            !BASE_URL,
+            'WSI_VIEWER_BASE_URL not set — skipping WSI annotation e2e tests'
+        );
     });
 
     /** Two stub annotations from different users */
@@ -1729,8 +2131,14 @@ test.describe('WSI viewer — multi-user annotation CRUD (Option C)', () => {
         id: 'ann-user-a-1',
         slide_id: '1492807',
         study_id: STUDY_ID,
-        body: { label: 'User A annotation', comment: 'Default', type: 'Red|#ef4444' },
-        target: { selector: { type: 'FragmentSelector', value: 'xywh=10,10,40,40' } },
+        body: {
+            label: 'User A annotation',
+            comment: 'Default',
+            type: 'Red|#ef4444',
+        },
+        target: {
+            selector: { type: 'FragmentSelector', value: 'xywh=10,10,40,40' },
+        },
         created_by: 'alice@example.com',
         created_at: '2025-03-15T09:00:00',
         version: 1,
@@ -1739,49 +2147,71 @@ test.describe('WSI viewer — multi-user annotation CRUD (Option C)', () => {
         id: 'ann-user-b-1',
         slide_id: '1492807',
         study_id: STUDY_ID,
-        body: { label: 'User B annotation', comment: 'Default', type: 'Green|#22c55e' },
-        target: { selector: { type: 'FragmentSelector', value: 'xywh=60,60,30,30' } },
+        body: {
+            label: 'User B annotation',
+            comment: 'Default',
+            type: 'Green|#22c55e',
+        },
+        target: {
+            selector: { type: 'FragmentSelector', value: 'xywh=60,60,30,30' },
+        },
         created_by: 'bob@example.com',
         created_at: '2025-03-15T11:00:00',
         version: 1,
     };
 
     async function gotoWithMultiUserMock(page: any) {
-        await page.route(`${MOCK_ANNOTATION_URL}/annotations**`, async (route: any) => {
-            const method = route.request().method();
-            if (method === 'GET') {
-                await route.fulfill({
-                    status: 200, contentType: 'application/json',
-                    body: JSON.stringify([USER_A_ANN, USER_B_ANN]),
-                });
-            } else if (method === 'POST') {
-                await route.fulfill({
-                    status: 201, contentType: 'application/json',
-                    body: JSON.stringify({ ...USER_A_ANN, id: 'ann-new-multiuser', version: 1 }),
-                });
-            } else if (method === 'PUT') {
-                const url = route.request().url();
-                const id = url.split('/annotations/')[1];
-                await route.fulfill({
-                    status: 200, contentType: 'application/json',
-                    body: JSON.stringify({ ...USER_A_ANN, id, version: 2 }),
-                });
-            } else if (method === 'DELETE') {
-                await route.fulfill({ status: 204, body: '' });
-            } else {
-                await route.continue();
+        await page.route(
+            `${MOCK_ANNOTATION_URL}/annotations**`,
+            async (route: any) => {
+                const method = route.request().method();
+                if (method === 'GET') {
+                    await route.fulfill({
+                        status: 200,
+                        contentType: 'application/json',
+                        body: JSON.stringify([USER_A_ANN, USER_B_ANN]),
+                    });
+                } else if (method === 'POST') {
+                    await route.fulfill({
+                        status: 201,
+                        contentType: 'application/json',
+                        body: JSON.stringify({
+                            ...USER_A_ANN,
+                            id: 'ann-new-multiuser',
+                            version: 1,
+                        }),
+                    });
+                } else if (method === 'PUT') {
+                    const url = route.request().url();
+                    const id = url.split('/annotations/')[1];
+                    await route.fulfill({
+                        status: 200,
+                        contentType: 'application/json',
+                        body: JSON.stringify({ ...USER_A_ANN, id, version: 2 }),
+                    });
+                } else if (method === 'DELETE') {
+                    await route.fulfill({ status: 204, body: '' });
+                } else {
+                    await route.continue();
+                }
             }
-        });
+        );
         await page.addInitScript((apiUrl: string) => {
-            localStorage.setItem('frontendConfig',
-                JSON.stringify({ serverConfig: { msk_wsi_annotation_api_url: apiUrl } }));
+            localStorage.setItem(
+                'frontendConfig',
+                JSON.stringify({
+                    serverConfig: { msk_wsi_annotation_api_url: apiUrl },
+                })
+            );
         }, MOCK_ANNOTATION_URL);
         await page.goto(viewerUrl());
-        await expect(page.locator('button:has-text("Share view")')).toBeVisible({ timeout: 30_000 });
+        await expect(shareViewButton(page)).toBeVisible({ timeout: 30_000 });
     }
 
     // READ: annotations from two different users both appear in the sidebar
-    test('Read: annotations from two different users both render in sidebar', async ({ page }) => {
+    test('Read: annotations from two different users both render in sidebar', async ({
+        page,
+    }) => {
         await gotoWithMultiUserMock(page);
 
         // Wait for annotations panel to populate (annotation count = 2)
@@ -1789,44 +2219,74 @@ test.describe('WSI viewer — multi-user annotation CRUD (Option C)', () => {
         await expect(panel).toBeVisible({ timeout: 15_000 });
 
         // Both annotation labels appear
-        await expect(page.locator('[title="User A annotation"]')).toBeVisible({ timeout: 5_000 });
-        await expect(page.locator('[title="User B annotation"]')).toBeVisible({ timeout: 5_000 });
+        await expect(page.locator('[title="User A annotation"]')).toBeVisible({
+            timeout: 5_000,
+        });
+        await expect(page.locator('[title="User B annotation"]')).toBeVisible({
+            timeout: 5_000,
+        });
     });
 
     // READ: creator attribution displayed per annotation
-    test('Read: creator name is shown under each annotation in the sidebar', async ({ page }) => {
+    test('Read: creator name is shown under each annotation in the sidebar', async ({
+        page,
+    }) => {
         await gotoWithMultiUserMock(page);
-        await expect(page.locator('text=Annotations (2)')).toBeVisible({ timeout: 15_000 });
+        await expect(page.locator('text=Annotations (2)')).toBeVisible({
+            timeout: 15_000,
+        });
 
         // alice and bob creator lines should both be visible
-        await expect(page.locator('text=alice@example.com')).toBeVisible({ timeout: 5_000 });
-        await expect(page.locator('text=bob@example.com')).toBeVisible({ timeout: 5_000 });
+        await expect(page.locator('text=alice@example.com')).toBeVisible({
+            timeout: 5_000,
+        });
+        await expect(page.locator('text=bob@example.com')).toBeVisible({
+            timeout: 5_000,
+        });
     });
 
     // CREATE: POST body includes slide_id, study_id, visible_to
-    test('Create: POST body includes slide_id, study_id and visible_to fields', async ({ page }) => {
+    test('Create: POST body includes slide_id, study_id and visible_to fields', async ({
+        page,
+    }) => {
         const postBodies: any[] = [];
 
-        await page.route(`${MOCK_ANNOTATION_URL}/annotations**`, async (route: any) => {
-            const method = route.request().method();
-            if (method === 'GET') {
-                await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([]) });
-            } else if (method === 'POST') {
-                postBodies.push(await route.request().postDataJSON());
-                await route.fulfill({
-                    status: 201, contentType: 'application/json',
-                    body: JSON.stringify({ ...USER_A_ANN, id: 'ann-post-test', version: 1 }),
-                });
-            } else {
-                await route.continue();
+        await page.route(
+            `${MOCK_ANNOTATION_URL}/annotations**`,
+            async (route: any) => {
+                const method = route.request().method();
+                if (method === 'GET') {
+                    await route.fulfill({
+                        status: 200,
+                        contentType: 'application/json',
+                        body: JSON.stringify([]),
+                    });
+                } else if (method === 'POST') {
+                    postBodies.push(await route.request().postDataJSON());
+                    await route.fulfill({
+                        status: 201,
+                        contentType: 'application/json',
+                        body: JSON.stringify({
+                            ...USER_A_ANN,
+                            id: 'ann-post-test',
+                            version: 1,
+                        }),
+                    });
+                } else {
+                    await route.continue();
+                }
             }
-        });
+        );
         await page.addInitScript((apiUrl: string) => {
-            localStorage.setItem('frontendConfig',
-                JSON.stringify({ serverConfig: { msk_wsi_annotation_api_url: apiUrl } }));
+            localStorage.setItem(
+                'frontendConfig',
+                JSON.stringify({
+                    serverConfig: { msk_wsi_annotation_api_url: apiUrl },
+                })
+            );
         }, MOCK_ANNOTATION_URL);
         await page.goto(viewerUrl());
-        await expect(page.locator('button:has-text("Share view")')).toBeVisible({ timeout: 30_000 });
+        await expect(shareViewButton(page)).toBeVisible({ timeout: 30_000 });
 
         // Trigger annotation creation via the mock route (simulate programmatic POST)
         await page.evaluate(async (apiUrl: string) => {
@@ -1836,8 +2296,17 @@ test.describe('WSI viewer — multi-user annotation CRUD (Option C)', () => {
                 body: JSON.stringify({
                     slide_id: '1492807',
                     study_id: 'coad_msk_2025',
-                    body: { label: 'Programmatic test', comment: 'Default', type: 'region' },
-                    target: { selector: { type: 'FragmentSelector', value: 'xywh=5,5,10,10' } },
+                    body: {
+                        label: 'Programmatic test',
+                        comment: 'Default',
+                        type: 'region',
+                    },
+                    target: {
+                        selector: {
+                            type: 'FragmentSelector',
+                            value: 'xywh=5,5,10,10',
+                        },
+                    },
                     visible_to: [],
                 }),
             });
@@ -1852,39 +2321,54 @@ test.describe('WSI viewer — multi-user annotation CRUD (Option C)', () => {
     });
 
     // UPDATE: PUT body includes version for optimistic concurrency
-    test('Update: PUT sends version field for optimistic concurrency', async ({ page }) => {
+    test('Update: PUT sends version field for optimistic concurrency', async ({
+        page,
+    }) => {
         const putBodies: any[] = [];
 
-        await page.route(`${MOCK_ANNOTATION_URL}/annotations**`, async (route: any) => {
-            const method = route.request().method();
-            if (method === 'GET') {
-                await route.fulfill({
-                    status: 200, contentType: 'application/json',
-                    body: JSON.stringify([USER_A_ANN]),
-                });
-            } else if (method === 'PUT') {
-                putBodies.push(await route.request().postDataJSON());
-                await route.fulfill({
-                    status: 200, contentType: 'application/json',
-                    body: JSON.stringify({ ...USER_A_ANN, version: 2 }),
-                });
-            } else {
-                await route.continue();
+        await page.route(
+            `${MOCK_ANNOTATION_URL}/annotations**`,
+            async (route: any) => {
+                const method = route.request().method();
+                if (method === 'GET') {
+                    await route.fulfill({
+                        status: 200,
+                        contentType: 'application/json',
+                        body: JSON.stringify([USER_A_ANN]),
+                    });
+                } else if (method === 'PUT') {
+                    putBodies.push(await route.request().postDataJSON());
+                    await route.fulfill({
+                        status: 200,
+                        contentType: 'application/json',
+                        body: JSON.stringify({ ...USER_A_ANN, version: 2 }),
+                    });
+                } else {
+                    await route.continue();
+                }
             }
-        });
+        );
         await page.addInitScript((apiUrl: string) => {
-            localStorage.setItem('frontendConfig',
-                JSON.stringify({ serverConfig: { msk_wsi_annotation_api_url: apiUrl } }));
+            localStorage.setItem(
+                'frontendConfig',
+                JSON.stringify({
+                    serverConfig: { msk_wsi_annotation_api_url: apiUrl },
+                })
+            );
         }, MOCK_ANNOTATION_URL);
         await page.goto(viewerUrl());
-        await expect(page.locator('button:has-text("Share view")')).toBeVisible({ timeout: 30_000 });
+        await expect(shareViewButton(page)).toBeVisible({ timeout: 30_000 });
 
         // Trigger a label edit (this fires a PUT)
-        const editBtn = page.locator(`[data-testid="edit-label-${USER_A_ANN.id}"]`);
+        const editBtn = page.locator(
+            `[data-testid="edit-label-${USER_A_ANN.id}"]`
+        );
         await expect(editBtn).toBeVisible({ timeout: 10_000 });
         await editBtn.click();
 
-        const editInput = page.locator('[data-testid="annotation-label-edit-input"]');
+        const editInput = page.locator(
+            '[data-testid="annotation-label-edit-input"]'
+        );
         await editInput.fill('Updated by user');
         await editInput.press('Enter');
 
@@ -1898,50 +2382,78 @@ test.describe('WSI viewer — multi-user annotation CRUD (Option C)', () => {
     });
 
     // UPDATE: version from server response is stored (next PUT uses incremented version)
-    test('Update: server-returned version is stored for subsequent PUT', async ({ page }) => {
+    test('Update: server-returned version is stored for subsequent PUT', async ({
+        page,
+    }) => {
         const putBodies: any[] = [];
         let putCount = 0;
 
-        await page.route(`${MOCK_ANNOTATION_URL}/annotations**`, async (route: any) => {
-            const method = route.request().method();
-            if (method === 'GET') {
-                await route.fulfill({
-                    status: 200, contentType: 'application/json',
-                    body: JSON.stringify([USER_A_ANN]),
-                });
-            } else if (method === 'PUT') {
-                putCount++;
-                const body = await route.request().postDataJSON();
-                putBodies.push(body);
-                // Return version = putCount + 1 so each successive PUT should increment
-                await route.fulfill({
-                    status: 200, contentType: 'application/json',
-                    body: JSON.stringify({ ...USER_A_ANN, version: putCount + 1 }),
-                });
-            } else {
-                await route.continue();
+        await page.route(
+            `${MOCK_ANNOTATION_URL}/annotations**`,
+            async (route: any) => {
+                const method = route.request().method();
+                if (method === 'GET') {
+                    await route.fulfill({
+                        status: 200,
+                        contentType: 'application/json',
+                        body: JSON.stringify([USER_A_ANN]),
+                    });
+                } else if (method === 'PUT') {
+                    putCount++;
+                    const body = await route.request().postDataJSON();
+                    putBodies.push(body);
+                    // Return version = putCount + 1 so each successive PUT should increment
+                    await route.fulfill({
+                        status: 200,
+                        contentType: 'application/json',
+                        body: JSON.stringify({
+                            ...USER_A_ANN,
+                            version: putCount + 1,
+                        }),
+                    });
+                } else {
+                    await route.continue();
+                }
             }
-        });
+        );
         await page.addInitScript((apiUrl: string) => {
-            localStorage.setItem('frontendConfig',
-                JSON.stringify({ serverConfig: { msk_wsi_annotation_api_url: apiUrl } }));
+            localStorage.setItem(
+                'frontendConfig',
+                JSON.stringify({
+                    serverConfig: { msk_wsi_annotation_api_url: apiUrl },
+                })
+            );
         }, MOCK_ANNOTATION_URL);
         await page.goto(viewerUrl());
-        await expect(page.locator('button:has-text("Share view")')).toBeVisible({ timeout: 30_000 });
+        await expect(shareViewButton(page)).toBeVisible({ timeout: 30_000 });
 
         // First edit
-        const editBtn = page.locator(`[data-testid="edit-label-${USER_A_ANN.id}"]`);
+        const editBtn = page.locator(
+            `[data-testid="edit-label-${USER_A_ANN.id}"]`
+        );
         await expect(editBtn).toBeVisible({ timeout: 10_000 });
         await editBtn.click();
-        await page.locator('[data-testid="annotation-label-edit-input"]').fill('First edit');
-        await page.locator('[data-testid="annotation-label-edit-input"]').press('Enter');
-        await expect(page.locator('[data-testid="annotation-label-edit-input"]')).not.toBeVisible({ timeout: 5_000 });
+        await page
+            .locator('[data-testid="annotation-label-edit-input"]')
+            .fill('First edit');
+        await page
+            .locator('[data-testid="annotation-label-edit-input"]')
+            .press('Enter');
+        await expect(
+            page.locator('[data-testid="annotation-label-edit-input"]')
+        ).not.toBeVisible({ timeout: 5_000 });
 
         // Second edit — version should be incremented from server response
         await editBtn.click();
-        await page.locator('[data-testid="annotation-label-edit-input"]').fill('Second edit');
-        await page.locator('[data-testid="annotation-label-edit-input"]').press('Enter');
-        await expect(page.locator('[data-testid="annotation-label-edit-input"]')).not.toBeVisible({ timeout: 5_000 });
+        await page
+            .locator('[data-testid="annotation-label-edit-input"]')
+            .fill('Second edit');
+        await page
+            .locator('[data-testid="annotation-label-edit-input"]')
+            .press('Enter');
+        await expect(
+            page.locator('[data-testid="annotation-label-edit-input"]')
+        ).not.toBeVisible({ timeout: 5_000 });
 
         expect(putBodies.length).toBe(2);
         // First PUT uses version 1 (from initial load)
@@ -1951,52 +2463,83 @@ test.describe('WSI viewer — multi-user annotation CRUD (Option C)', () => {
     });
 
     // DELETE: removes annotation from sidebar
-    test('Delete: removing own annotation removes it from sidebar', async ({ page }) => {
+    test('Delete: removing own annotation removes it from sidebar', async ({
+        page,
+    }) => {
         await gotoWithMultiUserMock(page);
-        await expect(page.locator('text=Annotations (2)')).toBeVisible({ timeout: 15_000 });
+        await expect(page.locator('text=Annotations (2)')).toBeVisible({
+            timeout: 15_000,
+        });
 
         // Delete User A annotation via the ✕ button on its row
-        await expect(page.locator('[title="User A annotation"]')).toBeVisible({ timeout: 5_000 });
-        const annoRow = page.locator('[title="User A annotation"]').locator('xpath=../..');
+        await expect(page.locator('[title="User A annotation"]')).toBeVisible({
+            timeout: 5_000,
+        });
+        const annoRow = page
+            .locator('[title="User A annotation"]')
+            .locator('xpath=../..');
         await annoRow.locator('button[title="Delete annotation"]').click();
 
         // User A annotation disappears; User B remains
-        await expect(page.locator('[title="User A annotation"]')).toHaveCount(0, { timeout: 5_000 });
-        await expect(page.locator('[title="User B annotation"]')).toBeVisible({ timeout: 5_000 });
+        await expect(page.locator('[title="User A annotation"]')).toHaveCount(
+            0,
+            { timeout: 5_000 }
+        );
+        await expect(page.locator('[title="User B annotation"]')).toBeVisible({
+            timeout: 5_000,
+        });
     });
 
     // Version conflict (409): viewer does not crash and shows remaining annotations
-    test('Update: 409 version-conflict response does not crash the viewer', async ({ page }) => {
-        await page.route(`${MOCK_ANNOTATION_URL}/annotations**`, async (route: any) => {
-            const method = route.request().method();
-            if (method === 'GET') {
-                await route.fulfill({
-                    status: 200, contentType: 'application/json',
-                    body: JSON.stringify([USER_A_ANN]),
-                });
-            } else if (method === 'PUT') {
-                // Simulate a concurrent-edit conflict
-                await route.fulfill({ status: 409, body: JSON.stringify({ detail: 'Version conflict' }) });
-            } else {
-                await route.continue();
+    test('Update: 409 version-conflict response does not crash the viewer', async ({
+        page,
+    }) => {
+        await page.route(
+            `${MOCK_ANNOTATION_URL}/annotations**`,
+            async (route: any) => {
+                const method = route.request().method();
+                if (method === 'GET') {
+                    await route.fulfill({
+                        status: 200,
+                        contentType: 'application/json',
+                        body: JSON.stringify([USER_A_ANN]),
+                    });
+                } else if (method === 'PUT') {
+                    // Simulate a concurrent-edit conflict
+                    await route.fulfill({
+                        status: 409,
+                        body: JSON.stringify({ detail: 'Version conflict' }),
+                    });
+                } else {
+                    await route.continue();
+                }
             }
-        });
+        );
         await page.addInitScript((apiUrl: string) => {
-            localStorage.setItem('frontendConfig',
-                JSON.stringify({ serverConfig: { msk_wsi_annotation_api_url: apiUrl } }));
+            localStorage.setItem(
+                'frontendConfig',
+                JSON.stringify({
+                    serverConfig: { msk_wsi_annotation_api_url: apiUrl },
+                })
+            );
         }, MOCK_ANNOTATION_URL);
         await page.goto(viewerUrl());
-        await expect(page.locator('button:has-text("Share view")')).toBeVisible({ timeout: 30_000 });
+        await expect(shareViewButton(page)).toBeVisible({ timeout: 30_000 });
 
         // Trigger a PUT that returns 409
-        const editBtn = page.locator(`[data-testid="edit-label-${USER_A_ANN.id}"]`);
+        const editBtn = page.locator(
+            `[data-testid="edit-label-${USER_A_ANN.id}"]`
+        );
         await expect(editBtn).toBeVisible({ timeout: 10_000 });
         await editBtn.click();
-        await page.locator('[data-testid="annotation-label-edit-input"]').fill('Conflicting edit');
-        await page.locator('[data-testid="annotation-label-edit-input"]').press('Enter');
+        await page
+            .locator('[data-testid="annotation-label-edit-input"]')
+            .fill('Conflicting edit');
+        await page
+            .locator('[data-testid="annotation-label-edit-input"]')
+            .press('Enter');
 
         // Viewer should still be alive — Share view button must still be visible
-        await expect(page.locator('button:has-text("Share view")')).toBeVisible({ timeout: 5_000 });
+        await expect(shareViewButton(page)).toBeVisible({ timeout: 5_000 });
     });
 });
-
