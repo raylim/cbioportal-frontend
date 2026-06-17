@@ -2963,6 +2963,7 @@ export function CoordBar({
                 left: 0,
                 right: 0,
                 display: 'flex',
+                flexWrap: 'nowrap',
                 alignItems: 'center',
                 gap: 6,
                 padding: '4px 10px',
@@ -2972,6 +2973,7 @@ export function CoordBar({
                 color: C.muted,
                 backdropFilter: 'blur(2px)',
                 zIndex: 10,
+                overflow: 'hidden',
             }}
         >
             <span style={{ fontWeight: 600, color: C.text, marginRight: 2 }}>
