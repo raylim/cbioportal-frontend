@@ -1687,6 +1687,31 @@ test.describe('WSI viewer — annotation layers (Option C)', () => {
         const dot = page.locator('[data-annotation-layer="Tumor"]');
         await expect(dot).toBeVisible({ timeout: 5_000 });
     });
+    test('Hidden layer stays hidden after slide is re-loaded', async ({ page }) => {
+        await gotoViewerWithAnnotationApi(page);
+        await expect(page.locator('button:has-text("Share view")')).toBeVisible({ timeout: 30_000 });
+
+        const annotationDot = page.locator('[data-annotation-layer="Default"]').first();
+        await expect(annotationDot).toBeVisible({ timeout: 10_000 });
+
+        // Hide the Default layer.
+        const toggleBtn = page.locator('[data-testid="layer-toggle-Default"]');
+        await toggleBtn.click();
+        await expect(toggleBtn).toHaveAttribute('title', /^Show layer/);
+        await expect(annotationDot).not.toBeVisible({ timeout: 3_000 });
+
+        // Re-select the current slide (triggers loadAnnotations → setAnnotations).
+        const firstSlide = page.locator('[data-testid="slide-nav-item"]').first();
+        if (await firstSlide.isVisible()) {
+            await firstSlide.click();
+            // Wait for annotations to reload.
+            await page.waitForTimeout(500);
+        }
+
+        // Layer must still be hidden — filter should have been re-applied after setAnnotations.
+        await expect(toggleBtn).toHaveAttribute('title', /^Show layer/);
+        await expect(annotationDot).not.toBeVisible({ timeout: 3_000 });
+    });
 });
 
 // ---- Multi-user annotation CRUD tests (Option C) ----

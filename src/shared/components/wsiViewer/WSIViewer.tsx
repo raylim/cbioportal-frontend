@@ -604,6 +604,8 @@ export default class WSIViewer extends React.Component<Props, {}> {
             if (this.annotorious) {
                 this.annotorious.setAnnotations(anns);
                 this.refreshAnnotoriousStyle();
+                // Re-apply any active layer filter so hidden layers stay hidden on slide change.
+                if (this.hiddenLayerNames.size > 0) this.applyLayerFilter();
             }
         } catch (e) {
             action(() => { this.annotationsLoading = false; })();
