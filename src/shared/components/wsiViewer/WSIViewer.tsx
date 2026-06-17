@@ -535,6 +535,18 @@ export default class WSIViewer extends React.Component<Props, {}> {
         return h;
     }
 
+    /**
+     * Normalize an SVG selector value so Annotorious can parse it.
+     * Converts <circle cx cy r> to <ellipse cx cy rx ry> because
+     * Annotorious' SvgSelector parser only handles <ellipse>.
+     */
+    private static normalizeSvgSelector(svg: string): string {
+        return svg.replace(
+            /<circle\s+cx="([^"]+)"\s+cy="([^"]+)"\s+r="([^"]+)"\s*\/>/g,
+            (_m, cx, cy, r) => `<ellipse cx="${cx}" cy="${cy}" rx="${r}" ry="${r}" />`
+        );
+    }
+
     /** Load annotations for the given slide from the annotation API. */
     @action.bound
     private async loadAnnotations(slideId: string) {
@@ -561,7 +573,16 @@ export default class WSIViewer extends React.Component<Props, {}> {
                     body: item.body?.label
                         ? [{ type: 'TextualBody' as const, value: item.body.label, purpose: 'commenting' as const }]
                         : [],
-                    target: { source: slideId, selector: item.target?.selector ?? item.target },
+                    target: {
+                        source: slideId,
+                        selector: (() => {
+                            const sel = item.target?.selector ?? item.target;
+                            if (sel?.type === 'SvgSelector' && typeof sel.value === 'string') {
+                                return { ...sel, value: WSIViewer.normalizeSvgSelector(sel.value) };
+                            }
+                            return sel;
+                        })(),
+                    },
                     created: item.created_at,
                     creator: item.created_by,
                     version: item.version,
@@ -769,7 +790,9 @@ export default class WSIViewer extends React.Component<Props, {}> {
             const cx = (x1 + x2) / 2, cy = (y1 + y2) / 2;
             const r = Math.min(Math.abs(x2 - x1), Math.abs(y2 - y1)) / 2;
             if (r < 3) return;
-            svgValue = `<svg><circle cx="${cx.toFixed(2)}" cy="${cy.toFixed(2)}" r="${r.toFixed(2)}" /></svg>`;
+            // Annotorious' SvgSelector parser (Iy) only handles <ellipse>, not <circle>.
+            // A circle is an ellipse with rx = ry = r, so emit <ellipse> for compatibility.
+            svgValue = `<svg><ellipse cx="${cx.toFixed(2)}" cy="${cy.toFixed(2)}" rx="${r.toFixed(2)}" ry="${r.toFixed(2)}" /></svg>`;
         } else {
             const len = Math.hypot(x2 - x1, y2 - y1);
             if (len < 3) return;
