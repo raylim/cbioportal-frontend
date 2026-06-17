@@ -2098,11 +2098,11 @@ export default class WSIViewer extends React.Component<Props, {}> {
             return;
         }
 
-        // Push navigator thumbnail above both the CoordBar (~32px) and DrawToolbar (~32px)
+        // Push navigator thumbnail above both the CoordBar (~40px) and DrawToolbar (~32px, bottom: 44)
         // that sit at the bottom of the viewer on this branch.
         // OSD v6 BOTTOM_RIGHT sets `bottom:0`; we override to clear both bars.
         const navEl = this.osdViewer.navigator?.element as HTMLElement | undefined;
-        if (navEl) navEl.style.bottom = '80px';
+        if (navEl) navEl.style.bottom = '84px';
 
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         this.osdViewer.addOnceHandler('open', () => {
@@ -4592,7 +4592,7 @@ export function DrawToolbar({
         <div
             style={{
                 position: 'absolute',
-                bottom: 32,
+                bottom: 44,
                 left: 0,
                 right: 0,
                 display: 'flex',
