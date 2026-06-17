@@ -1514,13 +1514,13 @@ test.describe('WSI viewer — annotation layers (Option C)', () => {
 
         const toggleBtn = page.locator('[data-testid="layer-toggle-Default"]');
         await expect(toggleBtn).toBeVisible({ timeout: 10_000 });
-        // Initially visible — button shows filled circle.
-        await expect(toggleBtn).toContainText('●');
+        // Initially visible — button title says "Hide layer".
+        await expect(toggleBtn).toHaveAttribute('title', /^Hide layer/);
 
         // Hide the layer.
         await toggleBtn.click();
-        // Should switch to empty circle (hidden state).
-        await expect(toggleBtn).toContainText('○');
+        // Should switch to "Show layer" title (hidden state).
+        await expect(toggleBtn).toHaveAttribute('title', /^Show layer/);
     });
 
     test('Sidebar shows Layers section when annotations enabled', async ({ page }) => {
@@ -1538,16 +1538,16 @@ test.describe('WSI viewer — annotation layers (Option C)', () => {
 
         const toggleBtn = page.locator('[data-testid="layer-toggle-Default"]');
         await expect(toggleBtn).toBeVisible({ timeout: 10_000 });
-        // Initially visible.
-        await expect(toggleBtn).toContainText('●');
+        // Initially visible — title says "Hide layer".
+        await expect(toggleBtn).toHaveAttribute('title', /^Hide layer/);
 
-        // Hide the layer — should switch to empty circle.
+        // Hide the layer — title should switch to "Show layer".
         await toggleBtn.click();
-        await expect(toggleBtn).toContainText('○');
+        await expect(toggleBtn).toHaveAttribute('title', /^Show layer/);
 
-        // Show again — back to filled circle.
+        // Show again — title back to "Hide layer".
         await toggleBtn.click();
-        await expect(toggleBtn).toContainText('●');
+        await expect(toggleBtn).toHaveAttribute('title', /^Hide layer/);
     });
 
     test('Hiding a layer removes its annotations from the sidebar and clears tooltip/selection', async ({ page }) => {
@@ -1570,13 +1570,13 @@ test.describe('WSI viewer — annotation layers (Option C)', () => {
 
         // Hide the Default layer → sidebar entry must disappear, tooltip must stay absent.
         await toggleBtn.click();
-        await expect(toggleBtn).toContainText('○');
+        await expect(toggleBtn).toHaveAttribute('title', /^Show layer/);
         await expect(annotationDot).not.toBeVisible({ timeout: 3_000 });
         await expect(page.locator('[data-testid="annotation-tooltip"]')).not.toBeVisible();
 
         // Show again → sidebar entry must reappear.
         await toggleBtn.click();
-        await expect(toggleBtn).toContainText('●');
+        await expect(toggleBtn).toHaveAttribute('title', /^Hide layer/);
         await expect(annotationDot).toBeVisible({ timeout: 3_000 });
 
         // No JS errors during either toggle.
@@ -1645,7 +1645,7 @@ test.describe('WSI viewer — annotation layers (Option C)', () => {
 
         // Hide the layer.
         await toggleBtn.click();
-        await expect(toggleBtn).toContainText('○');
+        await expect(toggleBtn).toHaveAttribute('title', /^Show layer/);
 
         // After 100ms (well past the setTimeout(0) tick), the canvas annotation shape
         // must be gone from the PixiJS stage (no visible a9s-annotation elements).
