@@ -60,7 +60,12 @@ function loadCustomLayerNames(): string[] {
         const raw = localStorage.getItem(LOCALSTORAGE_LAYERS_KEY);
         if (raw) {
             const parsed = JSON.parse(raw) as string[];
-            if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+            if (
+                Array.isArray(parsed) &&
+                parsed.length > 0 &&
+                parsed.every(s => typeof s === 'string')
+            )
+                return parsed;
         }
     } catch (_) {
         /* ignore */
@@ -129,7 +134,16 @@ function loadNamedColors(): NamedColor[] {
         const raw = localStorage.getItem(LOCALSTORAGE_COLORS_KEY);
         if (raw) {
             const parsed = JSON.parse(raw) as NamedColor[];
-            if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+            if (
+                Array.isArray(parsed) &&
+                parsed.length > 0 &&
+                parsed.every(
+                    c =>
+                        typeof c?.name === 'string' &&
+                        typeof c?.hex === 'string'
+                )
+            )
+                return parsed;
         }
     } catch (_) {
         /* ignore */
@@ -1916,7 +1930,8 @@ export default class WSIViewer extends React.Component<Props, {}> {
 
     @action.bound
     addLayer(name: string) {
-        const n = name.trim();
+        // Strip pipe characters to avoid corrupting the "name|hex" encoding.
+        const n = name.replace(/\|/g, '').trim();
         if (!n || this.customLayerNames.includes(n)) return;
         this.customLayerNames = [...this.customLayerNames, n];
         saveCustomLayerNames(this.customLayerNames);
@@ -2050,7 +2065,9 @@ export default class WSIViewer extends React.Component<Props, {}> {
                 // eslint-disable-next-line no-console
                 console.error('[WSIViewer] metadata fetch failed', err);
                 action(() => {
-                    this.error = `Failed to load slide metadata: ${err}`;
+                    this.error = `Failed to load slide metadata: ${
+                        err instanceof Error ? err.message : 'Network error'
+                    }`;
                 })();
                 return;
             }
@@ -2119,7 +2136,9 @@ export default class WSIViewer extends React.Component<Props, {}> {
             // eslint-disable-next-line no-console
             console.error('[WSIViewer] OSD init error:', err);
             action(() => {
-                this.error = `OSD init error: ${err}`;
+                this.error = `OSD init error: ${
+                    err instanceof Error ? err.message : 'Unknown error'
+                }`;
             })();
             return;
         }
@@ -2317,16 +2336,19 @@ export default class WSIViewer extends React.Component<Props, {}> {
                         }
                     );
                     // Expose a test hook so Playwright tests can simulate clickAnnotation.
-                    (window as any).__wsiAnnotoriousClickHook = (
-                        ann: W3CAnnotation,
-                        originalEvent: { clientX: number; clientY: number }
-                    ) => {
-                        this.showAnnotationTooltip(
-                            ann,
-                            originalEvent.clientX,
-                            originalEvent.clientY
-                        );
-                    };
+                    // Gated to non-production to avoid exposing internal state in deployed builds.
+                    if (process.env.NODE_ENV !== 'production') {
+                        (window as any).__wsiAnnotoriousClickHook = (
+                            ann: W3CAnnotation,
+                            originalEvent: { clientX: number; clientY: number }
+                        ) => {
+                            this.showAnnotationTooltip(
+                                ann,
+                                originalEvent.clientX,
+                                originalEvent.clientY
+                            );
+                        };
+                    }
 
                     // Push any already-loaded annotations into Annotorious
                     if (this.annotations.length > 0) {
