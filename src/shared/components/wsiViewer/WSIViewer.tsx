@@ -2962,7 +2962,6 @@ export function CoordBar({
                 bottom: 0,
                 left: 0,
                 right: 0,
-                height: 40,
                 display: 'flex',
                 flexWrap: 'nowrap',
                 alignItems: 'center',
@@ -3088,11 +3087,9 @@ export function CoordBar({
                         color: C.muted,
                         fontFamily: 'monospace',
                         fontSize: 11,
-                        lineHeight: '18px',
-                        whiteSpace: 'nowrap',
                     }}
                 >
-                    @ {cursorLabel}
+                    📍 {cursorLabel}
                 </span>
             )}
         </div>
