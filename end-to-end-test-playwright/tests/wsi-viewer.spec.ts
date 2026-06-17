@@ -1095,6 +1095,33 @@ test.describe('WSI viewer — drawing tools (Option C)', () => {
             // best-effort cleanup
         }
     });
+
+    test('Draw ellipse: annotation persists in sidebar after drawing', async ({ page }) => {
+        await gotoViewerWithAnnotationApi(page);
+        await expect(page.locator('button:has-text("Share view")')).toBeVisible({ timeout: 30_000 });
+        await page.waitForTimeout(4_000);
+
+        await page.locator('button[title*="Draw an ellipse"]').click();
+        await expect(page.locator('button', { hasText: '✕ Cancel draw' })).toBeVisible({ timeout: 5_000 });
+
+        const canvas = page.locator('.openseadragon-canvas').first();
+        const box = await canvas.boundingBox();
+        expect(box).not.toBeNull();
+        const cx = box!.x + box!.width * 0.4;
+        const cy = box!.y + box!.height * 0.4;
+        await page.mouse.move(cx, cy);
+        await page.mouse.down();
+        for (let i = 1; i <= 15; i++) {
+            await page.mouse.move(cx + i * 10, cy + i * 7);
+        }
+        await page.mouse.up();
+
+        // Tool should auto-deactivate after drawing
+        await expect(page.locator('button', { hasText: '✕ Cancel draw' })).not.toBeVisible({ timeout: 5_000 });
+
+        // Mock POST returns id: 'ann-new-1'; sidebar should show its edit button
+        await expect(page.locator('[data-testid="edit-label-ann-new-1"]')).toBeVisible({ timeout: 5_000 });
+    });
 });
 
 // ---- Named-color palette tests ----
