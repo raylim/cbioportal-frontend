@@ -1432,11 +1432,10 @@ test.describe('WSI viewer — annotation layers (Option C)', () => {
         test.skip(!BASE_URL, 'WSI_VIEWER_BASE_URL not set — skipping WSI layer e2e tests');
     });
 
-    test('Default layer pill appears in DrawToolbar when annotations enabled', async ({ page }) => {
+    test('Default layer pill appears in sidebar when annotations enabled', async ({ page }) => {
         await gotoViewerWithAnnotationApi(page);
         await expect(page.locator('button:has-text("Share view")')).toBeVisible({ timeout: 30_000 });
-        // DrawToolbar is rendered when annotation API is configured and annotations are visible.
-        // It should show at least one layer pill (the "Default" layer).
+        // The sidebar Layers section should show at least the "Default" layer.
         const defaultLayerBtn = page.locator('[data-testid="layer-select-Default"]');
         await expect(defaultLayerBtn).toBeVisible({ timeout: 10_000 });
         // It should be active (aria-pressed=true) since it's the only layer.
@@ -1470,7 +1469,7 @@ test.describe('WSI viewer — annotation layers (Option C)', () => {
         await expect(page.locator('[data-testid="add-layer-confirm"]')).toBeVisible();
     });
 
-    test('Adding a new layer creates a new pill in DrawToolbar', async ({ page }) => {
+    test('Adding a new layer creates a new pill in the sidebar', async ({ page }) => {
         await gotoViewerWithAnnotationApi(page);
         await expect(page.locator('button:has-text("Share view")')).toBeVisible({ timeout: 30_000 });
 
@@ -1529,22 +1528,26 @@ test.describe('WSI viewer — annotation layers (Option C)', () => {
         await expect(page.locator('button:has-text("Share view")')).toBeVisible({ timeout: 30_000 });
 
         // The sidebar layers section should be rendered.
-        const sidebarToggle = page.locator('[data-testid="sidebar-layer-toggle-Default"]');
-        await expect(sidebarToggle).toBeVisible({ timeout: 10_000 });
+        const toggleBtn = page.locator('[data-testid="layer-toggle-Default"]');
+        await expect(toggleBtn).toBeVisible({ timeout: 10_000 });
     });
 
-    test('Sidebar layer toggle syncs with DrawToolbar toggle', async ({ page }) => {
+    test('Sidebar layer toggle button changes appearance when clicked', async ({ page }) => {
         await gotoViewerWithAnnotationApi(page);
         await expect(page.locator('button:has-text("Share view")')).toBeVisible({ timeout: 30_000 });
 
-        // Toggle from sidebar.
-        const sidebarToggle = page.locator('[data-testid="sidebar-layer-toggle-Default"]');
-        await expect(sidebarToggle).toBeVisible({ timeout: 10_000 });
-        await sidebarToggle.click();
+        const toggleBtn = page.locator('[data-testid="layer-toggle-Default"]');
+        await expect(toggleBtn).toBeVisible({ timeout: 10_000 });
+        // Initially visible.
+        await expect(toggleBtn).toContainText('●');
 
-        // DrawToolbar toggle should also reflect hidden state.
-        const toolbarToggle = page.locator('[data-testid="layer-toggle-Default"]');
-        await expect(toolbarToggle).toContainText('○');
+        // Hide the layer — should switch to empty circle.
+        await toggleBtn.click();
+        await expect(toggleBtn).toContainText('○');
+
+        // Show again — back to filled circle.
+        await toggleBtn.click();
+        await expect(toggleBtn).toContainText('●');
     });
 
     test('Hiding a layer removes its annotations from the sidebar and clears tooltip/selection', async ({ page }) => {
@@ -1676,7 +1679,7 @@ test.describe('WSI viewer — annotation layers (Option C)', () => {
         await page.goto(viewerUrl());
         await expect(page.locator('button:has-text("Share view")')).toBeVisible({ timeout: 30_000 });
 
-        // The "Tumor" layer should auto-appear in both DrawToolbar and sidebar.
+        // The "Tumor" layer should auto-appear in the sidebar.
         const tumorLayerBtn = page.locator('[data-testid="layer-select-Tumor"]');
         await expect(tumorLayerBtn).toBeVisible({ timeout: 10_000 });
 

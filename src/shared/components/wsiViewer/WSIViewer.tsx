@@ -1366,12 +1366,6 @@ export default class WSIViewer extends React.Component<Props, {}> {
                             onSetActiveColor={this.setActiveColor}
                             onAddNamedColor={this.addNamedColor}
                             onRemoveNamedColor={this.removeNamedColor}
-                            layerNames={this.layerNames}
-                            activeLayerName={this.activeLayerName}
-                            hiddenLayerNames={this.hiddenLayerNames}
-                            onSetActiveLayer={this.setActiveLayer}
-                            onAddLayer={this.addLayer}
-                            onToggleLayerVisibility={this.toggleLayerVisibility}
                         />
                     )}
                     {this.viewerReady && (
@@ -1434,6 +1428,9 @@ export default class WSIViewer extends React.Component<Props, {}> {
                     layerNames={this.layerNames}
                     hiddenLayerNames={this.hiddenLayerNames}
                     onToggleLayerVisibility={this.toggleLayerVisibility}
+                    activeLayerName={this.activeLayerName}
+                    onSetActiveLayer={this.setActiveLayer}
+                    onAddLayer={this.addLayer}
                 />
             </div>
         );
@@ -1924,10 +1921,16 @@ export interface MetaSidebarProps {
     /** Currently hidden layer names. */
     hiddenLayerNames?: Set<string>;
     onToggleLayerVisibility?: (name: string) => void;
+    /** The layer currently selected for drawing. */
+    activeLayerName?: string;
+    onSetActiveLayer?: (name: string) => void;
+    onAddLayer?: (name: string) => void;
 }
 
-export function MetaSidebar({ slide, sample, meta, tileServerBase, studyId, annotations = [], annotationsLoading = false, annotationEnabled = false, onDeleteAnnotation, editingAnnotationId, editingLabelText = '', onStartEditAnnotation, onChangeEditLabel, onConfirmEditLabel, onCancelEditLabel, layerNames = [], hiddenLayerNames = new Set(), onToggleLayerVisibility }: MetaSidebarProps) {
+export function MetaSidebar({ slide, sample, meta, tileServerBase, studyId, annotations = [], annotationsLoading = false, annotationEnabled = false, onDeleteAnnotation, editingAnnotationId, editingLabelText = '', onStartEditAnnotation, onChangeEditLabel, onConfirmEditLabel, onCancelEditLabel, layerNames = [], hiddenLayerNames = new Set(), onToggleLayerVisibility, activeLayerName, onSetActiveLayer, onAddLayer }: MetaSidebarProps) {
     const thumbSrc = slide ? `${tileServerBase}/tiles/${encodeURIComponent(slide.image_id)}/thumbnail` : null;
+    const [showAddLayerForm, setShowAddLayerForm] = React.useState(false);
+    const [newLayerName, setNewLayerName] = React.useState('');
 
     return (
         <div style={{
@@ -1975,29 +1978,76 @@ export function MetaSidebar({ slide, sample, meta, tileServerBase, studyId, anno
             </SbSection>
 
             {/* Layers panel */}
-            {annotationEnabled && layerNames.length > 0 && (
+            {annotationEnabled && (
                 <SbSection title="Layers">
                     <div style={{ marginTop: 6 }}>
                         {layerNames.map(name => {
                             const isHidden = hiddenLayerNames.has(name);
+                            const isActive = activeLayerName === name;
                             const count = annotations.filter(a => ((a as any).layerName ?? DEFAULT_LAYER_NAME) === name).length;
                             return (
-                                <div key={name} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '2px 0' }}>
+                                <div key={name} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '3px 0' }}>
                                     <button
-                                        data-testid={`sidebar-layer-toggle-${name}`}
+                                        data-testid={`layer-toggle-${name}`}
                                         onClick={() => onToggleLayerVisibility?.(name)}
                                         title={isHidden ? `Show layer "${name}"` : `Hide layer "${name}"`}
-                                        style={{ border: 'none', background: 'transparent', cursor: 'pointer', fontSize: 13, padding: '0 2px', color: isHidden ? '#e74c3c' : C.blue, lineHeight: 1 }}
+                                        style={{ border: 'none', background: 'transparent', cursor: 'pointer', fontSize: 13, padding: '0 2px', color: isHidden ? '#e74c3c' : C.blue, lineHeight: 1, flexShrink: 0 }}
                                     >
                                         {isHidden ? '○' : '●'}
                                     </button>
-                                    <span style={{ fontSize: 12, color: isHidden ? C.muted : C.text, flex: 1, textDecoration: isHidden ? 'line-through' : 'none' }}>
+                                    <button
+                                        data-testid={`layer-select-${name}`}
+                                        onClick={() => onSetActiveLayer?.(name)}
+                                        title={`Draw on layer "${name}"${isHidden ? ' (currently hidden)' : ''}`}
+                                        aria-pressed={isActive}
+                                        style={{
+                                            flex: 1, textAlign: 'left', fontSize: 11, padding: '1px 6px',
+                                            borderRadius: 3, cursor: 'pointer',
+                                            border: `1.5px solid ${isActive ? C.blue : C.border}`,
+                                            background: isActive ? C.blue : 'transparent',
+                                            color: isActive ? '#fff' : isHidden ? C.muted : C.text,
+                                            fontWeight: isActive ? 700 : 400,
+                                            textDecoration: isHidden ? 'line-through' : 'none',
+                                            opacity: isHidden ? 0.55 : 1,
+                                        }}
+                                    >
                                         {name}
-                                    </span>
-                                    <span style={{ fontSize: 10, color: C.muted }}>{count}</span>
+                                    </button>
+                                    <span style={{ fontSize: 10, color: C.muted, flexShrink: 0, minWidth: 14, textAlign: 'right' }}>{count}</span>
                                 </div>
                             );
                         })}
+                        <div style={{ marginTop: 4 }}>
+                            {!showAddLayerForm ? (
+                                <button
+                                    data-testid="add-layer-btn"
+                                    title="Add new annotation layer"
+                                    onClick={() => setShowAddLayerForm(true)}
+                                    style={{ fontSize: 11, padding: '1px 8px', border: `1px dashed ${C.border}`, background: 'transparent', color: C.muted, borderRadius: 3, cursor: 'pointer', width: '100%' }}
+                                >+ Add layer</button>
+                            ) : (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+                                    <input
+                                        data-testid="add-layer-input"
+                                        type="text" value={newLayerName} placeholder="Layer name" maxLength={30} autoFocus
+                                        onChange={e => setNewLayerName(e.target.value)}
+                                        onKeyDown={e => {
+                                            if (e.key === 'Enter') { onAddLayer?.(newLayerName); setShowAddLayerForm(false); setNewLayerName(''); }
+                                            if (e.key === 'Escape') { setShowAddLayerForm(false); setNewLayerName(''); }
+                                        }}
+                                        style={{ flex: 1, fontSize: 11, border: `1px solid ${C.border}`, borderRadius: 3, padding: '1px 5px', outline: 'none', color: C.text, background: '#fff' }}
+                                    />
+                                    <button
+                                        data-testid="add-layer-confirm"
+                                        onClick={() => { onAddLayer?.(newLayerName); setShowAddLayerForm(false); setNewLayerName(''); }}
+                                        style={{ fontSize: 11, padding: '1px 6px', border: `1px solid ${C.blue}`, background: C.blue, color: '#fff', borderRadius: 3, cursor: 'pointer' }}
+                                    >Add</button>
+                                    <button onClick={() => { setShowAddLayerForm(false); setNewLayerName(''); }}
+                                        style={{ fontSize: 11, padding: '1px 4px', border: 'none', background: 'transparent', color: C.muted, cursor: 'pointer' }}
+                                    >✕</button>
+                                </div>
+                            )}
+                        </div>
                     </div>
                 </SbSection>
             )}
@@ -2162,26 +2212,16 @@ export interface DrawToolbarProps {
     onSetActiveColor: (name: string, hex: string) => void;
     onAddNamedColor: (name: string, hex: string) => void;
     onRemoveNamedColor: (hex: string, name: string) => void;
-    layerNames: string[];
-    activeLayerName: string;
-    hiddenLayerNames: Set<string>;
-    onSetActiveLayer: (name: string) => void;
-    onAddLayer: (name: string) => void;
-    onToggleLayerVisibility: (name: string) => void;
 }
 
 export function DrawToolbar({
     drawingTool, onSetDrawingTool,
     namedColors, activeColorHex, activeColorName,
     onSetActiveColor, onAddNamedColor, onRemoveNamedColor,
-    layerNames, activeLayerName, hiddenLayerNames,
-    onSetActiveLayer, onAddLayer, onToggleLayerVisibility,
 }: DrawToolbarProps) {
     const [showAddColorForm, setShowAddColorForm] = React.useState(false);
     const [newHex, setNewHex] = React.useState('#ff0000');
     const [newColorName, setNewColorName] = React.useState('');
-    const [showAddLayerForm, setShowAddLayerForm] = React.useState(false);
-    const [newLayerName, setNewLayerName] = React.useState('');
 
     const handleAddColor = () => {
         if (newHex) onAddNamedColor(newColorName.trim() || newHex, newHex);
@@ -2217,74 +2257,6 @@ export function DrawToolbar({
                     </button>
                 );
             })}
-
-            <span style={{ width: 1, height: 16, background: C.border, margin: '0 2px' }} />
-
-            {/* Layer selector */}
-            <span style={{ fontSize: 10, color: C.muted, whiteSpace: 'nowrap' }}>Layer:</span>
-            {layerNames.map(name => {
-                const isActive = activeLayerName === name;
-                const isHidden = hiddenLayerNames.has(name);
-                return (
-                    <span key={name} style={{ display: 'inline-flex', alignItems: 'center', gap: 1 }}>
-                        <button
-                            data-testid={`layer-select-${name}`}
-                            title={`Draw on layer "${name}"${isHidden ? ' (currently hidden)' : ''}`}
-                            aria-pressed={isActive}
-                            onClick={() => onSetActiveLayer(name)}
-                            style={{
-                                fontSize: 10, padding: '1px 7px', borderRadius: 10, cursor: 'pointer',
-                                background: isActive ? C.blue : '#fff',
-                                color: isActive ? '#fff' : C.text,
-                                border: `1.5px solid ${isActive ? C.blue : C.border}`,
-                                fontWeight: isActive ? 700 : 400,
-                                opacity: isHidden ? 0.45 : 1,
-                                whiteSpace: 'nowrap',
-                            }}
-                        >
-                            {name}
-                        </button>
-                        <button
-                            data-testid={`layer-toggle-${name}`}
-                            title={isHidden ? `Show layer "${name}"` : `Hide layer "${name}"`}
-                            onClick={() => onToggleLayerVisibility(name)}
-                            style={{ fontSize: 10, padding: '0 2px', border: 'none', background: 'transparent', cursor: 'pointer', color: isHidden ? '#e74c3c' : '#bbb', lineHeight: 1 }}
-                        >
-                            {isHidden ? '○' : '●'}
-                        </button>
-                    </span>
-                );
-            })}
-            {!showAddLayerForm ? (
-                <button
-                    data-testid="add-layer-btn"
-                    title="Add new annotation layer"
-                    onClick={() => setShowAddLayerForm(true)}
-                    style={{ fontSize: 12, padding: '0 5px', border: `1px dashed ${C.border}`, background: '#fff', color: C.muted, borderRadius: 10, cursor: 'pointer' }}
-                >+</button>
-            ) : (
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, padding: '1px 5px', border: `1px solid ${C.border}`, borderRadius: 10, background: '#fff' }}>
-                    <input
-                        data-testid="add-layer-input"
-                        type="text" value={newLayerName} placeholder="Layer name" maxLength={30} autoFocus
-                        onChange={e => setNewLayerName(e.target.value)}
-                        onKeyDown={e => {
-                            if (e.key === 'Enter') { onAddLayer(newLayerName); setShowAddLayerForm(false); setNewLayerName(''); }
-                            if (e.key === 'Escape') { setShowAddLayerForm(false); setNewLayerName(''); }
-                        }}
-                        style={{ fontSize: 10, border: 'none', outline: 'none', width: 90, background: 'transparent', color: C.text }}
-                    />
-                    <button
-                        data-testid="add-layer-confirm"
-                        title="Add layer"
-                        onClick={() => { onAddLayer(newLayerName); setShowAddLayerForm(false); setNewLayerName(''); }}
-                        style={{ fontSize: 10, padding: '1px 5px', border: `1px solid ${C.blue}`, background: C.blue, color: '#fff', borderRadius: 8, cursor: 'pointer' }}
-                    >Add</button>
-                    <button title="Cancel" onClick={() => { setShowAddLayerForm(false); setNewLayerName(''); }}
-                        style={{ fontSize: 10, padding: '1px 4px', border: 'none', background: 'transparent', color: C.muted, cursor: 'pointer' }}
-                    >✕</button>
-                </span>
-            )}
 
             <span style={{ width: 1, height: 16, background: C.border, margin: '0 2px' }} />
 
