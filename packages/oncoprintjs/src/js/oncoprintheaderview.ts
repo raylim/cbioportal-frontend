@@ -3,7 +3,10 @@ import menuDotsIcon from '../img/menudots.svg';
 import svgfactory from './svgfactory';
 import $ from 'jquery';
 import ClickEvent = JQuery.ClickEvent;
-import { CLOSE_MENUS_EVENT as TRACK_OPTIONS_VIEW_CLOSE_MENUS_EVENT } from './oncoprinttrackoptionsview';
+import {
+    HEADER_VIEW_CLOSE_MENUS_EVENT,
+    TRACK_OPTIONS_VIEW_CLOSE_MENUS_EVENT,
+} from './oncoprintMenuEvents';
 
 const MENU_DOTS_SIZE = 20;
 const LABEL_CLASS = 'oncoprintjs__header__label';
@@ -16,8 +19,6 @@ const NTH_CLASS_PREFIX = 'track-group-';
 const FADE_MS = 100;
 
 const HEADER_FONT_SIZE = 16;
-
-export const CLOSE_MENUS_EVENT = 'oncoprint-header-view.do-close-menus';
 
 export default class OncoprintHeaderView {
     private rendering_suppressed = false;
@@ -58,18 +59,18 @@ export default class OncoprintHeaderView {
             });
 
         this.clickHandler = () => {
-            $(document).trigger(CLOSE_MENUS_EVENT);
+            $(document).trigger(HEADER_VIEW_CLOSE_MENUS_EVENT);
         };
         $(document).on('click', this.clickHandler);
 
-        $(document).on(CLOSE_MENUS_EVENT, () => {
+        $(document).on(HEADER_VIEW_CLOSE_MENUS_EVENT, () => {
             this.closeAllDropdowns();
         });
     }
 
     public destroy() {
         $(document).off('click', this.clickHandler);
-        $(document).off(CLOSE_MENUS_EVENT);
+        $(document).off(HEADER_VIEW_CLOSE_MENUS_EVENT);
     }
 
     private closeAllDropdowns() {

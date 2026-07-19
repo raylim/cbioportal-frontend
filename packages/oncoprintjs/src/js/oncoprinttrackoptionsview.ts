@@ -6,7 +6,10 @@ import OncoprintModel, {
     TrackProp,
     TrackSortDirection,
 } from './oncoprintmodel';
-import { CLOSE_MENUS_EVENT as HEADER_VIEW_CLOSE_MENUS_EVENT } from './oncoprintheaderview';
+import {
+    HEADER_VIEW_CLOSE_MENUS_EVENT,
+    TRACK_OPTIONS_VIEW_CLOSE_MENUS_EVENT,
+} from './oncoprintMenuEvents';
 import ClickEvent = JQuery.ClickEvent;
 
 const TOGGLE_BTN_CLASS = 'oncoprintjs__track_options__toggle_btn_img';
@@ -14,8 +17,6 @@ const TOGGLE_BTN_OPEN_CLASS = 'oncoprintjs__track_options__open';
 const DROPDOWN_CLASS = 'oncoprintjs__track_options__dropdown';
 const SEPARATOR_CLASS = 'oncoprintjs__track_options__separator';
 const NTH_CLASS_PREFIX = 'nth-';
-
-export const CLOSE_MENUS_EVENT = 'oncoprint-track-options-view.do-close-menus';
 
 type TrackCallback = (trackId: TrackId) => void;
 export default class OncoprintTrackOptionsView {
@@ -72,7 +73,7 @@ export default class OncoprintTrackOptionsView {
 
         const self = this;
         this.clickHandler = function() {
-            $(document).trigger(CLOSE_MENUS_EVENT);
+            $(document).trigger(TRACK_OPTIONS_VIEW_CLOSE_MENUS_EVENT);
         };
         $(document).on('click', this.clickHandler);
     }
@@ -82,8 +83,8 @@ export default class OncoprintTrackOptionsView {
             return;
         }
         const self = this;
-        $(document).off(CLOSE_MENUS_EVENT);
-        $(document).on(CLOSE_MENUS_EVENT, function() {
+        $(document).off(TRACK_OPTIONS_VIEW_CLOSE_MENUS_EVENT);
+        $(document).on(TRACK_OPTIONS_VIEW_CLOSE_MENUS_EVENT, function() {
             self.hideAllMenus();
         });
 
@@ -622,7 +623,7 @@ export default class OncoprintTrackOptionsView {
     }
     public destroy() {
         $(document).off('click', this.clickHandler);
-        $(document).off(CLOSE_MENUS_EVENT);
+        $(document).off(TRACK_OPTIONS_VIEW_CLOSE_MENUS_EVENT);
     }
     public setTrackCustomOptions(model: OncoprintModel) {
         this.renderAllOptions(model);

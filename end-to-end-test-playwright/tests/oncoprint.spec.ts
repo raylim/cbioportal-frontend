@@ -59,6 +59,34 @@ const CUSTOM_CASE_PATIENT_ORDER =
 const CUSTOM_CASE_SAMPLE_ORDER =
     'VENHQS1BQS0zOTcxLTAxOmNvYWRyZWFkX3RjZ2FfcHVi,VENHQS1PUi1BNUpDLTAxOmFjY190Y2dh,VENHQS1PUi1BNUoyLTAxOmFjY190Y2dh,VENHQS1BQS1BMDBRLTAxOmNvYWRyZWFkX3RjZ2FfcHVi,VENHQS1DTS00NzQ4LTAxOmNvYWRyZWFkX3RjZ2FfcHVi,VENHQS1PUi1BNUpELTAxOmFjY190Y2dh,VENHQS1PUi1BNUozLTAxOmFjY190Y2dh';
 
+async function skipIfOncoprintStudyUnavailable(
+    page: Page,
+    reason: string
+) {
+    await page.waitForLoadState('networkidle');
+    await page.waitForFunction(
+        () =>
+            document.body.innerText.includes(
+                'do not exist or you do not have access to them'
+            ) || !!document.querySelector('#oncoprintDiv svg rect'),
+        null,
+        { timeout: 30000 }
+    );
+    const bodyText = await page.locator('body').innerText();
+    test.skip(
+        bodyText.includes('do not exist or you do not have access to them'),
+        reason
+    );
+}
+
+async function skipIfNoStudySearchResults(page: Page, reason: string) {
+    await page.waitForTimeout(1000);
+    test.skip(
+        (await page.locator('[data-test="StudySelect"] input').count()) === 0,
+        reason
+    );
+}
+
 // --- merged tracks ----------------------------------------------------
 
 /**
@@ -76,6 +104,10 @@ test.describe('merged tracks', () => {
                 '&geneset_list=%20' +
                 '&genetic_profile_ids_PROFILE_COPY_NUMBER_ALTERATION=coadread_tcga_gistic' +
                 '&genetic_profile_ids_PROFILE_MUTATION_EXTENDED=coadread_tcga_mutations&tab_index=tab_visualize'
+        );
+        await skipIfOncoprintStudyUnavailable(
+            page,
+            'Required merged-track study is unavailable on this server'
         );
         await waitForOncoprint(page);
 
@@ -118,6 +150,10 @@ test.describe('initialization from URL parameters', () => {
                 '&genetic_profile_ids_PROFILE_MUTATION_EXTENDED=acc_tcga_mutations' +
                 '&genetic_profile_ids_PROFILE_COPY_NUMBER_ALTERATION=acc_tcga_gistic'
         );
+        await skipIfOncoprintStudyUnavailable(
+            page,
+            'Required ACC study is unavailable on this server'
+        );
         await waitForOncoprint(page);
         expect(await getFrontendOncIdOrder(page)).toEqual(ACC_PATIENT_ORDER);
 
@@ -128,6 +164,10 @@ test.describe('initialization from URL parameters', () => {
                 '&gene_list=KRAS%2520NRAS%2520BRAF&geneset_list=+&tab_index=tab_visualize&Action=Submit' +
                 '&genetic_profile_ids_PROFILE_MUTATION_EXTENDED=acc_tcga_mutations' +
                 '&genetic_profile_ids_PROFILE_COPY_NUMBER_ALTERATION=acc_tcga_gistic'
+        );
+        await skipIfOncoprintStudyUnavailable(
+            page,
+            'Required ACC study is unavailable on this server'
         );
         await waitForOncoprint(page);
         expect(await getFrontendOncIdOrder(page)).toEqual(ACC_PATIENT_ORDER);
@@ -142,6 +182,10 @@ test.describe('initialization from URL parameters', () => {
                 '&gene_list=KRAS%2520NRAS%2520BRAF&geneset_list=+&tab_index=tab_visualize&Action=Submit' +
                 '&genetic_profile_ids_PROFILE_MUTATION_EXTENDED=acc_tcga_mutations' +
                 '&genetic_profile_ids_PROFILE_COPY_NUMBER_ALTERATION=acc_tcga_gistic'
+        );
+        await skipIfOncoprintStudyUnavailable(
+            page,
+            'Required ACC study is unavailable on this server'
         );
         await waitForOncoprint(page);
         expect(await getFrontendOncIdOrder(page)).toEqual(ACC_SAMPLE_ORDER);
@@ -162,6 +206,10 @@ test.describe('initialization from URL parameters', () => {
                 '&genetic_profile_ids_PROFILE_MUTATION_EXTENDED=acc_tcga_mutations' +
                 '&genetic_profile_ids_PROFILE_COPY_NUMBER_ALTERATION=acc_tcga_gistic' +
                 '&clinicallist=asodifjpaosidjfa'
+        );
+        await skipIfOncoprintStudyUnavailable(
+            page,
+            'Required ACC study is unavailable on this server'
         );
         await waitForOncoprint(page);
         expect(await getFrontendOncIdOrder(page)).toEqual(ACC_SAMPLE_ORDER);
@@ -184,6 +232,10 @@ test.describe('initialization from URL parameters', () => {
                 '&genetic_profile_ids_PROFILE_COPY_NUMBER_ALTERATION=acc_tcga_gistic' +
                 '&clinicallist=CANCER_TYPE,asodifjpaosidjfa,CANCER_TYPE_DETAILED,' +
                 'FRACTION_GENOME_ALTERED,aposdijfpoai,MUTATION_COUNT'
+        );
+        await skipIfOncoprintStudyUnavailable(
+            page,
+            'Required ACC study is unavailable on this server'
         );
         await waitForOncoprint(page);
         // Clinical tracks paint on a slight delay after main tracks.
@@ -215,6 +267,10 @@ test.describe('heatmap clustering', () => {
                 '&genetic_profile_ids_PROFILE_MUTATION_EXTENDED=coadread_tcga_pub_mutations' +
                 '&heatmap_track_groups=coadread_tcga_pub_rna_seq_mrna_median_Zscores%2CKRAS%2CNRAS%2CBRAF' +
                 '%3Bcoadread_tcga_pub_methylation_hm27%2CKRAS%2CNRAS%2CBRAF&show_samples=false'
+        );
+        await skipIfOncoprintStudyUnavailable(
+            page,
+            'Required heatmap-clustering study is unavailable on this server'
         );
         await waitForOncoprint(page);
 
@@ -277,6 +333,10 @@ test.describe('germline mutation', () => {
             search,
             'ovarian serous cystadenocarcinoma tcga nature 2011'
         );
+        await skipIfNoStudySearchResults(
+            page,
+            'Required ovarian TCGA study is unavailable on this server'
+        );
         await waitForNumberOfStudyCheckboxes(page, 1);
         await page.locator('[data-test="StudySelect"] input').click();
         await clickQueryByGeneButton(page);
@@ -318,6 +378,10 @@ test.describe('germline mutation', () => {
                 '&genetic_profile_ids_PROFILE_COPY_NUMBER_ALTERATION=ov_tcga_pub_gistic' +
                 '&genetic_profile_ids_PROFILE_MUTATION_EXTENDED=ov_tcga_pub_mutations' +
                 '&tab_index=tab_visualize'
+        );
+        await skipIfOncoprintStudyUnavailable(
+            page,
+            'Required ovarian TCGA study is unavailable on this server'
         );
         await waitForOncoprint(page);
 
@@ -364,6 +428,10 @@ test.describe('germline mutation', () => {
                 '&genetic_profile_ids_PROFILE_COPY_NUMBER_ALTERATION=ov_tcga_pub_gistic' +
                 '&genetic_profile_ids_PROFILE_MUTATION_EXTENDED=ov_tcga_pub_mutations' +
                 '&tab_index=tab_visualize'
+        );
+        await skipIfOncoprintStudyUnavailable(
+            page,
+            'Required ovarian TCGA study is unavailable on this server'
         );
         await waitForOncoprint(page);
 
@@ -469,6 +537,10 @@ test.describe('custom case list sorting', () => {
         await page.goto('/');
         const search = 'div[data-test=study-search] input[type="text"]';
         await setInputText(page, search, 'colorectal tcga nature');
+        await skipIfNoStudySearchResults(
+            page,
+            'Required colorectal TCGA study is unavailable on this server'
+        );
         await waitForNumberOfStudyCheckboxes(page, 1);
         await page.locator('[data-test="StudySelect"] input').click();
 
@@ -476,6 +548,10 @@ test.describe('custom case list sorting', () => {
             page,
             search,
             'adrenocortical carcinoma tcga firehose legacy'
+        );
+        await skipIfNoStudySearchResults(
+            page,
+            'Required ACC study is unavailable on this server'
         );
         await waitForNumberOfStudyCheckboxes(page, 1);
         // Small settle — the second study's checkbox materializes after
@@ -579,6 +655,10 @@ test.describe('only show clinical legends for altered cases', () => {
                 '&genetic_profile_ids_PROFILE_COPY_NUMBER_ALTERATION=coadread_tcga_pub_gistic' +
                 '&show_samples=false&clinicallist=SEX'
         );
+        await skipIfOncoprintStudyUnavailable(
+            page,
+            'Required colorectal TCGA study is unavailable on this server'
+        );
         await waitForOncoprint(page);
 
         let legend = await getTextInOncoprintLegend(page);
@@ -624,6 +704,10 @@ test.describe('only show clinical legends for altered cases', () => {
                 '&genetic_profile_ids_PROFILE_MUTATION_EXTENDED=coadread_tcga_pub_mutations' +
                 '&genetic_profile_ids_PROFILE_COPY_NUMBER_ALTERATION=coadread_tcga_pub_gistic' +
                 '&show_samples=false&clinicallist=SEX'
+        );
+        await skipIfOncoprintStudyUnavailable(
+            page,
+            'Required colorectal TCGA study is unavailable on this server'
         );
         await waitForOncoprint(page);
 
