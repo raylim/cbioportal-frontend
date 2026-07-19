@@ -52,12 +52,14 @@ pnpm run test:docker:localdb            # verify against tracked baselines
 pnpm run test:docker:localdb:update     # regenerate tracked baselines
 
 # Local-DB lane (host-mode, scratch snapshots) — for fast local iteration
-pnpm run test:localdb                   # verify against local scratch snapshots
+pnpm run test:localdb                   # headed on GUI hosts, headless otherwise
+pnpm run test:localdb:headless          # same as above, but works without X/GUI
 pnpm run test:localdb:update            # regenerate local scratch snapshots
 pnpm run test:localdb:ui                # interactive runner + trace viewer
 
 # Host-mode (fast, scratch snapshots) — for local iteration
-pnpm test                               # verify against local scratch
+pnpm test                               # headed on GUI hosts, headless otherwise
+pnpm run test:headless                  # same as above, but works without X/GUI
 pnpm run test:update                    # regenerate local scratch
 pnpm run test:ui                        # interactive runner + trace viewer
 
@@ -65,6 +67,7 @@ pnpm run test:ui                        # interactive runner + trace viewer
 pnpm run report                         # open the last HTML report
 ./scripts/docker-test.sh timeline       # grep-filter specs
 CBIOPORTAL_URL=https://rc.cbioportal.org pnpm run test:docker
+pnpm run test -- --list tests/pathology-summary.spec.ts
 ```
 
 The `test:docker:localdb` scripts set `PW_LOCAL=1` and point
@@ -73,14 +76,24 @@ to the wrapper. They assume a local cBioPortal backend is already
 listening on port 8080; the wrapper's `host.docker.internal` remap
 makes that reachable from inside the Playwright container.
 
-The `test:localdb` and `test:localdb:update` commands run the same
+The `test:localdb`, `test:localdb:headless`, and `test:localdb:update` commands run the same
 `tests/local` suite directly on the host (no Docker) against a backend
 already listening on `http://localhost:8080`. They write scratch
 snapshots to `tests/**/__local_snapshots__/` (gitignored) so they never
 overwrite the tracked Docker references. `LOCALDEV=0` is set explicitly
 because the backend serves the full app directly — no separate frontend
 dev server is involved. These commands are the fastest way to iterate on
-localdb tests without waiting for a Docker pull.
+localdb tests without waiting for a Docker pull. Use the `:headless`
+variant on SSH-only machines or anywhere a graphical X server is not
+available.
+
+`pnpm test` and `pnpm run test:localdb` now auto-select headed mode when
+a GUI display is available and fall back to headless when it is not, so
+they work both on ordinary desktops and on SSH-only machines. Use
+`pnpm run test:headless` when you want to force headless mode even on a
+GUI host, `pnpm run test:localdb:headless` for the same behavior on the
+localdb lane, and `pnpm run test:ui` when you explicitly want the
+interactive headed runner.
 
 `./scripts/docker-test.sh` is a thin wrapper — anything after the
 script name is forwarded to `playwright test`, so flags like

@@ -38,6 +38,12 @@ async function openQuickSearchAndType(page: Page, query: string) {
 
 test.describe('Quick Search', () => {
     test.beforeEach(async ({ page }) => {
+        await page.goto('/');
+        const quickSearchTab = page.locator('a.tabAnchor_quickSearch');
+        test.skip(
+            (await quickSearchTab.count()) === 0,
+            'Quick Search is disabled on this server'
+        );
         await openQuickSearchAndType(page, 'Ad');
     });
 
