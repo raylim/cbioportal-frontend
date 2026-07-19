@@ -3,6 +3,7 @@ import { TimelineTrackSpecification, TimelineTrackType } from './types';
 import { TICK_AXIS_HEIGHT } from './TickAxis';
 import { CustomTrackSpecification } from './CustomTrack';
 import { TimelineStore } from './TimelineStore';
+import { CustomTrackLayout } from './TimelineTracks';
 import { useObserver } from 'mobx-react-lite';
 import { EllipsisTextTooltip } from 'cbioportal-frontend-commons';
 import { isTrackVisible } from './lib/helpers';
@@ -15,11 +16,40 @@ interface ITrackHeaderProps {
     track: TimelineTrackSpecification;
     handleTrackHover: (e: React.MouseEvent<any>) => void;
     height: number;
+    hoverTrackIndex?: number;
     paddingLeft?: number;
 }
 
+type CachedTrackLabelEntry = {
+    label?: string;
+    resolved: string;
+    type: string;
+};
+
+const trackLabelCache = new WeakMap<
+    TimelineTrackSpecification,
+    CachedTrackLabelEntry
+>();
+
 export function getTrackLabel(track: TimelineTrackSpecification) {
-    return (track.label || track.type).replace(/_/g, '');
+    const cached = trackLabelCache.get(track);
+
+    if (
+        cached &&
+        cached.label === track.label &&
+        cached.type === track.type
+    ) {
+        return cached.resolved;
+    }
+
+    const resolved = (track.label || track.type).replace(/_/g, '');
+    trackLabelCache.set(track, {
+        label: track.label,
+        resolved,
+        type: track.type,
+    });
+
+    return resolved;
 }
 
 const TrackHeader: React.FunctionComponent<ITrackHeaderProps> = function({
@@ -27,6 +57,7 @@ const TrackHeader: React.FunctionComponent<ITrackHeaderProps> = function({
     track,
     handleTrackHover,
     height,
+    hoverTrackIndex,
     paddingLeft = 5,
 }) {
     const collapseCallback = useCallback(
@@ -39,6 +70,7 @@ const TrackHeader: React.FunctionComponent<ITrackHeaderProps> = function({
     return useObserver(() => (
         <>
             <div
+                data-track-index={hoverTrackIndex}
                 style={{
                     paddingLeft,
                     height,
@@ -96,8 +128,11 @@ export const EXPORT_TRACK_HEADER_BORDER_CLASSNAME = 'track-header-border';
 export function getTrackHeadersG(
     store: TimelineStore,
     customTracks?: CustomTrackSpecification[],
+    customTrackLayouts?: CustomTrackLayout[],
     visibleTracks?: string[]
 ) {
+    const headerWidth = store.headersWidth;
+    const headerWidthText = headerWidth.toString();
     const g = (document.createElementNS(
         'http://www.w3.org/2000/svg',
         'g'
@@ -122,7 +157,7 @@ export function getTrackHeadersG(
         ) as unknown) as SVGLineElement;
         line.classList.add(EXPORT_TRACK_HEADER_BORDER_CLASSNAME);
         line.setAttribute('x1', '0');
-        line.setAttribute('x2', store.headersWidth.toString());
+        line.setAttribute('x2', headerWidthText);
         line.setAttribute('y1', `${y + trackHeight - 0.5}`);
         line.setAttribute('y2', `${y + trackHeight - 0.5}`);
         line.setAttribute('stroke', '#eee');
@@ -151,8 +186,7 @@ export function getTrackHeadersG(
 
             axisGroup.setAttribute(
                 'transform',
-                `translate(${store.headersWidth -
-                    LINE_CHART_AXIS_SVG_WIDTH}, ${y})`
+                `translate(${headerWidth - LINE_CHART_AXIS_SVG_WIDTH}, ${y})`
             );
             const axisRoot = createRoot(axisGroup);
             flushSync(() => {
@@ -169,13 +203,26 @@ export function getTrackHeadersG(
         y += t.height;
     }
 
-    if (customTracks) {
-        for (const t of customTracks) {
+    const resolvedCustomTrackLayouts =
+        customTrackLayouts || [];
+
+    if (!customTrackLayouts && customTracks?.length) {
+        for (let index = 0; index < customTracks.length; index += 1) {
+            const track = customTracks[index];
+            resolvedCustomTrackLayouts.push({
+                height: track.height(store),
+                index,
+                track,
+            });
+        }
+    }
+
+    if (resolvedCustomTrackLayouts.length > 0) {
+        for (const { height, track: t } of resolvedCustomTrackLayouts) {
             const text = makeTextElement(5, y);
             text.textContent = t.labelForExport;
             g.appendChild(text);
 
-            const height = t.height(store);
             g.appendChild(makeBorderLineElement(y, height));
 
             y += height;

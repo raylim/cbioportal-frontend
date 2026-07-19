@@ -1,6 +1,10 @@
 import { POINT_RADIUS, TimelineEvent } from './types';
 import React from 'react';
 import { getAttributeValue } from './lib/helpers';
+import {
+    COLOR_ATTRIBUTE_KEY,
+    SHAPE_ATTRIBUTE_KEY,
+} from './styleAttributeKeys';
 
 enum Shape {
     CIRCLE = 'circle',
@@ -135,6 +139,3 @@ export function renderShape(
             );
     }
 }
-
-export const COLOR_ATTRIBUTE_KEY = 'STYLE_COLOR';
-export const SHAPE_ATTRIBUTE_KEY = 'STYLE_SHAPE';

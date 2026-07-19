@@ -2,7 +2,6 @@ import { TickIntervalEnum, TimelineTick } from './types';
 import React from 'react';
 import { TimelineStore } from './TimelineStore';
 import { observer } from 'mobx-react';
-import _ from 'lodash';
 
 interface ITickAxisProps {
     store: TimelineStore;
@@ -18,18 +17,19 @@ const TICK_LABEL_STYLE: any = {
 const MAJOR_TICK_HEIGHT = 6;
 const MINOR_TICK_HEIGHT = 3;
 
+export function getTimelineTickKey(tick: TimelineTick, index: number): string {
+    return `${index}:${tick.start}:${tick.end}:${tick.realEnd ?? ''}:${tick.offset ?? ''}:${tick.isTrim ? 1 : 0}`;
+}
+
+export function getMinorTimelineTickKey(
+    majorTickKey: string,
+    minorIndex: number,
+    position: number
+): string {
+    return `${majorTickKey}:minor:${minorIndex}:${position}`;
+}
+
 function makeSquiggle(onClick: () => void) {
-    const points = [
-        'M0,5',
-        'L2.5,8',
-        'L5,0',
-        'L7.5,10',
-        'L10,0',
-        'L12.5,10',
-        'L15,0',
-        'L17.5,8',
-        'L20,5',
-    ];
     return (
         <g transform={`translate(-6 ${TICK_AXIS_HEIGHT - 6})`}>
             {/* this rect visually blocks the axis */}
@@ -44,7 +44,7 @@ function makeSquiggle(onClick: () => void) {
                 onClick={onClick}
             />
             <path
-                d={points.join('')}
+                d={'M0,5L2.5,8L5,0L7.5,10L10,0L12.5,10L15,0L17.5,8L20,5'}
                 stroke={TICK_AXIS_COLOR}
                 strokeWidth="1"
                 fill="none"
@@ -60,6 +60,146 @@ const TickAxis: React.FunctionComponent<ITickAxisProps> = observer(function({
     store,
     width,
 }: ITickAxisProps) {
+    const ticks = store.ticks;
+    const tickPixelWidth = store.tickPixelWidth;
+    const showMinorTicks = tickPixelWidth > 150;
+    const showAllMinorLabels = tickPixelWidth > 700;
+    const tickLayers = new Array<JSX.Element>(ticks.length);
+
+    for (let index = 0; index < ticks.length; index += 1) {
+        const tick = ticks[index];
+        let content: JSX.Element | null = null;
+        const tickKey = getTimelineTickKey(tick, index);
+        const startPoint =
+            tick === store.firstTick
+                ? tick.end - store.tickInterval + 1
+                : tick.start;
+        const majorTickPosition = store.getTickPosition(startPoint);
+        const transform = majorTickPosition
+            ? `translate(${majorTickPosition.pixelLeft} 0)`
+            : undefined;
+        const minorTicks: JSX.Element[] = [];
+
+        if (tick.isTrim) {
+            content = makeSquiggle(store.toggleExpandedTrims);
+        } else {
+            const count = startPoint / store.tickInterval;
+            const unit =
+                store.tickInterval === TickIntervalEnum.MONTH ? 'm' : 'y';
+            let majorLabel = '';
+
+            if (count < 0) {
+                majorLabel = `${count}${unit}`;
+            } else if (count === 0) {
+                majorLabel = '0';
+            } else {
+                majorLabel = `${count}${unit}`;
+            }
+
+            content = (
+                <>
+                    <text
+                        dy={'1em'}
+                        style={{
+                            fill: '#333',
+                            ...TICK_LABEL_STYLE,
+                        }}
+                    >
+                        {majorLabel}
+                    </text>
+                    <rect
+                        height={MAJOR_TICK_HEIGHT}
+                        width={1}
+                        transform={`translate(0 ${
+                            TICK_AXIS_HEIGHT - MAJOR_TICK_HEIGHT
+                        })`}
+                        fill={'#aaa'}
+                    />
+                </>
+            );
+
+            if (showMinorTicks) {
+                const minorTickWidth = TickIntervalEnum.MONTH;
+
+                for (let minorIndex = 1; minorIndex < 12; minorIndex += 1) {
+                    const position = store.getTickPosition(
+                        startPoint + minorTickWidth * minorIndex
+                    );
+                    const minorTransform = position
+                        ? `translate(${position.pixelLeft} 0)`
+                        : undefined;
+                    const minorPixelLeft = position?.pixelLeft;
+                    let minorLabel = '';
+
+                    if (
+                        minorIndex % 4 === 0 ||
+                        showAllMinorLabels
+                    ) {
+                        let minorCount = minorIndex;
+                        if (count < 0) {
+                            minorCount = 12 - minorIndex;
+                            const nextMajorLabel =
+                                count + 1 === 0 ? '' : `${count + 1}${unit}`;
+                            minorLabel =
+                                count === -1
+                                    ? `-${minorCount}m`
+                                    : `${nextMajorLabel} ${minorCount}m`;
+                        } else {
+                            minorLabel =
+                                count === 0
+                                    ? `${minorCount}m`
+                                    : `${majorLabel} ${minorCount}m`;
+                        }
+                    }
+
+                    if (
+                        minorTransform &&
+                        minorPixelLeft !== undefined
+                    ) {
+                        minorTicks.push(
+                            <g
+                                key={getMinorTimelineTickKey(
+                                    tickKey,
+                                    minorIndex,
+                                    minorPixelLeft
+                                )}
+                                transform={minorTransform}
+                            >
+                                <text
+                                    dy={'1.5em'}
+                                    style={{
+                                        fill: '#aaa',
+                                        ...TICK_LABEL_STYLE,
+                                    }}
+                                >
+                                    {minorLabel}
+                                </text>
+                                <rect
+                                    height={MINOR_TICK_HEIGHT}
+                                    width={1}
+                                    transform={`translate(0 ${
+                                        TICK_AXIS_HEIGHT - MINOR_TICK_HEIGHT
+                                    })`}
+                                    fill={'#aaa'}
+                                />
+                            </g>
+                        );
+                    }
+                }
+            }
+        }
+
+        const rightAfterTrim = index > 0 && ticks[index - 1].isTrim;
+        tickLayers[index] = (
+            <React.Fragment key={tickKey}>
+                {!rightAfterTrim && transform && (
+                    <g transform={transform}>{content}</g>
+                )}
+                {minorTicks}
+            </React.Fragment>
+        );
+    }
+
     return (
         <>
             <g>
@@ -69,174 +209,7 @@ const TickAxis: React.FunctionComponent<ITickAxisProps> = observer(function({
                     height={1}
                     width={width}
                 />
-                {store.ticks.map((tick: TimelineTick, index: number) => {
-                    let content: JSX.Element | null = null;
-
-                    let startPoint;
-                    if (tick === store.firstTick) {
-                        startPoint = tick.end - store.tickInterval + 1; //tick.end - normalTickWidth - 1;
-                    } else {
-                        startPoint = tick.start;
-                    }
-
-                    const majorTickPosition = store.getPosition({
-                        start: startPoint,
-                    });
-                    const transform = majorTickPosition
-                        ? `translate(${majorTickPosition.pixelLeft} 0)`
-                        : undefined;
-                    const minorTicks: JSX.Element[] = [];
-
-                    if (tick.isTrim) {
-                        content = makeSquiggle(store.toggleExpandedTrims);
-                    } else {
-                        const count = startPoint / store.tickInterval;
-                        const unit =
-                            store.tickInterval === TickIntervalEnum.MONTH
-                                ? 'm'
-                                : 'y';
-
-                        let majorLabel: string = '';
-
-                        if (count < 0) {
-                            majorLabel = `${count}${unit}`;
-                        }
-
-                        if (count === 0) {
-                            majorLabel = '0';
-                        }
-
-                        if (count > 0) {
-                            majorLabel = `${count}${unit}`;
-                        }
-
-                        content = (
-                            <>
-                                <text
-                                    dy={'1em'}
-                                    style={{
-                                        fill: '#333',
-                                        ...TICK_LABEL_STYLE,
-                                    }}
-                                >
-                                    {majorLabel}
-                                </text>
-                                <rect
-                                    height={MAJOR_TICK_HEIGHT}
-                                    width={1}
-                                    transform={`translate(0 ${TICK_AXIS_HEIGHT -
-                                        MAJOR_TICK_HEIGHT})`}
-                                    fill={'#aaa'}
-                                />
-                            </>
-                        );
-
-                        if (store.tickPixelWidth > 150) {
-                            const minorTickWidth = TickIntervalEnum.MONTH;
-
-                            for (let i = 1; i < 12; i++) {
-                                const position = store.getPosition({
-                                    start: startPoint + minorTickWidth * i,
-                                });
-
-                                const transform = position
-                                    ? `translate(${position.pixelLeft} 0)`
-                                    : undefined;
-
-                                let minorLabel = '';
-                                let showLabel = false;
-                                if (store.tickPixelWidth > 150) {
-                                    if (i % 4 === 0) {
-                                        // only odd
-                                        showLabel = true;
-                                    }
-                                    if (store.tickPixelWidth > 700) {
-                                        showLabel = true;
-                                    }
-                                }
-
-                                if (showLabel) {
-                                    let minorCount = i;
-                                    if (count < 0) {
-                                        minorCount = 12 - i;
-                                        majorLabel =
-                                            count + 1 === 0
-                                                ? ''
-                                                : `${count + 1}${unit}`;
-                                        minorLabel =
-                                            count === -1
-                                                ? `-${minorCount}m`
-                                                : `${majorLabel} ${minorCount}m`;
-                                    } else {
-                                        minorLabel =
-                                            count === 0
-                                                ? `${minorCount}m`
-                                                : `${majorLabel} ${minorCount}m`;
-                                    }
-                                }
-
-                                if (transform) {
-                                    minorTicks.push(
-                                        <g transform={transform}>
-                                            <text
-                                                dy={'1.5em'}
-                                                style={{
-                                                    fill: '#aaa',
-                                                    ...TICK_LABEL_STYLE,
-                                                }}
-                                            >
-                                                {minorLabel}
-                                            </text>
-                                            <rect
-                                                height={MINOR_TICK_HEIGHT}
-                                                width={1}
-                                                transform={`translate(0 ${TICK_AXIS_HEIGHT -
-                                                    MINOR_TICK_HEIGHT})`}
-                                                fill={'#aaa'}
-                                            />
-                                        </g>
-                                    );
-                                }
-                            }
-                        }
-                    }
-
-                    // DAY TICKS
-                    // if (store.tickPixelWidth > 2000) {
-                    //     const dayTickWidth = TickIntervalEnum.MONTH/30;
-                    //     for (let i = 0; i <= 365; i++) {
-                    //
-                    //         if (i % 30 !== 0) {
-                    //             const position = majorTickPosition && store.getPosition(
-                    //                 {start: startPoint + dayTickWidth * i},
-                    //                 store.trimmedLimit
-                    //             );
-                    //             if (position) {
-                    //                 minorTicks.push(
-                    //                     <div className={'tl-daytick'} style={{left: position.left}}>
-                    //                         <div className={'tl-tickline'}></div>
-                    //                     </div>
-                    //                 )
-                    //             }
-                    //         }
-                    //     }
-                    //
-                    //
-                    // }
-
-                    const rightAfterTrim =
-                        index > 0 && store.ticks[index - 1].isTrim;
-
-                    return (
-                        <>
-                            {!rightAfterTrim && transform && (
-                                <g transform={transform}>{content}</g>
-                            )}
-
-                            {minorTicks}
-                        </>
-                    );
-                })}
+                {tickLayers}
             </g>
         </>
     );

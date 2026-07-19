@@ -1,5 +1,6 @@
 import {TimelineStore} from "../TimelineStore";
 import {CustomTrackSpecification} from "../CustomTrack";
+import {CustomTrackLayout} from "../TimelineTracks";
 import {EXPORT_TRACK_HEADER_BORDER_CLASSNAME, getTrackHeadersG} from "../TrackHeader";
 import {TICK_AXIS_COLOR} from "../TickAxis";
 import jQuery from "jquery";
@@ -9,6 +10,7 @@ export default function getSvg(
     store: TimelineStore,
     timelineG: SVGGElement | null,
     customTracks?: CustomTrackSpecification[],
+    customTrackLayouts?: CustomTrackLayout[],
     visibleTracks?: string[]
 ) {
     if (!timelineG) {
@@ -29,7 +31,12 @@ export default function getSvg(
 
     try {
         // Add headers
-        const headersG = getTrackHeadersG(store, customTracks, visibleTracks);
+        const headersG = getTrackHeadersG(
+            store,
+            customTracks,
+            customTrackLayouts,
+            visibleTracks
+        );
         everythingG.appendChild(headersG);
         const headersSize = headersG.getBBox();
         const headersPadding = 10;
