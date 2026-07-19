@@ -35,6 +35,18 @@ export default class FrequencyBar extends React.Component<
         super(props);
     }
 
+    private getSafeProportion(count: number, totalCount: number) {
+        if (
+            !Number.isFinite(count) ||
+            !Number.isFinite(totalCount) ||
+            totalCount <= 0
+        ) {
+            return 0;
+        }
+
+        return Math.max(0, count / totalCount);
+    }
+
     public mainContent() {
         const {
             barWidth,
@@ -58,7 +70,10 @@ export default class FrequencyBar extends React.Component<
                 ? this.props.mainCountIndex
                 : 0;
 
-        const mainProportion = counts[mainCountIndex] / totalCount;
+        const mainProportion = this.getSafeProportion(
+            counts[mainCountIndex],
+            totalCount
+        );
         const textPos = (barWidth || 0) + (textMargin || 0);
         const totalWidth = textPos + (textWidth || 0);
 
@@ -69,7 +84,14 @@ export default class FrequencyBar extends React.Component<
             const colorIdx = index % freqColors.length;
             const color = colorIdx >= 0 ? freqColors[colorIdx] : freqColors[0];
 
-            freqRects.push(this.frequencyRectangle(count, totalCount, color));
+            freqRects.push(
+                this.frequencyRectangle(
+                    count,
+                    totalCount,
+                    color,
+                    `${index}-${count}-${totalCount}`
+                )
+            );
         });
 
         return (
@@ -91,13 +113,15 @@ export default class FrequencyBar extends React.Component<
     public frequencyRectangle(
         count: number,
         totalCount: number,
-        color: string
+        color: string,
+        key: string
     ) {
-        const proportion = count / totalCount;
+        const proportion = this.getSafeProportion(count, totalCount);
         const { barWidth, barHeight } = this.props;
 
         return (
             <rect
+                key={key}
                 y="2"
                 width={proportion * (barWidth || 0)}
                 height={barHeight}

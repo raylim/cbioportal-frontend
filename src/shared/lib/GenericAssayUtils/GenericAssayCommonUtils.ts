@@ -369,7 +369,14 @@ export function filterGenericAssayEntitiesByGenes(
 ) {
     // filter logic is: stableId, name or description
     // filter out others entities and only keep matching entities
-    return _.filter(genericAssayEntities, meta => {
+    const regexes = new Array<RegExp>(hugoGeneSymbols.length);
+    for (let index = 0; index < hugoGeneSymbols.length; index += 1) {
+        regexes[index] = constructGeneRegex(hugoGeneSymbols[index]);
+    }
+
+    const matchingEntities: GenericAssayMeta[] = [];
+    for (let entityIndex = 0; entityIndex < genericAssayEntities.length; entityIndex += 1) {
+        const meta = genericAssayEntities[entityIndex];
         const entityName = getGenericAssayMetaPropertyOrDefault(
             meta,
             COMMON_GENERIC_ASSAY_PROPERTY.NAME,
@@ -380,27 +387,44 @@ export function filterGenericAssayEntitiesByGenes(
             COMMON_GENERIC_ASSAY_PROPERTY.DESCRIPTION,
             ''
         );
-        return _.some(hugoGeneSymbols, hugoGeneSymbol => {
-            const regex = constructGeneRegex(hugoGeneSymbol);
-            return (
+        for (let regexIndex = 0; regexIndex < regexes.length; regexIndex += 1) {
+            const regex = regexes[regexIndex];
+            if (
                 regex.test(meta.stableId) ||
                 regex.test(entityName) ||
                 regex.test(entityDescription)
-            );
-        });
-    });
+            ) {
+                matchingEntities.push(meta);
+                break;
+            }
+        }
+    }
+
+    return matchingEntities;
 }
 
 export function filterGenericAssayOptionsByGenes(
     options: ISelectOption[],
     hugoGeneSymbols: string[]
 ) {
-    return _.filter(options, option =>
-        _.some(hugoGeneSymbols, hugoGeneSymbol => {
-            const regex = constructGeneRegex(hugoGeneSymbol);
-            return regex.test(option.label) || regex.test(option.value);
-        })
-    );
+    const regexes = new Array<RegExp>(hugoGeneSymbols.length);
+    for (let index = 0; index < hugoGeneSymbols.length; index += 1) {
+        regexes[index] = constructGeneRegex(hugoGeneSymbols[index]);
+    }
+
+    const matchingOptions: ISelectOption[] = [];
+    for (let optionIndex = 0; optionIndex < options.length; optionIndex += 1) {
+        const option = options[optionIndex];
+        for (let regexIndex = 0; regexIndex < regexes.length; regexIndex += 1) {
+            const regex = regexes[regexIndex];
+            if (regex.test(option.label) || regex.test(option.value)) {
+                matchingOptions.push(option);
+                break;
+            }
+        }
+    }
+
+    return matchingOptions;
 }
 
 export function deriveDisplayTextFromGenericAssayType(

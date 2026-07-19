@@ -154,7 +154,11 @@ export async function fetchMutationData(
     molecularProfileId?: string,
     client: CBioPortalAPI = getClient()
 ) {
-    if (molecularProfileId) {
+    if (
+        molecularProfileId &&
+        mutationFilter.sampleIds &&
+        mutationFilter.sampleIds.length > 0
+    ) {
         return await client.fetchMutationsInMolecularProfileUsingPOST({
             molecularProfileId,
             mutationFilter,
@@ -351,7 +355,11 @@ export async function fetchClinicalData(
     clinicalDataMultiStudyFilter: ClinicalDataMultiStudyFilter,
     client: CBioPortalAPI = getClient()
 ) {
-    if (clinicalDataMultiStudyFilter) {
+    if (
+        clinicalDataMultiStudyFilter &&
+        clinicalDataMultiStudyFilter.identifiers &&
+        clinicalDataMultiStudyFilter.identifiers.length > 0
+    ) {
         return await client.fetchClinicalDataUsingPOST({
             clinicalDataType: 'SAMPLE',
             clinicalDataMultiStudyFilter: clinicalDataMultiStudyFilter,
@@ -440,10 +448,20 @@ export async function fetchSamplesForPatient(
     client: CBioPortalAPI = getClient()
 ) {
     if (studyId && patientId) {
+        const detailedSamples = await client.getAllSamplesOfPatientInStudyUsingGET(
+            {
+                studyId,
+                patientId,
+                projection: 'DETAILED',
+            }
+        );
+        if (detailedSamples.length > 0) {
+            return detailedSamples;
+        }
         return await client.getAllSamplesOfPatientInStudyUsingGET({
             studyId,
             patientId,
-            projection: 'DETAILED',
+            projection: 'SUMMARY',
         });
     } else if (studyId && sampleId) {
         return await client
@@ -996,7 +1014,9 @@ export async function fetchDiscreteCNAData(
 ) {
     if (
         molecularProfileIdDiscrete.isComplete &&
-        molecularProfileIdDiscrete.result
+        molecularProfileIdDiscrete.result &&
+        discreteCopyNumberFilter.sampleIds &&
+        discreteCopyNumberFilter.sampleIds.length > 0
     ) {
         return await client.fetchDiscreteCopyNumbersInMolecularProfileUsingPOST(
             {

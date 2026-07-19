@@ -265,6 +265,107 @@ export interface IWaterfallPlotData
         IValue1D,
         IThreshold1D {}
 
+function groupByUniqueSampleKey<T extends { uniqueSampleKey: string }>(
+    data: T[] | undefined
+): { [uniqueSampleKey: string]: T[] } {
+    const grouped: { [uniqueSampleKey: string]: T[] } = {};
+    if (!data) {
+        return grouped;
+    }
+
+    for (let index = 0; index < data.length; index += 1) {
+        const datum = data[index];
+        const existing = grouped[datum.uniqueSampleKey];
+        if (existing) {
+            existing.push(datum);
+        } else {
+            grouped[datum.uniqueSampleKey] = [datum];
+        }
+    }
+
+    return grouped;
+}
+
+function keyClinicalDataByUniqueTarget(
+    clinicalData:
+        | {
+              clinicalAttribute: ClinicalAttribute;
+              data: ClinicalData[];
+          }
+        | undefined
+): { [uniqueKey: string]: ClinicalData } {
+    const keyedData: { [uniqueKey: string]: ClinicalData } = {};
+    if (!clinicalData) {
+        return keyedData;
+    }
+
+    const keyField = clinicalData.clinicalAttribute.patientAttribute
+        ? 'uniquePatientKey'
+        : 'uniqueSampleKey';
+    for (let index = 0; index < clinicalData.data.length; index += 1) {
+        const datum = clinicalData.data[index];
+        keyedData[(datum as any)[keyField]] = datum;
+    }
+
+    return keyedData;
+}
+
+function hasAnyProfiledSample(
+    molecularProfileIds: string[],
+    profiledReport: { [molecularProfileId: string]: boolean }
+): boolean {
+    for (let index = 0; index < molecularProfileIds.length; index += 1) {
+        if (profiledReport[molecularProfileIds[index]]) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function getMutationDisplayKey(mutation: AnnotatedMutation): string {
+    const mutationType = getOncoprintMutationType(mutation);
+    const driverSuffix =
+        mutationType !== 'promoter' &&
+        mutationType !== 'other' &&
+        mutation.putativeDriver
+            ? '.driver'
+            : '';
+    return `${mutationType}${driverSuffix}`;
+}
+
+function getDisplayMutationType(
+    sampleMutations: AnnotatedMutation[] | undefined,
+    selectedEntrezGeneId?: number
+): OncoprintMutationType | undefined {
+    if (!sampleMutations?.length) {
+        return undefined;
+    }
+
+    const counts: { [mutationType: string]: number } = {};
+    let hasMatchingMutation = false;
+    for (let index = 0; index < sampleMutations.length; index += 1) {
+        const mutation = sampleMutations[index];
+        if (
+            selectedEntrezGeneId !== undefined &&
+            mutation.entrezGeneId !== selectedEntrezGeneId
+        ) {
+            continue;
+        }
+
+        const mutationKey = getMutationDisplayKey(mutation);
+        counts[mutationKey] = (counts[mutationKey] || 0) + 1;
+        hasMatchingMutation = true;
+    }
+
+    return hasMatchingMutation
+        ? (selectDisplayValue(
+              counts,
+              mutationRenderPriority
+          ) as OncoprintMutationType)
+        : undefined;
+}
+
 export interface IAxisLogScaleParams {
     label: string;
 
@@ -1166,7 +1267,34 @@ export function makeAxisDataPromise_Molecular_MakeMutationData(
     mutationCountBy: MutationCountBy,
     samples: Pick<Sample, 'uniqueSampleKey'>[]
 ): IStringAxisData | INumberAxisData {
-    const sampleToMutations = _.groupBy(mutations, m => m.uniqueSampleKey);
+    const sampleToMutations: {
+        [uniqueSampleKey: string]: typeof mutations;
+    } = {};
+    let hasVafData = false;
+    let hasCCFData = false;
+    for (let index = 0; index < mutations.length; index += 1) {
+        const mutation = mutations[index];
+        const existing = sampleToMutations[mutation.uniqueSampleKey];
+        if (existing) {
+            existing.push(mutation);
+        } else {
+            sampleToMutations[mutation.uniqueSampleKey] = [mutation];
+        }
+
+        if (
+            !hasVafData &&
+            Number.isFinite(mutation.tumorAltCount) &&
+            Number.isFinite(mutation.tumorRefCount)
+        ) {
+            hasVafData = true;
+        }
+        if (
+            !hasCCFData &&
+            hasASCNProperty(mutation as AnnotatedMutation, 'ccfExpectedCopies')
+        ) {
+            hasCCFData = true;
+        }
+    }
     const data: {
         uniqueSampleKey: string;
         value: string | number | string[] | number[];
@@ -1192,14 +1320,24 @@ export function makeAxisDataPromise_Molecular_MakeMutationData(
                             ? MUT_PROFILE_COUNT_NOT_MUTATED
                             : MUT_PROFILE_COUNT_NOT_PROFILED;
                     } else {
-                        const types = _.uniq(
-                            sampleMutations.map(
-                                m =>
-                                    mutationTypeToDisplayName[
-                                        getOncoprintMutationType(m)
-                                    ]
-                            )
-                        );
+                        const typeIndex: { [mutationType: string]: true } = {};
+                        const types: string[] = [];
+                        for (
+                            let mutationIndex = 0;
+                            mutationIndex < sampleMutations.length;
+                            mutationIndex += 1
+                        ) {
+                            const mutationType =
+                                mutationTypeToDisplayName[
+                                    getOncoprintMutationType(
+                                        sampleMutations[mutationIndex]
+                                    )
+                                ];
+                            if (!typeIndex[mutationType]) {
+                                typeIndex[mutationType] = true;
+                                types.push(mutationType);
+                            }
+                        }
                         value =
                             types.length > 1
                                 ? MUT_PROFILE_COUNT_MULTIPLE
@@ -1213,7 +1351,18 @@ export function makeAxisDataPromise_Molecular_MakeMutationData(
                             ? MUT_PROFILE_COUNT_NOT_MUTATED
                             : MUT_PROFILE_COUNT_NOT_PROFILED;
                     } else {
-                        value = _.some(sampleMutations, m => m.putativeDriver)
+                        let hasDriver = false;
+                        for (
+                            let mutationIndex = 0;
+                            mutationIndex < sampleMutations.length;
+                            mutationIndex += 1
+                        ) {
+                            if (sampleMutations[mutationIndex].putativeDriver) {
+                                hasDriver = true;
+                                break;
+                            }
+                        }
+                        value = hasDriver
                             ? MUT_PROFILE_COUNT_DRIVER
                             : MUT_PROFILE_COUNT_VUS;
                     }
@@ -1228,10 +1377,19 @@ export function makeAxisDataPromise_Molecular_MakeMutationData(
                         // 2. Not profiled for this gene
                         return null;
                     } else {
-                        const vafs: number[] = _(sampleMutations)
-                            .map(m => getVariantAlleleFrequency(m)?.vaf)
-                            .compact()
-                            .value();
+                        const vafs: number[] = [];
+                        for (
+                            let mutationIndex = 0;
+                            mutationIndex < sampleMutations.length;
+                            mutationIndex += 1
+                        ) {
+                            const vaf = getVariantAlleleFrequency(
+                                sampleMutations[mutationIndex]
+                            )?.vaf;
+                            if (vaf !== undefined && vaf !== null) {
+                                vafs.push(vaf);
+                            }
+                        }
 
                         // Also filter out samples where mutations exist but VAF couldn't be calculated
                         if (vafs.length === 0) {
@@ -1246,22 +1404,26 @@ export function makeAxisDataPromise_Molecular_MakeMutationData(
                     if (!sampleMutations) {
                         return null;
                     } else {
-                        const ccfValues: number[] = _(sampleMutations)
-                            .map(m =>
+                        const ccfValues: number[] = [];
+                        for (
+                            let mutationIndex = 0;
+                            mutationIndex < sampleMutations.length;
+                            mutationIndex += 1
+                        ) {
+                            const mutation =
+                                sampleMutations[mutationIndex] as AnnotatedMutation;
+                            if (
                                 hasASCNProperty(
-                                    m as AnnotatedMutation,
+                                    mutation,
                                     'ccfExpectedCopies'
                                 )
-                                    ? (m as AnnotatedMutation)
-                                          .alleleSpecificCopyNumber
-                                          .ccfExpectedCopies
-                                    : null
-                            )
-                            .filter(
-                                (v): v is number =>
-                                    v !== null && v !== undefined
-                            )
-                            .value();
+                            ) {
+                                ccfValues.push(
+                                    mutation.alleleSpecificCopyNumber
+                                        .ccfExpectedCopies
+                                );
+                            }
+                        }
                         if (ccfValues.length === 0) {
                             return null;
                         }
@@ -1275,13 +1437,25 @@ export function makeAxisDataPromise_Molecular_MakeMutationData(
                             ? MUT_PROFILE_COUNT_NOT_MUTATED
                             : MUT_PROFILE_COUNT_NOT_PROFILED;
                     } else {
-                        const clonalValues = _.uniq(
-                            sampleMutations
-                                .map(m =>
-                                    getClonalValue(m as AnnotatedMutation)
-                                )
-                                .filter(v => v !== ClonalValue.NA)
-                        );
+                        const clonalValueIndex: { [clonalValue: string]: true } =
+                            {};
+                        const clonalValues: string[] = [];
+                        for (
+                            let mutationIndex = 0;
+                            mutationIndex < sampleMutations.length;
+                            mutationIndex += 1
+                        ) {
+                            const clonalValue = getClonalValue(
+                                sampleMutations[mutationIndex] as AnnotatedMutation
+                            );
+                            if (
+                                clonalValue !== ClonalValue.NA &&
+                                !clonalValueIndex[clonalValue]
+                            ) {
+                                clonalValueIndex[clonalValue] = true;
+                                clonalValues.push(clonalValue);
+                            }
+                        }
                         // Exclude sample if all mutations have no clonality data
                         if (clonalValues.length === 0) {
                             return null;
@@ -1316,20 +1490,12 @@ export function makeAxisDataPromise_Molecular_MakeMutationData(
     }[];
 
     if (mutationCountBy === MutationCountBy.VariantAlleleFrequency) {
-        const hasVafData = mutations.some(
-            m => _.isFinite(m.tumorAltCount) && _.isFinite(m.tumorRefCount)
-        );
-
         return {
             data: hasVafData ? data : [],
             hugoGeneSymbol,
             datatype: 'number',
         } as INumberAxisData;
     } else if (mutationCountBy === MutationCountBy.CancerCellFraction) {
-        const hasCCFData = mutations.some(m =>
-            hasASCNProperty(m as AnnotatedMutation, 'ccfExpectedCopies')
-        );
-
         return {
             data: hasCCFData ? data : [],
             hugoGeneSymbol,
@@ -2915,38 +3081,10 @@ export function makeScatterPlotData(
         data: ClinicalData[];
     }
 ): IScatterPlotData[] | IBoxScatterPlotPoint[] {
-    const mutationsMap: {
-        [uniqueSampleKey: string]: AnnotatedMutation[];
-    } = mutations ? _.groupBy(mutations.data, m => m.uniqueSampleKey) : {};
-
-    const cnaMap: {
-        [uniqueSampleKey: string]: AnnotatedNumericGeneMolecularData[];
-    } = copyNumberAlterations
-        ? _.groupBy(copyNumberAlterations.data, d => d.uniqueSampleKey)
-        : {};
-
-    const structuralVariantMap: {
-        [uniqueSampleKey: string]: StructuralVariant[];
-    } = structuralVariants
-        ? _.groupBy(structuralVariants.data, d => d.uniqueSampleKey)
-        : {};
-
-    let clinicalDataMap: {
-        [uniqueKey: string]: ClinicalData;
-    } = {};
-    if (clinicalData) {
-        if (clinicalData.clinicalAttribute.patientAttribute) {
-            clinicalDataMap = _.keyBy(
-                clinicalData.data,
-                d => d.uniquePatientKey
-            );
-        } else {
-            clinicalDataMap = _.keyBy(
-                clinicalData.data,
-                d => d.uniqueSampleKey
-            );
-        }
-    }
+    const mutationsMap = groupByUniqueSampleKey(mutations?.data);
+    const cnaMap = groupByUniqueSampleKey(copyNumberAlterations?.data);
+    const structuralVariantMap = groupByUniqueSampleKey(structuralVariants?.data);
+    const clinicalDataMap = keyClinicalDataByUniqueTarget(clinicalData);
     const dataMap: {
         [uniqueSampleKey: string]: Partial<
             IPlotSampleData & {
@@ -2975,25 +3113,7 @@ export function makeScatterPlotData(
         let dispMutationType: OncoprintMutationType | undefined = undefined;
         const sampleMutations: AnnotatedMutation[] | undefined =
             mutationsMap[d.uniqueSampleKey];
-        if (sampleMutations && sampleMutations.length) {
-            const counts = _.chain(sampleMutations)
-                .groupBy(mutation => {
-                    const mutationType = getOncoprintMutationType(mutation);
-                    const driverSuffix =
-                        mutationType !== 'promoter' &&
-                        mutationType !== 'other' &&
-                        mutation.putativeDriver
-                            ? '.driver'
-                            : '';
-                    return `${mutationType}${driverSuffix}`;
-                })
-                .mapValues(muts => muts.length)
-                .value();
-            dispMutationType = selectDisplayValue(
-                counts,
-                mutationRenderPriority
-            ) as OncoprintMutationType;
-        }
+        dispMutationType = getDisplayMutationType(sampleMutations);
         let dispStructuralVariant: string | undefined = undefined;
         const sampleSv: StructuralVariant[] | undefined =
             structuralVariantMap[d.uniqueSampleKey];
@@ -3018,21 +3138,21 @@ export function makeScatterPlotData(
                 sampleCoverageInfo
             );
             if (mutations) {
-                isProfiledMutations = _.some(
+                isProfiledMutations = hasAnyProfiledSample(
                     mutations.molecularProfileIds,
-                    id => !!profiledReport[id]
+                    profiledReport
                 );
             }
             if (copyNumberAlterations) {
-                isProfiledCna = _.some(
+                isProfiledCna = hasAnyProfiledSample(
                     copyNumberAlterations.molecularProfileIds,
-                    id => !!profiledReport[id]
+                    profiledReport
                 );
             }
             if (structuralVariants) {
-                isProfiledStructuralVariants = _.some(
+                isProfiledStructuralVariants = hasAnyProfiledSample(
                     structuralVariants.molecularProfileIds,
-                    id => !!profiledReport[id]
+                    profiledReport
                 );
             }
         }
@@ -3134,38 +3254,10 @@ export function makeWaterfallPlotData(
         data: ClinicalData[];
     }
 ): IWaterfallPlotData[] {
-    const mutationsMap: {
-        [uniqueSampleKey: string]: AnnotatedMutation[];
-    } = mutations ? _.groupBy(mutations.data, m => m.uniqueSampleKey) : {};
-
-    const cnaMap: {
-        [uniqueSampleKey: string]: CustomDriverNumericGeneMolecularData[];
-    } = copyNumberAlterations
-        ? _.groupBy(copyNumberAlterations.data, d => d.uniqueSampleKey)
-        : {};
-
-    const structuralVariantMap: {
-        [uniqueSampleKey: string]: StructuralVariant[];
-    } = structuralVariants
-        ? _.groupBy(structuralVariants.data, d => d.uniqueSampleKey)
-        : {};
-
-    let clinicalDataMap: {
-        [uniqueKey: string]: ClinicalData;
-    } = {};
-    if (clinicalData) {
-        if (clinicalData.clinicalAttribute.patientAttribute) {
-            clinicalDataMap = _.keyBy(
-                clinicalData.data,
-                d => d.uniquePatientKey
-            );
-        } else {
-            clinicalDataMap = _.keyBy(
-                clinicalData.data,
-                d => d.uniqueSampleKey
-            );
-        }
-    }
+    const mutationsMap = groupByUniqueSampleKey(mutations?.data);
+    const cnaMap = groupByUniqueSampleKey(copyNumberAlterations?.data);
+    const structuralVariantMap = groupByUniqueSampleKey(structuralVariants?.data);
+    const clinicalDataMap = keyClinicalDataByUniqueTarget(clinicalData);
 
     const contractedData: any[] = [];
 
@@ -3199,28 +3291,11 @@ export function makeWaterfallPlotData(
 
         // For waterfall plot the datum styling looks at the currently selected gene
         // in the utilities menu. Below evalute which mutation to show for a sample.
-        if (sampleMutations && sampleMutations.length && selectedGene) {
-            const counts = _(sampleMutations)
-                .filter(
-                    (d: AnnotatedMutation) =>
-                        d.entrezGeneId === selectedGene.entrezGeneId
-                ) // filter mutations by gene
-                .groupBy((mutation: AnnotatedMutation) => {
-                    const mutationType = getOncoprintMutationType(mutation);
-                    const driverSuffix =
-                        mutationType !== 'promoter' &&
-                        mutationType !== 'other' &&
-                        mutation.putativeDriver
-                            ? '.driver'
-                            : '';
-                    return `${mutationType}${driverSuffix}`;
-                })
-                .mapValues((muts: AnnotatedMutation[]) => muts.length)
-                .value();
-            dispMutationType = selectDisplayValue(
-                counts,
-                mutationRenderPriority
-            ) as OncoprintMutationType;
+        if (selectedGene) {
+            dispMutationType = getDisplayMutationType(
+                sampleMutations,
+                selectedGene.entrezGeneId
+            );
         }
 
         let dispStructuralVariant: string | undefined = undefined;
@@ -3247,24 +3322,21 @@ export function makeWaterfallPlotData(
                 sampleCoverageInfo
             );
             if (mutations) {
-                isProfiledMutations = false;
-                for (const molecularProfileId of mutations.molecularProfileIds) {
-                    isProfiledMutations =
-                        isProfiledMutations ||
-                        !!profiledReport[molecularProfileId];
-                }
+                isProfiledMutations = hasAnyProfiledSample(
+                    mutations.molecularProfileIds,
+                    profiledReport
+                );
             }
             if (copyNumberAlterations) {
-                isProfiledCna = false;
-                for (const molecularProfileId of copyNumberAlterations.molecularProfileIds) {
-                    isProfiledCna =
-                        isProfiledCna || !!profiledReport[molecularProfileId];
-                }
+                isProfiledCna = hasAnyProfiledSample(
+                    copyNumberAlterations.molecularProfileIds,
+                    profiledReport
+                );
             }
             if (structuralVariants) {
-                isProfiledStructuralVariants = _.some(
+                isProfiledStructuralVariants = hasAnyProfiledSample(
                     structuralVariants.molecularProfileIds,
-                    id => !!profiledReport[id]
+                    profiledReport
                 );
             }
         }
@@ -3495,11 +3567,10 @@ export function getWaterfallPlotDownloadData(
     colorByCopyNumber?: boolean,
     colorByClinicalAttribute?: ClinicalAttribute
 ) {
-    let dataPoints = _.cloneDeep(data);
-    dataPoints = _.sortBy(dataPoints, (d: IWaterfallPlotData) => d.value);
-    if (sortOrder === 'DESC') {
-        dataPoints = _.reverse(dataPoints);
-    }
+    const descending = sortOrder === 'DESC';
+    const dataPoints = data.slice().sort((left, right) =>
+        descending ? right.value - left.value : left.value - right.value
+    );
 
     const dataRows: string[] = [];
     for (const datum of dataPoints) {
@@ -3654,12 +3725,14 @@ export function getMutationProfileDuplicateSamplesReport(
         }
     }
 
-    const numSamples = Object.keys(sampleToNumPoints).length;
-    const numPointsForTheseSamples = _.reduce(
-        sampleToNumPoints,
-        (sum, nextNumPoints) => sum + nextNumPoints,
-        0
-    );
+    let numSamples = 0;
+    let numPointsForTheseSamples = 0;
+    for (const uniqueSampleKey in sampleToNumPoints) {
+        if (Object.prototype.hasOwnProperty.call(sampleToNumPoints, uniqueSampleKey)) {
+            numSamples += 1;
+            numPointsForTheseSamples += sampleToNumPoints[uniqueSampleKey];
+        }
+    }
     const numSurplusPoints = numPointsForTheseSamples - numSamples;
 
     return {
@@ -3676,31 +3749,36 @@ export function makeClinicalAttributeOptions(
     >[]
 ) {
     {
-        // filter out anything but NUMBER or STRING
-        const validDataTypes = ['number', 'string'];
-        const validClinicalAttributes = attributes.filter(
-            attribute =>
-                validDataTypes.indexOf(attribute.datatype.toLowerCase()) > -1
-        );
-
-        // for multiple study cases, we need unique attributes
-        const uniqueValidClinicalAttributes = _.uniqBy(
-            validClinicalAttributes,
-            validClinicalAttribute => validClinicalAttribute.clinicalAttributeId
-        );
-
-        // sort
-        let options = _.sortBy<{
+        const seenClinicalAttributeIds: { [id: string]: true } = {};
+        const options: {
             value: string;
             label: string;
             priority: number;
-        }>(
-            uniqueValidClinicalAttributes.map(attribute => ({
+        }[] = [];
+
+        for (let index = 0; index < attributes.length; index += 1) {
+            const attribute = attributes[index];
+            const datatype = attribute.datatype.toLowerCase();
+            if (datatype !== 'number' && datatype !== 'string') {
+                continue;
+            }
+
+            if (seenClinicalAttributeIds[attribute.clinicalAttributeId]) {
+                continue;
+            }
+
+            seenClinicalAttributeIds[attribute.clinicalAttributeId] = true;
+            options.push({
                 value: attribute.clinicalAttributeId,
                 label: attribute.displayName,
                 priority: parseFloat(attribute.priority || '-1'),
-            })),
-            [(o: any) => -o.priority, (o: any) => o.label]
+            });
+        }
+
+        options.sort(
+            (left, right) =>
+                right.priority - left.priority ||
+                left.label.localeCompare(right.label)
         );
 
         // to load more quickly, only filter and annotate with data availability once its ready
@@ -3771,11 +3849,12 @@ export function makeAxisLogScaleFunction(
 
 export function axisHasNegativeNumbers(axisData: IAxisData): boolean {
     if (isNumberData(axisData)) {
-        return (
-            _(axisData.data)
-                .filter((d: any) => d.value < 0)
-                .size() > 0
-        );
+        for (let index = 0; index < axisData.data.length; index += 1) {
+            const value = axisData.data[index].value;
+            if (typeof value === 'number' && value < 0) {
+                return true;
+            }
+        }
     }
     return false;
 }
@@ -3800,19 +3879,27 @@ export function getAxisDataOverlapSampleCount(
 }
 
 export function getLimitValues(data: any[]): string[] {
-    return _(data)
-        .filter(d => {
-            return (
-                d.thresholdType !== undefined &&
-                d.thresholdType !== '' &&
-                !Array.isArray(d.value)
-            );
-        })
-        .map(d => {
-            return `${d.thresholdType}${d.value.toFixed(2)}`;
-        })
-        .uniq()
-        .value();
+    const uniqueLimitValues: { [key: string]: true } = {};
+    const limitValues: string[] = [];
+
+    for (let index = 0; index < data.length; index += 1) {
+        const datum = data[index];
+        if (
+            datum.thresholdType === undefined ||
+            datum.thresholdType === '' ||
+            Array.isArray(datum.value)
+        ) {
+            continue;
+        }
+
+        const limitValue = `${datum.thresholdType}${datum.value.toFixed(2)}`;
+        if (!uniqueLimitValues[limitValue]) {
+            uniqueLimitValues[limitValue] = true;
+            limitValues.push(limitValue);
+        }
+    }
+
+    return limitValues;
 }
 
 export function isAlterationTypePresent(

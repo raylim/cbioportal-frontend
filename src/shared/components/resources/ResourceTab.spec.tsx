@@ -22,13 +22,6 @@ jest.mock('shared/components/wsiViewer/WSIViewer', () => {
     };
 });
 
-const mockWarmInitialWsiSlide = jest.fn().mockResolvedValue(undefined);
-
-jest.mock('shared/components/wsiViewer/wsiViewerWarmup', () => ({
-    warmInitialWsiSlide: (...args: unknown[]) =>
-        mockWarmInitialWsiSlide(...args),
-}));
-
 const mockReload = jest.fn();
 
 jest.mock('cbioportal-frontend-commons', () => {
@@ -134,7 +127,7 @@ describe('ResourceTab', () => {
         expect(screen.queryByTestId('iframe-loader')).toBeNull();
     });
 
-    it('warms the native WSI viewer path for resource tabs', async () => {
+    it('renders the native WSI viewer path without a duplicate warmup request', async () => {
         jest.spyOn(ResourceConfigModule, 'getResourceConfig').mockReturnValue({
             nativeViewer: 'wsi',
         });
@@ -151,15 +144,6 @@ describe('ResourceTab', () => {
             />
         );
 
-        await waitFor(() =>
-            expect(mockWarmInitialWsiSlide).toHaveBeenCalledWith({
-                tileServerUrl: 'https://tiles.example.org',
-                hierarchyUrl:
-                    'https://tiles.example.org/patient/PATIENT_1',
-                preferredSlideId: undefined,
-                stainFilter: 'all',
-            })
-        );
         expect(screen.getByTestId('wsi-viewer')).toBeTruthy();
     });
 });

@@ -1,5 +1,4 @@
 import * as React from 'react';
-import _ from 'lodash';
 import { IMutationalSignature } from '../../model/MutationalSignature';
 import { deriveDisplayTextFromGenericAssayType } from './GenericAssayCommonUtils';
 import { GenericAssayData } from 'cbioportal-ts-api-client';
@@ -69,9 +68,11 @@ export function getVersionOption(version: string) {
 }
 
 export function getVersionOptions(versions: string[]) {
-    return versions.map(version => {
-        return getVersionOption(version);
-    });
+    const options = new Array(versions.length);
+    for (let index = 0; index < versions.length; index += 1) {
+        options[index] = getVersionOption(versions[index]);
+    }
+    return options;
 }
 
 export function getSampleOption(sample: string) {
@@ -82,7 +83,11 @@ export function getSampleOption(sample: string) {
 }
 
 export function getSampleOptions(samples: string[]) {
-    return samples.map(sample => getSampleOption(sample));
+    const options = new Array(samples.length);
+    for (let index = 0; index < samples.length; index += 1) {
+        options[index] = getSampleOption(samples[index]);
+    }
+    return options;
 }
 
 export type ISampleProgressBarProps = {
@@ -137,18 +142,25 @@ export function getSignificantMutationalSignatures(
     mutationalSignatureData: IMutationalSignature[],
     sampleId: string
 ): IMutationalSignature[] {
-    return (
-        _.chain(mutationalSignatureData)
-            .filter(signature => signature.sampleId === sampleId)
-            .filter(
-                signature =>
-                    signature.confidence <
-                    MUTATIONAL_SIGNATURES_SIGNIFICANT_PVALUE_THRESHOLD
-            )
-            // sort by value, desc
-            .sortBy(signature => -signature.value)
-            .value()
+    const significantMutationalSignatures: IMutationalSignature[] = [];
+    for (
+        let index = 0;
+        index < mutationalSignatureData.length;
+        index += 1
+    ) {
+        const signature = mutationalSignatureData[index];
+        if (
+            signature.sampleId === sampleId &&
+            signature.confidence <
+                MUTATIONAL_SIGNATURES_SIGNIFICANT_PVALUE_THRESHOLD
+        ) {
+            significantMutationalSignatures.push(signature);
+        }
+    }
+    significantMutationalSignatures.sort(
+        (left, right) => right.value - left.value
     );
+    return significantMutationalSignatures;
 }
 
 export function validateMutationalSignatureRawData(
@@ -157,49 +169,56 @@ export function validateMutationalSignatureRawData(
     const regex = new RegExp(
         `(${MutationalSignatureStableIdKeyWord.MutationalSignatureContributionKeyWord}|${MutationalSignatureStableIdKeyWord.MutationalSignatureConfidenceKeyWord})`
     );
-    const profileIdsGroupByVersion: { [id: string]: string[] } = {};
-    _.reduce(
-        mutationalSignatureData,
-        (dict, data) => {
-            const id = data.molecularProfileId;
-            if (regex.test(id) && !(id in dict)) {
-                dict[id] = id;
-                // split by '_' and use the last word of molecularProfileId as version info
-                const version = _.last(id.split('_'))!;
-                if (version in profileIdsGroupByVersion) {
-                    profileIdsGroupByVersion[version].push(id);
-                } else {
-                    profileIdsGroupByVersion[version] = [id];
-                }
-            }
-            return dict;
-        },
-        {} as { [id: string]: string }
-    );
+    const profileIdsGroupByVersion: { [id: string]: number } = {};
+    const seenProfileIds: { [id: string]: true } = {};
+    for (
+        let index = 0;
+        index < mutationalSignatureData.length;
+        index += 1
+    ) {
+        const id = mutationalSignatureData[index].molecularProfileId;
+        if (regex.test(id) && !seenProfileIds[id]) {
+            seenProfileIds[id] = true;
+            const idParts = id.split('_');
+            const version = idParts[idParts.length - 1];
+            profileIdsGroupByVersion[version] =
+                (profileIdsGroupByVersion[version] || 0) + 1;
+        }
+    }
 
     // we are expecting contribution and pvalue profiles are in pairs
-    return _.every(profileIdsGroupByVersion, ids => ids.length === 2);
+    for (const version in profileIdsGroupByVersion) {
+        if (profileIdsGroupByVersion[version] !== 2) {
+            return false;
+        }
+    }
+    return true;
 }
 
 export function retrieveMutationalSignatureVersionFromData(
     signatureProfiles: string[]
 ): string {
-    const uniqueProfileVersion = _.uniq(
-        signatureProfiles.map(function(obj) {
-            return _.last(obj.split('_'));
-        })
-    );
-    if (uniqueProfileVersion !== undefined) {
+    const uniqueProfileVersions: string[] = [];
+    const seenVersions: { [version: string]: true } = {};
+    for (let index = 0; index < signatureProfiles.length; index += 1) {
+        const parts = signatureProfiles[index].split('_');
+        const version = parts[parts.length - 1];
+        if (!seenVersions[version]) {
+            seenVersions[version] = true;
+            uniqueProfileVersions.push(version);
+        }
+    }
+    if (uniqueProfileVersions.length > 0) {
         if (
-            uniqueProfileVersion.includes('v3') &&
-            uniqueProfileVersion.includes('v2')
+            uniqueProfileVersions.includes('v3') &&
+            uniqueProfileVersions.includes('v2')
         ) {
             return 'v3';
-        } else if (uniqueProfileVersion.includes('SBS')) {
+        } else if (uniqueProfileVersions.includes('SBS')) {
             // if there is no explicit version, we want to prefer SBS
             return 'SBS';
         } else {
-            return uniqueProfileVersion[0]!;
+            return uniqueProfileVersions[0]!;
         }
     }
     return 'v2';

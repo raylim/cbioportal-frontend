@@ -79,6 +79,10 @@ describe('#formatSignificanceValueWithStyle()', () => {
 });
 
 describe('#getPercentage', () => {
+    it('returns N/A for non-finite values', () => {
+        assert.equal(getPercentage(Number.NaN), 'N/A');
+        assert.equal(getPercentage(Number.POSITIVE_INFINITY), 'N/A');
+    });
     it('gets less than 1', () => {
         assert.equal(getPercentage(0.004), '<1%');
     });

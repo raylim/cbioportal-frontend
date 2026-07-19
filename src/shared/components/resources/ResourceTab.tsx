@@ -19,8 +19,6 @@ import LoadingIndicator from 'shared/components/loadingIndicator/LoadingIndicato
 import { CUSTOM_URL_TRANSFORMERS } from 'shared/components/resources/customResourceHelpers';
 import { getResourceConfig } from 'shared/lib/ResourceConfig';
 import WSIViewer from 'shared/components/wsiViewer/WSIViewer';
-import { readWsiHashState } from 'shared/components/wsiViewer/wsiViewStateUtils';
-import { warmInitialWsiSlide } from 'shared/components/wsiViewer/wsiViewerWarmup';
 
 type UrlAccessibilityState = 'checking' | 'ready' | 'warning';
 
@@ -57,7 +55,6 @@ export default class ResourceTab extends React.Component<
 
     componentDidMount() {
         this.startUrlAccessibilityCheck();
-        this.startWsiWarmup();
     }
 
     componentDidUpdate(prevProps: IResourceTabProps) {
@@ -66,24 +63,11 @@ export default class ResourceTab extends React.Component<
             this.currentResourceView.url
         ) {
             this.startUrlAccessibilityCheck();
-            this.startWsiWarmup();
         }
     }
 
     componentWillUnmount() {
         this.latestUrlCheckRequestId += 1;
-    }
-
-    private buildWsiTileServerBase(url: string): string {
-        try {
-            const parsed = new URL(url, getBrowserWindow().location.href);
-            const pathname = parsed.pathname
-                .replace(/\/patient\/[^/]+\/?$/, '')
-                .replace(/\/$/, '');
-            return `${parsed.origin}${pathname}`;
-        } catch {
-            return url.replace(/\/patient\/[^/]+\/?$/, '').replace(/\/$/, '');
-        }
     }
 
     private buildCurrentResourceView(
@@ -132,27 +116,6 @@ export default class ResourceTab extends React.Component<
         this.latestUrlCheckRequestId = requestId;
         this.urlAccessibilityState = 'checking';
         void this.checkUrlAccessibility(currentResourceUrl, requestId);
-    }
-
-    private startWsiWarmup() {
-        if (this.currentResourceView.nativeViewer !== 'wsi') {
-            return;
-        }
-
-        const currentResourceUrl = this.currentResourceView.url;
-        if (!currentResourceUrl) {
-            return;
-        }
-
-        const hashState = readWsiHashState();
-        void warmInitialWsiSlide({
-            tileServerUrl: this.buildWsiTileServerBase(currentResourceUrl),
-            hierarchyUrl: currentResourceUrl,
-            preferredSlideId: hashState?.slideId,
-            stainFilter: 'all',
-        }).catch(() => {
-            // Ignore warmup failures; the viewer handles real load errors.
-        });
     }
 
     private async checkUrlAccessibility(url: string, requestId: number) {
