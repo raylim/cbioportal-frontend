@@ -1,4 +1,3 @@
-import _ from 'lodash';
 import { GenePanelIdSpecialValue } from 'shared/lib/StoreUtils';
 import { Mutation } from 'cbioportal-ts-api-client';
 import { MutationFrequenciesBySample } from 'pages/patientView/vafPlot/VAFPlot';
@@ -28,47 +27,70 @@ export function getGenePanelIds(
     sampleIdToMutationGenePanelId?: { [sampleId: string]: string },
     sampleIdToCopyNumberGenePanelId?: { [sampleId: string]: string }
 ) {
-    return _.uniq(
-        _.concat(
-            _.values(sampleIdToMutationGenePanelId),
-            _.values(sampleIdToCopyNumberGenePanelId)
-        )
-    );
+    const seen = new Set<string>();
+    const genePanelIds: string[] = [];
+
+    if (sampleIdToMutationGenePanelId) {
+        for (const genePanelId of Object.values(sampleIdToMutationGenePanelId)) {
+            if (!seen.has(genePanelId)) {
+                seen.add(genePanelId);
+                genePanelIds.push(genePanelId);
+            }
+        }
+    }
+
+    if (sampleIdToCopyNumberGenePanelId) {
+        for (const genePanelId of Object.values(
+            sampleIdToCopyNumberGenePanelId
+        )) {
+            if (!seen.has(genePanelId)) {
+                seen.add(genePanelId);
+                genePanelIds.push(genePanelId);
+            }
+        }
+    }
+
+    return genePanelIds;
 }
 
 export function genePanelIdToIconData(
     genePanelIds: (string | undefined)[]
 ): IKeyedIconData {
-    // remove undef and get array of sorted unique elements
-    const gpIds = _.uniq(
-        _.filter(genePanelIds, genePanelId => genePanelId !== undefined)
-    ).sort();
-
     const lookupTable: IKeyedIconData = {};
+    const uniqueGenePanelIds: string[] = [];
+    const seen = new Set<string>();
+    const wholeGenomeIndicators = new Set<string>();
+    for (const indicator of Object.values(GenePanelIdSpecialValue)) {
+        if (indicator !== undefined) {
+            wholeGenomeIndicators.add(indicator);
+        }
+    }
 
-    // create entries for whole-genome analyses
-    _(gpIds)
-        .filter(genePanelId =>
-            _.values(GenePanelIdSpecialValue).includes(genePanelId)
-        )
-        .each(genePanelId => {
-            const i = Object.assign({}, wholeGenomeIconData);
-            i.genePanelId = genePanelId;
-            lookupTable[genePanelId!] = i;
-        });
+    for (const genePanelId of genePanelIds) {
+        if (genePanelId !== undefined && !seen.has(genePanelId)) {
+            seen.add(genePanelId);
+            uniqueGenePanelIds.push(genePanelId);
+        }
+    }
 
-    // create entries for gene panel analyses
-    _(gpIds)
-        .reject(genePanelId =>
-            _.values(GenePanelIdSpecialValue).includes(genePanelId)
-        )
-        .each((genePanelId, index) => {
-            lookupTable[genePanelId!] = {
-                genePanelId: genePanelId,
-                label: PREFIX_GENEPANEL_LABEL + (index + 1),
+    uniqueGenePanelIds.sort();
+
+    let genePanelIndex = 1;
+    for (const genePanelId of uniqueGenePanelIds) {
+        if (wholeGenomeIndicators.has(genePanelId)) {
+            lookupTable[genePanelId] = {
+                ...wholeGenomeIconData,
+                genePanelId,
+            };
+        } else {
+            lookupTable[genePanelId] = {
+                genePanelId,
+                label: PREFIX_GENEPANEL_LABEL + genePanelIndex,
                 color: COLOR_GENEPANEL_ICON,
             };
-        });
+            genePanelIndex++;
+        }
+    }
 
     return lookupTable;
 }
@@ -79,31 +101,46 @@ export function sampleIdToIconData(
         | undefined,
     iconLookupTable: IKeyedIconData
 ): IKeyedIconData {
-    // return undefined when all samples were analyzed with a whole genome approach
-    const genePanelIds = _.values(sampleIdToGenePanelId);
-    const wholeGenomeIndicators = _.values(GenePanelIdSpecialValue);
+    if (!sampleIdToGenePanelId) {
+        return {};
+    }
 
-    if (
-        !sampleIdToGenePanelId ||
-        _.difference(genePanelIds, wholeGenomeIndicators).length === 0
-    ) {
+    const wholeGenomeIndicators = new Set<string>();
+    for (const indicator of Object.values(GenePanelIdSpecialValue)) {
+        if (indicator !== undefined) {
+            wholeGenomeIndicators.add(indicator);
+        }
+    }
+    let hasNonWholeGenomeGenePanelId = false;
+
+    for (const genePanelId of Object.values(sampleIdToGenePanelId)) {
+        if (
+            genePanelId !== undefined &&
+            !wholeGenomeIndicators.has(genePanelId)
+        ) {
+            hasNonWholeGenomeGenePanelId = true;
+            break;
+        }
+    }
+
+    if (!hasNonWholeGenomeGenePanelId) {
         return {};
     }
 
     // samples where genePanelId is undefined represent a whole-genome analysis
     // undefined genePanelIds are not represented in the lookup table
-    const lookupTable: IKeyedIconData = _(sampleIdToGenePanelId)
-        .omitBy(genePanelId => genePanelId! in iconLookupTable) // keep samples with undefined genePanelIds
-        .mapValues(() => wholeGenomeIconData)
-        .value();
-
-    // add icon data for samples with defined genePanelIds
-    _(sampleIdToGenePanelId)
-        .pickBy(genePanelId => genePanelId! in iconLookupTable) // keep samples with defined genePanelIds
-        .forIn(
-            (genePanelId, sampleId) =>
-                (lookupTable[sampleId] = iconLookupTable[genePanelId!])
-        );
+    const lookupTable: IKeyedIconData = {};
+    for (const sampleId of Object.keys(sampleIdToGenePanelId)) {
+        const genePanelId = sampleIdToGenePanelId[sampleId];
+        if (
+            genePanelId !== undefined &&
+            Object.prototype.hasOwnProperty.call(iconLookupTable, genePanelId)
+        ) {
+            lookupTable[sampleId] = iconLookupTable[genePanelId];
+        } else {
+            lookupTable[sampleId] = wholeGenomeIconData;
+        }
+    }
 
     return lookupTable;
 }

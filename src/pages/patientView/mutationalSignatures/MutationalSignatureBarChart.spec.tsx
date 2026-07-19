@@ -204,4 +204,24 @@ describe('MutationalSignatureBarChart', () => {
             },
         ]);
     });
+
+    it('calculates percentages without an extra collection pass', () => {
+        const result = getPercentageOfMutationalCount([
+            {
+                ...sampleMutationalSignatureData[0],
+                value: 15,
+                percentage: 0,
+            },
+            {
+                ...sampleMutationalSignatureData[1],
+                value: 5,
+                percentage: 0,
+            },
+        ]);
+
+        assert.deepEqual(
+            result.map(entry => entry.percentage),
+            [75, 25]
+        );
+    });
 });

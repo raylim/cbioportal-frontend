@@ -31,7 +31,12 @@ async function fetch(
             const filter = studyToDataQueryFilter[studyId];
             const molecularProfile = studyToMolecularProfile[studyId];
             const entrezGeneIds = queries.map(x => x.entrezGeneId);
-            if (filter && molecularProfile && entrezGeneIds.length > 0) {
+            if (
+                filter &&
+                molecularProfile &&
+                entrezGeneIds.length > 0 &&
+                (!filter.sampleIds || filter.sampleIds.length > 0)
+            ) {
                 return client.fetchMutationsInMolecularProfileUsingPOST({
                     molecularProfileId: molecularProfile.molecularProfileId,
                     mutationFilter: {

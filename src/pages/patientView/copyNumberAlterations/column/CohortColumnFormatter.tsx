@@ -76,45 +76,30 @@ export default class CohortColumnFormatter {
                         )}
                     />
                 );
-            } else if (cacheDatum.status === 'complete') {
-                return (
-                    <DefaultTooltip
-                        placement="left"
-                        overlay={
-                            <span>
-                                Data not available for this gene and alteration.
-                            </span>
-                        }
-                    >
-                        <span
-                            style={{
-                                color: 'gray',
-                                fontSize: 'xx-small',
-                                textAlign: 'center',
-                            }}
-                        >
-                            NA
-                        </span>
-                    </DefaultTooltip>
-                );
-            } else {
-                return (
-                    <DefaultTooltip
-                        placement="left"
-                        overlay={<span>Error retrieving data.</span>}
-                    >
-                        <span
-                            style={{
-                                color: 'gray',
-                                fontSize: 'xx-small',
-                                textAlign: 'center',
-                            }}
-                        >
-                            ERROR
-                        </span>
-                    </DefaultTooltip>
-                );
             }
+
+            return (
+                <DefaultTooltip
+                    placement="left"
+                    overlay={
+                        <span>
+                            {cacheDatum.status === 'complete'
+                                ? 'Data not available for this gene and alteration.'
+                                : 'Error retrieving data.'}
+                        </span>
+                    }
+                >
+                    <span
+                        style={{
+                            color: 'gray',
+                            fontSize: 'xx-small',
+                            textAlign: 'center',
+                        }}
+                    >
+                        {cacheDatum.status === 'complete' ? 'NA' : 'ERROR'}
+                    </span>
+                </DefaultTooltip>
+            );
         } else {
             return (
                 <DefaultTooltip
@@ -206,19 +191,22 @@ export default class CohortColumnFormatter {
         gisticData: IGisticData
     ): IGisticSummary | null {
         const gistic = gisticData[data[0].entrezGeneId];
-        let summary: IGisticSummary | undefined;
-
-        if (gistic) {
-            // here we are assuming that we have at most 2 values in the GisticSummary array:
-            // one for amp === true, and one for amp === false
-            const targetAmp = data[0].alteration === 2;
-            summary = gistic.find((gs: IGisticSummary) => {
-                // alteration === 2 => amplified
-                // otherwise => not amplified (deleted)
-                return gs.amp === targetAmp;
-            });
+        if (!gistic) {
+            return null;
         }
 
-        return summary === undefined ? null : summary;
+        // here we are assuming that we have at most 2 values in the GisticSummary array:
+        // one for amp === true, and one for amp === false
+        const targetAmp = data[0].alteration === 2;
+        for (let index = 0; index < gistic.length; index += 1) {
+            const summary = gistic[index];
+            // alteration === 2 => amplified
+            // otherwise => not amplified (deleted)
+            if (summary.amp === targetAmp) {
+                return summary;
+            }
+        }
+
+        return null;
     }
 }

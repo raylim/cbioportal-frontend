@@ -161,26 +161,28 @@ export function mergeClinicalGroupMatchByAge(
     clinicalGroupMatch: IClinicalGroupMatch[]
 ): IClinicalGroupMatch[] {
     const mergedClinicalGroupMatch: IClinicalGroupMatch[] = [];
-    const matchesGroupedByTrialOncotreePrimaryDiagnosis = _.groupBy(
-        clinicalGroupMatch,
-        (match: IClinicalGroupMatch) => match.trialOncotreePrimaryDiagnosis
-    );
-    _.forEach(
-        matchesGroupedByTrialOncotreePrimaryDiagnosis,
-        (clinicalGroup: IClinicalGroupMatch[]) => {
-            _.forEach(
-                clinicalGroup,
-                (clinicalMatch: IClinicalGroupMatch, index: number) => {
-                    if (index !== 0) {
-                        clinicalGroup[0].trialAgeNumerical = clinicalGroup[0].trialAgeNumerical.concat(
-                            clinicalMatch.trialAgeNumerical
-                        );
-                    }
-                }
-            );
-            mergedClinicalGroupMatch.push(clinicalGroup[0]);
+    const matchesGroupedByTrialOncotreePrimaryDiagnosis: {
+        [key: string]: IClinicalGroupMatch[];
+    } = {};
+    const orderedKeys: string[] = [];
+    for (const match of clinicalGroupMatch) {
+        const key = JSON.stringify(match.trialOncotreePrimaryDiagnosis);
+        if (!matchesGroupedByTrialOncotreePrimaryDiagnosis[key]) {
+            matchesGroupedByTrialOncotreePrimaryDiagnosis[key] = [];
+            orderedKeys.push(key);
         }
-    );
+        matchesGroupedByTrialOncotreePrimaryDiagnosis[key].push(match);
+    }
+    for (const key of orderedKeys) {
+        const clinicalGroup = matchesGroupedByTrialOncotreePrimaryDiagnosis[key];
+        const firstMatch = clinicalGroup[0];
+        for (let index = 1; index < clinicalGroup.length; index += 1) {
+            firstMatch.trialAgeNumerical = firstMatch.trialAgeNumerical.concat(
+                clinicalGroup[index].trialAgeNumerical
+            );
+        }
+        mergedClinicalGroupMatch.push(firstMatch);
+    }
     return mergedClinicalGroupMatch;
 }
 
@@ -277,14 +279,11 @@ export function groupNegativeTrialMatchesByMatchType(
 
 export function calculateTrialPriority(armMatches: IArmMatch[]): number {
     let priority = 0;
-    _.forEach(armMatches, armMatch => {
-        _.forEach(
-            armMatch.matches,
-            (clinicalGroupMatch: IClinicalGroupMatch) => {
-                priority += getMatchPriority(clinicalGroupMatch);
-            }
-        );
-    });
+    for (const armMatch of armMatches) {
+        for (const clinicalGroupMatch of armMatch.matches) {
+            priority += getMatchPriority(clinicalGroupMatch);
+        }
+    }
     return priority;
 }
 
@@ -295,10 +294,10 @@ export function getMatchPriority(
     // The highest and default priority is 0. The priority the higher, the display order the lower.
     let matchesLength = 0;
     let notMatchesLength = 0;
-    if (!_.isUndefined(clinicalGroupMatch.matches)) {
+    if (clinicalGroupMatch.matches !== undefined) {
         matchesLength = getMatchesLength(clinicalGroupMatch.matches);
     }
-    if (!_.isUndefined(clinicalGroupMatch.notMatches)) {
+    if (clinicalGroupMatch.notMatches !== undefined) {
         notMatchesLength = getMatchesLength(clinicalGroupMatch.notMatches);
     }
     if (notMatchesLength > 0) {
@@ -311,25 +310,25 @@ export function getMatchPriority(
 }
 
 export function getMatchesLength(genomicMatchType: IGenomicMatchType): number {
-    return _.sum([
-        genomicMatchType.MUTATION.length,
-        genomicMatchType.CNA.length,
-        genomicMatchType.MSI.length,
-        genomicMatchType.WILDTYPE.length,
-    ]);
+    return (
+        genomicMatchType.MUTATION.length +
+        genomicMatchType.CNA.length +
+        genomicMatchType.MSI.length +
+        genomicMatchType.WILDTYPE.length
+    );
 }
 
 export function excludeControlArms(trialMatches: ITrialMatch[]): ITrialMatch[] {
-    const hiddenArmTypes = ['Control Arm', 'Placebo Arm'];
+    const hiddenArmTypes = new Set(['Control Arm', 'Placebo Arm']);
     const filteredTrialMatches: ITrialMatch[] = [];
-    _.forEach(trialMatches, trialMatch => {
+    for (const trialMatch of trialMatches) {
         if (
             !trialMatch.armType ||
-            !hiddenArmTypes.includes(trialMatch.armType)
+            !hiddenArmTypes.has(trialMatch.armType)
         ) {
             filteredTrialMatches.push(trialMatch);
         }
-    });
+    }
     return filteredTrialMatches;
 }
 
@@ -337,20 +336,31 @@ export function getDrugsFromArm(
     armDescription: string,
     arms: IArm[]
 ): string[][] {
-    let drugs: string[][] = [];
     if (armDescription !== '') {
-        // match for specific arm
-        const matchedArm: IArm = _.find(
-            arms,
-            arm => arm.arm_description === armDescription
-        )!;
-        if (!_.isUndefined(matchedArm.drugs)) {
-            drugs = matchedArm.drugs.map((drugCombination: IDrug[]) =>
-                drugCombination.map((drug: IDrug) => drug.name)
-            );
+        for (const arm of arms) {
+            if (arm.arm_description === armDescription && arm.drugs !== undefined) {
+                const drugs = new Array<string[]>(arm.drugs.length);
+                for (
+                    let combinationIndex = 0;
+                    combinationIndex < arm.drugs.length;
+                    combinationIndex += 1
+                ) {
+                    const drugCombination = arm.drugs[combinationIndex];
+                    const drugNames = new Array<string>(drugCombination.length);
+                    for (
+                        let drugIndex = 0;
+                        drugIndex < drugCombination.length;
+                        drugIndex += 1
+                    ) {
+                        drugNames[drugIndex] = drugCombination[drugIndex].name;
+                    }
+                    drugs[combinationIndex] = drugNames;
+                }
+                return drugs;
+            }
         }
     }
-    return drugs;
+    return [];
 }
 
 export function getAgeRangeDisplay(trialAgeNumerical: string[]) {
