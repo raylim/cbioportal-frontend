@@ -160,9 +160,17 @@ export async function expectOncoprintScreenshot(
 
 /** Wait until exactly `n` study checkboxes are present on the query page. */
 export async function waitForNumberOfStudyCheckboxes(page: Page, n: number) {
-    await expect(
-        page.locator('[data-test="StudySelect"] input[type="checkbox"]')
-    ).toHaveCount(n, { timeout: 30000 });
+    await expect
+        .poll(
+            async () =>
+                await page.locator(
+                    '[data-test="StudySelect"] input[type="checkbox"]:visible'
+                ).count(),
+            {
+                timeout: 30000,
+            }
+        )
+        .toBe(n);
 }
 
 /** Clear an input and type the given text. */

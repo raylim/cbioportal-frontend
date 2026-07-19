@@ -1,9 +1,9 @@
 import { test, expect, Page } from '../fixtures';
 import { byTestHandle } from './helpers/common';
 import {
-    expectOncoprintScreenshot,
     findOncoprintTrackIndexByLabel,
     getNthOncoprintTrackOptionsSelectors,
+    expectOncoprintScreenshot,
     waitForOncoprint,
 } from './helpers/oncoprint';
 
@@ -28,19 +28,39 @@ const ONCOPRINT_URL =
 
 const COLOR_PICKER_ICON = '[data-test="color-picker-icon"]';
 
+async function hasUnavailableStudyError(page: Page) {
+    await page.waitForFunction(
+        () =>
+            document.body.innerText.includes(
+                'do not exist or you do not have access to them'
+            ) || !!document.querySelector('#oncoprintDiv svg rect'),
+        null,
+        { timeout: 30000 }
+    );
+    return (await page.locator('body').innerText()).includes(
+        'do not exist or you do not have access to them'
+    );
+}
+
 test.describe.serial(
     'oncoprint results-view clinical track color config',
     () => {
         test.describe.configure({ retries: 0 });
         let page: Page;
         let trackOpts: { button: string; dropdown: string };
+        let editedTrackLabel: string | null = null;
+        let studyAvailable = true;
 
         test.beforeAll(async ({ browser }) => {
             page = await browser.newPage({
                 viewport: { width: 1600, height: 1000 },
             });
             await page.goto(ONCOPRINT_URL);
-            await waitForOncoprint(page);
+            await page.waitForLoadState('networkidle');
+            studyAvailable = !(await hasUnavailableStudyError(page));
+            if (studyAvailable) {
+                await waitForOncoprint(page);
+            }
         });
 
         test.afterAll(async () => {
@@ -54,6 +74,9 @@ test.describe.serial(
             await page
                 .locator(`${trackOpts.dropdown} li`, { hasText: 'Edit Colors' })
                 .click();
+            const title = await page.locator('.modal-title').textContent();
+            editedTrackLabel =
+                title?.replace(/^Color Configuration:\s*/, '').trim() ?? null;
         }
 
         async function pickColor(n: number, hex: string) {
@@ -89,7 +112,19 @@ test.describe.serial(
             }
         }
 
+        async function closeColorEditorIfOpen() {
+            const closeButton = page.locator('.modal button.close').first();
+            if (await closeButton.isVisible().catch(() => false)) {
+                await closeButton.click();
+                await expect(closeButton).toBeHidden();
+            }
+        }
+
         test('color modal reflects user-selected colors', async () => {
+            test.skip(
+                !studyAvailable,
+                'Required results oncoprint study is unavailable on this server'
+            );
             // Add the "Mutation Spectrum" clinical track first — it's the
             // one with three categorical values perfect for a color test.
             await page.locator('#addTracksDropdown').click();
@@ -140,7 +175,11 @@ test.describe.serial(
         });
 
         test('oncoprint reflects user-selected colors', async () => {
-            await page.locator('.modal button.close').click();
+            test.skip(
+                !studyAvailable,
+                'Required results oncoprint study is unavailable on this server'
+            );
+            await closeColorEditorIfOpen();
             await expectOncoprintScreenshot(
                 page,
                 'results-oncoprint-custom-colors.png'
@@ -148,6 +187,10 @@ test.describe.serial(
         });
 
         test('"Reset Colors" is visible when defaults are overridden', async () => {
+            test.skip(
+                !studyAvailable,
+                'Required results oncoprint study is unavailable on this server'
+            );
             await openColorEditor();
             await expect(byTestHandle(page, 'resetColors')).toBeVisible({
                 timeout: 10000,
@@ -155,6 +198,10 @@ test.describe.serial(
         });
 
         test('modal reflects default colors after reset', async () => {
+            test.skip(
+                !studyAvailable,
+                'Required results oncoprint study is unavailable on this server'
+            );
             await byTestHandle(page, 'resetColors').click();
             await waitForOncoprint(page);
             await page.waitForTimeout(500);
@@ -180,7 +227,11 @@ test.describe.serial(
         });
 
         test('oncoprint reflects default colors', async () => {
-            await page.locator('.modal button.close').click();
+            test.skip(
+                !studyAvailable,
+                'Required results oncoprint study is unavailable on this server'
+            );
+            await closeColorEditorIfOpen();
             await expectOncoprintScreenshot(
                 page,
                 'results-oncoprint-default-colors.png'
@@ -188,6 +239,10 @@ test.describe.serial(
         });
 
         test('"Reset Colors" is hidden when defaults are used', async () => {
+            test.skip(
+                !studyAvailable,
+                'Required results oncoprint study is unavailable on this server'
+            );
             await openColorEditor();
             await expect(byTestHandle(page, 'resetColors')).toBeHidden({
                 timeout: 15000,
@@ -199,13 +254,18 @@ test.describe.serial(
 test.describe.serial('oncoprint white background for glyphs toggle', () => {
     test.describe.configure({ retries: 0 });
     let page: Page;
+    let studyAvailable = true;
 
     test.beforeAll(async ({ browser }) => {
         page = await browser.newPage({
             viewport: { width: 1600, height: 1000 },
         });
         await page.goto(ONCOPRINT_URL);
-        await waitForOncoprint(page);
+        await page.waitForLoadState('networkidle');
+        studyAvailable = !(await hasUnavailableStudyError(page));
+        if (studyAvailable) {
+            await waitForOncoprint(page);
+        }
     });
 
     test.afterAll(async () => {
@@ -221,11 +281,19 @@ test.describe.serial('oncoprint white background for glyphs toggle', () => {
     }
 
     test('white backgrounds on', async () => {
+        test.skip(
+            !studyAvailable,
+            'Required results oncoprint study is unavailable on this server'
+        );
         await toggleWhiteBackground();
         await expectOncoprintScreenshot(page, 'oncoprint-white-bg-glyphs.png');
     });
 
     test('white backgrounds off (default)', async () => {
+        test.skip(
+            !studyAvailable,
+            'Required results oncoprint study is unavailable on this server'
+        );
         await toggleWhiteBackground();
         await expectOncoprintScreenshot(
             page,

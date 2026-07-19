@@ -6,6 +6,9 @@ import _ from 'lodash';
 import { sortValue as oncoKbAnnotationSortValue, OncoKB } from './OncoKB';
 import { defaultArraySortMethod } from 'cbioportal-utils';
 import { LevelOfEvidence, IndicatorQueryResp } from 'oncokb-ts-api-client';
+import OncoKbHelper from './OncoKbHelper';
+import { OncoKbCardDataType } from '../model/OncoKB';
+import { LEVEL_DESC } from './levelDescriptions';
 
 function emptyQueryIndicator(): IndicatorQueryResp {
     return {
@@ -71,6 +74,28 @@ function oncoKbAnnotationSortMethod(
 }
 
 describe('OncoKB', () => {
+    it('reuses the shared level descriptions across helper lookups', () => {
+        assert.strictEqual(OncoKbHelper.LEVEL_DESC, LEVEL_DESC);
+        assert.deepEqual(
+            Object.keys(
+                OncoKbHelper.getLevelsDesc(OncoKbCardDataType.TXS)
+            ).sort(),
+            [...OncoKbHelper.TX_LEVELS].sort()
+        );
+        assert.deepEqual(
+            Object.keys(
+                OncoKbHelper.getLevelsDesc(OncoKbCardDataType.DX)
+            ).sort(),
+            [...OncoKbHelper.DX_LEVELS].sort()
+        );
+        assert.deepEqual(
+            Object.keys(
+                OncoKbHelper.getLevelsDesc(OncoKbCardDataType.PX)
+            ).sort(),
+            [...OncoKbHelper.PX_LEVELS].sort()
+        );
+    });
+
     it('displays a load spinner when there is no indicator data', () => {
         const component = render(
             <OncoKB

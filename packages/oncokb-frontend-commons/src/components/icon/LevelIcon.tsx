@@ -1,14 +1,10 @@
 import Tooltip from 'rc-tooltip';
 import * as React from 'react';
 import { levelIconClassNames } from '../../util/OncoKbUtils';
-import OncoKbHelper from '../OncoKbHelper';
+import { LEVEL_DESC } from '../levelDescriptions';
 
 const levelTooltipContent = (level: string) => {
-    return (
-        <div style={{ maxWidth: '200px' }}>
-            {OncoKbHelper.LEVEL_DESC[level]}
-        </div>
-    );
+    return <div style={{ maxWidth: '200px' }}>{LEVEL_DESC[level]}</div>;
 };
 
 const LevelIcon: React.FunctionComponent<{

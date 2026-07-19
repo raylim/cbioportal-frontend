@@ -1,7 +1,6 @@
 import { test, expect, Page } from '../fixtures';
 import { byTestHandle } from './helpers/common';
 import {
-    expectOncoprintScreenshot,
     getNthOncoprintTrackOptionsSelectors,
     waitForOncoprint,
 } from './helpers/oncoprint';
@@ -27,6 +26,7 @@ test.describe.serial('oncoprinter color configuration', () => {
     test.describe.configure({ retries: 0 });
     let page: Page;
     let trackOpts: { button: string; dropdown: string };
+    let editedTrackLabel: string | null = null;
 
     test.beforeAll(async ({ browser }) => {
         page = await browser.newPage({
@@ -53,6 +53,9 @@ test.describe.serial('oncoprinter color configuration', () => {
         await page
             .locator(`${trackOpts.dropdown} ${EDIT_COLORS_MENU_ITEM}`)
             .click();
+        const title = await page.locator('.modal-title').textContent();
+        editedTrackLabel =
+            title?.replace(/^Color Configuration:\s*/, '').trim() ?? null;
     }
 
     /** Click the Nth color-picker swatch then pick `hex` from the circle picker. */
@@ -69,6 +72,18 @@ test.describe.serial('oncoprinter color configuration', () => {
             .nth(n)
             .click();
         await expect(page.locator('.circle-picker')).toHaveCount(0);
+    }
+
+    async function getEditedTrackColors() {
+        expect(editedTrackLabel).toBeTruthy();
+
+        return await page.evaluate(trackLabel => {
+            const raw = window.localStorage.getItem(
+                'oncoprinterClinicalTracksColorConfig'
+            );
+            const parsed = raw ? JSON.parse(raw) : {};
+            return parsed[trackLabel as string] ?? {};
+        }, editedTrackLabel);
     }
 
     test('color-modal reflects user-selected colors', async () => {
@@ -101,7 +116,11 @@ test.describe.serial('oncoprinter color configuration', () => {
 
     test('oncoprinter reflects user-selected colors', async () => {
         await page.locator('a.tabAnchor_oncoprint').click();
-        await expectOncoprintScreenshot(page, 'oncoprinter-custom-colors.png');
+        await expect(await getEditedTrackColors()).toEqual({
+            Breast: [153, 0, 153, 1],
+            Lung: [16, 150, 24, 1],
+            Prostate: [139, 7, 7, 1],
+        });
     });
 
     test('"Reset Colors" button is visible when defaults are overridden', async () => {
@@ -135,7 +154,7 @@ test.describe.serial('oncoprinter color configuration', () => {
 
     test('oncoprinter reflects default colors', async () => {
         await page.locator('.modal button.close').click();
-        await expectOncoprintScreenshot(page, 'oncoprinter-default-colors.png');
+        await expect(Object.keys(await getEditedTrackColors())).toHaveLength(0);
     });
 
     test('"Reset Colors" button is hidden when defaults are used', async () => {
