@@ -1,7 +1,11 @@
 import {
     evaluatePutativeDriverInfo,
+    fetchClinicalData,
+    fetchDiscreteCNAData,
     fetchGermlineConsentedSamples,
+    fetchMutationData,
     fetchOncoKbData,
+    fetchSamplesForPatient,
     fetchSamplesWithoutCancerTypeClinicalData,
     fetchStudiesForSamplesWithoutCancerTypeClinicalData,
     filterAndAnnotateMolecularData,
@@ -261,6 +265,150 @@ describe('StoreUtils', () => {
                 2: 'TWO',
                 3: 'three',
             });
+        });
+    });
+
+    describe('fetchSamplesForPatient', () => {
+        it('falls back to SUMMARY samples when DETAILED samples are empty', async () => {
+            const summarySamples = [
+                {
+                    sampleId: 'P-0011144-T01-IM5',
+                    patientId: 'P-0011144',
+                    studyId: 'coad_msk_2025',
+                } as Sample,
+            ];
+            const getAllSamplesOfPatientInStudyUsingGET = sinon.stub();
+            getAllSamplesOfPatientInStudyUsingGET
+                .onFirstCall()
+                .resolves([]);
+            getAllSamplesOfPatientInStudyUsingGET
+                .onSecondCall()
+                .resolves(summarySamples);
+
+            const samples = await fetchSamplesForPatient(
+                'coad_msk_2025',
+                'P-0011144',
+                undefined,
+                {
+                    getAllSamplesOfPatientInStudyUsingGET,
+                } as any
+            );
+
+            assert.deepEqual(samples, summarySamples);
+            assert.deepEqual(
+                getAllSamplesOfPatientInStudyUsingGET.firstCall.args[0],
+                {
+                    studyId: 'coad_msk_2025',
+                    patientId: 'P-0011144',
+                    projection: 'DETAILED',
+                }
+            );
+            assert.deepEqual(
+                getAllSamplesOfPatientInStudyUsingGET.secondCall.args[0],
+                {
+                    studyId: 'coad_msk_2025',
+                    patientId: 'P-0011144',
+                    projection: 'SUMMARY',
+                }
+            );
+        });
+
+        it('keeps DETAILED samples when they are present', async () => {
+            const detailedSamples = [
+                {
+                    sampleId: 'P-0011144-T01-IM5',
+                    patientId: 'P-0011144',
+                    studyId: 'coad_msk_2025',
+                } as Sample,
+            ];
+            const getAllSamplesOfPatientInStudyUsingGET = sinon.stub().resolves(
+                detailedSamples
+            );
+
+            const samples = await fetchSamplesForPatient(
+                'coad_msk_2025',
+                'P-0011144',
+                undefined,
+                {
+                    getAllSamplesOfPatientInStudyUsingGET,
+                } as any
+            );
+
+            assert.deepEqual(samples, detailedSamples);
+            assert.strictEqual(
+                getAllSamplesOfPatientInStudyUsingGET.callCount,
+                1
+            );
+            assert.deepEqual(
+                getAllSamplesOfPatientInStudyUsingGET.firstCall.args[0],
+                {
+                    studyId: 'coad_msk_2025',
+                    patientId: 'P-0011144',
+                    projection: 'DETAILED',
+                }
+            );
+        });
+    });
+
+    describe('fetchClinicalData', () => {
+        it('returns an empty array without posting when identifiers are empty', async () => {
+            const client = {
+                fetchClinicalDataUsingPOST: sinon
+                    .stub()
+                    .rejects(new Error('unexpected request')),
+            } as any;
+
+            const result = await fetchClinicalData(
+                { identifiers: [] } as any,
+                client
+            );
+
+            assert.deepEqual(result, []);
+            assert.isTrue(client.fetchClinicalDataUsingPOST.notCalled);
+        });
+    });
+
+    describe('empty payload guards', () => {
+        it('returns an empty array without posting mutation data when sampleIds are empty', async () => {
+            const client = {
+                fetchMutationsInMolecularProfileUsingPOST: sinon
+                    .stub()
+                    .rejects(new Error('unexpected request')),
+            } as any;
+
+            const result = await fetchMutationData(
+                { sampleIds: [] } as any,
+                'study_mutations',
+                client
+            );
+
+            assert.deepEqual(result, []);
+            assert.isTrue(
+                client.fetchMutationsInMolecularProfileUsingPOST.notCalled
+            );
+        });
+
+        it('returns an empty array without posting discrete CNA data when sampleIds are empty', async () => {
+            const client = {
+                fetchDiscreteCopyNumbersInMolecularProfileUsingPOST: sinon
+                    .stub()
+                    .rejects(new Error('unexpected request')),
+            } as any;
+
+            const result = await fetchDiscreteCNAData(
+                { sampleIds: [] } as any,
+                {
+                    isComplete: true,
+                    result: 'study_gistic',
+                } as any,
+                client
+            );
+
+            assert.deepEqual(result, []);
+            assert.isTrue(
+                client.fetchDiscreteCopyNumbersInMolecularProfileUsingPOST
+                    .notCalled
+            );
         });
     });
 

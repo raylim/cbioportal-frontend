@@ -94,4 +94,20 @@ describe('FrequencyBar', () => {
             'component should have a tooltip'
         );
     });
+
+    it('renders N/A and zero-width frequency bars when totalCount is zero', () => {
+        const zeroTotal = mount(
+            <FrequencyBar
+                {...props}
+                totalCount={0}
+                counts={[1, 2]}
+                tooltip={undefined}
+            />
+        );
+
+        assert.equal(zeroTotal.find('text').text(), '0%');
+        const rects = zeroTotal.find('rect');
+        assert.equal(rects.at(1).prop('width'), 0);
+        assert.equal(rects.at(2).prop('width'), 0);
+    });
 });

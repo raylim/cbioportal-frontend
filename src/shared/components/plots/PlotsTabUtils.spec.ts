@@ -1098,6 +1098,21 @@ describe('PlotsTabUtils', () => {
             assert.equal(elements[1][4], 'GeneA: changeA, changeB');
             assert.equal(elements[2][4], 'GeneA: changeC, changeD');
         });
+
+        it('should not mutate the caller data order while sorting output', () => {
+            const data = mockProps.data.slice();
+
+            getWaterfallPlotDownloadData(
+                data,
+                'DESC',
+                mockProps.pivotThreshold,
+                mockProps.axisLabel,
+                mockProps.entrezGeneIdToGene
+            );
+
+            assert.equal(data[0].sampleId, 'sample1');
+            assert.equal(data[1].sampleId, 'sample2');
+        });
     });
 
     describe('limitValueTypes', () => {

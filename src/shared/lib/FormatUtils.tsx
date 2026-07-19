@@ -62,6 +62,9 @@ export function toFixedWithThreshold(value: number, digits: number): string {
 }
 
 export function getPercentage(proportion: number) {
+    if (!Number.isFinite(proportion)) {
+        return 'N/A';
+    }
     const perc = 100 * proportion;
     if (perc === 0) {
         return '0%';

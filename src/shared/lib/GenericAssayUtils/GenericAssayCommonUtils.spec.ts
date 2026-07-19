@@ -411,6 +411,25 @@ describe('GenericAssayCommonUtils', () => {
                 0
             );
         });
+
+        it('matches any gene from a multi-gene filter list', () => {
+            const genericAssayEntity: GenericAssayMeta = {
+                stableId: 'id_1',
+                entityType: 'GENERIC_ASSAY',
+                genericEntityMetaProperties: {
+                    NAME: 'KRAS',
+                    DESCRIPTION: 'description_1',
+                },
+            };
+
+            assert.deepEqual(
+                filterGenericAssayEntitiesByGenes(
+                    [genericAssayEntity],
+                    ['TP53', 'KRAS']
+                ),
+                [genericAssayEntity]
+            );
+        });
     });
 
     describe('filterGenericAssayOptionsByGenes()', () => {
@@ -468,6 +487,21 @@ describe('GenericAssayCommonUtils', () => {
                     TARGET_GENE_LIST
                 ).length,
                 0
+            );
+        });
+
+        it('matches any gene from a multi-gene filter list', () => {
+            const genericAssayOption: ISelectOption = {
+                value: 'id_1',
+                label: 'KRAS',
+            };
+
+            assert.deepEqual(
+                filterGenericAssayOptionsByGenes(
+                    [genericAssayOption],
+                    ['TP53', 'KRAS']
+                ),
+                [genericAssayOption]
             );
         });
     });

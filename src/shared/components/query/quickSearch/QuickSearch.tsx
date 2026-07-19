@@ -7,7 +7,7 @@ import autobind from 'autobind-decorator';
 import './styles.scss';
 import { sleep } from 'shared/lib/TimeUtils';
 import { Label } from 'react-bootstrap';
-import * as moduleStyles from './styles.module.scss';
+import moduleStyles from './styles.module.scss';
 import { action, computed, makeObservable, observable } from 'mobx';
 import { getBrowserWindow, remoteData } from 'cbioportal-frontend-commons';
 import Pluralize from 'pluralize';

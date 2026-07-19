@@ -41,44 +41,107 @@ type QuickPlot = {
     toButtonInfo: (
         vertical: TypeSourcePair,
         horizontal: TypeSourcePair,
-        dataTypes: PlotsTabOption[],
-        dataSources: PlotsTabDataSource
+        context: QuickPlotContext
     ) => ButtonInfo;
-    isApplicableToQuery: (
-        dataTypes: PlotsTabOption[],
-        dataSources: PlotsTabDataSource,
-        cancerTypes: string[],
-        mutationCount: number
-    ) => boolean;
+    isApplicableToQuery: (context: QuickPlotContext) => boolean;
 };
+
+type QuickPlotContext = {
+    cancerTypes: string[];
+    mutationCount: number;
+    dataTypeByValue: { [value: string]: PlotsTabOption };
+    dataSourceByTypeAndValue: {
+        [dataType: string]: { [value: string]: PlotsTabOption };
+    };
+};
+
+function buildQuickPlotContext(
+    dataTypes: PlotsTabOption[],
+    dataSources: PlotsTabDataSource,
+    cancerTypes: string[],
+    mutationCount: number
+): QuickPlotContext {
+    const dataTypeByValue: { [value: string]: PlotsTabOption } = {};
+    for (let index = 0; index < dataTypes.length; index += 1) {
+        const dataType = dataTypes[index];
+        dataTypeByValue[dataType.value] = dataType;
+    }
+
+    const dataSourceByTypeAndValue: {
+        [dataType: string]: { [value: string]: PlotsTabOption };
+    } = {};
+    for (const dataType in dataSources) {
+        if (!Object.prototype.hasOwnProperty.call(dataSources, dataType)) {
+            continue;
+        }
+
+        const dataSourceOptions = dataSources[dataType];
+        const optionsByValue: { [value: string]: PlotsTabOption } = {};
+        for (let index = 0; index < dataSourceOptions.length; index += 1) {
+            const option = dataSourceOptions[index];
+            optionsByValue[option.value] = option;
+        }
+        dataSourceByTypeAndValue[dataType] = optionsByValue;
+    }
+
+    return {
+        cancerTypes,
+        mutationCount,
+        dataTypeByValue,
+        dataSourceByTypeAndValue,
+    };
+}
+
+function getDataType(
+    context: QuickPlotContext,
+    value: string
+): PlotsTabOption | undefined {
+    return context.dataTypeByValue[value];
+}
+
+function hasDataType(context: QuickPlotContext, value: string): boolean {
+    return getDataType(context, value) !== undefined;
+}
+
+function getDataSource(
+    context: QuickPlotContext,
+    dataType: string,
+    value: string
+): PlotsTabOption | undefined {
+    return context.dataSourceByTypeAndValue[dataType]?.[value];
+}
+
+function hasDataSource(
+    context: QuickPlotContext,
+    dataType: string,
+    value: string
+): boolean {
+    return getDataSource(context, dataType, value) !== undefined;
+}
 
 const quickPlots: QuickPlot[] = [
     {
-        isApplicableToQuery: (
-            dataTypes: PlotsTabOption[],
-            dataSources: PlotsTabDataSource,
-            cancerTypes: string[]
-        ): boolean => {
-            const clinicalAttributes = dataSources[CLIN_ATTR_DATA_TYPE];
+        isApplicableToQuery: (context: QuickPlotContext): boolean => {
             return (
-                dataTypes.find(
-                    dataType => dataType.value === CLIN_ATTR_DATA_TYPE
-                ) !== undefined &&
-                clinicalAttributes.find(
-                    attritube => attritube.value === 'MUTATION_COUNT'
-                ) !== undefined &&
-                clinicalAttributes.find(
-                    attritube => attritube.value === 'CANCER_TYPE_DETAILED'
-                ) !== undefined &&
-                cancerTypes.length > 1 &&
-                cancerTypes.length < 16
+                hasDataType(context, CLIN_ATTR_DATA_TYPE) &&
+                hasDataSource(
+                    context,
+                    CLIN_ATTR_DATA_TYPE,
+                    'MUTATION_COUNT'
+                ) &&
+                hasDataSource(
+                    context,
+                    CLIN_ATTR_DATA_TYPE,
+                    'CANCER_TYPE_DETAILED'
+                ) &&
+                context.cancerTypes.length > 1 &&
+                context.cancerTypes.length < 16
             );
         },
         toButtonInfo: (
             vertical: TypeSourcePair,
             horizontal: TypeSourcePair,
-            dataTypes: PlotsTabOption[],
-            dataSources: PlotsTabDataSource
+            context: QuickPlotContext
         ): ButtonInfo => {
             const selected =
                 vertical.type === CLIN_ATTR_DATA_TYPE &&
@@ -91,20 +154,19 @@ const quickPlots: QuickPlot[] = [
                 display: 'Mut# vs Dx',
                 plotModel: {
                     vertical: {
-                        dataType: dataTypes.find(
-                            dataType => dataType.value === CLIN_ATTR_DATA_TYPE
-                        ),
-                        dataSource: dataSources[CLIN_ATTR_DATA_TYPE].find(
-                            attritube => attritube.value === 'MUTATION_COUNT'
+                        dataType: getDataType(context, CLIN_ATTR_DATA_TYPE),
+                        dataSource: getDataSource(
+                            context,
+                            CLIN_ATTR_DATA_TYPE,
+                            'MUTATION_COUNT'
                         ),
                     },
                     horizontal: {
-                        dataType: dataTypes.find(
-                            dataType => dataType.value === CLIN_ATTR_DATA_TYPE
-                        ),
-                        dataSource: dataSources[CLIN_ATTR_DATA_TYPE].find(
-                            attritube =>
-                                attritube.value === 'CANCER_TYPE_DETAILED'
+                        dataType: getDataType(context, CLIN_ATTR_DATA_TYPE),
+                        dataSource: getDataSource(
+                            context,
+                            CLIN_ATTR_DATA_TYPE,
+                            'CANCER_TYPE_DETAILED'
                         ),
                     },
                 },
@@ -112,30 +174,22 @@ const quickPlots: QuickPlot[] = [
         },
     },
     {
-        isApplicableToQuery: (
-            dataTypes: PlotsTabOption[],
-            dataSources: PlotsTabDataSource,
-            cancerTypes: string[]
-        ): boolean => {
-            const clinicalAttributes = dataSources[CLIN_ATTR_DATA_TYPE];
+        isApplicableToQuery: (context: QuickPlotContext): boolean => {
             return (
-                dataTypes.find(
-                    dataType => dataType.value === CLIN_ATTR_DATA_TYPE
-                ) !== undefined &&
-                clinicalAttributes.find(
-                    attritube => attritube.value === 'MUTATION_COUNT'
-                ) !== undefined &&
-                clinicalAttributes.find(
-                    attritube => attritube.value === 'CANCER_TYPE'
-                ) !== undefined &&
-                cancerTypes.length > 15
+                hasDataType(context, CLIN_ATTR_DATA_TYPE) &&
+                hasDataSource(
+                    context,
+                    CLIN_ATTR_DATA_TYPE,
+                    'MUTATION_COUNT'
+                ) &&
+                hasDataSource(context, CLIN_ATTR_DATA_TYPE, 'CANCER_TYPE') &&
+                context.cancerTypes.length > 15
             );
         },
         toButtonInfo: (
             vertical: TypeSourcePair,
             horizontal: TypeSourcePair,
-            dataTypes: PlotsTabOption[],
-            dataSources: PlotsTabDataSource
+            context: QuickPlotContext
         ): ButtonInfo => {
             const selected =
                 vertical.type === CLIN_ATTR_DATA_TYPE &&
@@ -148,19 +202,19 @@ const quickPlots: QuickPlot[] = [
                 display: 'Mut# vs Dx',
                 plotModel: {
                     vertical: {
-                        dataType: dataTypes.find(
-                            dataType => dataType.value === CLIN_ATTR_DATA_TYPE
-                        ),
-                        dataSource: dataSources[CLIN_ATTR_DATA_TYPE].find(
-                            attritube => attritube.value === 'MUTATION_COUNT'
+                        dataType: getDataType(context, CLIN_ATTR_DATA_TYPE),
+                        dataSource: getDataSource(
+                            context,
+                            CLIN_ATTR_DATA_TYPE,
+                            'MUTATION_COUNT'
                         ),
                     },
                     horizontal: {
-                        dataType: dataTypes.find(
-                            dataType => dataType.value === CLIN_ATTR_DATA_TYPE
-                        ),
-                        dataSource: dataSources[CLIN_ATTR_DATA_TYPE].find(
-                            attritube => attritube.value === 'CANCER_TYPE'
+                        dataType: getDataType(context, CLIN_ATTR_DATA_TYPE),
+                        dataSource: getDataSource(
+                            context,
+                            CLIN_ATTR_DATA_TYPE,
+                            'CANCER_TYPE'
                         ),
                     },
                 },
@@ -168,31 +222,27 @@ const quickPlots: QuickPlot[] = [
         },
     },
     {
-        isApplicableToQuery: (
-            dataTypes: PlotsTabOption[],
-            dataSources: PlotsTabDataSource,
-            cancerTypes: string[]
-        ): boolean => {
-            const clinicalAttributes = dataSources[CLIN_ATTR_DATA_TYPE];
+        isApplicableToQuery: (context: QuickPlotContext): boolean => {
             return (
-                dataTypes.find(
-                    dataType => dataType.value === CLIN_ATTR_DATA_TYPE
-                ) !== undefined &&
-                clinicalAttributes.find(
-                    attritube => attritube.value === 'FRACTION_GENOME_ALTERED'
-                ) !== undefined &&
-                clinicalAttributes.find(
-                    attritube => attritube.value === 'CANCER_TYPE_DETAILED'
-                ) !== undefined &&
-                cancerTypes.length > 1 &&
-                cancerTypes.length < 16
+                hasDataType(context, CLIN_ATTR_DATA_TYPE) &&
+                hasDataSource(
+                    context,
+                    CLIN_ATTR_DATA_TYPE,
+                    'FRACTION_GENOME_ALTERED'
+                ) &&
+                hasDataSource(
+                    context,
+                    CLIN_ATTR_DATA_TYPE,
+                    'CANCER_TYPE_DETAILED'
+                ) &&
+                context.cancerTypes.length > 1 &&
+                context.cancerTypes.length < 16
             );
         },
         toButtonInfo: (
             vertical: TypeSourcePair,
             horizontal: TypeSourcePair,
-            dataTypes: PlotsTabOption[],
-            dataSources: PlotsTabDataSource
+            context: QuickPlotContext
         ): ButtonInfo => {
             const selected =
                 vertical.type === CLIN_ATTR_DATA_TYPE &&
@@ -205,21 +255,19 @@ const quickPlots: QuickPlot[] = [
                 display: 'FGA vs Dx',
                 plotModel: {
                     vertical: {
-                        dataType: dataTypes.find(
-                            dataType => dataType.value === CLIN_ATTR_DATA_TYPE
-                        ),
-                        dataSource: dataSources[CLIN_ATTR_DATA_TYPE].find(
-                            attritube =>
-                                attritube.value === 'FRACTION_GENOME_ALTERED'
+                        dataType: getDataType(context, CLIN_ATTR_DATA_TYPE),
+                        dataSource: getDataSource(
+                            context,
+                            CLIN_ATTR_DATA_TYPE,
+                            'FRACTION_GENOME_ALTERED'
                         ),
                     },
                     horizontal: {
-                        dataType: dataTypes.find(
-                            dataType => dataType.value === CLIN_ATTR_DATA_TYPE
-                        ),
-                        dataSource: dataSources[CLIN_ATTR_DATA_TYPE].find(
-                            attritube =>
-                                attritube.value === 'CANCER_TYPE_DETAILED'
+                        dataType: getDataType(context, CLIN_ATTR_DATA_TYPE),
+                        dataSource: getDataSource(
+                            context,
+                            CLIN_ATTR_DATA_TYPE,
+                            'CANCER_TYPE_DETAILED'
                         ),
                     },
                 },
@@ -227,30 +275,22 @@ const quickPlots: QuickPlot[] = [
         },
     },
     {
-        isApplicableToQuery: (
-            dataTypes: PlotsTabOption[],
-            dataSources: PlotsTabDataSource,
-            cancerTypes: string[]
-        ): boolean => {
-            const clinicalAttributes = dataSources[CLIN_ATTR_DATA_TYPE];
+        isApplicableToQuery: (context: QuickPlotContext): boolean => {
             return (
-                dataTypes.find(
-                    dataType => dataType.value === CLIN_ATTR_DATA_TYPE
-                ) !== undefined &&
-                clinicalAttributes.find(
-                    attritube => attritube.value === 'FRACTION_GENOME_ALTERED'
-                ) !== undefined &&
-                clinicalAttributes.find(
-                    attritube => attritube.value === 'CANCER_TYPE'
-                ) !== undefined &&
-                cancerTypes.length > 15
+                hasDataType(context, CLIN_ATTR_DATA_TYPE) &&
+                hasDataSource(
+                    context,
+                    CLIN_ATTR_DATA_TYPE,
+                    'FRACTION_GENOME_ALTERED'
+                ) &&
+                hasDataSource(context, CLIN_ATTR_DATA_TYPE, 'CANCER_TYPE') &&
+                context.cancerTypes.length > 15
             );
         },
         toButtonInfo: (
             vertical: TypeSourcePair,
             horizontal: TypeSourcePair,
-            dataTypes: PlotsTabOption[],
-            dataSources: PlotsTabDataSource
+            context: QuickPlotContext
         ): ButtonInfo => {
             const selected =
                 vertical.type === CLIN_ATTR_DATA_TYPE &&
@@ -263,20 +303,19 @@ const quickPlots: QuickPlot[] = [
                 display: 'FGA vs Dx',
                 plotModel: {
                     vertical: {
-                        dataType: dataTypes.find(
-                            dataType => dataType.value === CLIN_ATTR_DATA_TYPE
-                        ),
-                        dataSource: dataSources[CLIN_ATTR_DATA_TYPE].find(
-                            attritube =>
-                                attritube.value === 'FRACTION_GENOME_ALTERED'
+                        dataType: getDataType(context, CLIN_ATTR_DATA_TYPE),
+                        dataSource: getDataSource(
+                            context,
+                            CLIN_ATTR_DATA_TYPE,
+                            'FRACTION_GENOME_ALTERED'
                         ),
                     },
                     horizontal: {
-                        dataType: dataTypes.find(
-                            dataType => dataType.value === CLIN_ATTR_DATA_TYPE
-                        ),
-                        dataSource: dataSources[CLIN_ATTR_DATA_TYPE].find(
-                            attritube => attritube.value === 'CANCER_TYPE'
+                        dataType: getDataType(context, CLIN_ATTR_DATA_TYPE),
+                        dataSource: getDataSource(
+                            context,
+                            CLIN_ATTR_DATA_TYPE,
+                            'CANCER_TYPE'
                         ),
                     },
                 },
@@ -284,28 +323,25 @@ const quickPlots: QuickPlot[] = [
         },
     },
     {
-        isApplicableToQuery: (
-            dataTypes: PlotsTabOption[],
-            dataSources: PlotsTabDataSource
-        ): boolean => {
-            const clinicalAttributes = dataSources[CLIN_ATTR_DATA_TYPE];
+        isApplicableToQuery: (context: QuickPlotContext): boolean => {
             return (
-                dataTypes.find(
-                    dataType => dataType.value === CLIN_ATTR_DATA_TYPE
-                ) !== undefined &&
-                clinicalAttributes.find(
-                    attritube => attritube.value === 'MUTATION_COUNT'
-                ) !== undefined &&
-                clinicalAttributes.find(
-                    attritube => attritube.value === 'FRACTION_GENOME_ALTERED'
-                ) !== undefined
+                hasDataType(context, CLIN_ATTR_DATA_TYPE) &&
+                hasDataSource(
+                    context,
+                    CLIN_ATTR_DATA_TYPE,
+                    'MUTATION_COUNT'
+                ) &&
+                hasDataSource(
+                    context,
+                    CLIN_ATTR_DATA_TYPE,
+                    'FRACTION_GENOME_ALTERED'
+                )
             );
         },
         toButtonInfo: (
             vertical: TypeSourcePair,
             horizontal: TypeSourcePair,
-            dataTypes: PlotsTabOption[],
-            dataSources: PlotsTabDataSource
+            context: QuickPlotContext
         ): ButtonInfo => {
             const selected =
                 vertical.type === CLIN_ATTR_DATA_TYPE &&
@@ -318,20 +354,19 @@ const quickPlots: QuickPlot[] = [
                 display: 'Mut# vs FGA',
                 plotModel: {
                     vertical: {
-                        dataType: dataTypes.find(
-                            dataType => dataType.value === CLIN_ATTR_DATA_TYPE
-                        ),
-                        dataSource: dataSources[CLIN_ATTR_DATA_TYPE].find(
-                            attritube => attritube.value === 'MUTATION_COUNT'
+                        dataType: getDataType(context, CLIN_ATTR_DATA_TYPE),
+                        dataSource: getDataSource(
+                            context,
+                            CLIN_ATTR_DATA_TYPE,
+                            'MUTATION_COUNT'
                         ),
                     },
                     horizontal: {
-                        dataType: dataTypes.find(
-                            dataType => dataType.value === CLIN_ATTR_DATA_TYPE
-                        ),
-                        dataSource: dataSources[CLIN_ATTR_DATA_TYPE].find(
-                            attritube =>
-                                attritube.value === 'FRACTION_GENOME_ALTERED'
+                        dataType: getDataType(context, CLIN_ATTR_DATA_TYPE),
+                        dataSource: getDataSource(
+                            context,
+                            CLIN_ATTR_DATA_TYPE,
+                            'FRACTION_GENOME_ALTERED'
                         ),
                     },
                 },
@@ -339,30 +374,22 @@ const quickPlots: QuickPlot[] = [
         },
     },
     {
-        isApplicableToQuery: (
-            dataTypes: PlotsTabOption[],
-            dataSources: PlotsTabDataSource,
-            cancerTypes: string[]
-        ): boolean => {
-            const clinicalAttributes = dataSources[CLIN_ATTR_DATA_TYPE];
+        isApplicableToQuery: (context: QuickPlotContext): boolean => {
             return (
-                dataTypes.find(
-                    dataType => dataType.value === CLIN_ATTR_DATA_TYPE
-                ) !== undefined &&
-                dataTypes.find(
-                    dataType => dataType.value === 'MRNA_EXPRESSION'
-                ) !== undefined &&
-                clinicalAttributes.find(
-                    attritube => attritube.value === 'CANCER_TYPE_DETAILED'
-                ) !== undefined &&
-                cancerTypes.length > 1
+                hasDataType(context, CLIN_ATTR_DATA_TYPE) &&
+                hasDataType(context, 'MRNA_EXPRESSION') &&
+                hasDataSource(
+                    context,
+                    CLIN_ATTR_DATA_TYPE,
+                    'CANCER_TYPE_DETAILED'
+                ) &&
+                context.cancerTypes.length > 1
             );
         },
         toButtonInfo: (
             vertical: TypeSourcePair,
             horizontal: TypeSourcePair,
-            dataTypes: PlotsTabOption[],
-            dataSources: PlotsTabDataSource
+            context: QuickPlotContext
         ): ButtonInfo => {
             const selected =
                 vertical.type === 'MRNA_EXPRESSION' &&
@@ -374,18 +401,15 @@ const quickPlots: QuickPlot[] = [
                 display: 'mRNA vs Dx',
                 plotModel: {
                     vertical: {
-                        dataType: dataTypes.find(
-                            dataType => dataType.value === 'MRNA_EXPRESSION'
-                        ),
+                        dataType: getDataType(context, 'MRNA_EXPRESSION'),
                         dataSource: undefined,
                     },
                     horizontal: {
-                        dataType: dataTypes.find(
-                            dataType => dataType.value === CLIN_ATTR_DATA_TYPE
-                        ),
-                        dataSource: dataSources[CLIN_ATTR_DATA_TYPE].find(
-                            attritube =>
-                                attritube.value === 'CANCER_TYPE_DETAILED'
+                        dataType: getDataType(context, CLIN_ATTR_DATA_TYPE),
+                        dataSource: getDataSource(
+                            context,
+                            CLIN_ATTR_DATA_TYPE,
+                            'CANCER_TYPE_DETAILED'
                         ),
                     },
                 },
@@ -393,26 +417,17 @@ const quickPlots: QuickPlot[] = [
         },
     },
     {
-        isApplicableToQuery: (
-            dataTypes: PlotsTabOption[],
-            __: PlotsTabDataSource,
-            _: string[],
-            mutationCount: number
-        ): boolean => {
+        isApplicableToQuery: (context: QuickPlotContext): boolean => {
             return (
-                dataTypes.find(
-                    dataType => dataType.value === 'MUTATION_EXTENDED'
-                ) !== undefined &&
-                dataTypes.find(
-                    dataType => dataType.value === 'MRNA_EXPRESSION'
-                ) !== undefined &&
-                mutationCount > 0
+                hasDataType(context, 'MUTATION_EXTENDED') &&
+                hasDataType(context, 'MRNA_EXPRESSION') &&
+                context.mutationCount > 0
             );
         },
         toButtonInfo: (
             vertical: TypeSourcePair,
             horizontal: TypeSourcePair,
-            dataTypes: PlotsTabOption[]
+            context: QuickPlotContext
         ): ButtonInfo => {
             const selected =
                 vertical.type === 'MRNA_EXPRESSION' &&
@@ -423,16 +438,12 @@ const quickPlots: QuickPlot[] = [
                 display: 'mRNA vs mut type',
                 plotModel: {
                     vertical: {
-                        dataType: dataTypes.find(
-                            dataType => dataType.value === 'MRNA_EXPRESSION'
-                        ),
+                        dataType: getDataType(context, 'MRNA_EXPRESSION'),
                         dataSource: undefined,
                         useSameGene: true,
                     },
                     horizontal: {
-                        dataType: dataTypes.find(
-                            dataType => dataType.value === 'MUTATION_EXTENDED'
-                        ),
+                        dataType: getDataType(context, 'MUTATION_EXTENDED'),
                         dataSource: undefined,
                     },
                 },
@@ -440,20 +451,16 @@ const quickPlots: QuickPlot[] = [
         },
     },
     {
-        isApplicableToQuery: (dataTypes: PlotsTabOption[]): boolean => {
+        isApplicableToQuery: (context: QuickPlotContext): boolean => {
             return (
-                dataTypes.find(
-                    dataType => dataType.value === 'COPY_NUMBER_ALTERATION'
-                ) !== undefined &&
-                dataTypes.find(
-                    dataType => dataType.value === 'MRNA_EXPRESSION'
-                ) !== undefined
+                hasDataType(context, 'COPY_NUMBER_ALTERATION') &&
+                hasDataType(context, 'MRNA_EXPRESSION')
             );
         },
         toButtonInfo: (
             vertical: TypeSourcePair,
             horizontal: TypeSourcePair,
-            dataTypes: PlotsTabOption[]
+            context: QuickPlotContext
         ): ButtonInfo => {
             const selected =
                 vertical.type === 'MRNA_EXPRESSION' &&
@@ -464,16 +471,14 @@ const quickPlots: QuickPlot[] = [
                 display: 'mRNA vs CNA',
                 plotModel: {
                     vertical: {
-                        dataType: dataTypes.find(
-                            dataType => dataType.value === 'MRNA_EXPRESSION'
-                        ),
+                        dataType: getDataType(context, 'MRNA_EXPRESSION'),
                         dataSource: undefined,
                         useSameGene: true,
                     },
                     horizontal: {
-                        dataType: dataTypes.find(
-                            dataType =>
-                                dataType.value === 'COPY_NUMBER_ALTERATION'
+                        dataType: getDataType(
+                            context,
+                            'COPY_NUMBER_ALTERATION'
                         ),
                         dataSource: undefined,
                     },
@@ -482,19 +487,16 @@ const quickPlots: QuickPlot[] = [
         },
     },
     {
-        isApplicableToQuery: (dataTypes: PlotsTabOption[]): boolean => {
+        isApplicableToQuery: (context: QuickPlotContext): boolean => {
             return (
-                dataTypes.find(dataType => dataType.value === 'METHYLATION') !==
-                    undefined &&
-                dataTypes.find(
-                    dataType => dataType.value === 'MRNA_EXPRESSION'
-                ) !== undefined
+                hasDataType(context, 'METHYLATION') &&
+                hasDataType(context, 'MRNA_EXPRESSION')
             );
         },
         toButtonInfo: (
             vertical: TypeSourcePair,
             horizontal: TypeSourcePair,
-            dataTypes: PlotsTabOption[]
+            context: QuickPlotContext
         ): ButtonInfo => {
             const selected =
                 vertical.type === 'MRNA_EXPRESSION' &&
@@ -505,16 +507,12 @@ const quickPlots: QuickPlot[] = [
                 display: 'mRNA vs methyl',
                 plotModel: {
                     vertical: {
-                        dataType: dataTypes.find(
-                            dataType => dataType.value === 'MRNA_EXPRESSION'
-                        ),
+                        dataType: getDataType(context, 'MRNA_EXPRESSION'),
                         dataSource: undefined,
                         useSameGene: true,
                     },
                     horizontal: {
-                        dataType: dataTypes.find(
-                            dataType => dataType.value === 'METHYLATION'
-                        ),
+                        dataType: getDataType(context, 'METHYLATION'),
                         dataSource: undefined,
                     },
                 },
@@ -522,21 +520,16 @@ const quickPlots: QuickPlot[] = [
         },
     },
     {
-        isApplicableToQuery: (dataTypes: PlotsTabOption[]): boolean => {
+        isApplicableToQuery: (context: QuickPlotContext): boolean => {
             return (
-                dataTypes.find(
-                    dataType => dataType.value === 'PROTEIN_LEVEL'
-                ) !== undefined &&
-                dataTypes.find(
-                    dataType => dataType.value === 'MRNA_EXPRESSION'
-                ) !== undefined
+                hasDataType(context, 'PROTEIN_LEVEL') &&
+                hasDataType(context, 'MRNA_EXPRESSION')
             );
         },
         toButtonInfo: (
             vertical: TypeSourcePair,
             horizontal: TypeSourcePair,
-            dataTypes: PlotsTabOption[],
-            dataSources: PlotsTabDataSource
+            context: QuickPlotContext
         ): ButtonInfo => {
             const selected =
                 vertical.type === 'PROTEIN_LEVEL' &&
@@ -547,20 +540,16 @@ const quickPlots: QuickPlot[] = [
                 display: 'Protein vs mRNA',
                 plotModel: {
                     vertical: {
-                        dataType: dataTypes.find(
-                            dataType => dataType.value === 'PROTEIN_LEVEL'
-                        ),
-                        dataSource: dataSources['PROTEIN_LEVEL'].find(
-                            source =>
-                                source.value ===
-                                'brca_tcga_protein_quantification'
+                        dataType: getDataType(context, 'PROTEIN_LEVEL'),
+                        dataSource: getDataSource(
+                            context,
+                            'PROTEIN_LEVEL',
+                            'brca_tcga_protein_quantification'
                         ),
                         useSameGene: true,
                     },
                     horizontal: {
-                        dataType: dataTypes.find(
-                            dataType => dataType.value === 'MRNA_EXPRESSION'
-                        ),
+                        dataType: getDataType(context, 'MRNA_EXPRESSION'),
                         dataSource: undefined,
                     },
                 },
@@ -568,19 +557,18 @@ const quickPlots: QuickPlot[] = [
         },
     },
     {
-        isApplicableToQuery: (dataTypes: PlotsTabOption[]): boolean => {
+        isApplicableToQuery: (context: QuickPlotContext): boolean => {
             return (
-                dataTypes.find(
-                    dataType =>
-                        dataType.value ===
-                        GenericAssayTypeConstants.TREATMENT_RESPONSE
-                ) !== undefined
+                hasDataType(
+                    context,
+                    GenericAssayTypeConstants.TREATMENT_RESPONSE
+                )
             );
         },
         toButtonInfo: (
             vertical: TypeSourcePair,
             horizontal: TypeSourcePair,
-            dataTypes: PlotsTabOption[]
+            context: QuickPlotContext
         ): ButtonInfo => {
             const selected =
                 vertical.type ===
@@ -599,10 +587,9 @@ const quickPlots: QuickPlot[] = [
                         dataSource: undefined,
                     },
                     vertical: {
-                        dataType: dataTypes.find(
-                            dataType =>
-                                dataType.value ===
-                                GenericAssayTypeConstants.TREATMENT_RESPONSE
+                        dataType: getDataType(
+                            context,
+                            GenericAssayTypeConstants.TREATMENT_RESPONSE
                         ),
                         dataSource: undefined,
                     },
@@ -611,29 +598,21 @@ const quickPlots: QuickPlot[] = [
         },
     },
     {
-        isApplicableToQuery: (
-            dataTypes: PlotsTabOption[],
-            dataSources: PlotsTabDataSource
-        ): boolean => {
-            const clinicalAttributes = dataSources[CLIN_ATTR_DATA_TYPE];
+        isApplicableToQuery: (context: QuickPlotContext): boolean => {
             return (
-                dataTypes.find(
-                    dataType => dataType.value === 'MRNA_EXPRESSION'
-                ) !== undefined &&
-                dataTypes.find(
-                    dataType => dataType.value === CLIN_ATTR_DATA_TYPE
-                ) !== undefined &&
-                clinicalAttributes.find(
-                    attritube =>
-                        attritube.value === SpecialAttribute.StudyOfOrigin
-                ) !== undefined
+                hasDataType(context, 'MRNA_EXPRESSION') &&
+                hasDataType(context, CLIN_ATTR_DATA_TYPE) &&
+                hasDataSource(
+                    context,
+                    CLIN_ATTR_DATA_TYPE,
+                    SpecialAttribute.StudyOfOrigin
+                )
             );
         },
         toButtonInfo: (
             vertical: TypeSourcePair,
             horizontal: TypeSourcePair,
-            dataTypes: PlotsTabOption[],
-            dataSources: PlotsTabDataSource
+            context: QuickPlotContext
         ): ButtonInfo => {
             const selected =
                 vertical.type === AlterationTypeConstants.MRNA_EXPRESSION &&
@@ -645,21 +624,18 @@ const quickPlots: QuickPlot[] = [
                 display: 'mRNA vs Study',
                 plotModel: {
                     vertical: {
-                        dataType: dataTypes.find(
-                            dataType =>
-                                dataType.value ===
-                                AlterationTypeConstants.MRNA_EXPRESSION
+                        dataType: getDataType(
+                            context,
+                            AlterationTypeConstants.MRNA_EXPRESSION
                         ),
                         dataSource: undefined,
                     },
                     horizontal: {
-                        dataType: dataTypes.find(
-                            dataType => dataType.value === CLIN_ATTR_DATA_TYPE
-                        ),
-                        dataSource: dataSources[CLIN_ATTR_DATA_TYPE].find(
-                            attritube =>
-                                attritube.value ===
-                                SpecialAttribute.StudyOfOrigin
+                        dataType: getDataType(context, CLIN_ATTR_DATA_TYPE),
+                        dataSource: getDataSource(
+                            context,
+                            CLIN_ATTR_DATA_TYPE,
+                            SpecialAttribute.StudyOfOrigin
                         ),
                     },
                 },
@@ -676,16 +652,14 @@ export function generateQuickPlots(
     horizontal: TypeSourcePair,
     vertical: TypeSourcePair
 ): ButtonInfo[] {
+    const context = buildQuickPlotContext(
+        dataTypes,
+        dataSources,
+        cancerTypes,
+        mutationCount
+    );
+
     return quickPlots
-        .filter(plot =>
-            plot.isApplicableToQuery(
-                dataTypes,
-                dataSources,
-                cancerTypes,
-                mutationCount
-            )
-        )
-        .map(plot =>
-            plot.toButtonInfo(vertical, horizontal, dataTypes, dataSources)
-        );
+        .filter(plot => plot.isApplicableToQuery(context))
+        .map(plot => plot.toButtonInfo(vertical, horizontal, context));
 }
