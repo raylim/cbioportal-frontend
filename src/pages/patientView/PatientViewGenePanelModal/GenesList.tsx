@@ -4,7 +4,6 @@ import { observer } from 'mobx-react';
 import { SimpleCopyDownloadControls } from 'shared/components/copyDownloadControls/SimpleCopyDownloadControls';
 import { serializeData } from 'shared/lib/Serializer';
 import styles from './styles.module.scss';
-import { chunk, flatten } from 'lodash';
 import { observable, action, computed, makeObservable } from 'mobx';
 import autobind from 'autobind-decorator';
 import classnames from 'classnames';
@@ -44,23 +43,20 @@ export default class GenesList extends React.Component<IGenesListProps, {}> {
     }
 
     genesDividedToColumns = (genes: GenePanelToGene[]) => {
-        let result = [];
-        let columnCount = this.columnCount;
-        let remainingGenes = [...genes];
-        while (columnCount > 0) {
-            const chunked = chunk(
-                remainingGenes,
-                Math.ceil(remainingGenes.length / columnCount)
-            );
-            if (chunked.length === columnCount) {
-                result = result.concat(chunked);
-                break;
-            } else {
-                result.push(chunked[0]);
-                remainingGenes = remainingGenes.slice(flatten(result).length);
-                columnCount--;
-            }
+        const result: GenePanelToGene[][] = [];
+        let remainingStartIndex = 0;
+        let remainingGenes = genes.length;
+        let remainingColumns = this.columnCount;
+
+        while (remainingColumns > 0) {
+            const columnSize = Math.ceil(remainingGenes / remainingColumns);
+            const nextStartIndex = remainingStartIndex + columnSize;
+            result.push(genes.slice(remainingStartIndex, nextStartIndex));
+            remainingStartIndex = nextStartIndex;
+            remainingGenes -= columnSize;
+            remainingColumns -= 1;
         }
+
         return result;
     };
 
@@ -70,12 +66,18 @@ export default class GenesList extends React.Component<IGenesListProps, {}> {
             return [];
         }
         const rows: JSX.Element[] = [];
-        this.genesDividedToRows(filtered).forEach(row => {
-            const tdValues = row.map(gene => (
-                <td key={gene ? gene : Math.random()}>{gene}</td>
-            ));
-            rows.push(<tr>{tdValues}</tr>);
-        });
+        const genesByRows = this.genesDividedToRows(filtered);
+        for (let rowIndex = 0; rowIndex < genesByRows.length; rowIndex += 1) {
+            const row = genesByRows[rowIndex];
+            const tdValues = new Array<JSX.Element>(row.length);
+            for (let columnIndex = 0; columnIndex < row.length; columnIndex += 1) {
+                const gene = row[columnIndex];
+                tdValues[columnIndex] = (
+                    <td key={`${rowIndex}:${columnIndex}:${gene}`}>{gene}</td>
+                );
+            }
+            rows.push(<tr key={`row-${rowIndex}`}>{tdValues}</tr>);
+        }
         return rows;
     }
 
@@ -89,18 +91,17 @@ export default class GenesList extends React.Component<IGenesListProps, {}> {
 
     genesDividedToRows = (genes: GenePanelToGene[]) => {
         const genesByColumns = this.genesDividedToColumns(genes);
-        const genesByRows = [];
         const geneCountPerColumn = this.geneCountPerColumn(genes.length);
+        const genesByRows = new Array<string[]>(geneCountPerColumn);
         for (let i = 0; i < geneCountPerColumn; i++) {
-            const genesPerRow = [];
+            const genesPerRow = new Array<string>(this.columnCount);
             for (let j = 0; j < this.columnCount; j++) {
-                genesPerRow.push(
+                genesPerRow[j] =
                     genesByColumns[j] && genesByColumns[j][i]
                         ? genesByColumns[j][i].hugoGeneSymbol
-                        : ''
-                );
+                        : '';
             }
-            genesByRows.push(genesPerRow);
+            genesByRows[i] = genesPerRow;
         }
         return genesByRows;
     };
@@ -114,8 +115,12 @@ export default class GenesList extends React.Component<IGenesListProps, {}> {
     };
 
     @computed get renderTableHeaders() {
-        const thValues = [<th>Genes</th>];
-        return thValues.concat(Array(this.columnCount - 1).fill(<th></th>));
+        const headers = new Array<JSX.Element>(this.columnCount);
+        headers[0] = <th key="header-0">Genes</th>;
+        for (let index = 1; index < this.columnCount; index += 1) {
+            headers[index] = <th key={`header-${index}`}></th>;
+        }
+        return headers;
     }
 
     render() {

@@ -2,7 +2,6 @@ import * as React from 'react';
 import 'rc-tooltip/assets/bootstrap_white.css';
 import SampleManager from '../../SampleManager';
 import { isUncalled } from 'shared/lib/MutationUtils';
-import _ from 'lodash';
 import { ClinicalDataBySampleId } from 'cbioportal-ts-api-client';
 import { noGenePanelUsed } from 'shared/lib/StoreUtils';
 import SampleInline from 'pages/patientView/patientHeader/SampleInline';
@@ -32,10 +31,10 @@ export default class TumorColumnFormatter {
         // - when sample->gene has no mutation (absent from _mutatedSamples_) and was profiled, show `no mutation` icon
         // - when sample->gene has no mutation (absent from _mutatedSamples_) and was not profiled, show `not profiled` icon
         const samples = sampleManager.samples;
-        const sampleIds = _.map(
-            samples,
-            (sample: ClinicalDataBySampleId) => sample.id
-        );
+        const sampleIds = new Array<string>(samples.length);
+        for (let i = 0; i < samples.length; i++) {
+            sampleIds[i] = (samples[i] as ClinicalDataBySampleId).id;
+        }
         const entrezGeneId = mutations[0].entrezGeneId;
         const mutatedSamples = TumorColumnFormatter.getPresentSamples(
             mutations
@@ -119,15 +118,21 @@ export default class TumorColumnFormatter {
             return [];
         } else {
             const presentSamples = TumorColumnFormatter.getPresentSamples(d);
-            const ret = [];
-            // First, we sort by the number of present and called samples
-            ret.push(
-                Object.keys(presentSamples).filter(s => presentSamples[s])
-                    .length
+            const ret = new Array<number>(
+                sampleManager.getSampleIdsInOrder().length + 1
             );
+            let calledCount = 0;
+            for (const sampleId of Object.keys(presentSamples)) {
+                if (presentSamples[sampleId]) {
+                    calledCount++;
+                }
+            }
+            // First, we sort by the number of present and called samples
+            ret[0] = calledCount;
             // Then, we sort by the particular ones present
-            for (const sampleId of sampleManager.getSampleIdsInOrder()) {
-                ret.push(+!!presentSamples[sampleId]);
+            const sampleIds = sampleManager.getSampleIdsInOrder();
+            for (let i = 0; i < sampleIds.length; i++) {
+                ret[i + 1] = +!!presentSamples[sampleIds[i]];
             }
             return ret;
         }
@@ -140,7 +145,8 @@ export default class TumorColumnFormatter {
             molecularProfileId?: string;
         }
     >(data: T[]) {
-        return data.reduce((map, next: T, currentIndex: number) => {
+        const presentSamples = {} as { [s: string]: boolean };
+        for (const next of data) {
             // Indicate called mutations with true,
             // uncalled mutations with supporting reads as false
             // exclude uncalled mutations without supporting reads completely
@@ -149,13 +155,13 @@ export default class TumorColumnFormatter {
                 isUncalled(next.molecularProfileId)
             ) {
                 if (next.tumorAltCount && next.tumorAltCount > 0) {
-                    map[next.sampleId] = false;
+                    presentSamples[next.sampleId] = false;
                 }
             } else {
-                map[next.sampleId] = true;
+                presentSamples[next.sampleId] = true;
             }
-            return map;
-        }, {} as { [s: string]: boolean });
+        }
+        return presentSamples;
     }
 
     public static getProfiledSamplesForGene(
@@ -165,42 +171,47 @@ export default class TumorColumnFormatter {
         genePanelIdToEntrezGeneIds: { [genePanelId: string]: number[] }
     ) {
         // For a given gene indicate whether it was profiled in a particular sample
-        return sampleIds.reduce(
-            (sampleIsProfiled, nextSampleId, currentIndex: number) => {
-                const genePanelId = sampleToGenePanelId[nextSampleId];
+        const sampleIsProfiled = {} as { [s: string]: boolean };
+        const geneIds = Array.isArray(entrezGeneId)
+            ? entrezGeneId
+            : [entrezGeneId];
 
-                // NOTE: entrezGeneId can be an array in order to
-                // support structural variant alteration types
-                const wholeGenome = noGenePanelUsed(genePanelId);
-                const isInGenePanel =
-                    !wholeGenome &&
-                    !!genePanelId &&
-                    genePanelId in genePanelIdToEntrezGeneIds &&
-                    _.some(
-                        _.isArray(entrezGeneId) ? entrezGeneId : [entrezGeneId],
-                        geneId => {
-                            return genePanelIdToEntrezGeneIds[
-                                genePanelId
-                            ].includes(geneId);
-                        }
-                    );
+        for (const nextSampleId of sampleIds) {
+            const genePanelId = sampleToGenePanelId[nextSampleId];
 
-                sampleIsProfiled[nextSampleId] = wholeGenome || isInGenePanel;
+            // NOTE: entrezGeneId can be an array in order to
+            // support structural variant alteration types
+            const wholeGenome = noGenePanelUsed(genePanelId);
+            let isInGenePanel = false;
 
-                return sampleIsProfiled;
-            },
-            {} as { [s: string]: boolean }
-        );
+            if (
+                !wholeGenome &&
+                !!genePanelId &&
+                genePanelId in genePanelIdToEntrezGeneIds
+            ) {
+                const panelGeneIds = genePanelIdToEntrezGeneIds[genePanelId];
+                for (const geneId of geneIds) {
+                    if (panelGeneIds.includes(geneId)) {
+                        isInGenePanel = true;
+                        break;
+                    }
+                }
+            }
+
+            sampleIsProfiled[nextSampleId] = wholeGenome || isInGenePanel;
+        }
+
+        return sampleIsProfiled;
     }
 
     public static getSample(
         data: Array<{ sampleId: string }>
     ): string | string[] {
-        let result: string[] = [];
+        const result: string[] = [];
         if (data) {
-            data.forEach((datum: { sampleId: string }) => {
+            for (const datum of data) {
                 result.push(datum.sampleId);
-            });
+            }
         }
         if (result.length == 1) {
             return result[0];

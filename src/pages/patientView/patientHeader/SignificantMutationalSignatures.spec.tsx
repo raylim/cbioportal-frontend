@@ -1,4 +1,8 @@
-import { getSignificantMutationalSignatures } from '../../../shared/lib/GenericAssayUtils/MutationalSignaturesUtils';
+import {
+    getSignificantMutationalSignatures,
+    retrieveMutationalSignatureVersionFromData,
+    validateMutationalSignatureRawData,
+} from '../../../shared/lib/GenericAssayUtils/MutationalSignaturesUtils';
 import React from 'react';
 import { assert } from 'chai';
 import { IMutationalSignatureMeta } from 'shared/model/MutationalSignature';
@@ -79,4 +83,41 @@ describe('SignificantMutationalSignatures', () => {
             assert.deepEqual(result, [sampleMutationalSignatureData[0]]);
         }
     );
+
+    it('validates raw mutational signature profiles only when contribution and pvalue entries are paired per version', () => {
+        assert.isTrue(
+            validateMutationalSignatureRawData([
+                { molecularProfileId: 'study_contribution_v2' },
+                { molecularProfileId: 'study_pvalue_v2' },
+                { molecularProfileId: 'study_contribution_v3' },
+                { molecularProfileId: 'study_pvalue_v3' },
+            ] as any)
+        );
+
+        assert.isFalse(
+            validateMutationalSignatureRawData([
+                { molecularProfileId: 'study_contribution_v2' },
+                { molecularProfileId: 'study_pvalue_v2' },
+                { molecularProfileId: 'study_contribution_v3' },
+            ] as any)
+        );
+    });
+
+    it('prefers v3 over v2, prefers SBS when present, and falls back to v2', () => {
+        assert.equal(
+            retrieveMutationalSignatureVersionFromData([
+                'study_contribution_v2',
+                'study_pvalue_v3',
+            ]),
+            'v3'
+        );
+        assert.equal(
+            retrieveMutationalSignatureVersionFromData([
+                'study_contribution_SBS',
+                'study_pvalue_SBS',
+            ]),
+            'SBS'
+        );
+        assert.equal(retrieveMutationalSignatureVersionFromData([]), 'v2');
+    });
 });

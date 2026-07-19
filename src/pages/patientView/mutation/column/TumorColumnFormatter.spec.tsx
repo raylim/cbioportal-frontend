@@ -108,5 +108,21 @@ describe('TumorColumnFormatter', () => {
             };
             assert.deepEqual(profiledSamples, correct);
         });
+
+        it('supports structural variant style gene id arrays', () => {
+            const entrezIds = [4, 8];
+            const sampleIds = ['sampleA', 'sampleB'];
+            const profiledSamples = TumorColumnFormatter.getProfiledSamplesForGene(
+                entrezIds,
+                sampleIds,
+                sampleToGenePanelId,
+                genePanelIdToGene
+            );
+            const correct = {
+                sampleA: false,
+                sampleB: true,
+            };
+            assert.deepEqual(profiledSamples, correct);
+        });
     });
 });

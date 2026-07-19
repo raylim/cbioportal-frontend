@@ -1,5 +1,4 @@
 import { Mutation, Sample } from 'cbioportal-ts-api-client';
-import _ from 'lodash';
 import { generateMutationIdByGeneAndProteinChangeAndEvent } from '../../../../shared/lib/StoreUtils';
 import { CoverageInformation } from '../../../../shared/lib/GenePanelUtils';
 import {
@@ -50,17 +49,34 @@ export function makeMutationHeatmapData(
     coverageInformation: CoverageInformation,
     mode: MutationOncoprintMode
 ) {
-    const mutationsByKey = _.keyBy(
-        mutations,
-        generateMutationIdByGeneAndProteinChangeAndEvent
-    );
-    const mutationsBySample = _.groupBy(mutations, m => m.uniqueSampleKey);
-    const mutationHasAtLeastOneVAF = _.mapValues(mutationsByKey, () => false);
+    const mutationsByKey: { [mutationId: string]: Mutation } = {};
+    const mutationKeys: string[] = [];
+    const mutationsBySample: { [uniqueSampleKey: string]: Mutation[] } = {};
+    const mutationHasAtLeastOneVAF: { [mutationId: string]: boolean } = {};
+
+    for (let index = 0; index < mutations.length; index += 1) {
+        const mutation = mutations[index];
+        const mutationId =
+            generateMutationIdByGeneAndProteinChangeAndEvent(mutation);
+
+        if (!(mutationId in mutationsByKey)) {
+            mutationKeys.push(mutationId);
+            mutationHasAtLeastOneVAF[mutationId] = false;
+        }
+        mutationsByKey[mutationId] = mutation;
+
+        let sampleMutations = mutationsBySample[mutation.uniqueSampleKey];
+        if (!sampleMutations) {
+            sampleMutations = [];
+            mutationsBySample[mutation.uniqueSampleKey] = sampleMutations;
+        }
+        sampleMutations.push(mutation);
+    }
 
     let oncoprintData: IMutationOncoprintTrackDatum[] = [];
     for (const sample of samples) {
         const sampleMutations = mutationsBySample[sample.uniqueSampleKey] || [];
-        const mutationKeys: { [mutationId: string]: boolean } = {};
+        const presentMutationKeys: { [mutationId: string]: boolean } = {};
         for (const mutation of sampleMutations) {
             const mutationId = generateMutationIdByGeneAndProteinChangeAndEvent(
                 mutation
@@ -74,7 +90,7 @@ export function makeMutationHeatmapData(
             if (isUncalled && mutation.tumorAltCount <= 0) {
                 // Uncalled with no variant reads: mark as not mutated but
                 // keep per-sample read data so the tooltip can show coverage.
-                mutationKeys[mutationId] = true;
+                presentMutationKeys[mutationId] = true;
                 oncoprintData.push({
                     profile_data: null,
                     sample: sample.sampleId,
@@ -87,7 +103,7 @@ export function makeMutationHeatmapData(
                     mutationStatus: MutationStatus.PROFILED_BUT_NOT_MUTATED,
                 });
             } else {
-                mutationKeys[mutationId] = true;
+                presentMutationKeys[mutationId] = true;
                 let vafReport = getVariantAlleleFrequency(mutation);
 
                 let mutationStatus;
@@ -116,15 +132,16 @@ export function makeMutationHeatmapData(
         }
 
         // fill in data for missing mutations
-
-        const noData = Object.keys(mutationsByKey)
-            .filter(key => !(key in mutationKeys))
-            .map(key => mutationsByKey[key]);
-
-        for (const mutation of noData) {
-            const mutationId = generateMutationIdByGeneAndProteinChangeAndEvent(
-                mutation
-            );
+        for (
+            let mutationKeyIndex = 0;
+            mutationKeyIndex < mutationKeys.length;
+            mutationKeyIndex += 1
+        ) {
+            const mutationId = mutationKeys[mutationKeyIndex];
+            if (mutationId in presentMutationKeys) {
+                continue;
+            }
+            const mutation = mutationsByKey[mutationId];
             const uid =
                 mode === MutationOncoprintMode.SAMPLE_TRACKS
                     ? mutationId
@@ -158,10 +175,31 @@ export function makeMutationHeatmapData(
     );
 
     // group data by track
+    const groupedData: { [group: string]: IMutationOncoprintTrackDatum[] } = {};
     if (mode === MutationOncoprintMode.SAMPLE_TRACKS) {
-        return _.groupBy(oncoprintData, d => d.sample);
+        for (let index = 0; index < oncoprintData.length; index += 1) {
+            const datum = oncoprintData[index];
+            const groupKey = datum.sample!;
+            let group = groupedData[groupKey];
+            if (!group) {
+                group = [];
+                groupedData[groupKey] = group;
+            }
+            group.push(datum);
+        }
+        return groupedData;
     } else {
-        return _.groupBy(oncoprintData, d => d.mutationId);
+        for (let index = 0; index < oncoprintData.length; index += 1) {
+            const datum = oncoprintData[index];
+            const groupKey = datum.mutationId;
+            let group = groupedData[groupKey];
+            if (!group) {
+                group = [];
+                groupedData[groupKey] = group;
+            }
+            group.push(datum);
+        }
+        return groupedData;
     }
 }
 

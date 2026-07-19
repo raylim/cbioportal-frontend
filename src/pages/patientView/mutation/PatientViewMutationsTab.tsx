@@ -22,9 +22,9 @@ import VAFChartWrapper from 'pages/patientView/timeline/VAFChartWrapper';
 import TimelineWrapper from 'pages/patientView/timeline/TimelineWrapper';
 import VAFChartWrapperStore from '../timeline/VAFChartWrapperStore';
 import { ExtendedMutationTableColumnType } from 'shared/components/mutationTable/MutationTable';
-import _ from 'lodash';
 import { extractColumnNames } from 'shared/components/mutationMapper/MutationMapperUtils';
 import SampleNotProfiledAlert from 'shared/components/SampleNotProfiledAlert';
+import { buildTimelineEventsSignature } from '../timeline/pathologyTimelineUtils';
 
 export interface IPatientViewMutationsTabProps {
     patientViewPageStore: PatientViewPageStore;
@@ -152,6 +152,12 @@ export default class PatientViewMutationsTab extends React.Component<
         );
     }
 
+    @computed get clinicalEventsSignature() {
+        return buildTimelineEventsSignature(
+            this.props.patientViewPageStore.clinicalEvents.result || []
+        );
+    }
+
     readonly vafLineChart = MakeMobxView({
         await: () => [
             this.props.patientViewPageStore.coverageInformation,
@@ -163,7 +169,6 @@ export default class PatientViewMutationsTab extends React.Component<
             <>
                 {this.props.sampleManager && (
                     <VAFChartWrapper
-                        key={`vafKey${WindowStore.size.width}-${this.showTimeline}`}
                         wrapperStore={this.vafChartWrapperStore}
                         dataStore={this.dataStore}
                         caseMetaData={{
@@ -175,6 +180,7 @@ export default class PatientViewMutationsTab extends React.Component<
                             this.props.patientViewPageStore.clinicalEvents
                                 .result
                         }
+                        clinicalEventsSignature={this.clinicalEventsSignature}
                         sampleManager={this.props.sampleManager}
                         width={WindowStore.size.width}
                         samples={this.props.patientViewPageStore.samples.result}
@@ -389,17 +395,36 @@ export default class PatientViewMutationsTab extends React.Component<
         const namespaceColumnNames = extractColumnNames(
             this.dataStore.namespaceColumnConfig
         );
-        return _.concat(
-            PatientViewMutationTable.defaultProps.columns,
-            namespaceColumnNames
+        const defaultColumns =
+            PatientViewMutationTable.defaultProps.columns || [];
+        const columns = new Array<ExtendedMutationTableColumnType>(
+            defaultColumns.length + namespaceColumnNames.length
         );
+
+        for (let index = 0; index < defaultColumns.length; index += 1) {
+            columns[index] = defaultColumns[index];
+        }
+        for (
+            let index = 0;
+            index < namespaceColumnNames.length;
+            index += 1
+        ) {
+            columns[defaultColumns.length + index] = namespaceColumnNames[index];
+        }
+
+        return columns;
     }
 
     readonly timeline = MakeMobxView({
-        await: () => [this.props.patientViewPageStore.clinicalEvents],
+        await: () => [
+            this.props.patientViewPageStore.clinicalEvents,
+            this.props.patientViewPageStore.clinicalDataGroupedBySample,
+        ],
         render: () => {
             if (
                 this.props.sampleManager !== null &&
+                this.props.patientViewPageStore.clinicalDataGroupedBySample
+                    .isComplete &&
                 this.props.patientViewPageStore.clinicalEvents.result!.length >
                     0
             ) {
@@ -421,7 +446,6 @@ export default class PatientViewMutationsTab extends React.Component<
                         {this.showTimeline && (
                             <div style={{ marginTop: 10 }}>
                                 <TimelineWrapper
-                                    key={`tlkey-${WindowStore.size.width}-${this.showTimeline}1`}
                                     dataStore={this.dataStore}
                                     caseMetaData={{
                                         color: this.props.sampleManager
@@ -435,11 +459,18 @@ export default class PatientViewMutationsTab extends React.Component<
                                         this.props.patientViewPageStore
                                             .clinicalEvents.result
                                     }
+                                    clinicalEventsSignature={
+                                        this.clinicalEventsSignature
+                                    }
                                     sampleManager={this.props.sampleManager}
                                     width={WindowStore.size.width}
                                     samples={
                                         this.props.patientViewPageStore.samples
                                             .result
+                                    }
+                                    clinicalSamples={
+                                        this.props.patientViewPageStore
+                                            .clinicalDataGroupedBySample.result
                                     }
                                     mutationProfileId={
                                         this.props.patientViewPageStore

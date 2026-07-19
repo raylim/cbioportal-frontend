@@ -1,5 +1,4 @@
 import * as React from 'react';
-import _ from 'lodash';
 import { DefaultTooltip } from 'cbioportal-frontend-commons';
 import 'rc-tooltip/assets/bootstrap_white.css';
 import { Mutation } from 'cbioportal-ts-api-client';
@@ -96,45 +95,56 @@ export default class AlleleFreqColumnFormatter {
         }
 
         const sampleOrder = sampleManager.getSampleIdsInOrder();
-        const barX = sampleOrder.reduce((map, sampleId: string, i: number) => {
-            map[sampleId] = AlleleFreqColumnFormatter.indexToBarLeft(i);
-            return map;
-        }, {} as { [s: string]: number });
-        const sampleElements = mutations.map((m: Mutation) => {
-            const args = AlleleFreqColumnFormatter.getComponentForSampleArgs(m);
-            return AlleleFreqColumnFormatter.convertMutationToSampleElement(
-                m,
-                sampleManager.getColorForSample(m.sampleId),
-                barX[m.sampleId],
+        const sampleOrderLength = sampleOrder.length;
+        const barX = {} as { [s: string]: number };
+        for (let index = 0; index < sampleOrderLength; index += 1) {
+            barX[sampleOrder[index]] = AlleleFreqColumnFormatter.indexToBarLeft(
+                index
+            );
+        }
+        const sampleToElements = {} as { [s: string]: any };
+        for (let index = 0; index < mutations.length; index += 1) {
+            const mutation = mutations[index];
+            const args = AlleleFreqColumnFormatter.getComponentForSampleArgs(
+                mutation
+            );
+            const elements = AlleleFreqColumnFormatter.convertMutationToSampleElement(
+                mutation,
+                sampleManager.getColorForSample(mutation.sampleId),
+                barX[mutation.sampleId],
                 sampleManager.getComponentForSample(
-                    m.sampleId,
+                    mutation.sampleId,
                     args.opacity,
                     args.extraTooltipText
                 )
             );
-        });
-        const sampleToElements = sampleElements.reduce((map, elements: any) => {
             if (elements) {
-                map[elements.sampleId] = elements;
+                sampleToElements[elements.sampleId] = elements;
             }
-            return map;
-        }, {} as { [s: string]: any });
-        const elementsInSampleOrder = sampleOrder
-            .map((sampleId: string) => sampleToElements[sampleId])
-            .filter((x: any) => !!x);
-        const tooltipLines = elementsInSampleOrder.map((elements: any) => (
-            <span key={elements.sampleId}>
-                {elements.component} {elements.text}
-                <br />
-            </span>
-        ));
-        const freqs = sampleOrder.map(
-            (sampleId: string) =>
-                (sampleToElements[sampleId] &&
-                    sampleToElements[sampleId].freq) ||
-                undefined
-        );
-        const bars = elementsInSampleOrder.map((elements: any) => elements.bar);
+        }
+        const elementsInSampleOrder: any[] = [];
+        const tooltipLines: JSX.Element[] = [];
+        const freqs = new Array<number | undefined>(sampleOrderLength);
+        const bars: JSX.Element[] = [];
+        let definedFrequencyCount = 0;
+        for (let index = 0; index < sampleOrderLength; index += 1) {
+            const sampleId = sampleOrder[index];
+            const elements = sampleToElements[sampleId];
+            freqs[index] = elements ? elements.freq : undefined;
+            if (freqs[index] !== undefined) {
+                definedFrequencyCount += 1;
+            }
+            if (elements) {
+                elementsInSampleOrder.push(elements);
+                tooltipLines.push(
+                    <span key={elements.sampleId}>
+                        {elements.component} {elements.text}
+                        <br />
+                    </span>
+                );
+                bars.push(elements.bar);
+            }
+        }
 
         let content: JSX.Element = <span />;
 
@@ -145,12 +155,12 @@ export default class AlleleFreqColumnFormatter {
             const visualizedSampleIndex = sampleOrder.indexOf(
                 sampleManager.sampleIdsInHeader[0]
             );
+            const visualizedFrequency = freqs[visualizedSampleIndex];
             content = (
                 <span>
-                    {!isNaN(freqs[visualizedSampleIndex])
-                        ? getFormattedFrequencyValue(
-                              freqs[visualizedSampleIndex]
-                          )
+                    {visualizedFrequency !== undefined &&
+                    !isNaN(visualizedFrequency)
+                        ? getFormattedFrequencyValue(visualizedFrequency)
                         : ''}
                 </span>
             );
@@ -171,10 +181,7 @@ export default class AlleleFreqColumnFormatter {
         }
 
         // as long as we have tooltip lines, show tooltip in either cases (single or multiple)
-        if (
-            tooltipLines.length > 0 &&
-            freqs.filter(freq => freq !== undefined).length > 0
-        ) {
+        if (tooltipLines.length > 0 && definedFrequencyCount > 0) {
             const overlay = () => <span>{tooltipLines}</span>;
             content = (
                 <DefaultTooltip
@@ -234,8 +241,10 @@ export default class AlleleFreqColumnFormatter {
                     sampleManager
                 );
                 // if there is at least one valid (non-falsey) value, it should be visible
-                if (_.compact(frequency).length > 0) {
-                    return true;
+                for (let index = 0; index < frequency.length; index += 1) {
+                    if (frequency[index]) {
+                        return true;
+                    }
                 }
             }
         }

@@ -110,31 +110,30 @@ export default class PatientViewMutationTable extends MutationTable<
 
     protected generateColumns() {
         super.generateColumns();
+        const sampleManager = this.props.sampleManager;
+        const sampleToGenePanelId = this.props.sampleToGenePanelId;
+        const genePanelIdToEntrezGeneIds =
+            this.props.genePanelIdToEntrezGeneIds;
+        const onSelectGenePanel = this.props.onSelectGenePanel;
+        const disableTooltip = this.props.disableTooltip;
+        const samples = this.getSamples();
+        const allData = this.props.dataStore
+            ? this.props.dataStore.allData
+            : this.props.data;
 
         this._columns[MutationTableColumnType.TUMOR_ALLELE_FREQ] = {
             name: 'Allele Freq',
             headerRender: this.props.alleleFreqHeaderRender,
             render: (d: Mutation[]) =>
-                AlleleFreqColumnFormatter.renderFunction(
-                    d,
-                    this.props.sampleManager
-                ),
+                AlleleFreqColumnFormatter.renderFunction(d, sampleManager),
             sortBy: (d: Mutation[]) =>
-                AlleleFreqColumnFormatter.getSortValue(
-                    d,
-                    this.props.sampleManager
-                ),
+                AlleleFreqColumnFormatter.getSortValue(d, sampleManager),
             download: (d: Mutation[]) =>
                 AlleleFreqColumnFormatter.getFrequency(d),
             tooltip: this.props.alleleFreqHeaderRender
                 ? undefined
                 : defaultAlleleFrequencyHeaderTooltip,
-            visible: AlleleFreqColumnFormatter.isVisible(
-                this.props.sampleManager,
-                this.props.dataStore
-                    ? this.props.dataStore.allData
-                    : this.props.data
-            ),
+            visible: AlleleFreqColumnFormatter.isVisible(sampleManager, allData),
         };
 
         this._columns[MutationTableColumnType.SAMPLES] = {
@@ -142,24 +141,24 @@ export default class PatientViewMutationTable extends MutationTable<
             render: (d: Mutation[]) =>
                 TumorColumnFormatter.renderFunction(
                     d,
-                    this.props.sampleManager,
-                    this.props.sampleToGenePanelId,
-                    this.props.genePanelIdToEntrezGeneIds,
-                    this.props.onSelectGenePanel,
-                    this.props.disableTooltip
+                    sampleManager,
+                    sampleToGenePanelId,
+                    genePanelIdToEntrezGeneIds,
+                    onSelectGenePanel,
+                    disableTooltip
                 ),
             sortBy: (d: Mutation[]) =>
-                TumorColumnFormatter.getSortValue(d, this.props.sampleManager),
+                TumorColumnFormatter.getSortValue(d, sampleManager),
             download: (d: Mutation[]) => TumorColumnFormatter.getSample(d),
             resizable: true,
         };
 
         const GenePanelProps = (d: Mutation[]) => ({
             data: d,
-            sampleToGenePanelId: this.props.sampleToGenePanelId,
-            sampleManager: this.props.sampleManager,
-            genePanelIdToGene: this.props.genePanelIdToEntrezGeneIds,
-            onSelectGenePanel: this.props.onSelectGenePanel,
+            sampleToGenePanelId,
+            sampleManager,
+            genePanelIdToGene: genePanelIdToEntrezGeneIds,
+            onSelectGenePanel,
         });
 
         this._columns[MutationTableColumnType.GENE_PANEL] = {
@@ -183,8 +182,8 @@ export default class PatientViewMutationTable extends MutationTable<
             MutationTableColumnType.CANCER_CELL_FRACTION
         ] = {
             ...getDefaultCancerCellFractionColumnDefinition(
-                this.getSamples(),
-                this.props.sampleManager
+                samples,
+                sampleManager
             ),
             // Show CCF column by default if data exists
             visible:
@@ -196,16 +195,16 @@ export default class PatientViewMutationTable extends MutationTable<
         this._columns[
             MutationTableColumnType.CLONAL
         ] = getDefaultClonalColumnDefinition(
-            this.getSamples(),
-            this.props.sampleManager
+            samples,
+            sampleManager
         );
 
         this._columns[
             MutationTableColumnType.EXPECTED_ALT_COPIES
         ] = {
             ...getDefaultExpectedAltCopiesColumnDefinition(
-                this.getSamples(),
-                this.props.sampleManager
+                samples,
+                sampleManager
             ),
             // Show Expected Alt Copies column by default if data exists
             visible:
@@ -217,9 +216,9 @@ export default class PatientViewMutationTable extends MutationTable<
         this._columns[
             MutationTableColumnType.ASCN_COPY_NUM
         ] = getDefaultASCNCopyNumberColumnDefinition(
-            this.getSamples(),
+            samples,
             this.props.sampleIdToClinicalDataMap,
-            this.props.sampleManager
+            sampleManager
         );
 
         // customization for allele count columns
@@ -229,7 +228,7 @@ export default class PatientViewMutationTable extends MutationTable<
         ) =>
             AlleleCountColumnFormatter.renderFunction(
                 d,
-                this.getSamples(),
+                samples,
                 'normalRefCount'
             );
         this._columns[MutationTableColumnType.REF_READS_N].download = (
@@ -241,7 +240,7 @@ export default class PatientViewMutationTable extends MutationTable<
         ) =>
             AlleleCountColumnFormatter.renderFunction(
                 d,
-                this.getSamples(),
+                samples,
                 'normalAltCount'
             );
         this._columns[MutationTableColumnType.VAR_READS_N].download = (
@@ -253,7 +252,7 @@ export default class PatientViewMutationTable extends MutationTable<
         ) =>
             AlleleCountColumnFormatter.renderFunction(
                 d,
-                this.getSamples(),
+                samples,
                 'tumorRefCount'
             );
         this._columns[MutationTableColumnType.REF_READS].download = (
@@ -265,7 +264,7 @@ export default class PatientViewMutationTable extends MutationTable<
         ) =>
             AlleleCountColumnFormatter.renderFunction(
                 d,
-                this.getSamples(),
+                samples,
                 'tumorAltCount'
             );
         this._columns[MutationTableColumnType.VAR_READS].download = (

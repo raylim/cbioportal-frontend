@@ -320,66 +320,80 @@ export const colorMap: ColorMapProps[] = [
         color: '#368BFD',
     },
 ];
+
+function getMatchingColorMapEntry(
+    label: string
+): ColorMapProps | undefined {
+    const useAlternativeName =
+        label.indexOf('_') !== -1 || label.indexOf('-') !== -1;
+    let matchingEntry: ColorMapProps | undefined;
+
+    for (let index = 0; index < colorMap.length; index += 1) {
+        const candidate = colorMap[index];
+        const matchValue = useAlternativeName
+            ? candidate.alternativeName
+            : candidate.name;
+
+        if (label.includes(matchValue)) {
+            matchingEntry = candidate;
+        }
+    }
+
+    return matchingEntry;
+}
+
 export function getColorsForSignatures(
     dataset: IMutationalCounts[],
     yAxisSetting: string
 ): IColorLegend[] {
-    const colorTableData = dataset.map((obj: IMutationalCounts) => {
+    const colorTableData = new Array<IColorLegend>(dataset.length);
+
+    for (let index = 0; index < dataset.length; index += 1) {
+        const obj = dataset[index];
         if (obj.mutationalSignatureLabel !== '') {
-            const colorIdentity = colorMap.filter(cmap => {
-                if (
-                    obj.mutationalSignatureLabel.indexOf('_') == -1 &&
-                    obj.mutationalSignatureLabel.indexOf('-') == -1
-                ) {
-                    if (
-                        obj.mutationalSignatureLabel.match(cmap.name) !== null
-                    ) {
-                        return cmap.color;
-                    }
-                } else {
-                    if (
-                        obj.mutationalSignatureLabel.match(
-                            cmap.alternativeName
-                        ) !== null
-                    ) {
-                        return cmap.color;
-                    }
-                }
-            });
+            const colorIdentity = getMatchingColorMapEntry(
+                obj.mutationalSignatureLabel
+            );
             const label = formatTooltipLabelCosmicStyle(
                 obj.version,
                 obj.mutationalSignatureLabel,
-                colorIdentity,
+                colorIdentity ? [colorIdentity] : [],
                 yAxisSetting,
                 obj.value,
                 obj.percentage
             );
             const group: string =
-                colorIdentity.length > 0
-                    ? colorIdentity[colorIdentity.length - 1].category
-                    : 'unknown';
+                colorIdentity?.category || 'unknown';
             const colorValue: string =
-                colorIdentity.length > 0
-                    ? colorIdentity[colorIdentity.length - 1].color
-                    : '#EE4B2B';
+                colorIdentity?.color || '#EE4B2B';
             const subcategory: string =
-                'subcategory' in colorIdentity[colorIdentity.length - 1]
-                    ? colorIdentity[colorIdentity.length - 1].subcategory!
-                    : ' ';
+                colorIdentity?.subcategory || ' ';
             const sublabel: string =
-                'sublabel' in colorIdentity[colorIdentity.length - 1]
-                    ? colorIdentity[colorIdentity.length - 1].sublabel!
-                    : ' ';
-            return { ...obj, colorValue, label, subcategory, sublabel, group };
+                colorIdentity?.sublabel || ' ';
+            colorTableData[index] = {
+                ...obj,
+                colorValue,
+                label,
+                subcategory,
+                sublabel,
+                group,
+            };
         } else {
             const label = obj.mutationalSignatureLabel;
             const colorValue = '#EE4B2B';
             const group = ' ';
             const subcategory: string = ' ';
             const sublabel: string = '';
-            return { ...obj, colorValue, label, subcategory, sublabel, group };
+            colorTableData[index] = {
+                ...obj,
+                colorValue,
+                label,
+                subcategory,
+                sublabel,
+                group,
+            };
         }
-    });
+    }
     if (colorTableData[0].group !== ' ') {
         return _.sortBy(colorTableData, 'group');
     } else {
@@ -391,10 +405,17 @@ export function getColorsForSignatures(
 export function getPercentageOfMutationalCount(
     inputData: IMutationalCounts[]
 ): IMutationalCounts[] {
-    const sumValue = _.sum(inputData.map(item => item.value));
-    return inputData.map(item => {
-        const percentage = Math.round((item.value / sumValue!) * 100);
-        return {
+    let sumValue = 0;
+    for (let index = 0; index < inputData.length; index += 1) {
+        sumValue += inputData[index].value;
+    }
+
+    const dataWithPercentages = new Array<IMutationalCounts>(inputData.length);
+    for (let index = 0; index < inputData.length; index += 1) {
+        const item = inputData[index];
+        const percentage =
+            sumValue === 0 ? 0 : Math.round((item.value / sumValue) * 100);
+        dataWithPercentages[index] = {
             uniqueSampleKey: item.uniqueSampleKey,
             patientId: item.patientId,
             uniquePatientKey: item.uniquePatientKey,
@@ -403,10 +424,12 @@ export function getPercentageOfMutationalCount(
             mutationalSignatureLabel: item.mutationalSignatureLabel,
             mutationalSignatureClass: item.mutationalSignatureClass,
             version: item.version,
-            percentage: sumValue == 0 ? 0 : percentage,
+            percentage,
             value: item.value,
         };
-    });
+    }
+
+    return dataWithPercentages;
 }
 
 export function getxScalePoint(

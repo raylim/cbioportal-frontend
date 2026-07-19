@@ -52,6 +52,9 @@ async function fetchForStudy(
                 } as DiscreteCopyNumberFilter;
             });
         }
+        if (filters.length === 0) {
+            return { data: [], meta: studyId };
+        }
         const allData: DiscreteCopyNumberData[][] = await Promise.all(
             filters.map(filter => {
                 if (typeof molecularProfileIdDiscrete === 'undefined') {

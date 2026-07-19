@@ -1,5 +1,4 @@
 import * as React from 'react';
-import _ from 'lodash';
 import {
     buildCivicEntry,
     ICivicEntry,
@@ -35,6 +34,22 @@ import { ICopyNumberTableWrapperProps } from '../CopyNumberTableWrapper';
  * @author Selcuk Onur Sumer
  */
 export default class AnnotationColumnFormatter {
+    private static hasOwnEntries(
+        value: { [key: string]: unknown } | undefined
+    ): boolean {
+        if (!value) {
+            return false;
+        }
+
+        for (const key in value) {
+            if (Object.prototype.hasOwnProperty.call(value, key)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     public static getData(
         copyNumberData: DiscreteCopyNumberData[] | undefined,
         oncoKbCancerGenes?: RemoteData<CancerGene[] | Error | undefined>,
@@ -51,26 +66,24 @@ export default class AnnotationColumnFormatter {
             let oncoKbIndicator: IndicatorQueryResp | undefined = undefined;
             let oncoKbStatus: IAnnotation['oncoKbStatus'] = 'complete';
             let hugoGeneSymbol = copyNumberData[0].gene.hugoGeneSymbol;
+            const entrezGeneId = copyNumberData[0].entrezGeneId;
 
             let oncoKbGeneExist = false;
             let isOncoKbCancerGene = false;
             if (
                 oncoKbCancerGenes &&
+                oncoKbCancerGenes.result &&
                 !(oncoKbCancerGenes.result instanceof Error)
             ) {
-                oncoKbGeneExist =
-                    _.find(
-                        oncoKbCancerGenes.result,
-                        (gene: CancerGene) =>
-                            gene.oncokbAnnotated &&
-                            gene.entrezGeneId === copyNumberData[0].entrezGeneId
-                    ) !== undefined;
-                isOncoKbCancerGene =
-                    _.find(
-                        oncoKbCancerGenes.result,
-                        (gene: CancerGene) =>
-                            gene.entrezGeneId === copyNumberData[0].entrezGeneId
-                    ) !== undefined;
+                for (const gene of oncoKbCancerGenes.result) {
+                    if (gene.entrezGeneId === entrezGeneId) {
+                        isOncoKbCancerGene = true;
+                        if (gene.oncokbAnnotated) {
+                            oncoKbGeneExist = true;
+                            break;
+                        }
+                    }
+                }
             }
 
             // Always show oncogenicity icon even when the indicatorMapResult is empty.
@@ -97,12 +110,15 @@ export default class AnnotationColumnFormatter {
                         uniqueSampleKeyToTumorType,
                         studyIdToStudy
                     );
-                    oncoKbAvailableDataTypes = _.uniq([
-                        ...oncoKbAvailableDataTypes,
-                        ...calculateOncoKbAvailableDataType(
-                            _.values(oncoKbData.result.indicatorMap)
-                        ),
-                    ]);
+                    const indicatorMap = oncoKbData.result.indicatorMap || {};
+                    const availableDataTypes = calculateOncoKbAvailableDataType(
+                        Object.values(indicatorMap)
+                    );
+                    for (const dataType of availableDataTypes) {
+                        if (!oncoKbAvailableDataTypes.includes(dataType)) {
+                            oncoKbAvailableDataTypes.push(dataType);
+                        }
+                    }
                 }
                 oncoKbStatus = oncoKbData ? oncoKbData.status : 'pending';
             }
@@ -179,7 +195,8 @@ export default class AnnotationColumnFormatter {
         //geneEntry must exists, and only return data for genes with variants or it has a description provided by the Civic API
         if (
             geneSummary &&
-            (!_.isEmpty(geneVariants) || geneSummary.description !== '')
+            (AnnotationColumnFormatter.hasOwnEntries(geneVariants) ||
+                geneSummary.description !== '')
         ) {
             civicEntry = buildCivicEntry(geneSummary, geneVariants);
         }
@@ -215,7 +232,10 @@ export default class AnnotationColumnFormatter {
         } = getCivicCNAVariants(copyNumberData, geneSymbol, civicVariants);
         let geneSummary: ICivicGeneSummary = civicGenes[geneSymbol];
 
-        if (geneSummary && _.isEmpty(geneVariants)) {
+        if (
+            geneSummary &&
+            !AnnotationColumnFormatter.hasOwnEntries(geneVariants)
+        ) {
             return false;
         }
 
@@ -273,12 +293,20 @@ export default class AnnotationColumnFormatter {
             civicGenes,
             civicVariants
         );
+        const oncoKbSortValues = oncoKbAnnotationSortValue(
+            annotationData.oncoKbIndicator
+        );
+        const civicSortValues = civicSortValue(annotationData.civicEntry);
 
-        return _.flatten([
-            oncoKbAnnotationSortValue(annotationData.oncoKbIndicator),
-            civicSortValue(annotationData.civicEntry),
+        return [
+            ...(Array.isArray(oncoKbSortValues)
+                ? oncoKbSortValues
+                : [oncoKbSortValues]),
+            ...(Array.isArray(civicSortValues)
+                ? civicSortValues
+                : [civicSortValues]),
             annotationData.isOncoKbCancerGene ? 1 : 0,
-        ]);
+        ];
     }
 
     public static renderFunction(

@@ -76,4 +76,28 @@ describe('AlleleFreqColumnFormatter', () => {
             '0.09090909090909091'
         );
     });
+    it('returns sort values in sample-manager order with null for missing samples', () => {
+        const sampleManager = {
+            getSampleIdsInOrder: sinon
+                .stub()
+                .returns(['sample2', 'sample1', 'sample3']),
+        } as any;
+        const mutations = [
+            initMutation({
+                sampleId: 'sample1',
+                tumorAltCount: 1,
+                tumorRefCount: 9,
+            }),
+            initMutation({
+                sampleId: 'sample2',
+                tumorAltCount: 2,
+                tumorRefCount: 8,
+            }),
+        ] as Mutation[];
+
+        assert.deepEqual(
+            AlleleFreqColumnFormatter.getSortValue(mutations, sampleManager),
+            [0.2, 0.1, null]
+        );
+    });
 });
