@@ -1,38 +1,218 @@
 import { TimelineEvent, TimelineTrackSpecification } from '../types';
-import { getTrackHeight } from './helpers';
+import { buildTimelineEventSignature, getTrackHeight } from './helpers';
 import { tickFormatNumeral } from 'cbioportal-frontend-commons';
-import _ from 'lodash';
+
+type CachedTrackValueRangeEntry = {
+    getLineChartValue?: TimelineTrackSpecification['getLineChartValue'];
+    signature: string;
+    range: { min: number; max: number };
+};
+
+type CachedLineChartItemsSnapshotEntry = {
+    getLineChartValue?: TimelineTrackSpecification['getLineChartValue'];
+    orderedSnapshot: string;
+    range: { min: number; max: number };
+    signature: string;
+};
+
+type CachedLineChartTicksEntry = {
+    getLineChartValue?: TimelineTrackSpecification['getLineChartValue'];
+    signature: string;
+    trackHeight: number;
+    ticks: { label: string; offset: number }[];
+};
+
+type CachedGroupedLineChartValueEntry = {
+    getLineChartValue?: TimelineTrackSpecification['getLineChartValue'];
+    hasFiniteValue: boolean;
+    maxFiniteValue: number;
+    orderedSnapshot: string;
+    signature: string;
+    maxValue: number | null;
+};
+
+const trackValueRangeCache = new WeakMap<
+    TimelineEvent[],
+    CachedTrackValueRangeEntry
+>();
+const lineChartItemsSnapshotCache = new WeakMap<
+    TimelineEvent[],
+    CachedLineChartItemsSnapshotEntry
+>();
+const lineChartTicksCache = new WeakMap<
+    TimelineEvent[],
+    CachedLineChartTicksEntry
+>();
+const groupedLineChartValueCache = new WeakMap<
+    TimelineEvent[],
+    CachedGroupedLineChartValueEntry
+>();
+
+function getLineChartItemsSnapshot(
+    items: TimelineEvent[],
+    getLineChartValue: NonNullable<TimelineTrackSpecification['getLineChartValue']>
+): CachedLineChartItemsSnapshotEntry {
+    let orderedSnapshot = '';
+    let min = Number.POSITIVE_INFINITY;
+    let max = Number.NEGATIVE_INFINITY;
+
+    for (let index = 0; index < items.length; index += 1) {
+        const event = items[index];
+        const value = getLineChartValue(event);
+        if (index > 0) {
+            orderedSnapshot += '|';
+        }
+        orderedSnapshot += `${buildTimelineEventSignature(event)}::${
+            value == null ? '' : value
+        }`;
+
+        if (value === null || !Number.isFinite(value)) {
+            continue;
+        }
+
+        min = Math.min(value, min);
+        max = Math.max(value, max);
+    }
+
+    const cached = lineChartItemsSnapshotCache.get(items);
+
+    if (
+        cached &&
+        cached.getLineChartValue === getLineChartValue &&
+        cached.orderedSnapshot === orderedSnapshot
+    ) {
+        return cached;
+    }
+
+    if (max === min) {
+        max = min + 1;
+    }
+
+    const snapshot = {
+        getLineChartValue,
+        orderedSnapshot,
+        range: { min, max },
+        signature: orderedSnapshot,
+    };
+    lineChartItemsSnapshotCache.set(items, snapshot);
+    return snapshot;
+}
+
+function getCachedMaxLineChartValue(
+    events: TimelineEvent[],
+    getLineChartValue: NonNullable<TimelineTrackSpecification['getLineChartValue']>
+) {
+    const cached = groupedLineChartValueCache.get(events);
+    let orderedSnapshot = '';
+    let hasFiniteValue = false;
+    let maxFiniteValue = Number.NEGATIVE_INFINITY;
+
+    for (let index = 0; index < events.length; index += 1) {
+        const event = events[index];
+        const value = getLineChartValue(event);
+        if (index > 0) {
+            orderedSnapshot += '|';
+        }
+        orderedSnapshot += `${buildTimelineEventSignature(event)}::${
+            value == null ? '' : value
+        }`;
+        if (value === null || !Number.isFinite(value)) {
+            continue;
+        }
+
+        hasFiniteValue = true;
+        maxFiniteValue = Math.max(maxFiniteValue, value);
+    }
+
+    if (
+        cached &&
+        cached.getLineChartValue === getLineChartValue &&
+        cached.orderedSnapshot === orderedSnapshot
+    ) {
+        return cached.maxValue;
+    }
+
+    const maxValue = hasFiniteValue ? maxFiniteValue : null;
+
+    groupedLineChartValueCache.set(events, {
+        getLineChartValue,
+        hasFiniteValue,
+        maxFiniteValue,
+        orderedSnapshot,
+        signature: orderedSnapshot,
+        maxValue,
+    });
+
+    return maxValue;
+}
 
 export function getTicksForLineChartAxis(track: TimelineTrackSpecification) {
-    const range = getTrackValueRange(track);
+    const getLineChartValue = track.getLineChartValue!;
+    const items = track.items || [];
+    const snapshot = getLineChartItemsSnapshot(items, getLineChartValue);
+    const signature = snapshot.signature;
     const trackHeight = getTrackHeight(track);
+    const cached = lineChartTicksCache.get(items);
+
+    if (
+        cached &&
+        cached.getLineChartValue === getLineChartValue &&
+        cached.signature === signature &&
+        cached.trackHeight === trackHeight
+    ) {
+        return cached.ticks;
+    }
+
+    const range = snapshot.range;
     const rawTickValues = [range.min, (range.min + range.max) / 2, range.max];
-    return rawTickValues.map(v => ({
-        label: tickFormatNumeral(v, rawTickValues),
-        offset: getLineChartYCoordinateForValue(v, track, trackHeight, range),
-    }));
+    const ticks = new Array<{ label: string; offset: number }>(
+        rawTickValues.length
+    );
+    for (let index = 0; index < rawTickValues.length; index += 1) {
+        const value = rawTickValues[index];
+        ticks[index] = {
+            label: tickFormatNumeral(value, rawTickValues),
+            offset: getLineChartYCoordinateForValue(
+                value,
+                track,
+                trackHeight,
+                range
+            ),
+        };
+    }
+
+    lineChartTicksCache.set(items, {
+        getLineChartValue,
+        signature,
+        trackHeight,
+        ticks,
+    });
+
+    return ticks;
 }
 
 export function getTrackValueRange(track: TimelineTrackSpecification) {
     // We are assuming this is a line chart track
+    const getLineChartValue = track.getLineChartValue!;
+    const items = track.items || [];
+    const snapshot = getLineChartItemsSnapshot(items, getLineChartValue);
+    const signature = snapshot.signature;
+    const cached = trackValueRangeCache.get(items);
 
-    let min = Number.POSITIVE_INFINITY;
-    let max = Number.NEGATIVE_INFINITY;
-    let value: number | null;
-    for (const event of track.items) {
-        value = track.getLineChartValue!(event);
-        if (value === null) {
-            continue;
-        }
-        min = Math.min(value, min);
-        max = Math.max(value, max);
+    if (
+        cached &&
+        cached.getLineChartValue === getLineChartValue &&
+        cached.signature === signature
+    ) {
+        return cached.range;
     }
-    if (max === min) {
-        // prevent divide-by-zero and scaling issues
-        max = min + 1;
-    }
-
-    return { min, max };
+    const range = snapshot.range;
+    trackValueRangeCache.set(items, {
+        getLineChartValue,
+        signature,
+        range,
+    });
+    return range;
 }
 
 export function getLineChartYCoordinateForValue(
@@ -56,13 +236,16 @@ export function getLineChartYCoordinateForEvents(
     trackHeight: number,
     trackValueRange: { min: number; max: number }
 ) {
-    let values = events.map(track.getLineChartValue!).filter(x => x !== null);
-    if (values.length === 0) {
+    const maxValue = getCachedMaxLineChartValue(
+        events,
+        track.getLineChartValue!
+    );
+    if (maxValue === null) {
         return null;
     }
 
     return getLineChartYCoordinateForValue(
-        _.max(values) || 0,
+        maxValue,
         track,
         trackHeight,
         trackValueRange

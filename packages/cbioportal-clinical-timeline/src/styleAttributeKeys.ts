@@ -1,0 +1,2 @@
+export const COLOR_ATTRIBUTE_KEY = 'STYLE_COLOR';
+export const SHAPE_ATTRIBUTE_KEY = 'STYLE_SHAPE';

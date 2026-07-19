@@ -9,13 +9,13 @@ import {
     TimelineTrackType,
 } from './types';
 import React, { useCallback, useState } from 'react';
-import _ from 'lodash';
 import {
+    buildTimelineEventSignature,
     colorGetterFactory,
     formatDate,
+    getPreparedTooltipAttributes,
     getTrackEventCustomColorGetterFromConfiguration,
     REMOVE_FOR_DOWNLOAD_CLASSNAME,
-    segmentAndSortAttributesForTooltip,
     TIMELINE_TRACK_HEIGHT,
 } from './lib/helpers';
 import { TimelineStore } from './TimelineStore';
@@ -28,11 +28,11 @@ import {
 } from './lib/lineChartAxisUtils';
 import { getBrowserWindow, getColor } from 'cbioportal-frontend-commons';
 import { getTrackLabel } from './TrackHeader';
+import { renderShape } from './renderHelpers';
 import {
     COLOR_ATTRIBUTE_KEY,
-    renderShape,
     SHAPE_ATTRIBUTE_KEY,
-} from './renderHelpers';
+} from './styleAttributeKeys';
 import ReactMarkdown from 'react-markdown';
 import { useLocalObservable, useLocalStore } from 'mobx-react-lite';
 
@@ -47,6 +47,7 @@ export interface ITimelineTrackProps {
     store: TimelineStore;
     y: number;
     height: number;
+    hoverTrackIndex?: number;
     width: number;
 }
 
@@ -54,9 +55,151 @@ export interface ITimelineTrackProps {
  get events with identical positions so we can stack them
  */
 export function groupEventsByPosition(events: TimelineEvent[]) {
-    return _.groupBy(events, e => {
-        return `${e.start}-${e.end}`;
-    });
+    return buildGroupedEventsSnapshot(events).groupedEvents;
+}
+
+function buildGroupedEventsSnapshot(events: TimelineEvent[]) {
+    const groupedEvents: GroupedEventsByPosition = {};
+    const groupedEntries: GroupedEventEntry[] = [];
+
+    for (let index = 0; index < events.length; index += 1) {
+        const event = events[index];
+        const positionKey = `${event.start}-${event.end}`;
+        let bucket = groupedEvents[positionKey];
+
+        if (!bucket) {
+            bucket = [];
+            groupedEvents[positionKey] = bucket;
+            groupedEntries.push({
+                events: bucket,
+                positionKey,
+            });
+        }
+
+        bucket.push(event);
+    }
+
+    return { groupedEntries, groupedEvents };
+}
+
+function sortGroupedEvents(
+    groupedEntries: GroupedEventEntry[],
+    groupedEvents: GroupedEventsByPosition,
+    sortSimultaneousEvents: (e: TimelineEvent[]) => TimelineEvent[]
+) {
+    for (let index = 0; index < groupedEntries.length; index += 1) {
+        const groupedEntry = groupedEntries[index];
+        const nextEvents = sortSimultaneousEvents(groupedEntry.events);
+        groupedEntry.events = nextEvents;
+        groupedEvents[groupedEntry.positionKey] = nextEvents;
+    }
+}
+
+type GroupedEventsByPosition = { [positionKey: string]: TimelineEvent[] };
+
+type GroupedEventEntry = {
+    events: TimelineEvent[];
+    positionKey: string;
+};
+
+type GroupedEventsCacheEntry = {
+    groupedEntries: GroupedEventEntry[];
+    groupedEvents: GroupedEventsByPosition;
+    orderedSnapshot: string;
+    sortSimultaneousEvents?: (e: TimelineEvent[]) => TimelineEvent[];
+};
+
+type CachedStackColorsEntry = {
+    colorGetter?: (event: TimelineEvent) => string;
+    colors: string[];
+    orderedSnapshot: string;
+};
+
+type CachedSameTrackEntry = {
+    allFromSameTrack: boolean;
+    orderedSnapshot: string;
+};
+
+const groupedEventsByPositionCache = new WeakMap<
+    TimelineEvent[],
+    GroupedEventsCacheEntry
+>();
+const stackColorsCache = new WeakMap<TimelineEvent[], CachedStackColorsEntry>();
+const sameTrackCache = new WeakMap<TimelineEvent[], CachedSameTrackEntry>();
+
+function buildGroupedEventsSnapshotSignature(events: TimelineEvent[]) {
+    let snapshot = '';
+
+    for (let index = 0; index < events.length; index += 1) {
+        const event = events[index];
+
+        if (index > 0) {
+            snapshot += '|';
+        }
+
+        snapshot += `${event.start}::${event.end}::${
+            event.event.uniquePatientKey || ''
+        }::${event.event.eventType || ''}`;
+    }
+
+    return snapshot;
+}
+
+export function getGroupedEventsForTrack(
+    events: TimelineEvent[] | undefined,
+    sortSimultaneousEvents?: (e: TimelineEvent[]) => TimelineEvent[]
+): GroupedEventsByPosition | undefined {
+    return getGroupedEventsSnapshotForTrack(events, sortSimultaneousEvents)
+        ?.groupedEvents;
+}
+
+export function getGroupedEventEntriesForTrack(
+    events: TimelineEvent[] | undefined,
+    sortSimultaneousEvents?: (e: TimelineEvent[]) => TimelineEvent[]
+): GroupedEventEntry[] | undefined {
+    return getGroupedEventsSnapshotForTrack(events, sortSimultaneousEvents)
+        ?.groupedEntries;
+}
+
+function getGroupedEventsSnapshotForTrack(
+    events: TimelineEvent[] | undefined,
+    sortSimultaneousEvents?: (e: TimelineEvent[]) => TimelineEvent[]
+): GroupedEventsCacheEntry | undefined {
+    if (!events) {
+        return undefined;
+    }
+
+    const orderedSnapshot = buildGroupedEventsSnapshotSignature(events);
+    const cached = groupedEventsByPositionCache.get(events);
+    if (
+        cached &&
+        cached.orderedSnapshot === orderedSnapshot &&
+        cached.sortSimultaneousEvents === sortSimultaneousEvents
+    ) {
+        return cached;
+    }
+
+    const snapshot = buildGroupedEventsSnapshot(events);
+    const groupedEvents = snapshot.groupedEvents;
+    const groupedEntries = snapshot.groupedEntries;
+
+    if (sortSimultaneousEvents) {
+        sortGroupedEvents(
+            groupedEntries,
+            groupedEvents,
+            sortSimultaneousEvents
+        );
+    }
+
+    const nextCached = {
+        groupedEntries,
+        groupedEvents,
+        orderedSnapshot,
+        sortSimultaneousEvents,
+    };
+    groupedEventsByPositionCache.set(events, nextCached);
+
+    return nextCached;
 }
 
 export function renderSuperscript(number: number, y: number = 0) {
@@ -81,15 +224,21 @@ export function renderSuperscript(number: number, y: number = 0) {
 
 function renderTickGridLines(track: TimelineTrackSpecification, width: number) {
     const ticks = getTicksForLineChartAxis(track);
-    return ticks.map(tick => (
-        <line
-            className={'tl-axis-grid-line tl-track-highlight'}
-            x1={0}
-            x2={width}
-            y1={tick.offset}
-            y2={tick.offset}
-        />
-    ));
+    const gridLines = new Array<JSX.Element>(ticks.length);
+    for (let index = 0; index < ticks.length; index += 1) {
+        const tick = ticks[index];
+        gridLines[index] = (
+            <line
+                key={`${tick.label}-${tick.offset}`}
+                className={'tl-axis-grid-line tl-track-highlight'}
+                x1={0}
+                x2={width}
+                y1={tick.offset}
+                y2={tick.offset}
+            />
+        );
+    }
+    return gridLines;
 }
 
 function renderLineChartConnectingLines(points: { x: number; y: number }[]) {
@@ -97,27 +246,29 @@ function renderLineChartConnectingLines(points: { x: number; y: number }[]) {
         return null;
     }
 
+    const lines = new Array<JSX.Element | null>(points.length);
+    lines[0] = null;
+    for (let index = 1; index < points.length; index += 1) {
+        const point = points[index];
+        const prev = points[index - 1];
+        lines[index] = (
+            <line
+                key={`${prev.x}-${prev.y}-${point.x}-${point.y}`}
+                style={{
+                    stroke: '#555',
+                    strokeWidth: 2,
+                }}
+                x1={prev.x}
+                y1={prev.y}
+                x2={point.x}
+                y2={point.y}
+            />
+        );
+    }
+
     return (
         <g>
-            {points.map((point, index) => {
-                if (index === 0) {
-                    return null;
-                } else {
-                    const prev = points[index - 1];
-                    return (
-                        <line
-                            style={{
-                                stroke: '#555',
-                                strokeWidth: 2,
-                            }}
-                            x1={prev.x}
-                            y1={prev.y}
-                            x2={point.x}
-                            y2={point.y}
-                        />
-                    );
-                }
-            })}
+            {lines}
         </g>
     );
 }
@@ -148,16 +299,56 @@ export function randomColorGetter(e: TimelineEvent) {
     return getColor(getTrackLabel(e.containingTrack));
 }
 
+function allEventsFromSameTrack(events: TimelineEvent[]) {
+    if (events.length < 2) {
+        return true;
+    }
+
+    let orderedSnapshot = '';
+    for (let index = 0; index < events.length; index += 1) {
+        const event = events[index];
+
+        if (index > 0) {
+            orderedSnapshot += '|';
+        }
+
+        orderedSnapshot += `${buildTimelineEventSignature(event)}::${
+            event.containingTrack.uid
+        }`;
+    }
+
+    const cached = sameTrackCache.get(events);
+    if (cached && cached.orderedSnapshot === orderedSnapshot) {
+        return cached.allFromSameTrack;
+    }
+
+    const firstTrackUid = events[0].containingTrack.uid;
+    let allFromSameTrack = true;
+    for (let index = 1; index < events.length; index += 1) {
+        if (events[index].containingTrack.uid !== firstTrackUid) {
+            allFromSameTrack = false;
+            break;
+        }
+    }
+
+    sameTrackCache.set(events, {
+        allFromSameTrack,
+        orderedSnapshot,
+    });
+
+    return allFromSameTrack;
+}
+
 export function renderPoint(
     events: TimelineEvent[],
     y: number,
-    eventColorGetter?: TimeLineColorGetter
+    colorGetter?: (event: TimelineEvent) => string
 ) {
+    const resolvedColorGetter = colorGetter || randomColorGetter;
     // When nested tracks are collapsed, we might see multiple events that are
     //  from different tracks. So let's check if all these events actually come
     //  from the same track
-    const allFromSameTrack =
-        _.uniq(events.map(e => e.containingTrack.uid)).length === 1;
+    const allFromSameTrack = allEventsFromSameTrack(events);
 
     let contents: any | null = null;
     if (allFromSameTrack && events[0].containingTrack.renderEvents) {
@@ -174,28 +365,63 @@ export function renderPoint(
                 <>
                     {renderSuperscript(events.length, y)}
                     {renderStack(
-                        events.map(colorGetterFactory(eventColorGetter)),
+                        getStackColorsForEvents(events, resolvedColorGetter),
                         y
                     )}
                 </>
             );
         } else {
-            contents = renderShape(
-                events[0],
-                y,
-                colorGetterFactory(eventColorGetter)
-            );
+            contents = renderShape(events[0], y, resolvedColorGetter);
         }
     }
 
     return <g>{contents}</g>;
 }
 
+export function getStackColorsForEvents(
+    events: TimelineEvent[],
+    colorGetter?: (event: TimelineEvent) => string
+) {
+    let orderedSnapshot = '';
+    for (let index = 0; index < events.length; index += 1) {
+        if (index > 0) {
+            orderedSnapshot += '|';
+        }
+
+        orderedSnapshot += buildTimelineEventSignature(events[index]);
+    }
+
+    const cached = stackColorsCache.get(events);
+
+    if (
+        cached &&
+        cached.orderedSnapshot === orderedSnapshot &&
+        cached.colorGetter === colorGetter
+    ) {
+        return cached.colors;
+    }
+
+    const resolvedColorGetter = colorGetter || randomColorGetter;
+    const colors = new Array<string>(events.length);
+    for (let index = 0; index < events.length; index += 1) {
+        colors[index] = resolvedColorGetter(events[index]);
+    }
+
+    stackColorsCache.set(events, {
+        colorGetter,
+        colors,
+        orderedSnapshot,
+    });
+
+    return colors;
+}
+
 function renderRange(
     pixelWidth: number,
     events: TimelineEvent[],
-    eventColorGetter?: TimeLineColorGetter
+    colorGetter?: (event: TimelineEvent) => string
 ) {
+    const resolvedColorGetter = colorGetter || randomColorGetter;
     const height = 5;
     return (
         <rect
@@ -204,7 +430,7 @@ function renderRange(
             y={(TIMELINE_TRACK_HEIGHT - height) / 2}
             rx="2"
             ry="2"
-            fill={colorGetterFactory(eventColorGetter)(events[0])}
+            fill={resolvedColorGetter(events[0])}
         />
     );
 }
@@ -218,34 +444,36 @@ export const TimelineTrack: React.FunctionComponent<ITimelineTrackProps> = obser
         store,
         y,
         height,
+        hoverTrackIndex,
         width,
     }: ITimelineTrackProps) {
-        let eventsGroupedByPosition;
+        const groupedEventEntries = getGroupedEventEntriesForTrack(
+            trackData.items,
+            trackData.sortSimultaneousEvents
+        );
+        const eventColorGetter = getTrackEventCustomColorGetterFromConfiguration(
+            trackData
+        );
+        const colorGetter = colorGetterFactory(eventColorGetter);
 
-        if (trackData.items) {
-            // group events which occur on the same day offset
-            // so they can be "stacked"
-            eventsGroupedByPosition = groupEventsByPosition(trackData.items);
-
-            // if this track has a custom sorting function
-            // configured for simultaneous events, employ it
-            if (trackData.sortSimultaneousEvents) {
-                eventsGroupedByPosition = _.mapValues(
-                    eventsGroupedByPosition,
-                    trackData.sortSimultaneousEvents
-                );
-            }
-        }
-
-        let trackValueRange: { min: number; max: number };
+        let trackValueRange: { min: number; max: number } | undefined;
         const linePoints: { x: number; y: number }[] = [];
         if (trackData.trackType === TimelineTrackType.LINE_CHART) {
             trackValueRange = getTrackValueRange(trackData);
         }
 
-        const points =
-            eventsGroupedByPosition &&
-            _.map(eventsGroupedByPosition, itemGroup => {
+        let points: JSX.Element[] | undefined;
+        if (groupedEventEntries) {
+            points = new Array<JSX.Element>(groupedEventEntries.length);
+            for (
+                let index = 0;
+                index < groupedEventEntries.length;
+                index += 1
+            ) {
+                const {
+                    events: itemGroup,
+                    positionKey,
+                } = groupedEventEntries[index];
                 const firstItem = itemGroup[0];
                 const position = getPosition(firstItem, limit);
 
@@ -268,9 +496,7 @@ export const TimelineTrack: React.FunctionComponent<ITimelineTrackProps> = obser
                         content = renderPoint(
                             itemGroup,
                             y,
-                            getTrackEventCustomColorGetterFromConfiguration(
-                                trackData
-                            )
+                            colorGetter
                         );
                         linePoints.push({
                             x: position ? position.pixelLeft : 0,
@@ -281,14 +507,13 @@ export const TimelineTrack: React.FunctionComponent<ITimelineTrackProps> = obser
                     content = renderRange(
                         position.pixelWidth,
                         itemGroup,
-                        getTrackEventCustomColorGetterFromConfiguration(
-                            trackData
-                        )
+                        colorGetter
                     );
                 }
 
-                return (
+                points[index] = (
                     <TimelineItemWithTooltip
+                        key={`${trackData.uid}-${positionKey}-${firstItem.event.uniquePatientKey || ''}`}
                         x={position && position.pixelLeft}
                         store={store}
                         track={trackData}
@@ -296,10 +521,12 @@ export const TimelineTrack: React.FunctionComponent<ITimelineTrackProps> = obser
                         content={content}
                     />
                 );
-            });
+            }
+        }
 
         return (
             <g
+                data-track-index={hoverTrackIndex}
                 className={'tl-track'}
                 transform={`translate(0 ${y})`}
                 onMouseEnter={handleTrackHover}
@@ -364,6 +591,11 @@ export const TimelineItemWithTooltip: React.FunctionComponent<{
             style={{ cursor: 'pointer', ...hoverStyle }}
             transform={transforms.join(' ')}
             onMouseMove={e => {
+                store.setMousePosition({
+                    x: e.pageX,
+                    y: e.pageY,
+                });
+
                 let uid = syncTooltipUid();
 
                 if (!uid) {
@@ -375,15 +607,11 @@ export const TimelineItemWithTooltip: React.FunctionComponent<{
                     setTooltipUid(uid);
 
                     store.setHoveredTooltipUid(uid);
-                }
 
-                // Update on every move (not just first creation) so the tooltip
-                // tracks the cursor and doesn't freeze at the entry point,
-                // which would cause it to obscure the underlying SVG element.
-                store.setMousePosition({
-                    x: e.pageX,
-                    y: e.pageY,
-                });
+                    if (events.length > 1) {
+                        store.pinTooltip(uid);
+                    }
+                }
             }}
             onMouseLeave={e => {
                 // we use a timeout here to allow user to
@@ -457,18 +685,44 @@ export const EventTooltipContent: React.FunctionComponent<{
     event: TimelineEvent;
     trackConfig: ITrackEventConfig | undefined;
 }> = function({ event, trackConfig }) {
-    let attributes = event.event.attributes.filter(attr => {
-        return (
-            attr.key !== COLOR_ATTRIBUTE_KEY && attr.key !== SHAPE_ATTRIBUTE_KEY
-        );
-    });
-
-    // if we have an attribute order configuration, we need to
-    // update attribute list accordingly
-    if (trackConfig?.attributeOrder) {
-        attributes = segmentAndSortAttributesForTooltip(
-            attributes,
-            trackConfig.attributeOrder
+    const attributes = getPreparedTooltipAttributes(
+        event.event.attributes,
+        trackConfig?.attributeOrder
+    );
+    const attributeRows = new Array<JSX.Element>(attributes.length);
+    for (let index = 0; index < attributes.length; index += 1) {
+        const attr = attributes[index];
+        attributeRows[index] = (
+            <tr key={`${attr.key}-${attr.value}`}>
+                <td>{attr.key.replace(/_/g, ' ')}</td>
+                <td>
+                    <ReactMarkdown
+                        allowedElements={['p', 'a']}
+                        linkTarget={'_blank'}
+                        components={{
+                            a: ({ node, ...props }) => {
+                                if (/:blank$/.test(props.href!)) {
+                                    return (
+                                        <a
+                                            href={props.href?.replace(
+                                                /:blank$/,
+                                                ''
+                                            )}
+                                            target={'_blank'}
+                                        >
+                                            {props.children}
+                                        </a>
+                                    );
+                                } else {
+                                    return <OurPopup {...props} />;
+                                }
+                            },
+                        }}
+                    >
+                        {attr.value}
+                    </ReactMarkdown>
+                </td>
+            </tr>
         );
     }
 
@@ -476,44 +730,7 @@ export const EventTooltipContent: React.FunctionComponent<{
         <div>
             <table className={'table table-condensed'}>
                 <tbody>
-                    {_.map(attributes, (attr: any) => {
-                        return (
-                            <tr>
-                                <td>{attr.key.replace(/_/g, ' ')}</td>
-                                <td>
-                                    <ReactMarkdown
-                                        allowedElements={['p', 'a']}
-                                        linkTarget={'_blank'}
-                                        components={{
-                                            a: ({ node, ...props }) => {
-                                                if (
-                                                    /:blank$/.test(props.href!)
-                                                ) {
-                                                    return (
-                                                        <a
-                                                            href={props.href?.replace(
-                                                                /:blank$/,
-                                                                ''
-                                                            )}
-                                                            target={'_blank'}
-                                                        >
-                                                            {props.children}
-                                                        </a>
-                                                    );
-                                                } else {
-                                                    return (
-                                                        <OurPopup {...props} />
-                                                    );
-                                                }
-                                            },
-                                        }}
-                                    >
-                                        {attr.value}
-                                    </ReactMarkdown>
-                                </td>
-                            </tr>
-                        );
-                    })}
+                    {attributeRows}
                     <tr>
                         <td>{`${
                             event.event.endNumberOfDaysSinceDiagnosis
