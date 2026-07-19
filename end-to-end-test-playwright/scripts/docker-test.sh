@@ -53,6 +53,9 @@ echo "Target: ${CBIOPORTAL_URL:-https://www.cbioportal.org (playwright.config.ts
 # LOCALDEV defaults ON: this suite exists to validate locally-built
 # frontend changes against a public backend. Opt out with LOCALDEV=0
 # (e.g. to verify against the deployed bundle on cbioportal.org).
+# Mirror the host wrapper's safety check: if the local HTTPS bundle
+# server is not available, fall back to the deployed bundle rather than
+# launching Chromium into the dev-mode interstitial.
 #
 # --add-host       ensures host.docker.internal points at the host gateway
 #                  so the playwright config's
@@ -60,7 +63,17 @@ echo "Target: ${CBIOPORTAL_URL:-https://www.cbioportal.org (playwright.config.ts
 #                  can reach `yarn startSSL` on the host's port 3000. On
 #                  macOS Docker Desktop this hostname exists already; on
 #                  Linux the explicit mapping is required. Harmless on Mac.
-LOCALDEV="${LOCALDEV:-1}"
+if [[ -z "${LOCALDEV:-}" ]]; then
+    if curl -ksSf --max-time 2 https://localhost:3000/ >/dev/null 2>&1; then
+        LOCALDEV=1
+    else
+        LOCALDEV=0
+        echo "LOCALDEV fallback: https://localhost:3000 unavailable; using deployed bundle" >&2
+    fi
+else
+    LOCALDEV="${LOCALDEV}"
+fi
+
 LOCALDEV_ARGS=()
 if [[ "${LOCALDEV}" != "0" ]]; then
     LOCALDEV_ARGS+=(--add-host=host.docker.internal:host-gateway)

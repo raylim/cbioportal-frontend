@@ -27,6 +27,7 @@ const SELECTED_CASE_SET =
     'div[data-test="CaseSetSelector"] span.Select-value-label[aria-selected="true"]';
 const MOLECULAR_CHECKBOX =
     'div[data-test="molecularProfileSelector"] input[type="checkbox"]';
+const VISIBLE_QUERY_BUTTON = 'button[data-test="queryButton"]:visible';
 
 async function countCheckedStudies(page: Page): Promise<number> {
     return await page
@@ -35,7 +36,33 @@ async function countCheckedStudies(page: Page): Promise<number> {
 }
 
 async function clickModifyStudy(page: Page) {
-    await page.locator('[data-test="modifyStudySelectionButton"]').click();
+    const modifyButton = page.locator(
+        '[data-test="modifyStudySelectionButton"], button:has-text("Modify")'
+    );
+    await expect(modifyButton.first()).toBeVisible({ timeout: 15000 });
+    await modifyButton.first().click();
+}
+
+async function ensureSingleStudyQueryForm(page: Page) {
+    const modifyButton = page.locator(
+        '[data-test="modifyStudySelectionButton"], button:has-text("Modify")'
+    );
+    if (await modifyButton.first().isVisible().catch(() => false)) {
+        return;
+    }
+
+    await page.goto('/');
+    await expect(page.locator(SEARCH_INPUT)).toBeVisible({
+        timeout: 20000,
+    });
+    await setInputText(page, SEARCH_INPUT, 'ovarian nature 2011');
+    await waitForNumberOfStudyCheckboxes(page, 1);
+    await page.locator(STUDY_SELECT_INPUT).first().click();
+    await page.waitForTimeout(200);
+    await clickQueryByGeneButton(page);
+    await expect(page.locator(MOLECULAR_CHECKBOX).first()).toBeAttached({
+        timeout: 10000,
+    });
 }
 
 test.describe('homepage', () => {
@@ -106,7 +133,7 @@ test.describe('homepage', () => {
             { timeout: 10000 }
         );
         await expect(
-            page.locator('button[data-test="queryButton"]')
+            page.locator(VISIBLE_QUERY_BUTTON)
         ).toBeDisabled();
 
         await setInputText(page, oqlEntry, 'PTEN: PROT>1');
@@ -117,7 +144,7 @@ test.describe('homepage', () => {
             { timeout: 10000 }
         );
         await expect(
-            page.locator('button[data-test="queryButton"]')
+            page.locator(VISIBLE_QUERY_BUTTON)
         ).toBeDisabled();
     });
 });
@@ -442,6 +469,7 @@ test.describe.serial(
         });
 
         test('modify study selection keeps default profiles checked', async () => {
+            await ensureSingleStudyQueryForm(page);
             await clickModifyStudy(page);
             await expect(page.locator(SEARCH_INPUT)).toBeVisible({
                 timeout: 10000,
@@ -467,6 +495,7 @@ test.describe.serial(
         });
 
         test('deselect study reverts to prior study defaults', async () => {
+            await ensureSingleStudyQueryForm(page);
             await clickModifyStudy(page);
             await expect(
                 page.locator('.studyItem_ampca_bcm_2016').first()
@@ -501,6 +530,7 @@ test.describe.serial(
         });
 
         test('select all TCGA firehose legacy studies keeps defaults', async () => {
+            await ensureSingleStudyQueryForm(page);
             await clickModifyStudy(page);
             await expect(page.locator(SEARCH_INPUT)).toBeVisible({
                 timeout: 10000,
@@ -528,6 +558,7 @@ test.describe.serial(
         });
 
         test('deselect all TCGA firehose legacy reverts to single-study defaults', async () => {
+            await ensureSingleStudyQueryForm(page);
             await clickModifyStudy(page);
             await page
                 .locator(
@@ -625,7 +656,7 @@ test.describe('auto-selecting needed profiles for oql in query form', () => {
             'TP53 BRCA1: EXP>1'
         );
 
-        const queryBtn = page.locator('button[data-test="queryButton"]');
+        const queryBtn = page.locator(VISIBLE_QUERY_BUTTON);
         await expect(queryBtn).toBeEnabled({ timeout: 5000 });
         await queryBtn.click();
 

@@ -7,17 +7,19 @@
     "test": "tests"
   },
   "scripts": {
-    "test": "./scripts/with-env.sh playwright test --headed",
-    "test:update": "./scripts/with-env.sh playwright test --update-snapshots",
-    "test:ui": "./scripts/with-env.sh playwright test --headed --ui",
+    "test": "./scripts/playwright-host.sh test",
+    "test:headless": "PW_FORCE_HEADLESS=1 ./scripts/playwright-host.sh test",
+    "test:update": "./scripts/playwright-host.sh test --update-snapshots",
+    "test:ui": "./scripts/with-env.sh ./node_modules/.bin/playwright test --headed --ui",
     "test:docker": "./scripts/docker-test.sh",
     "test:docker:update": "./scripts/docker-test.sh --update-snapshots",
     "test:docker:localdb": "PW_LOCAL=1 CBIOPORTAL_URL=http://localhost:8080 ./scripts/docker-test.sh tests/local",
     "test:docker:localdb:update": "PW_LOCAL=1 CBIOPORTAL_URL=http://localhost:8080 ./scripts/docker-test.sh tests/local --update-snapshots",
-    "test:localdb": "PW_LOCAL=1 LOCALDEV=0 CBIOPORTAL_URL=http://localhost:8080 playwright test --headed tests/local",
-    "test:localdb:update": "PW_LOCAL=1 LOCALDEV=0 CBIOPORTAL_URL=http://localhost:8080 playwright test tests/local --update-snapshots",
-    "test:localdb:ui": "PW_LOCAL=1 LOCALDEV=0 CBIOPORTAL_URL=http://localhost:8080 playwright test --headed --ui tests/local",
-    "report": "playwright show-report"
+    "test:localdb": "PW_LOCAL=1 LOCALDEV=0 CBIOPORTAL_URL=http://localhost:8080 ./scripts/playwright-host.sh test tests/local",
+    "test:localdb:headless": "PW_LOCAL=1 LOCALDEV=0 CBIOPORTAL_URL=http://localhost:8080 PW_FORCE_HEADLESS=1 ./scripts/playwright-host.sh test tests/local",
+    "test:localdb:update": "PW_LOCAL=1 LOCALDEV=0 CBIOPORTAL_URL=http://localhost:8080 ./scripts/playwright-host.sh test tests/local --update-snapshots",
+    "test:localdb:ui": "PW_LOCAL=1 LOCALDEV=0 CBIOPORTAL_URL=http://localhost:8080 ./scripts/with-env.sh ./node_modules/.bin/playwright test --headed --ui tests/local",
+    "report": "./node_modules/.bin/playwright show-report"
   },
   "keywords": [],
   "author": "",
