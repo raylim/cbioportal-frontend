@@ -5974,7 +5974,15 @@ export class StudyViewPageStore
                     const result = await this.internalClient.fetchGenericAssayDataCountsUsingPOST(
                         {
                             genericAssayDataCountFilter: {
-                                profileType: chartInfo.profileType,
+                                genericAssayDataFilters: Object.keys(
+                                    entityMetaByStableId
+                                ).map(
+                                    stableId =>
+                                        ({
+                                            stableId,
+                                            profileType: chartInfo.profileType,
+                                        }) as GenericAssayDataFilter
+                                ),
                                 studyViewFilter: this.filters,
                             } as GenericAssayDataCountFilter,
                         }
