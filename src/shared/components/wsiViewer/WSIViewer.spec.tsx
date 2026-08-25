@@ -5,7 +5,7 @@ import * as React from 'react';
 import { assert } from 'chai';
 import { action as mobxAction } from 'mobx';
 import TestRenderer, { act } from 'react-test-renderer';
-import WSIViewer from './WSIViewer';
+import WSIViewer, { transformDsaAnnotations } from './WSIViewer';
 import { readWsiHashState } from './wsiViewStateUtils';
 import * as wsiMetaUtils from './wsiMetaUtils';
 import * as wsiSlideUtils from './wsiSlideUtils';
@@ -56,6 +56,15 @@ jest.mock('openseadragon', () => {
     }));
     return OSD;
 });
+
+jest.mock('@annotorious/openseadragon', () => ({
+    createOSDAnnotator: jest.fn().mockReturnValue({
+        setAnnotations: jest.fn(),
+        setVisible: jest.fn(),
+        on: jest.fn(),
+        destroy: jest.fn(),
+    }),
+}));
 
 jest.mock('./wsiOpenSeadragonLoader', () => ({
     loadOpenSeadragon: () => mockLoadOpenSeadragon(),
@@ -3805,5 +3814,146 @@ describe('WSIViewer — open handler (mountOSD integration)', () => {
         } finally {
             (global as any).requestAnimationFrame = origRaf;
         }
+    });
+});
+
+describe('DSA annotation integration', () => {
+    it('converts rectangles, polygons, and points to W3C annotations', () => {
+        const result = transformDsaAnnotations([
+            {
+                _id: 'group1',
+                annotation: {
+                    name: 'Tumor ROI',
+                    elements: [
+                        {
+                            type: 'rectangle',
+                            center: [100, 200, 0],
+                            width: 80,
+                            height: 60,
+                        },
+                    ],
+                },
+            },
+            {
+                _id: 'group2',
+                annotation: {
+                    elements: [
+                        {
+                            type: 'polyline',
+                            points: [
+                                [0, 0, 0],
+                                [10, 0, 0],
+                                [10, 10, 0],
+                            ],
+                        },
+                        {
+                            type: 'point',
+                            center: [50, 50, 0],
+                        },
+                    ],
+                },
+            },
+        ] as any);
+
+        expect(result).toHaveLength(3);
+        expect((result[0] as any).body[0].value).toBe('Tumor ROI');
+        expect((result[0] as any).target.selector.value).toBe(
+            'xywh=pixel:60,170,80,60'
+        );
+        expect((result[1] as any).target.selector.type).toBe('SvgSelector');
+        expect((result[2] as any).target.selector.value).toBe(
+            'xywh=pixel:45,45,10,10'
+        );
+    });
+
+    it('skips unsupported or empty DSA elements', () => {
+        expect(
+            transformDsaAnnotations([
+                {
+                    _id: 'empty',
+                    annotation: { elements: [{ type: 'arrow' }] },
+                },
+                { _id: 'missing', annotation: {} },
+            ])
+        ).toEqual([]);
+    });
+
+    describe('resolveDsaItemId', () => {
+        const dsaUrl = 'https://dsa.example.com';
+
+        it('resolves and caches the item ID by image name', async () => {
+            const inst = makeInstance('https://tiles.example.com/patient/P-1', {
+                dsaUrl,
+            });
+            const fetchMock = jest.fn().mockResolvedValue({
+                ok: true,
+                json: async () => [
+                    { _id: 'gid-abc', name: 'img123.svs' },
+                    { _id: 'gid-other', name: 'other.svs' },
+                ],
+            });
+            setFetchMock(fetchMock);
+
+            await expect(inst.resolveDsaItemId('img123')).resolves.toBe(
+                'gid-abc'
+            );
+            await expect(inst.resolveDsaItemId('img123')).resolves.toBe(
+                'gid-abc'
+            );
+            expect(fetchMock).toHaveBeenCalledTimes(1);
+        });
+
+        it('returns null when DSA is unavailable or has no matching item', async () => {
+            const withoutDsa = makeInstance(
+                'https://tiles.example.com/patient/P-1'
+            );
+            await expect(withoutDsa.resolveDsaItemId('img123')).resolves.toBe(
+                null
+            );
+
+            const inst = makeInstance('https://tiles.example.com/patient/P-1', {
+                dsaUrl,
+            });
+            setFetchMock(
+                jest.fn().mockResolvedValue({
+                    ok: false,
+                    json: async () => [],
+                })
+            );
+            await expect(inst.resolveDsaItemId('img123')).resolves.toBe(null);
+        });
+    });
+
+    it('loads DSA annotations into the overlay state', async () => {
+        const inst = makeInstance('https://tiles.example.com/patient/P-1', {
+            dsaUrl: 'https://dsa.example.com',
+        });
+        setFetchMock(
+            jest.fn().mockResolvedValue({
+                ok: true,
+                json: async () => [
+                    {
+                        _id: 'ann1',
+                        annotation: {
+                            name: 'ROI',
+                            elements: [
+                                {
+                                    type: 'rectangle',
+                                    center: [200, 100, 0],
+                                    width: 40,
+                                    height: 20,
+                                },
+                            ],
+                        },
+                    },
+                ],
+            })
+        );
+
+        await inst.fetchDsaAnnotations('girder123');
+
+        expect(inst.dsaAnnotations).toHaveLength(1);
+        expect((inst.dsaAnnotations[0] as any).body[0].value).toBe('ROI');
+        expect(inst.annotationsLoading).toBe(false);
     });
 });

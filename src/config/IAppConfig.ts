@@ -161,6 +161,13 @@ export interface IServerConfig {
      * Null/undefined = feature hidden.
      */
     msk_wsi_tile_server_url: string | null;
+    /**
+     * Base URL of the MSK DSA (Digital Slide Archive) instance,
+     * e.g. https://dsa.mskcc.org
+     * Used to resolve girder item IDs, fetch annotations, and link to HistomicsUI.
+     * Null/undefined = DSA annotation features hidden.
+     */
+    msk_dsa_url: string | null;
     query_product_limit: number;
     clinical_attribute_product_limit: number;
     dat_method: string;

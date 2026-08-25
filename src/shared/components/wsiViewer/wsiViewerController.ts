@@ -78,6 +78,8 @@ export interface WsiViewerControllerHost {
         allSlides: Array<{ slide: Slide; sample: Sample }>
     ): { slide: Slide; sample: Sample } | undefined;
     beginSlideSelection(slide: Slide, sample: Sample): void;
+    onViewerOpen(viewer: unknown): void;
+    onViewerDestroy(): void;
     setSelectedMeta(meta: TileMetadata | null): void;
     setViewerReady(viewerReady: boolean): void;
     setSpinnerVisible(spinnerVisible: boolean): void;
@@ -427,6 +429,7 @@ export class WsiViewerController {
     }
 
     private destroyViewer() {
+        this.host.onViewerDestroy();
         destroyOsdHandles({
             osdMouseTracker: this.osdMouseTracker,
             osdViewer: this.osdViewer,
@@ -1172,6 +1175,7 @@ export class WsiViewerController {
             this.selectionTimeoutTimer = null;
         }
         this.host.setViewerReady(true);
+        this.host.onViewerOpen(this.osdViewer);
         if (
             slide.image_id === this.initialSlideImageId &&
             this.initialSlideLoadTrace

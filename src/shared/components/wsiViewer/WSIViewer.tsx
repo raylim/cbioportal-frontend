@@ -73,6 +73,9 @@ import {
 } from './wsiHierarchyUpdateUtils';
 import { reportWsiInitialSlideLoadPerformance } from 'shared/lib/tracking';
 
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { createOSDAnnotator } = require('@annotorious/openseadragon');
+
 // ---- design tokens (matches iframe viewer) ----
 const C = {
     blue: '#2986e2',
@@ -117,6 +120,8 @@ interface Props {
     height: number;
     /** cBioPortal study ID — used to build sample links in the sidebar */
     studyId?: string;
+    /** Base URL of the MSK Digital Slide Archive instance. */
+    dsaUrl?: string | null;
     /** Long-form cBioPortal study name shown in the metadata sidebar */
     studyName?: string;
     initialStainFilter?: 'all' | 'hne' | 'ihc';
@@ -167,6 +172,99 @@ function getPathologyPreferredImageIds(
     );
 }
 
+interface DsaElement {
+    type: 'rectangle' | 'polyline' | 'point' | string;
+    center?: [number, number, number];
+    width?: number;
+    height?: number;
+    points?: [number, number, number][];
+    closed?: boolean;
+}
+
+interface DsaAnnotationGroup {
+    _id: string;
+    annotation: {
+        name?: string;
+        description?: string;
+        elements?: DsaElement[];
+    };
+}
+
+/** Convert DSA elements to the W3C annotations consumed by Annotorious. */
+export function transformDsaAnnotations(
+    groups: DsaAnnotationGroup[]
+): object[] {
+    const annotations: object[] = [];
+
+    for (const group of groups) {
+        const label =
+            group.annotation.name || group.annotation.description || '';
+        const elements = group.annotation.elements ?? [];
+
+        for (let index = 0; index < elements.length; index += 1) {
+            const element = elements[index];
+            let selector: object | null = null;
+
+            if (
+                element.type === 'rectangle' &&
+                element.center &&
+                element.width != null &&
+                element.height != null
+            ) {
+                const x = Math.round(element.center[0] - element.width / 2);
+                const y = Math.round(element.center[1] - element.height / 2);
+                selector = {
+                    type: 'FragmentSelector',
+                    conformsTo: 'http://www.w3.org/TR/media-frags/',
+                    value: `xywh=pixel:${x},${y},${Math.round(
+                        element.width
+                    )},${Math.round(element.height)}`,
+                };
+            } else if (
+                (element.type === 'polyline' || element.type === 'polygon') &&
+                element.points &&
+                element.points.length >= 3
+            ) {
+                const points = element.points
+                    .map(([x, y]) => `${Math.round(x)},${Math.round(y)}`)
+                    .join(' ');
+                selector = {
+                    type: 'SvgSelector',
+                    value: `<svg><polygon points="${points}" /></svg>`,
+                };
+            } else if (element.type === 'point' && element.center) {
+                const x = Math.round(element.center[0]) - 5;
+                const y = Math.round(element.center[1]) - 5;
+                selector = {
+                    type: 'FragmentSelector',
+                    conformsTo: 'http://www.w3.org/TR/media-frags/',
+                    value: `xywh=pixel:${x},${y},10,10`,
+                };
+            }
+
+            if (!selector) continue;
+
+            annotations.push({
+                '@context': 'http://www.w3.org/ns/anno.jsonld',
+                type: 'Annotation',
+                id: `${group._id}-${index}`,
+                body: label
+                    ? [
+                          {
+                              type: 'TextualBody',
+                              value: label,
+                              purpose: 'commenting',
+                          },
+                      ]
+                    : [],
+                target: { source: '', selector },
+            });
+        }
+    }
+
+    return annotations;
+}
+
 @observer
 export default class WSIViewer extends React.Component<Props, {}> {
     @observable private hierarchy: PatientHierarchy | null = null;
@@ -194,11 +292,25 @@ export default class WSIViewer extends React.Component<Props, {}> {
     /** Current cursor position in image pixels (null when viewer not ready or cursor outside) */
     @observable cursorPos: { x: number; y: number } | null = null;
 
+    @observable private currentGirderItemId: string | null = null;
+    @observable private dsaAnnotations: object[] = [];
+    @observable private annotationsVisible = true;
+    @observable private annotationsLoading = false;
+    @observable private annotationTooltip: {
+        x: number;
+        y: number;
+        text: string;
+    } | null = null;
+
     private viewerContainerRef = React.createRef<HTMLDivElement>();
     /** Stable per-instance ID prefix for OSD custom nav button elements */
     private resizeStartX = 0;
     private resizeStartWidth = 0;
     private isResizingSidebar = false;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    private annotorious: any = null;
+    private girderIdCache = new Map<string, string | null>();
+    private dsaRequestSeq = 0;
     private controller: WsiViewerController;
     private hierarchyDataVersion = 0;
     private hierarchyRefreshScheduled = false;
@@ -403,6 +515,8 @@ export default class WSIViewer extends React.Component<Props, {}> {
                 this.chooseInitialServableSlide(allSlides),
             beginSlideSelection: (slide, sample) =>
                 this.beginSlideSelection(slide, sample),
+            onViewerOpen: viewer => this.handleViewerOpen(viewer),
+            onViewerDestroy: () => this.destroyAnnotorious(),
             setSelectedMeta: meta => {
                 this.selectedMeta = meta;
             },
@@ -425,6 +539,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
                 this.viewerReady = false;
                 this.spinnerVisible = false;
                 this.tilesReady = false;
+                this.resetDsaState();
             },
             getPatientId: () => this.hierarchy?.patient_id,
             setCoordInputs: (x, y) => this.setCoordInputs(x, y),
@@ -795,6 +910,172 @@ export default class WSIViewer extends React.Component<Props, {}> {
         this.tilesReady = false;
         this.spinnerVisible = true;
         this.error = null;
+        this.resetDsaState();
+
+        const dsaRequestSeq = ++this.dsaRequestSeq;
+        if (this.props.dsaUrl) {
+            this.annotationsLoading = true;
+            void this.resolveDsaItemId(slide.image_id).then(girderItemId => {
+                if (
+                    dsaRequestSeq !== this.dsaRequestSeq ||
+                    this.selectedSlide?.image_id !== slide.image_id
+                ) {
+                    return;
+                }
+                action(() => {
+                    this.currentGirderItemId = girderItemId;
+                })();
+                if (girderItemId) {
+                    void this.fetchDsaAnnotations(girderItemId, dsaRequestSeq);
+                } else {
+                    action(() => {
+                        this.annotationsLoading = false;
+                    })();
+                }
+            });
+        }
+    }
+
+    @action.bound
+    private resetDsaState() {
+        this.dsaRequestSeq += 1;
+        this.currentGirderItemId = null;
+        this.dsaAnnotations = [];
+        this.annotationsLoading = false;
+        this.annotationTooltip = null;
+        this.destroyAnnotorious();
+    }
+
+    private async resolveDsaItemId(imageId: string): Promise<string | null> {
+        const { dsaUrl } = this.props;
+        if (!dsaUrl) return null;
+        if (this.girderIdCache.has(imageId)) {
+            return this.girderIdCache.get(imageId) ?? null;
+        }
+
+        try {
+            const response = await fetch(
+                `${dsaUrl}/api/v1/item?text=${encodeURIComponent(
+                    imageId
+                )}&limit=5`,
+                { credentials: 'include' }
+            );
+            if (!response.ok) {
+                this.girderIdCache.set(imageId, null);
+                return null;
+            }
+            const items: Array<{
+                _id: string;
+                name: string;
+            }> = await response.json();
+            const match = items.find(item => item.name.startsWith(imageId));
+            const girderItemId = match?._id ?? null;
+            this.girderIdCache.set(imageId, girderItemId);
+            return girderItemId;
+        } catch {
+            return null;
+        }
+    }
+
+    private async fetchDsaAnnotations(
+        girderItemId: string,
+        expectedRequestSeq = this.dsaRequestSeq
+    ): Promise<void> {
+        const { dsaUrl } = this.props;
+        if (!dsaUrl) return;
+
+        try {
+            const response = await fetch(
+                `${dsaUrl}/api/v1/annotation?itemId=${encodeURIComponent(
+                    girderItemId
+                )}`,
+                { credentials: 'include' }
+            );
+            if (!response.ok) {
+                if (expectedRequestSeq === this.dsaRequestSeq) {
+                    action(() => {
+                        this.annotationsLoading = false;
+                    })();
+                }
+                return;
+            }
+            const groups: DsaAnnotationGroup[] = await response.json();
+            if (expectedRequestSeq !== this.dsaRequestSeq) return;
+            const annotations = transformDsaAnnotations(groups);
+            action(() => {
+                this.dsaAnnotations = annotations;
+                this.annotationsLoading = false;
+            })();
+            this.annotorious?.setAnnotations(annotations);
+        } catch {
+            if (expectedRequestSeq === this.dsaRequestSeq) {
+                action(() => {
+                    this.annotationsLoading = false;
+                })();
+            }
+        }
+    }
+
+    @action.bound
+    private toggleAnnotations() {
+        this.annotationsVisible = !this.annotationsVisible;
+        this.annotorious?.setVisible(this.annotationsVisible);
+    }
+
+    @action.bound
+    private destroyAnnotorious() {
+        if (this.annotorious) {
+            try {
+                this.annotorious.destroy();
+            } catch (_) {
+                // The overlay may already have been removed with the OSD canvas.
+            }
+            this.annotorious = null;
+        }
+        this.annotationTooltip = null;
+    }
+
+    private handleViewerOpen(viewer: unknown) {
+        if (!this.props.dsaUrl) return;
+
+        try {
+            this.destroyAnnotorious();
+            this.annotorious = createOSDAnnotator(viewer, {
+                drawingEnabled: false,
+            });
+            if (this.dsaAnnotations.length) {
+                this.annotorious.setAnnotations(this.dsaAnnotations);
+            }
+            if (!this.annotationsVisible) {
+                this.annotorious.setVisible(false);
+            }
+            this.annotorious.on(
+                'clickAnnotation',
+                (annotation: any, event: any) => {
+                    const label =
+                        annotation?.body?.[0]?.value ??
+                        annotation?.bodies?.[0]?.value ??
+                        '';
+                    const container = this.viewerContainerRef.current;
+                    if (!label || !container) return;
+                    const rect = container.getBoundingClientRect();
+                    const clientX =
+                        event?.originalEvent?.clientX ?? event?.clientX ?? 0;
+                    const clientY =
+                        event?.originalEvent?.clientY ?? event?.clientY ?? 0;
+                    action(() => {
+                        this.annotationTooltip = {
+                            x: clientX - rect.left,
+                            y: clientY - rect.top,
+                            text: label,
+                        };
+                    })();
+                }
+            );
+        } catch (error) {
+            // eslint-disable-next-line no-console
+            console.warn('[WSIViewer] Annotorious init failed', error);
+        }
     }
 
     @action.bound
@@ -1707,6 +1988,27 @@ export default class WSIViewer extends React.Component<Props, {}> {
                             </button>
                         </div>
                     )}
+                    {this.annotationTooltip && (
+                        <div
+                            style={{
+                                position: 'absolute',
+                                left: this.annotationTooltip.x + 10,
+                                top: this.annotationTooltip.y + 10,
+                                background: 'rgba(0,0,0,0.75)',
+                                color: '#fff',
+                                fontSize: 12,
+                                padding: '4px 8px',
+                                borderRadius: 4,
+                                pointerEvents: 'none',
+                                maxWidth: 240,
+                                zIndex: 999,
+                                whiteSpace: 'pre-wrap',
+                                wordBreak: 'break-word',
+                            }}
+                        >
+                            {this.annotationTooltip.text}
+                        </div>
+                    )}
                     {!selectedSlide && (
                         <div style={overlayStyle}>
                             <span style={{ color: C.muted, fontSize: 13 }}>
@@ -1770,6 +2072,12 @@ export default class WSIViewer extends React.Component<Props, {}> {
                     pathRows={this.selectedPathRows}
                     seqRows={this.sidebarSeqRowsForRender}
                     sample={this.sidebarImpactSample}
+                    dsaUrl={this.props.dsaUrl}
+                    currentGirderItemId={this.currentGirderItemId}
+                    dsaAnnotationCount={this.dsaAnnotations.length}
+                    annotationsLoading={this.annotationsLoading}
+                    annotationsVisible={this.annotationsVisible}
+                    onToggleAnnotations={this.toggleAnnotations}
                 />
             </div>
         );

@@ -1018,6 +1018,7 @@ export function tabs(
                     patientId={pageComponent.patientViewPageStore.patientId}
                     height={WindowStore.size.height - 220}
                     studyId={pageComponent.patientViewPageStore.studyId}
+                    dsaUrl={serverConfig.msk_dsa_url}
                     studyName={getStudyDisplayName(
                         pageComponent.patientViewPageStore.studyMetaData,
                         pageComponent.patientViewPageStore.studyId
