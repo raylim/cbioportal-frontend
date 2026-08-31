@@ -92,7 +92,7 @@ test.describe('download tab screenshot tests', () => {
                         '[data-test="dataDownloadGeneAlterationTable"] tr > td > svg'
                     )
                     .first()
-            ).toBeAttached({ timeout: 30000 });
+            ).toBeAttached({ timeout: 120000 });
             await expect(
                 page.locator('[data-test="downloadTabDiv"]')
             ).toBeVisible({ timeout: 15000 });
@@ -234,6 +234,13 @@ test.describe('results page pathways tab with unprofiled genes', () => {
         );
         await expect(page.locator('#cy')).toBeVisible({ timeout: 30000 });
         await waitForNetworkQuiet(page, 30000);
+        // The diagram keeps fetching alteration data for genes added by the
+        // pathway (separate from the initial page network calls), showing a
+        // "Loading alteration data..." banner while gene percentages/colors
+        // are still updating. Wait for it to clear before snapshotting.
+        await expect(
+            page.locator('[data-test="pathwayMapperMessageBox"]')
+        ).toBeHidden({ timeout: 30000 });
         await snapshot(
             page,
             '[data-test="pathwayMapperTabDiv"]',

@@ -33,14 +33,34 @@ async function isHeaderVisible(page: Page, text: string) {
     return await headerLocator(page, text).isVisible();
 }
 
+// Copy # and Cohort populate from molecular profile / cohort data that
+// resolves via a separate async request after the table's first paint
+// (see discreteCNAMolecularProfileId and variantCountCache in
+// PatientViewMutationTable), so a plain isVisible() snapshot can run
+// before that data arrives and false-negative under CI load. Poll for
+// visibility instead of taking a single snapshot when a column is
+// expected to be present. 30s gives that async data enough headroom on
+// a loaded CI runner.
+async function waitHeaderVisible(page: Page, text: string, timeout = 30000) {
+    try {
+        await headerLocator(page, text).waitFor({ state: 'visible', timeout });
+        return true;
+    } catch {
+        return false;
+    }
+}
+
 async function defaultResultColumnsAreDisplayed(page: Page) {
     return (
-        (await isHeaderVisible(page, DEFAULT_RESULT_COLS.SAMPLE_ID)) &&
-        (await isHeaderVisible(page, DEFAULT_RESULT_COLS.PROTEIN_CHANGE)) &&
-        (await isHeaderVisible(page, DEFAULT_RESULT_COLS.ANNOTATION)) &&
-        (await isHeaderVisible(page, DEFAULT_RESULT_COLS.MUTATION_TYPE)) &&
-        (await isHeaderVisible(page, DEFAULT_RESULT_COLS.COPY_NUM)) &&
-        (await isHeaderVisible(page, DEFAULT_RESULT_COLS.NUM_MUT_IN_SAMPLE)) &&
+        (await waitHeaderVisible(page, DEFAULT_RESULT_COLS.SAMPLE_ID)) &&
+        (await waitHeaderVisible(page, DEFAULT_RESULT_COLS.PROTEIN_CHANGE)) &&
+        (await waitHeaderVisible(page, DEFAULT_RESULT_COLS.ANNOTATION)) &&
+        (await waitHeaderVisible(page, DEFAULT_RESULT_COLS.MUTATION_TYPE)) &&
+        (await waitHeaderVisible(page, DEFAULT_RESULT_COLS.COPY_NUM)) &&
+        (await waitHeaderVisible(
+            page,
+            DEFAULT_RESULT_COLS.NUM_MUT_IN_SAMPLE
+        )) &&
         !(await isHeaderVisible(page, 'Functional Impact')) &&
         !(await isHeaderVisible(page, 'Variant Type'))
     );
@@ -48,12 +68,12 @@ async function defaultResultColumnsAreDisplayed(page: Page) {
 
 async function defaultPatientColumnsAreDisplayed(page: Page) {
     return (
-        (await isHeaderVisible(page, DEFAULT_PATIENT_COLS.GENE)) &&
-        (await isHeaderVisible(page, DEFAULT_PATIENT_COLS.PROTEIN_CHANGE)) &&
-        (await isHeaderVisible(page, DEFAULT_PATIENT_COLS.ANNOTATION)) &&
-        (await isHeaderVisible(page, DEFAULT_PATIENT_COLS.MUTATION_TYPE)) &&
-        (await isHeaderVisible(page, DEFAULT_PATIENT_COLS.COPY_NUM)) &&
-        (await isHeaderVisible(page, DEFAULT_PATIENT_COLS.COHORT)) &&
+        (await waitHeaderVisible(page, DEFAULT_PATIENT_COLS.GENE)) &&
+        (await waitHeaderVisible(page, DEFAULT_PATIENT_COLS.PROTEIN_CHANGE)) &&
+        (await waitHeaderVisible(page, DEFAULT_PATIENT_COLS.ANNOTATION)) &&
+        (await waitHeaderVisible(page, DEFAULT_PATIENT_COLS.MUTATION_TYPE)) &&
+        (await waitHeaderVisible(page, DEFAULT_PATIENT_COLS.COPY_NUM)) &&
+        (await waitHeaderVisible(page, DEFAULT_PATIENT_COLS.COHORT)) &&
         !(await isHeaderVisible(page, 'Functional Impact')) &&
         !(await isHeaderVisible(page, 'Variant Type'))
     );
@@ -61,39 +81,43 @@ async function defaultPatientColumnsAreDisplayed(page: Page) {
 
 async function namespaceColumnsAreDisplayed(page: Page) {
     return (
-        (await isHeaderVisible(page, 'Zygosity Code')) &&
-        (await isHeaderVisible(page, 'Zygosity Name'))
+        (await waitHeaderVisible(page, 'Zygosity Code')) &&
+        (await waitHeaderVisible(page, 'Zygosity Name'))
     );
 }
 
 async function namespaceColumnsAreNotDisplayed(page: Page) {
-    return !(
-        (await isHeaderVisible(page, 'Zygosity Code')) &&
-        (await isHeaderVisible(page, 'Zygosity Name'))
+    return (
+        !(await isHeaderVisible(page, 'Zygosity Code')) &&
+        !(await isHeaderVisible(page, 'Zygosity Name'))
     );
 }
 
 async function columnIsDisplayed(page: Page, column: string) {
-    return await isHeaderVisible(page, column);
+    return await waitHeaderVisible(page, column);
 }
 
 async function columnIsNotDisplayed(page: Page, column: string) {
     return !(await isHeaderVisible(page, column));
 }
 
+// Uses the same 30s headroom as waitHeaderVisible below: the table
+// only mounts once mutation data resolves over the network, which can
+// take longer than Playwright's default 5s assertion timeout on a
+// loaded CI runner.
 async function waitForMutationTable(page: Page) {
     await expect(
         page.locator('[data-test=LazyMobXTable]').first()
-    ).toBeVisible();
+    ).toBeVisible({ timeout: 30000 });
 }
 
 async function waitForPatientViewMutationTable(page: Page) {
     await expect(
         page.locator('[data-test=patientview-mutation-table]')
-    ).toBeVisible();
+    ).toBeVisible({ timeout: 30000 });
     await expect(
         page.locator('[data-test=LazyMobXTable]').first()
-    ).toBeVisible();
+    ).toBeVisible({ timeout: 30000 });
 }
 
 test.describe('default init columns in mutation tables', () => {

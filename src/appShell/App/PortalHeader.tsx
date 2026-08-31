@@ -13,13 +13,26 @@ import { Dropdown } from 'react-bootstrap';
 import { DataAccessTokensDropdown } from '../../shared/components/dataAccessTokens/DataAccessTokensDropdown';
 import { getLoadConfig, getServerConfig } from 'config/config';
 import FontAwesome from 'react-fontawesome';
-import { FeatureFlagEnum } from 'shared/featureFlags';
 
 @observer
 export default class PortalHeader extends React.Component<
     { appStore: AppStore },
-    {}
+    { datDropdownOpen: boolean }
 > {
+    state = { datDropdownOpen: false };
+
+    private handleDatDropdownToggle = (isOpen: boolean) => {
+        if (isOpen) {
+            // Defer by one tick: RootCloseWrapper adds its document click
+            // listener synchronously during React's commit phase, which runs
+            // inside the same browser click dispatch. Without the defer it
+            // catches the opening click and immediately closes the dropdown.
+            setTimeout(() => this.setState({ datDropdownOpen: true }), 0);
+        } else {
+            this.setState({ datDropdownOpen: false });
+        }
+    };
+
     private tabs() {
         return [
             {
@@ -114,13 +127,14 @@ export default class PortalHeader extends React.Component<
                         ? 'https://chat.cbioportal.aws.mskcc.org'
                         : 'https://chat.cbioportal.org',
                 internal: false,
-                hide: () =>
-                    !this.props.appStore.featureFlagStore.has(
-                        FeatureFlagEnum.CHAT
-                    ) ||
-                    !['public-portal', 'mskcc-portal'].includes(
-                        getServerConfig().app_name!
-                    ),
+                hide: () => {
+                    const appName = getServerConfig().app_name;
+                    // Only the MSK and public portals have a chat deployment.
+                    return (
+                        appName !== 'mskcc-portal' &&
+                        appName !== 'public-portal'
+                    );
+                },
             },
 
             {
@@ -190,7 +204,11 @@ export default class PortalHeader extends React.Component<
                         <If condition={this.props.appStore.isLoggedIn}>
                             <Then>
                                 <div className="identity">
-                                    <Dropdown id="dat-dropdown">
+                                    <Dropdown
+                                        id="dat-dropdown"
+                                        open={this.state.datDropdownOpen}
+                                        onToggle={this.handleDatDropdownToggle}
+                                    >
                                         <Dropdown.Toggle className="btn-sm username">
                                             Logged in as{' '}
                                             {this.props.appStore.userName}

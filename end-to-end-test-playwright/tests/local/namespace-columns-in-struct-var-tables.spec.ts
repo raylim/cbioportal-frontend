@@ -17,8 +17,16 @@ async function clickColumnSelectionButton(page: Page, table: string) {
         .click();
 }
 
-async function selectColumn(page: Page, columnId: string) {
-    await page.locator(`[data-id="${columnId}"]`).click();
+async function selectColumn(page: Page, columnId: string, table: string) {
+    const checkbox = page.locator(`[data-id="${columnId}"]`);
+    if (!(await checkbox.isVisible())) {
+        await clickColumnSelectionButton(page, table);
+    }
+    await expect(checkbox).toBeVisible({ timeout: 10000 });
+    if (!(await checkbox.isChecked())) {
+        await checkbox.click({ timeout: 10000, force: true });
+        await expect(checkbox).toBeChecked({ timeout: 10000 });
+    }
 }
 
 async function namespaceColumnsAreDisplayed(
@@ -26,8 +34,18 @@ async function namespaceColumnsAreDisplayed(
     columns: string[]
 ): Promise<boolean> {
     for (const column of columns) {
-        const loc = page.locator(`xpath=//span[text()='${column}']`);
-        if ((await loc.count()) === 0 || !(await loc.first().isVisible())) {
+        const matchingColumn = page
+            .locator(
+                '[data-test="patientview-structural-variant-table"] span',
+                {
+                    hasText: new RegExp(`^${column}$`),
+                }
+            )
+            .first();
+        if (
+            (await matchingColumn.count()) === 0 ||
+            !(await matchingColumn.isVisible())
+        ) {
             return false;
         }
     }
@@ -96,8 +114,16 @@ test.describe('namespace columns in struct var tables', () => {
 
         test('shows columns when column menu is used', async () => {
             await clickColumnSelectionButton(sharedPage, patientStructVarTable);
-            await selectColumn(sharedPage, namespaceColumn1);
-            await selectColumn(sharedPage, namespaceColumn2);
+            await selectColumn(
+                sharedPage,
+                namespaceColumn1,
+                patientStructVarTable
+            );
+            await selectColumn(
+                sharedPage,
+                namespaceColumn2,
+                patientStructVarTable
+            );
             await clickColumnSelectionButton(sharedPage, patientStructVarTable);
             expect(
                 await namespaceColumnsAreDisplayed(sharedPage, namespaceColumns)

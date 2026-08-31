@@ -1,5 +1,11 @@
 import { configure } from 'enzyme';
-import Adapter from 'enzyme-adapter-react-16';
+import Adapter from '@cfaester/enzyme-adapter-react-18';
+
+if (typeof globalThis.crypto === 'undefined') {
+    Object.defineProperty(globalThis, 'crypto', {
+        value: require('crypto').webcrypto,
+    });
+}
 
 configure({ adapter: new Adapter() });
 

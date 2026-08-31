@@ -1,11 +1,35 @@
 # cbioportal-frontend
 This repo contains the frontend code for cBioPortal which uses React, MobX and TypeScript. Read more about the architecture of cBioPortal [here](https://docs.cbioportal.org/2.1-deployment/architecture-overview).
 
+## Native WSI viewer artifact boundary
+
+The native whole-slide-image viewer is a read-only client of the cBioPortal
+WSI contract. For a patient view it requests the backend hierarchy, then
+requests a per-slide access bundle from:
+
+```text
+GET /api/wsi/v2/slides/{studyId}/{imageId}/access
+```
+
+The bundle supplies the exact source URL, intrinsic tile metadata, thumbnail
+artifact URL and dimensions, and a short-lived capability. The viewer sends
+those values to the configured tile server for `/tiles` and `/thumbnails`.
+The frontend does not discover slide paths, generate thumbnails, upload to
+S3/Dell ECS, or write Databricks tables. It must never be given object-store
+write credentials.
+
+Thumbnail artifacts are therefore an upstream data-preparation concern. A
+separate scheduled batch generates the artifacts and populates
+`cdsi_prod.pathology_data_mining.slide_thumbnail_registry`; the Databricks
+canonical export and cBioPortal core importer publish the resulting metadata
+before the viewer can serve a slide. Runtime/on-demand generation is not a
+production frontend behavior.
+
 ## Branch Information
 | | main branch | upcoming release branch | later release candidate branch |
 | --- | --- | --- | --- |
 | Branch name | [`master`](https://github.com/cBioPortal/cbioportal-frontend/tree/master) |  --|  [`rc`](https://github.com/cBioPortal/cbioportal-frontend/tree/rc) |
-| Description | All bug fixes and features not requiring database migrations go here. This code is either already in production or will be released this week | Next release that requires database migrations. Manual product review often takes place for this branch before release | Later releases with features that require database migrations. This is useful to allow merging in new features without affecting the upcoming release. Could be seen as a development branch, but note that only high quality pull requests are merged. That is the feature should be pretty much ready for release after merge. |
+| Description | All bug fixes and features not requiring database migrations go here. This code is either already in production or will be released this week | Next release that requires database migrations. Manual product review often takes place for this branch before release | Later releases with features that require database migrations. This is useful to allow merging in new features without affecting the upcoming release. Could be seen as a development branch, but note that only high quality pull requests are merged. That is, the feature should be pretty much ready for release after merge. |
 | Test Status | [CircleCI master workflow](https://circleci.com/gh/cBioPortal/workflows/cbioportal-frontend/tree/master) | -- | [CircleCI rc workflow](https://circleci.com/gh/cBioPortal/workflows/cbioportal-frontend/tree/rc) |
 | Live instance frontend | https://frontend.cbioportal.org / https://master--cbioportalfrontend.netlify.app/ | -- | https://rc--cbioportalfrontend.netlify.app |
 | Live instance backend | https://www.cbioportal.org / https://master.cbioportal.org | -- | https://rc.cbioportal.org |
@@ -26,7 +50,7 @@ corepack enable
 
 > **Windows Tip:** If you are developing on Windows, we recommend that you use [Ubuntu / Windows Subsystem for Linux](https://docs.microsoft.com/en-us/windows/wsl/install-win10).
 
-Remove old compiled `node_modules` if it exists
+Remove old compiled `node_modules` directory if it exists
 
 ```
 rm -rf node_modules
@@ -57,7 +81,7 @@ pnpm run start
 Example pages:
  - http://localhost:3000/
  - http://localhost:3000/patient?studyId=lgg_ucsf_2014&caseId=P04
-> **Tip:** If you see dependency errors, especially the error that the script cannot identify the packages managed by lerna(monorepo), you could do a `pnpm run buildModules` first before starting the project.
+> **Tip:** If you see dependency errors, especially the error that the script cannot identify the packages managed by lerna (monorepo), you could do a `pnpm run buildModules` first before starting the project.
 
 To run unit/integration tests
 ```
