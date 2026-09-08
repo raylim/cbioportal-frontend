@@ -454,23 +454,22 @@ test.describe('WSI viewer — share view and centering', () => {
             page.getByText(WSI_TEST_CONFIG.sampleId).first()
         ).toBeVisible();
         await expect(page.getByText('H&E').first()).toBeVisible();
-        await expect(page.getByText('Proc d-17').first()).toBeVisible();
+        // Relative procedure timing is rendered by the clinical timeline, not
+        // duplicated in the WSI hierarchy/sidebar contract.
+        await expect(page.getByText('Proc d-17')).toHaveCount(0);
         // The minimal public fixture intentionally has no private sequencing
         // metadata; the viewer should remain usable without that sidebar data.
         await expect(page.locator('text=MSK-IMPACT')).toHaveCount(0);
     });
 
-    test('WSI timepoint appears in the slide list and metadata panel', async ({
+    test('WSI hierarchy does not duplicate clinical timeline timing', async ({
         page,
     }) => {
         await gotoViewer(page);
         await waitForViewerReady(page);
 
-        await expect(page.locator('text=Proc d-17').first()).toBeVisible({
-            timeout: 15_000,
-        });
-        await expect(page.locator('text=Timepoint').last()).toBeVisible();
-        await expect(page.locator('text=Proc d-17').last()).toBeVisible();
+        await expect(page.locator('text=Proc d-17')).toHaveCount(0);
+        await expect(page.locator('text=Timepoint')).toHaveCount(0);
     });
 
     test('direct pathology viewer routes activate the requested match filter', async ({
