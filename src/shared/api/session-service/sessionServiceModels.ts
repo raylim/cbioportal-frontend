@@ -84,11 +84,17 @@ export type ChartUserSetting = {
     numericalAttrId?: string;
     patientAttribute: boolean;
     filterByCancerGenes?: boolean;
+    filterByO2gl?: boolean;
+    filterByDriverGenes?: boolean;
     customBins?: number[];
     disableLogScale?: boolean;
     description?: string;
     profileType?: string;
     hugoGeneSymbol?: string;
+    // Multiple genes for a gene-specific violin chart (one continuous-numeric
+    // profile across several genes).
+    hugoGeneSymbols?: string[];
+    violinLogScale?: boolean;
     genericAssayType?: string;
     genericAssayEntityId?: string;
     dataType?: string;

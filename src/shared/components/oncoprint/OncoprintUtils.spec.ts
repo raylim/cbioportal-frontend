@@ -1,9 +1,11 @@
 import {
     alterationInfoForCaseAggregatedDataByOQLLine,
+    commonPrefixLength,
     makeGeneticTrackWith,
     percentAltered,
     extractGenericAssaySelections,
     getGenericAssayTrackRuleSetParams,
+    getCategoricalTrackRuleSetParams,
     legendColorDarkBlue,
     legendColorLightBlue,
     legendColorLightRed,
@@ -774,6 +776,52 @@ describe('getGenericAssayTrackRuleSetParams', () => {
     });
 });
 
+describe('getCategoricalTrackRuleSetParams', () => {
+    const makeTrack = (data: any[]) =>
+        ({
+            key: 'GENERICASSAYCATEGORICALTRACK_1',
+            label: 'Category',
+            molecularProfileId: 'profile_1',
+            molecularProfileName: 'Profile',
+            molecularAlterationType: 'GENERIC_ASSAY',
+            genericAssayType: 'TEST',
+            datatype: 'CATEGORICAL',
+            data,
+            trackGroupIndex: 1,
+            trackLinkUrl: undefined,
+        } as any);
+
+    it('assigns unknown category colors independently of response order', () => {
+        const firstOrder = [
+            { attr_val: 'significant', uid: '1' },
+            { attr_val: 'Mixed', uid: '2' },
+        ];
+        const secondOrder = [
+            { attr_val: 'Mixed', uid: '2' },
+            { attr_val: 'significant', uid: '1' },
+        ];
+        const firstParams = getCategoricalTrackRuleSetParams(
+            makeTrack(firstOrder),
+            firstOrder as any
+        ) as any;
+        const secondParams = getCategoricalTrackRuleSetParams(
+            makeTrack(secondOrder),
+            secondOrder as any
+        ) as any;
+
+        assert.deepEqual(
+            {
+                Mixed: firstParams.category_to_color.Mixed,
+                significant: firstParams.category_to_color.significant,
+            },
+            {
+                Mixed: secondParams.category_to_color.Mixed,
+                significant: secondParams.category_to_color.significant,
+            }
+        );
+    });
+});
+
 describe('extractGenericAssaySelections', () => {
     const selectedEntities: string[] = [];
     const entityMap = {
@@ -800,5 +848,56 @@ describe('extractGenericAssaySelections', () => {
             entityMap
         );
         assert.equal(text, 'genericAssayC  genericAssayB');
+    });
+});
+
+describe('commonPrefixLength', () => {
+    it('returns 0 for empty input or a single string', () => {
+        assert.equal(commonPrefixLength([]), 0);
+        assert.equal(commonPrefixLength(['abc']), 0);
+    });
+
+    it('returns 0 when the shared prefix contains no separator', () => {
+        // Shared prefix "Signature" has no _ - . : space — strip nothing
+        // (we'd otherwise chop "Signature" away from "Signature1" / "Signature2").
+        assert.equal(commonPrefixLength(['Signature1', 'Signature2']), 0);
+    });
+
+    it('cuts at the last separator within the common prefix', () => {
+        // Common prefix "mutational_signatures_v2_Signature", last underscore at
+        // index 24 → strip 25 chars leaving "Signature1" / "Signature2".
+        const names = [
+            'mutational_signatures_v2_Signature1',
+            'mutational_signatures_v2_Signature2',
+            'mutational_signatures_v2_Signature10',
+        ];
+        const len = commonPrefixLength(names);
+        assert.equal(names[0].slice(len), 'Signature1');
+        assert.equal(names[1].slice(len), 'Signature2');
+        assert.equal(names[2].slice(len), 'Signature10');
+    });
+
+    it('supports -, ., : and whitespace as separators', () => {
+        assert.equal(
+            commonPrefixLength(['g-a', 'g-b']).toString(),
+            '2',
+            'hyphen'
+        );
+        assert.equal(commonPrefixLength(['g.a', 'g.b']).toString(), '2', 'dot');
+        assert.equal(
+            commonPrefixLength(['g:a', 'g:b']).toString(),
+            '2',
+            'colon'
+        );
+        assert.equal(
+            commonPrefixLength(['g a', 'g b']).toString(),
+            '2',
+            'space'
+        );
+    });
+
+    it('handles one string being a prefix of another', () => {
+        // Shared prefix = "foo_bar", no divergence within, so no strip.
+        assert.equal(commonPrefixLength(['foo_bar', 'foo_bar_baz']), 0);
     });
 });

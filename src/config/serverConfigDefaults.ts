@@ -195,8 +195,7 @@ export const ServerConfigDefaults: Partial<IServerConfig> = {
 
     skin_geneset_hierarchy_default_p_value: 0.05,
 
-    generic_assay_display_text:
-        'TREATMENT_RESPONSE:Treatment Response,MUTATIONAL_SIGNATURE:Mutational Signature,ARMLEVEL_CNA:Arm-level CNA',
+    generic_assay_display_text: '',
 
     saml_logout_local: false,
 
@@ -254,6 +253,9 @@ export const ServerConfigDefaults: Partial<IServerConfig> = {
     uptime_robot_api_key: null,
 
     skin_hide_clinical_data_tab_study_view: false,
+    msk_wsi_tile_server_url: '',
+    msk_wsi_annotation_api_url: '',
+    msk_wsi_enable_bootstrap: false,
 };
 
 export default ServerConfigDefaults;

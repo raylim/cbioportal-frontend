@@ -39,6 +39,7 @@ import {
     getScatterDownloadData,
     getSurvivalDownloadData,
     getMutatedGenesDownloadData,
+    getGenericAssayFrequencyTableDownloadData,
     getStructuralVariantGenesDownloadData,
     getGenesCNADownloadData,
     getPatientTreatmentDownloadData,
@@ -48,6 +49,7 @@ import { DataType } from 'cbioportal-frontend-commons';
 import DelayedRender from 'shared/components/DelayedRender';
 import { getRemoteDataGroupStatus } from 'cbioportal-utils';
 import { getServerConfig } from 'config/config';
+import { GenericAssayDataType } from 'shared/lib/GenericAssayUtils/GenericAssayCommonUtils';
 
 export interface IStudySummaryTabProps {
     store: StudyViewPageStore;
@@ -204,6 +206,22 @@ export class StudySummaryTab extends React.Component<
                 this.store.updateCategoricalGenericAssayDataFilters(
                     chartMeta.uniqueKey,
                     values
+                );
+            },
+            onGenericAssayFrequencyTableSelection: (
+                chartMeta: ChartMeta,
+                values: string[][]
+            ) => {
+                this.store.setGenericAssayFrequencyTableFilters(
+                    chartMeta.uniqueKey,
+                    values
+                );
+            },
+            onResetGenericAssayFrequencyTableSelection: (
+                chartMeta: ChartMeta
+            ) => {
+                this.store.resetGenericAssayFrequencyTableFilters(
+                    chartMeta.uniqueKey
                 );
             },
         };
@@ -447,6 +465,26 @@ export class StudySummaryTab extends React.Component<
                     onResetSelection: this.handlers.onValueSelection,
                 }),
             }),
+            [ChartTypeEnum.GENERIC_ASSAY_FREQUENCY_TABLE]: () => ({
+                filters: this.store.getGenericAssayFrequencyTableSelectedRowKeys(
+                    chartMeta.uniqueKey
+                ),
+                onValueSelection: this.handlers
+                    .onGenericAssayFrequencyTableSelection,
+                onResetSelection: this.handlers
+                    .onResetGenericAssayFrequencyTableSelection,
+                promise: this.store.getGenericAssayFrequencyTableData(
+                    chartMeta
+                ),
+                getData: () =>
+                    getGenericAssayFrequencyTableDownloadData(
+                        this.store.getGenericAssayFrequencyTableData(chartMeta),
+                        this.store.getMolecularChartDataType(
+                            chartMeta.uniqueKey
+                        ) !== GenericAssayDataType.BINARY
+                    ),
+                downloadTypes: ['Data'],
+            }),
             [ChartTypeEnum.MUTATED_GENES_TABLE]: () => ({
                 filters: this.store.getGeneFiltersByUniqueKey(
                     chartMeta.uniqueKey
@@ -473,6 +511,13 @@ export class StudySummaryTab extends React.Component<
                     .filterMutatedGenesTableByCancerGenes,
                 onChangeCancerGeneFilter: this.store
                     .updateMutatedGenesTableByCancerGenesFilter,
+                filterByO2gl: this.store.filterMutatedGenesTableByO2gl,
+                onChangeO2glFilter: this.store
+                    .updateMutatedGenesTableByO2glFilter,
+                filterByDriverGenes: this.store
+                    .filterMutatedGenesTableByDriverGenes,
+                onChangeDriverGenesFilter: this.store
+                    .updateMutatedGenesTableByDriverGenesFilter,
                 alterationFilterEnabled: getServerConfig()
                     .skin_show_settings_menu,
                 filterAlterations: this.store.isGlobalMutationFilterActive,
@@ -536,6 +581,11 @@ export class StudySummaryTab extends React.Component<
                 filterByCancerGenes: this.store.filterSVGenesTableByCancerGenes,
                 onChangeCancerGeneFilter: this.store
                     .updateSVGenesTableByCancerGenesFilter,
+                filterByO2gl: this.store.filterSVGenesTableByO2gl,
+                onChangeO2glFilter: this.store.updateSVGenesTableByO2glFilter,
+                filterByDriverGenes: this.store.filterSVGenesTableByDriverGenes,
+                onChangeDriverGenesFilter: this.store
+                    .updateSVGenesTableByDriverGenesFilter,
                 alterationFilterEnabled: getServerConfig()
                     .skin_show_settings_menu,
                 filterAlterations: this.store.isGlobalMutationFilterActive,
@@ -566,6 +616,9 @@ export class StudySummaryTab extends React.Component<
                     .filterStructVarsTableByCancerGenes,
                 onChangeCancerGeneFilter: this.store
                     .updateStructVarsTableByCancerGenesFilter,
+                filterByO2gl: this.store.filterStructVarsTableByO2gl,
+                onChangeO2glFilter: this.store
+                    .updateStructVarsTableByO2glFilter,
                 alterationFilterEnabled: getServerConfig()
                     .skin_show_settings_menu,
                 filterAlterations: this.store.isGlobalMutationFilterActive,
@@ -595,6 +648,12 @@ export class StudySummaryTab extends React.Component<
                     .filterCNAGenesTableByCancerGenes,
                 onChangeCancerGeneFilter: this.store
                     .updateCNAGenesTableByCancerGenesFilter,
+                filterByO2gl: this.store.filterCNAGenesTableByO2gl,
+                onChangeO2glFilter: this.store.updateCNAGenesTableByO2glFilter,
+                filterByDriverGenes: this.store
+                    .filterCNAGenesTableByDriverGenes,
+                onChangeDriverGenesFilter: this.store
+                    .updateCNAGenesTableByDriverGenesFilter,
                 alterationFilterEnabled: getServerConfig()
                     .skin_show_settings_menu,
                 filterAlterations: this.store.isGlobalAlterationFilterActive,
@@ -880,6 +939,27 @@ export class StudySummaryTab extends React.Component<
                     this.store.resetClinicalEventTypeFilter();
                 },
             }),
+            [ChartTypeEnum.MRNA_VIOLIN_PLOT]: () => ({
+                // The chart is self-contained; use selectedSamples as the
+                // promise so ChartContainer always has a valid MobxPromise.
+                promise: this.store.selectedSamples,
+                filters: [],
+            }),
+            [ChartTypeEnum.GENE_SPECIFIC_VIOLIN_PLOT]: () => ({
+                // Self-contained like the mRNA violin; selectedSamples just
+                // gives ChartContainer a valid MobxPromise to await.
+                promise: this.store.selectedSamples,
+                filters: [],
+                // Log scale lives in the chart-header options menu.
+                showLogScaleToggle: true,
+                logScaleChecked: this.store.isGeneSpecificViolinLogScale(
+                    chartMeta.uniqueKey
+                ),
+                onToggleLogScale: () =>
+                    this.store.toggleGeneSpecificViolinLogScale(
+                        chartMeta.uniqueKey
+                    ),
+            }),
         });
     }
 
@@ -896,6 +976,12 @@ export class StudySummaryTab extends React.Component<
             studyViewFilters: this.store.filters,
             analysisGroupsSettings: this.store.analysisGroupsSettings,
             cancerGeneFilterEnabled: this.store.oncokbCancerGeneFilterEnabled,
+            o2glFilterEnabled: this.store.isO2glFilterAvailable,
+            o2glGenes: this.store.o2glFilterGenes,
+            o2glOncotreeCodes: this.store.o2glFilterMatchedOncotreeCodes,
+            o2glGeneOncotreeCodes: this.store.o2glGeneOncotreeCodeMap,
+            oncotreeCodeColorMap: this.store.oncotreeCodeColorMap,
+            oncotreeCodeNameMap: this.store.oncotreeCodeNameMap,
             setComparisonConfirmationModal: this.store
                 .setComparisonConfirmationModal,
         };

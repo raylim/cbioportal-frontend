@@ -1,5 +1,5 @@
 import React from 'react';
-import ReactDOM from 'react-dom';
+import { createRoot, Root } from 'react-dom/client';
 import { configure, toJS } from 'mobx';
 import { Provider } from 'mobx-react';
 import { Router } from 'react-router-dom';
@@ -196,8 +196,8 @@ superagent.Request.prototype.end = function(callback) {
             localStorage.setItem(storageKey, window.location.href);
 
             // build URL with a reference to storage key so that /restore route can restore it after login
-            //@ts-ignore because we're using buildCBioPortalPageUrl without a pathname, which is normally required
             const loginUrl = buildCBioPortalPageUrl({
+                pathname: 'login',
                 query: {
                     'spring-security-redirect': buildCBioPortalPageUrl({
                         pathname: 'restore',
@@ -279,6 +279,8 @@ function enableDataDogTracking(store: AppStore) {
 //
 browserWindow.routingStore = routingStore;
 
+let reactRoot: Root | undefined;
+
 let render = (key?: number) => {
     if (!getBrowserWindow().navigator.webdriver) initializeTracking();
 
@@ -306,16 +308,16 @@ let render = (key?: number) => {
     ]`;
     }
 
-    const rootNode = document.getElementById('reactRoot');
-
-    ReactDOM.render(
+    if (!reactRoot) {
+        reactRoot = createRoot(document.getElementById('reactRoot')!);
+    }
+    reactRoot.render(
         <Provider {...stores}>
             <Router history={syncedHistory}>
                 {/*@ts-ignore*/}
                 <Container location={routingStore.location} />
             </Router>
-        </Provider>,
-        rootNode
+        </Provider>
     );
 };
 
