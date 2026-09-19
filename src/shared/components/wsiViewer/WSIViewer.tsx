@@ -1420,8 +1420,8 @@ export default class WSIViewer extends React.Component<Props, {}> {
      * request path, credentials and response contract used by the rest of the
      * frontend. The tile origin is never used as an annotation host.
      *
-     * Silently no-ops when the tile server doesn't have an OncoKB token configured
-     * (endpoint returns 503) or when the hierarchy has no mutations with entrezGeneId.
+     * Silently no-ops when the portal proxy is unavailable or returns an optional-service
+     * failure, or when the hierarchy has no mutations with entrezGeneId.
      */
     private async fetchAndMergeOncoKbAnnotations(
         shouldContinue: () => boolean = () => true
