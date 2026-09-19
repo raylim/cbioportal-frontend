@@ -1200,6 +1200,22 @@ export default class WSIViewer extends React.Component<Props, {}> {
         }
     }
 
+    private startOptionalEnrichment(
+        label: string,
+        task: () => Promise<void>,
+        shouldContinue: () => boolean
+    ): void {
+        void task().catch(error => {
+            // Molecular context is additive to slide viewing. A disabled or
+            // unavailable OncoKB/CIViC endpoint must not become an unhandled
+            // browser error or take down the native viewer.
+            if (shouldContinue() && (window as any).devContext === true) {
+                // eslint-disable-next-line no-console
+                console.warn(`[WSIViewer] optional ${label} enrichment failed`, error);
+            }
+        });
+    }
+
     /**
      * Enrich sample metadata (TMB, MSI, tumor purity, oncogenic mutations, …) from
      * cBioPortal's REST API so the sidebar reflects the same data shown elsewhere in
@@ -1272,16 +1288,42 @@ export default class WSIViewer extends React.Component<Props, {}> {
         ]);
         if (!shouldContinueForHierarchy()) return;
 
-        void this.fetchAndMergeOncoKbAnnotations(shouldContinueForHierarchy);
-        void this.fetchAndMergeCivicAnnotations(shouldContinueForHierarchy);
-        void this.fetchAndMergeMutationFrequency(
-            base,
-            studyId,
+        this.startOptionalEnrichment(
+            'OncoKB mutation',
+            () => this.fetchAndMergeOncoKbAnnotations(shouldContinueForHierarchy),
             shouldContinueForHierarchy
         );
-        void this.fetchAndMergeCnaOncoKbAnnotations(shouldContinueForHierarchy);
-        void this.fetchAndMergeCnaCivicAnnotations(shouldContinueForHierarchy);
-        void this.fetchAndMergeStructuralVariantOncoKbAnnotations(
+        this.startOptionalEnrichment(
+            'CIViC mutation',
+            () => this.fetchAndMergeCivicAnnotations(shouldContinueForHierarchy),
+            shouldContinueForHierarchy
+        );
+        this.startOptionalEnrichment(
+            'mutation frequency',
+            () =>
+                this.fetchAndMergeMutationFrequency(
+                    base,
+                    studyId,
+                    shouldContinueForHierarchy
+                ),
+            shouldContinueForHierarchy
+        );
+        this.startOptionalEnrichment(
+            'OncoKB CNA',
+            () => this.fetchAndMergeCnaOncoKbAnnotations(shouldContinueForHierarchy),
+            shouldContinueForHierarchy
+        );
+        this.startOptionalEnrichment(
+            'CIViC CNA',
+            () => this.fetchAndMergeCnaCivicAnnotations(shouldContinueForHierarchy),
+            shouldContinueForHierarchy
+        );
+        this.startOptionalEnrichment(
+            'OncoKB structural variant',
+            () =>
+                this.fetchAndMergeStructuralVariantOncoKbAnnotations(
+                    shouldContinueForHierarchy
+                ),
             shouldContinueForHierarchy
         );
     }
