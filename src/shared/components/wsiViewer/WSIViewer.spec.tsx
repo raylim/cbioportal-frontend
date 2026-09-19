@@ -29,6 +29,7 @@ import {
 } from './wsiMetadataFetchCache';
 import { clearWsiThumbnailFetchCache } from './wsiThumbnailFetchCache';
 import { PatientHierarchy, Block, Part, Sample, Slide } from './wsiViewerTypes';
+import { getServerConfig, setServerConfig } from 'config/config';
 
 // The controller now obtains v2 slide capabilities through the cBioPortal API
 // URL builder. These component tests use a synthetic origin, so keep URL
@@ -36,6 +37,7 @@ import { PatientHierarchy, Block, Part, Sample, Slide } from './wsiViewerTypes';
 jest.mock('shared/api/urls', () => ({
     ...jest.requireActual('shared/api/urls'),
     buildCBioPortalAPIUrl: (path: string) => `/${path}`,
+    getOncoKbApiUrl: () => '/proxy/oncokb',
 }));
 
 const mockLoadOpenSeadragon = jest.fn();
@@ -2811,6 +2813,23 @@ describe('WSIViewer — prefetchSlideMetadata cancellation', () => {
 });
 
 describe('WSIViewer — sample enrichment scheduling', () => {
+    let previousOncoKb: unknown;
+    let previousCivic: unknown;
+
+    beforeEach(() => {
+        previousOncoKb = getServerConfig().show_oncokb;
+        previousCivic = getServerConfig().show_civic;
+        setServerConfig({ show_oncokb: true, show_civic: true });
+    });
+
+    afterEach(() => {
+        setServerConfig({
+            show_oncokb: previousOncoKb,
+            show_civic: previousCivic,
+        });
+        jest.restoreAllMocks();
+    });
+
     it('does not apply stale mutation frequency or annotation results to a new hierarchy', async () => {
         const makeEnrichmentHierarchy = (patientId: string) => {
             const hierarchy = makeHierarchy(
