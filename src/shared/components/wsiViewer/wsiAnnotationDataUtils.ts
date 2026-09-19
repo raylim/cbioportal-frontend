@@ -24,6 +24,7 @@ import {
     MutationDetail,
     StructuralVariantDetail,
 } from './wsiViewerTypes';
+import oncokbClient from 'shared/api/oncokbClientInstance';
 
 const WSI_ANNOTATION_REQUEST_CACHE_TTL_MS = 5 * 60 * 1000;
 
@@ -202,7 +203,7 @@ export type OncoKbStructuralVariantAnnotation = {
 };
 
 export async function fetchOncoKbMutationAnnotationsReadOnly(
-    tileOrigin: string,
+    oncoKbBase: string,
     details: MutationDetail[]
 ): Promise<OncoKbMutationAnnotation[] | null> {
     const queryableDetails = details.filter(detail => detail.entrezGeneId);
@@ -212,7 +213,7 @@ export async function fetchOncoKbMutationAnnotationsReadOnly(
     if (!items.length) return null;
 
     const cacheKey = [
-        tileOrigin,
+        oncoKbBase,
         'oncokb-mutation',
         buildOrderedListCacheKeyFromItems(items, item => item.id),
     ].join('::');
@@ -232,10 +233,9 @@ export async function fetchOncoKbMutationAnnotationsReadOnly(
             }>;
             try {
                 annotations =
-                    (await postJson<typeof annotations[0][]>(
-                        `${tileOrigin}/annotate/mutations/byProteinChange`,
-                        items
-                    )) ?? [];
+                    (await oncokbClient.annotateMutationsByProteinChangePostUsingPOST_1({
+                        body: items as any,
+                    })) ?? [];
             } catch {
                 return null;
             }
@@ -331,7 +331,7 @@ export async function fetchCivicMutationAnnotations(
 }
 
 export async function fetchOncoKbCnaAnnotationsReadOnly(
-    tileOrigin: string,
+    oncoKbBase: string,
     cnas: CNADetail[]
 ): Promise<OncoKbCnaAnnotation[] | null> {
     const queryableCnas = cnas.filter(
@@ -343,7 +343,7 @@ export async function fetchOncoKbCnaAnnotationsReadOnly(
     if (!items.length) return null;
 
     const cacheKey = [
-        tileOrigin,
+        oncoKbBase,
         'oncokb-cna',
         buildOrderedListCacheKeyFromItems(items, item => item.id),
     ].join('::');
@@ -361,10 +361,9 @@ export async function fetchOncoKbCnaAnnotationsReadOnly(
             }>;
             try {
                 annotations =
-                    (await postJson<typeof annotations[0][]>(
-                        `${tileOrigin}/annotate/copyNumberAlterations`,
-                        items
-                    )) ?? [];
+                    (await oncokbClient.annotateCopyNumberAlterationsPostUsingPOST_1({
+                        body: items as any,
+                    })) ?? [];
             } catch {
                 return null;
             }
@@ -469,7 +468,7 @@ export async function fetchCivicCnaAnnotations(
 }
 
 export async function fetchOncoKbStructuralVariantAnnotationsReadOnly(
-    tileOrigin: string,
+    oncoKbBase: string,
     structuralVariants: StructuralVariantDetail[]
 ): Promise<OncoKbStructuralVariantAnnotation[] | null> {
     const queryableStructuralVariants = structuralVariants.filter(
@@ -483,7 +482,7 @@ export async function fetchOncoKbStructuralVariantAnnotationsReadOnly(
     if (!items.length) return null;
 
     const cacheKey = [
-        tileOrigin,
+        oncoKbBase,
         'oncokb-structural-variant',
         buildOrderedListCacheKeyFromItems(items, item => item.id),
     ].join('::');
@@ -501,10 +500,9 @@ export async function fetchOncoKbStructuralVariantAnnotationsReadOnly(
             }>;
             try {
                 annotations =
-                    (await postJson<typeof annotations[0][]>(
-                        `${tileOrigin}/annotate/structuralVariants`,
-                        items
-                    )) ?? [];
+                    (await oncokbClient.annotateStructuralVariantsPostUsingPOST_1({
+                        body: items as any,
+                    })) ?? [];
             } catch {
                 return null;
             }

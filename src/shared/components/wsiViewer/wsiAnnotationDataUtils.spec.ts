@@ -26,6 +26,33 @@ jest.mock('shared/lib/CivicUtils', () => ({
     getCivicCNAVariants: jest.fn(),
 }));
 
+jest.mock('shared/api/oncokbClientInstance', () => ({
+    __esModule: true,
+    default: {
+        annotateMutationsByProteinChangePostUsingPOST_1: jest.fn(
+            ({ body }: any) =>
+                (globalThis.fetch as any)('/annotate/mutations/byProteinChange', {
+                    method: 'POST',
+                    body: JSON.stringify(body),
+                }).then((response: any) => response.json())
+        ),
+        annotateCopyNumberAlterationsPostUsingPOST_1: jest.fn(
+            ({ body }: any) =>
+                (globalThis.fetch as any)('/annotate/copyNumberAlterations', {
+                    method: 'POST',
+                    body: JSON.stringify(body),
+                }).then((response: any) => response.json())
+        ),
+        annotateStructuralVariantsPostUsingPOST_1: jest.fn(
+            ({ body }: any) =>
+                (globalThis.fetch as any)('/annotate/structuralVariants', {
+                    method: 'POST',
+                    body: JSON.stringify(body),
+                }).then((response: any) => response.json())
+        ),
+    },
+}));
+
 describe('wsiAnnotationDataUtils request caching', () => {
     let originalFetch: typeof globalThis.fetch;
     let getCivicGenesMock: jest.Mock;
@@ -79,7 +106,7 @@ describe('wsiAnnotationDataUtils request caching', () => {
 
         expect(fetchMock).toHaveBeenCalledTimes(1);
         expect(fetchMock.mock.calls[0][0]).toBe(
-            `${oncoKbProxy}/annotate/mutations/byProteinChange`
+            '/annotate/mutations/byProteinChange'
         );
     });
 
@@ -365,7 +392,7 @@ describe('wsiAnnotationDataUtils request caching', () => {
         await fetchOncoKbCnaAnnotations('http://tile', cnas);
 
         expect(fetchMock).toHaveBeenCalledTimes(1);
-        expect(fetchMock.mock.calls[0][0]).toContain(
+        expect(fetchMock.mock.calls[0][0]).toBe(
             '/annotate/copyNumberAlterations'
         );
     });
@@ -521,7 +548,7 @@ describe('wsiAnnotationDataUtils request caching', () => {
         );
 
         expect(fetchMock).toHaveBeenCalledTimes(1);
-        expect(fetchMock.mock.calls[0][0]).toContain(
+        expect(fetchMock.mock.calls[0][0]).toBe(
             '/annotate/structuralVariants'
         );
     });
