@@ -73,12 +73,13 @@ describe('wsiAnnotationDataUtils request caching', () => {
             },
         ] as any;
 
-        await fetchOncoKbMutationAnnotations('http://tile', details);
-        await fetchOncoKbMutationAnnotations('http://tile', details);
+        const oncoKbProxy = 'http://portal.example/api/proxy/oncokb';
+        await fetchOncoKbMutationAnnotations(oncoKbProxy, details);
+        await fetchOncoKbMutationAnnotations(oncoKbProxy, details);
 
         expect(fetchMock).toHaveBeenCalledTimes(1);
-        expect(fetchMock.mock.calls[0][0]).toContain(
-            '/annotate/mutations/byProteinChange'
+        expect(fetchMock.mock.calls[0][0]).toBe(
+            `${oncoKbProxy}/annotate/mutations/byProteinChange`
         );
     });
 

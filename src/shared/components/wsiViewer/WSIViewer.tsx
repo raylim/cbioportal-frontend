@@ -1416,8 +1416,9 @@ export default class WSIViewer extends React.Component<Props, {}> {
      * merge oncogenic / mutationEffect / hotspot / geneSummary / variantSummary into each
      * MutationDetail object in-place so that MutationTable can show rich tooltips.
      *
-     * Routes through the tile server's /api/oncokb/annotate endpoint (same origin as the
-     * viewer) to avoid CORS restrictions when calling the OncoKB API directly.
+     * Routes through the portal's configured OncoKB proxy to preserve the same
+     * request path, credentials and response contract used by the rest of the
+     * frontend. The tile origin is never used as an annotation host.
      *
      * Silently no-ops when the tile server doesn't have an OncoKB token configured
      * (endpoint returns 503) or when the hierarchy has no mutations with entrezGeneId.
@@ -1432,14 +1433,14 @@ export default class WSIViewer extends React.Component<Props, {}> {
         );
         if (!allDetails.length) return;
 
-        const tileOrigin = this.tileServerOrigin;
-        if (!tileOrigin) return;
-        let oncoKbBase = tileOrigin;
+        let oncoKbBase: string;
         try {
             oncoKbBase = getOncoKbApiUrl();
         } catch {
-            // Embedded viewers and unit tests may not have portal config yet.
+            // Embedded viewers may not have portal config yet; enrichment is optional.
+            return;
         }
+        if (!oncoKbBase) return;
 
         const annotations = await fetchOncoKbMutationAnnotationsReadOnly(
             oncoKbBase,
@@ -1526,15 +1527,14 @@ export default class WSIViewer extends React.Component<Props, {}> {
         const allCnas = this.collectSampleEntries(
             sample => sample.cna_alterations
         );
-        const tileOrigin = this.tileServerOrigin;
-        if (!tileOrigin) return;
-
-        let oncoKbBase = tileOrigin;
+        let oncoKbBase: string;
         try {
             oncoKbBase = getOncoKbApiUrl();
         } catch {
-            // Embedded viewers and unit tests may not have portal config yet.
+            // Embedded viewers may not have portal config yet; enrichment is optional.
+            return;
         }
+        if (!oncoKbBase) return;
 
         const annotations = await fetchOncoKbCnaAnnotationsReadOnly(
             oncoKbBase,
@@ -1575,15 +1575,14 @@ export default class WSIViewer extends React.Component<Props, {}> {
         const allStructuralVariants = this.collectSampleEntries(
             sample => sample.structural_variants
         );
-        const tileOrigin = this.tileServerOrigin;
-        if (!tileOrigin) return;
-
-        let oncoKbBase = tileOrigin;
+        let oncoKbBase: string;
         try {
             oncoKbBase = getOncoKbApiUrl();
         } catch {
-            // Embedded viewers and unit tests may not have portal config yet.
+            // Embedded viewers may not have portal config yet; enrichment is optional.
+            return;
         }
+        if (!oncoKbBase) return;
 
         const annotations = await fetchOncoKbStructuralVariantAnnotationsReadOnly(
             oncoKbBase,
