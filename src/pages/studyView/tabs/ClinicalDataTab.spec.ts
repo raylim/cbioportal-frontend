@@ -103,3 +103,40 @@ describe('addPatientWsiSlideCounts', () => {
         expect(rows[1].WSI_PATIENT_SLIDE_COUNT).toBe('4');
     });
 });
+
+describe('fetchClinicalDataForStudyViewClinicalDataTab', () => {
+    it('keeps patient counts unavailable for filtered sample results', async () => {
+        jest.spyOn(
+            studyViewUtils,
+            'getAllClinicalDataByStudyViewFilter'
+        ).mockResolvedValue({
+            totalItems: 1,
+            data: {
+                'study::sample-1': [
+                    {
+                        clinicalAttributeId: 'WSI_SAMPLE_SLIDE_COUNT',
+                        value: '3',
+                    },
+                ],
+            } as any,
+        });
+
+        const sample = {
+            studyId: 'study',
+            patientId: 'patient',
+            sampleId: 'sample-1',
+            uniqueSampleKey: 'study::sample-1',
+        } as Sample;
+
+        const result = await fetchClinicalDataForStudyViewClinicalDataTab(
+            {} as StudyViewFilter,
+            { 'study::sample-1': sample },
+            'sample-1',
+            undefined,
+            undefined,
+            500
+        );
+
+        expect(result.data[0].WSI_PATIENT_SLIDE_COUNT).toBeUndefined();
+    });
+});
