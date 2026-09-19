@@ -1,7 +1,6 @@
 import React, { useMemo } from 'react';
 import { observer } from 'mobx-react-lite';
 import { ClinicalDataBySampleId, Sample } from 'cbioportal-ts-api-client';
-import { DownloadControlOption } from 'cbioportal-frontend-commons';
 import PatientViewMutationsDataStore from '../mutation/PatientViewMutationsDataStore';
 
 import 'cbioportal-clinical-timeline/dist/styles.css';
@@ -43,7 +42,6 @@ import {
     getBoundedMapCacheValue,
     setBoundedMapCacheValue,
 } from './boundedMapCache';
-import { getServerConfig } from 'config/config';
 
 export interface ISampleMetaDeta {
     color: { [sampleId: string]: string };
@@ -563,11 +561,6 @@ export const TimelineWrapperContent: React.FunctionComponent<ITimelineWrapperCon
                                 downloadZippedTracks(
                                     timelineDataWithPortalExtras
                                 )
-                            }
-                            showDownload={
-                                getServerConfig()
-                                    .skin_hide_download_controls ===
-                                DownloadControlOption.SHOW_ALL
                             }
                         />
                     </div>
