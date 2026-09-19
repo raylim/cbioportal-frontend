@@ -190,15 +190,11 @@ export async function fetchClinicalDataForStudyViewClinicalDataTab(
         }
     );
 
-    const canAggregateSampleCounts =
-        sampleClinicalDataResponse.totalItems <=
-        Object.keys(sampleClinicalDataResponse.data).length;
-
     return {
         totalItems: sampleClinicalDataResponse.totalItems,
         data: addPatientWsiSlideCounts(
             _.values(aggregatedSampleClinicalData),
-            canAggregateSampleCounts
+            false
         ),
     };
 }
