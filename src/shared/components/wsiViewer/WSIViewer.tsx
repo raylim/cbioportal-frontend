@@ -75,6 +75,7 @@ import {
     applyStructuralVariantData,
 } from './wsiHierarchyUpdateUtils';
 import { reportWsiInitialSlideLoadPerformance } from 'shared/lib/tracking';
+import { getOncoKbApiUrl } from 'shared/api/urls';
 
 // ---- design tokens (matches iframe viewer) ----
 const C = {
@@ -1211,7 +1212,10 @@ export default class WSIViewer extends React.Component<Props, {}> {
             // browser error or take down the native viewer.
             if (shouldContinue() && (window as any).devContext === true) {
                 // eslint-disable-next-line no-console
-                console.warn(`[WSIViewer] optional ${label} enrichment failed`, error);
+                console.warn(
+                    `[WSIViewer] optional ${label} enrichment failed`,
+                    error
+                );
             }
         });
     }
@@ -1290,12 +1294,14 @@ export default class WSIViewer extends React.Component<Props, {}> {
 
         this.startOptionalEnrichment(
             'OncoKB mutation',
-            () => this.fetchAndMergeOncoKbAnnotations(shouldContinueForHierarchy),
+            () =>
+                this.fetchAndMergeOncoKbAnnotations(shouldContinueForHierarchy),
             shouldContinueForHierarchy
         );
         this.startOptionalEnrichment(
             'CIViC mutation',
-            () => this.fetchAndMergeCivicAnnotations(shouldContinueForHierarchy),
+            () =>
+                this.fetchAndMergeCivicAnnotations(shouldContinueForHierarchy),
             shouldContinueForHierarchy
         );
         this.startOptionalEnrichment(
@@ -1310,12 +1316,18 @@ export default class WSIViewer extends React.Component<Props, {}> {
         );
         this.startOptionalEnrichment(
             'OncoKB CNA',
-            () => this.fetchAndMergeCnaOncoKbAnnotations(shouldContinueForHierarchy),
+            () =>
+                this.fetchAndMergeCnaOncoKbAnnotations(
+                    shouldContinueForHierarchy
+                ),
             shouldContinueForHierarchy
         );
         this.startOptionalEnrichment(
             'CIViC CNA',
-            () => this.fetchAndMergeCnaCivicAnnotations(shouldContinueForHierarchy),
+            () =>
+                this.fetchAndMergeCnaCivicAnnotations(
+                    shouldContinueForHierarchy
+                ),
             shouldContinueForHierarchy
         );
         this.startOptionalEnrichment(
@@ -1444,8 +1456,8 @@ export default class WSIViewer extends React.Component<Props, {}> {
      * merge oncogenic / mutationEffect / hotspot / geneSummary / variantSummary into each
      * MutationDetail object in-place so that MutationTable can show rich tooltips.
      *
-     * Routes through the tile server's /api/oncokb/annotate endpoint (same origin as the
-     * viewer) to avoid CORS restrictions when calling the OncoKB API directly.
+     * Uses cBioPortal's configured OncoKB proxy so the request follows the same
+     * authentication and proxy contract as the rest of the portal.
      *
      * Silently no-ops when the tile server doesn't have an OncoKB token configured
      * (endpoint returns 503) or when the hierarchy has no mutations with entrezGeneId.
@@ -1462,9 +1474,15 @@ export default class WSIViewer extends React.Component<Props, {}> {
 
         const tileOrigin = this.tileServerOrigin;
         if (!tileOrigin) return;
+        let oncoKbBase = tileOrigin;
+        try {
+            oncoKbBase = getOncoKbApiUrl();
+        } catch {
+            // Embedded viewers and unit tests may not have portal config yet.
+        }
 
         const annotations = await fetchOncoKbMutationAnnotationsReadOnly(
-            tileOrigin,
+            oncoKbBase,
             allDetails
         );
         if (!annotations?.length || !shouldContinue()) return;
@@ -1550,9 +1568,14 @@ export default class WSIViewer extends React.Component<Props, {}> {
         );
         const tileOrigin = this.tileServerOrigin;
         if (!tileOrigin) return;
-
+        let oncoKbBase = tileOrigin;
+        try {
+            oncoKbBase = getOncoKbApiUrl();
+        } catch {
+            // Embedded viewers and unit tests may not have portal config yet.
+        }
         const annotations = await fetchOncoKbCnaAnnotationsReadOnly(
-            tileOrigin,
+            oncoKbBase,
             allCnas
         );
         if (!annotations?.length || !shouldContinue()) return;
@@ -1592,9 +1615,14 @@ export default class WSIViewer extends React.Component<Props, {}> {
         );
         const tileOrigin = this.tileServerOrigin;
         if (!tileOrigin) return;
-
+        let oncoKbBase = tileOrigin;
+        try {
+            oncoKbBase = getOncoKbApiUrl();
+        } catch {
+            // Embedded viewers and unit tests may not have portal config yet.
+        }
         const annotations = await fetchOncoKbStructuralVariantAnnotationsReadOnly(
-            tileOrigin,
+            oncoKbBase,
             allStructuralVariants
         );
         if (!annotations?.length || !shouldContinue()) return;
