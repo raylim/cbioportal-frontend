@@ -77,7 +77,9 @@ describe('wsiAnnotationDataUtils request caching', () => {
         await fetchOncoKbMutationAnnotations('http://tile', details);
 
         expect(fetchMock).toHaveBeenCalledTimes(1);
-        expect(fetchMock.mock.calls[0][0]).toContain('/api/oncokb/annotate');
+        expect(fetchMock.mock.calls[0][0]).toContain(
+            '/annotate/mutations/byProteinChange'
+        );
     });
 
     it('returns cloned OncoKB mutation annotations so callers cannot mutate the shared cache', async () => {
@@ -363,7 +365,7 @@ describe('wsiAnnotationDataUtils request caching', () => {
 
         expect(fetchMock).toHaveBeenCalledTimes(1);
         expect(fetchMock.mock.calls[0][0]).toContain(
-            '/api/oncokb/annotate-copy-number'
+            '/annotate/copyNumberAlterations'
         );
     });
 
@@ -519,7 +521,7 @@ describe('wsiAnnotationDataUtils request caching', () => {
 
         expect(fetchMock).toHaveBeenCalledTimes(1);
         expect(fetchMock.mock.calls[0][0]).toContain(
-            '/api/oncokb/annotate-structural-variants'
+            '/annotate/structuralVariants'
         );
     });
 

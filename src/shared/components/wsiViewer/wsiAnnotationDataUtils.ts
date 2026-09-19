@@ -233,7 +233,7 @@ export async function fetchOncoKbMutationAnnotationsReadOnly(
             try {
                 annotations =
                     (await postJson<typeof annotations[0][]>(
-                        `${tileOrigin}/api/oncokb/annotate`,
+                        `${tileOrigin}/annotate/mutations/byProteinChange`,
                         items
                     )) ?? [];
             } catch {
@@ -362,7 +362,7 @@ export async function fetchOncoKbCnaAnnotationsReadOnly(
             try {
                 annotations =
                     (await postJson<typeof annotations[0][]>(
-                        `${tileOrigin}/api/oncokb/annotate-copy-number`,
+                        `${tileOrigin}/annotate/copyNumberAlterations`,
                         items
                     )) ?? [];
             } catch {
@@ -502,7 +502,7 @@ export async function fetchOncoKbStructuralVariantAnnotationsReadOnly(
             try {
                 annotations =
                     (await postJson<typeof annotations[0][]>(
-                        `${tileOrigin}/api/oncokb/annotate-structural-variants`,
+                        `${tileOrigin}/annotate/structuralVariants`,
                         items
                     )) ?? [];
             } catch {

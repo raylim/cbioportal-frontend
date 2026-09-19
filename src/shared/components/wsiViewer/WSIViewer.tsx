@@ -75,6 +75,7 @@ import {
     applyStructuralVariantData,
 } from './wsiHierarchyUpdateUtils';
 import { reportWsiInitialSlideLoadPerformance } from 'shared/lib/tracking';
+import { getOncoKbApiUrl } from 'shared/api/urls';
 
 // ---- design tokens (matches iframe viewer) ----
 const C = {
@@ -1272,18 +1273,31 @@ export default class WSIViewer extends React.Component<Props, {}> {
         ]);
         if (!shouldContinueForHierarchy()) return;
 
-        void this.fetchAndMergeOncoKbAnnotations(shouldContinueForHierarchy);
-        void this.fetchAndMergeCivicAnnotations(shouldContinueForHierarchy);
+        const serverConfig = getServerConfig();
+        if (serverConfig.show_oncokb) {
+            void this.fetchAndMergeOncoKbAnnotations(shouldContinueForHierarchy);
+        }
+        if (serverConfig.show_civic) {
+            void this.fetchAndMergeCivicAnnotations(shouldContinueForHierarchy);
+        }
         void this.fetchAndMergeMutationFrequency(
             base,
             studyId,
             shouldContinueForHierarchy
         );
-        void this.fetchAndMergeCnaOncoKbAnnotations(shouldContinueForHierarchy);
-        void this.fetchAndMergeCnaCivicAnnotations(shouldContinueForHierarchy);
-        void this.fetchAndMergeStructuralVariantOncoKbAnnotations(
-            shouldContinueForHierarchy
-        );
+        if (serverConfig.show_oncokb) {
+            void this.fetchAndMergeCnaOncoKbAnnotations(
+                shouldContinueForHierarchy
+            );
+            void this.fetchAndMergeStructuralVariantOncoKbAnnotations(
+                shouldContinueForHierarchy
+            );
+        }
+        if (serverConfig.show_civic) {
+            void this.fetchAndMergeCnaCivicAnnotations(
+                shouldContinueForHierarchy
+            );
+        }
     }
 
     /**
@@ -1420,9 +1434,15 @@ export default class WSIViewer extends React.Component<Props, {}> {
 
         const tileOrigin = this.tileServerOrigin;
         if (!tileOrigin) return;
+        let oncoKbBase = tileOrigin;
+        try {
+            oncoKbBase = getOncoKbApiUrl();
+        } catch {
+            // Embedded viewers and unit tests may not have portal config yet.
+        }
 
         const annotations = await fetchOncoKbMutationAnnotationsReadOnly(
-            tileOrigin,
+            oncoKbBase,
             allDetails
         );
         if (!annotations?.length || !shouldContinue()) return;
@@ -1509,8 +1529,15 @@ export default class WSIViewer extends React.Component<Props, {}> {
         const tileOrigin = this.tileServerOrigin;
         if (!tileOrigin) return;
 
+        let oncoKbBase = tileOrigin;
+        try {
+            oncoKbBase = getOncoKbApiUrl();
+        } catch {
+            // Embedded viewers and unit tests may not have portal config yet.
+        }
+
         const annotations = await fetchOncoKbCnaAnnotationsReadOnly(
-            tileOrigin,
+            oncoKbBase,
             allCnas
         );
         if (!annotations?.length || !shouldContinue()) return;
@@ -1551,8 +1578,15 @@ export default class WSIViewer extends React.Component<Props, {}> {
         const tileOrigin = this.tileServerOrigin;
         if (!tileOrigin) return;
 
+        let oncoKbBase = tileOrigin;
+        try {
+            oncoKbBase = getOncoKbApiUrl();
+        } catch {
+            // Embedded viewers and unit tests may not have portal config yet.
+        }
+
         const annotations = await fetchOncoKbStructuralVariantAnnotationsReadOnly(
-            tileOrigin,
+            oncoKbBase,
             allStructuralVariants
         );
         if (!annotations?.length || !shouldContinue()) return;
