@@ -939,5 +939,6 @@ test.describe('pathology summary and clinical-data surfaces', () => {
             page.locator('[data-test="patientview-structural-variant-table"]')
         ).toBeVisible({ timeout: 5000 });
         expect(delayedUrls.length).toBeGreaterThan(0);
+        await page.unrouteAll({ behavior: 'ignoreErrors' });
     });
 });
