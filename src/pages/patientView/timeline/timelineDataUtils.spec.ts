@@ -104,6 +104,32 @@ describe('groupTimelineData', () => {
         ]);
     });
 
+    it('invalidates cached rows when scalar event fields mutate in place', () => {
+        const mutableEvent = makeEvent({}, [{ key: 'A', value: '1' }]);
+        const events = [mutableEvent];
+        const firstData = groupTimelineData(events);
+
+        mutableEvent.startNumberOfDaysSinceDiagnosis = 99;
+        const secondData = groupTimelineData(events);
+
+        expect(secondData.TREATMENT).not.toBe(firstData.TREATMENT);
+        expect(secondData.TREATMENT[1][1]).toBe('99');
+    });
+
+    it('does not collide when an attribute value contains signature delimiters', () => {
+        const firstData = groupTimelineData([
+            makeEvent({}, [{ key: 'NOTE', value: 'A|STATUS:B' }]),
+        ]);
+        const secondData = groupTimelineData([
+            makeEvent({}, [
+                { key: 'NOTE', value: 'A' },
+                { key: 'STATUS', value: 'B' },
+            ]),
+        ]);
+
+        expect(firstData.TREATMENT).not.toEqual(secondData.TREATMENT);
+    });
+
     it('preserves first-seen attribute column order across multiple events', () => {
         const data = groupTimelineData([
             makeEvent({}, [

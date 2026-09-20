@@ -9,6 +9,7 @@ type CachedEventSignatureEntry = {
     attributeRef?: ClinicalEvent['attributes'];
     attributeSignature: string;
     includeUniqueKeys: boolean;
+    snapshot: string;
     signature: string;
 };
 
@@ -23,6 +24,16 @@ const attributeSignatureCache = new WeakMap<
     NonNullable<ClinicalEvent['attributes']>,
     CachedAttributeSignatureEntry
 >();
+
+function signatureValue(value: unknown): string {
+    const text = String(value ?? '');
+    // Keep the established compact format for ordinary identifiers while
+    // escaping delimiter characters in user-provided values. This prevents
+    // distinct events or attributes from sharing a cache key.
+    return /^[A-Za-z0-9_.-]*$/.test(text)
+        ? text
+        : `~${encodeURIComponent(text)}`;
+}
 const eventSignatureCache = new WeakMap<ClinicalEvent, CachedEventSignatureEntry>();
 const eventsSignatureCache = new WeakMap<
     ClinicalEvent[],
@@ -39,7 +50,9 @@ export function buildClinicalEventAttributesSignature(
     const entries = new Array<string>(attributes.length);
     for (let index = 0; index < attributes.length; index += 1) {
         const attribute = attributes[index];
-        entries[index] = `${attribute.key}:${attribute.value}`;
+        entries[index] = `${signatureValue(attribute.key)}:${signatureValue(
+            attribute.value
+        )}`;
     }
     const orderedSnapshot = entries.join('|');
 
@@ -67,31 +80,38 @@ export function buildClinicalEventSignature(
     const attributeSignature = buildClinicalEventAttributesSignature(attributes);
     const cached = eventSignatureCache.get(event);
 
+    const snapshot = [
+        signatureValue(event.eventType),
+        signatureValue(event.patientId),
+        signatureValue(event.studyId),
+        ...(includeUniqueKeys
+            ? [
+                  signatureValue(event.uniquePatientKey),
+                  signatureValue(event.uniqueSampleKey),
+              ]
+            : []),
+        signatureValue(event.startNumberOfDaysSinceDiagnosis),
+        signatureValue(event.endNumberOfDaysSinceDiagnosis),
+        attributeSignature,
+    ].join('::');
+
     if (
         cached &&
         cached.attributeRef === attributes &&
         cached.attributeSignature === attributeSignature &&
-        cached.includeUniqueKeys === includeUniqueKeys
+        cached.includeUniqueKeys === includeUniqueKeys &&
+        cached.snapshot === snapshot
     ) {
         return cached.signature;
     }
 
-    const signature = [
-        event.eventType || '',
-        event.patientId || '',
-        event.studyId || '',
-        ...(includeUniqueKeys
-            ? [event.uniquePatientKey || '', event.uniqueSampleKey || '']
-            : []),
-        event.startNumberOfDaysSinceDiagnosis ?? '',
-        event.endNumberOfDaysSinceDiagnosis ?? '',
-        attributeSignature,
-    ].join('::');
+    const signature = snapshot;
 
     eventSignatureCache.set(event, {
         attributeRef: attributes,
         attributeSignature,
         includeUniqueKeys,
+        snapshot: signature,
         signature,
     });
 

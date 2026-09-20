@@ -1,4 +1,5 @@
 import { test, expect } from '../fixtures';
+import { keycloakLogin } from './local/helpers';
 
 const baseUrl = process.env.WSI_VIEWER_BASE_URL ?? '';
 const timingStudyId = process.env.WSI_TIMING_STUDY_ID ?? 'mskimpact';
@@ -20,11 +21,21 @@ const recordedDateSource =
 
 test.describe('WSI pathology timing contract', () => {
     test('serves recorded and undated timing without a synthetic day-zero date', async ({
+        page,
         request,
     }) => {
         test.skip(!baseUrl, 'WSI_VIEWER_BASE_URL not set');
 
-        const undatedResponse = await request.get(
+        let apiRequest = request;
+        if (process.env.WSI_AUTHENTICATED_E2E === 'true') {
+            const authPortal =
+                process.env.WSI_AUTH_PORTAL_URL ?? 'http://localhost:8080';
+            await page.goto(`${authPortal}/`);
+            await keycloakLogin(page);
+            apiRequest = page.request;
+        }
+
+        const undatedResponse = await apiRequest.get(
             `${baseUrl}/api/wsi/v2/hierarchy/${timingStudyId}/${undatedPatientId}`
         );
         expect(undatedResponse.ok()).toBe(true);
@@ -46,7 +57,7 @@ test.describe('WSI pathology timing contract', () => {
             )
         ).toBe(true);
 
-        const recordedResponse = await request.get(
+        const recordedResponse = await apiRequest.get(
             `${baseUrl}/api/wsi/v2/hierarchy/${timingStudyId}/${recordedPatientId}`
         );
         expect(recordedResponse.ok()).toBe(true);
