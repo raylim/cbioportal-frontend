@@ -24,7 +24,7 @@ import {
     MutationDetail,
     StructuralVariantDetail,
 } from './wsiViewerTypes';
-import oncokbClient from 'shared/api/oncokbClientInstance';
+import { getWsiOncoKbClient } from 'shared/api/wsiOncoKbClientInstance';
 
 const WSI_ANNOTATION_REQUEST_CACHE_TTL_MS = 5 * 60 * 1000;
 
@@ -233,9 +233,11 @@ export async function fetchOncoKbMutationAnnotationsReadOnly(
             }>;
             try {
                 annotations =
-                    (await oncokbClient.annotateMutationsByProteinChangePostUsingPOST_1({
-                        body: items as any,
-                    })) ?? [];
+                    (await getWsiOncoKbClient().annotateMutationsByProteinChangePostUsingPOST_1(
+                        {
+                            body: items as any,
+                        }
+                    )) ?? [];
             } catch {
                 return null;
             }
@@ -361,9 +363,11 @@ export async function fetchOncoKbCnaAnnotationsReadOnly(
             }>;
             try {
                 annotations =
-                    (await oncokbClient.annotateCopyNumberAlterationsPostUsingPOST_1({
-                        body: items as any,
-                    })) ?? [];
+                    (await getWsiOncoKbClient().annotateCopyNumberAlterationsPostUsingPOST_1(
+                        {
+                            body: items as any,
+                        }
+                    )) ?? [];
             } catch {
                 return null;
             }
@@ -500,9 +504,11 @@ export async function fetchOncoKbStructuralVariantAnnotationsReadOnly(
             }>;
             try {
                 annotations =
-                    (await oncokbClient.annotateStructuralVariantsPostUsingPOST_1({
-                        body: items as any,
-                    })) ?? [];
+                    (await getWsiOncoKbClient().annotateStructuralVariantsPostUsingPOST_1(
+                        {
+                            body: items as any,
+                        }
+                    )) ?? [];
             } catch {
                 return null;
             }

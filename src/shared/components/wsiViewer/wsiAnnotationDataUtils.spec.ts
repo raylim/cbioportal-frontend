@@ -26,9 +26,9 @@ jest.mock('shared/lib/CivicUtils', () => ({
     getCivicCNAVariants: jest.fn(),
 }));
 
-jest.mock('shared/api/oncokbClientInstance', () => ({
+jest.mock('shared/api/wsiOncoKbClientInstance', () => ({
     __esModule: true,
-    default: {
+    getWsiOncoKbClient: jest.fn(() => ({
         annotateMutationsByProteinChangePostUsingPOST_1: jest.fn(
             ({ body }: any) =>
                 (globalThis.fetch as any)('/annotate/mutations/byProteinChange', {
@@ -50,7 +50,7 @@ jest.mock('shared/api/oncokbClientInstance', () => ({
                     body: JSON.stringify(body),
                 }).then((response: any) => response.json())
         ),
-    },
+    })),
 }));
 
 describe('wsiAnnotationDataUtils request caching', () => {
