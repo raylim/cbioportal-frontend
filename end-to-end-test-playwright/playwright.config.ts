@@ -48,6 +48,7 @@ const includeLocalDb = process.env.PW_LOCAL === '1';
 const suite = process.env.PW_SUITE || 'public';
 const liveWsiSpecs = [
     '**/wsi-viewer.spec.ts',
+    '**/wsi-foundation-route.spec.ts',
     '**/pathology-summary.spec.ts',
     '**/pathology-study-clinical-data.spec.ts',
     '**/pathology-timing-contract.spec.ts',
