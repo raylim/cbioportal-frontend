@@ -145,4 +145,37 @@ describe('WSI OncoKB client', () => {
         expect(emit).not.toHaveBeenCalled();
         emit.mockRestore();
     });
+
+    it('uses the generated CNA and structural-variant endpoint contracts', async () => {
+        await getWsiOncoKbClient().annotateCopyNumberAlterationsPostUsingPOST_1(
+            {
+                body: [{ id: '3845_AMP' } as any],
+            }
+        );
+        await getWsiOncoKbClient().annotateStructuralVariantsPostUsingPOST_1({
+            body: [{ id: 'ALK--EML4' } as any],
+        });
+
+        expect(requests).toHaveLength(2);
+        expect(requests[0].url).toBe(
+            `${mockOncoKbProxy}/${Buffer.from(
+                '/annotate/copyNumberAlterations'
+            ).toString('base64')}`
+        );
+        expect(requests[1].url).toBe(
+            `${mockOncoKbProxy}/${Buffer.from(
+                '/annotate/structuralVariants'
+            ).toString('base64')}`
+        );
+        expect(
+            JSON.parse(
+                Buffer.from(String(requests[0].body), 'base64').toString()
+            )
+        ).toEqual([{ id: '3845_AMP' }]);
+        expect(
+            JSON.parse(
+                Buffer.from(String(requests[1].body), 'base64').toString()
+            )
+        ).toEqual([{ id: 'ALK--EML4' }]);
+    });
 });
