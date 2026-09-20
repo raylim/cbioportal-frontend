@@ -711,7 +711,15 @@ function buildPathologyEvent(
                   subtype: group.subtype,
                   matchLevel: group.matchLevel,
                   specimenKey: group.specimenKey,
-                  timepointDays: date,
+                  // A clinical event may carry a fallback day for ordering,
+                  // while the WSI timing contract explicitly says that the
+                  // slide has no verified procedure date. Do not turn that
+                  // fallback into a viewer time filter.
+                  timepointDays: group.timepointSource.includes(
+                      'MISSING_PROCEDURE_DATE'
+                  )
+                      ? undefined
+                      : date,
               })
             : '';
 
