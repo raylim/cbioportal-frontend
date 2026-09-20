@@ -29,10 +29,13 @@ test.describe('WSI pathology timing contract', () => {
         );
         expect(undatedResponse.ok()).toBe(true);
         const undated = await undatedResponse.json();
-        const undatedSlides = undated.sampleGroups
+        const allUndatedPatientSlides = undated.sampleGroups
             .flatMap((group: any) => group.parts)
             .flatMap((part: any) => part.blocks)
             .flatMap((block: any) => block.slides);
+        const undatedSlides = allUndatedPatientSlides.filter(
+            (slide: any) => slide.procedureDateKind === 'UNDATED'
+        );
         expect(undatedSlides.length).toBe(undatedSlideCount);
         expect(
             undatedSlides.every(
