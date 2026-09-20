@@ -19,9 +19,10 @@ const SNAPSHOT_DIR = inDocker ? '__snapshots__' : '__local_snapshots__';
 // bundle can attach. Opt out with LOCALDEV=0 to exercise the deployed
 // bundle on the public origin instead.
 const isLocaldev = process.env.LOCALDEV !== '0';
-// Isolated CI stacks may serve the exact candidate bundle over a generated
-// localhost certificate while deliberately keeping LOCALDEV=0. Keep TLS
-// relaxation explicit so it cannot silently change localdist URL semantics.
+// CI child validation serves each candidate bundle over a generated
+// localhost certificate while keeping LOCALDEV=0.  Honour the explicit CI
+// opt-in so those tests exercise the candidate bundle instead of failing
+// during TLS negotiation.
 const ignoreHTTPSErrors =
     isLocaldev || process.env.PW_IGNORE_HTTPS_ERRORS === '1';
 
