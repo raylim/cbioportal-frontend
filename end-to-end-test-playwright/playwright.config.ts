@@ -47,6 +47,7 @@ const updateSnapshots = process.env.PW_UPDATE_SNAPSHOTS as
 const includeLocalDb = process.env.PW_LOCAL === '1';
 const suite = process.env.PW_SUITE || 'public';
 const liveWsiSpecs = [
+    '**/wsi-foundation-route.spec.ts',
     '**/wsi-viewer.spec.ts',
     '**/pathology-summary.spec.ts',
     '**/pathology-study-clinical-data.spec.ts',
