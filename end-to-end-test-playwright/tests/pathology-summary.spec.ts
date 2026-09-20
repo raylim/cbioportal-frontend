@@ -1,4 +1,4 @@
-import { Page } from '@playwright/test';
+import { Page, Route } from '@playwright/test';
 import { test, expect } from '../fixtures';
 import { ensureLocalLogin } from './local/helpers';
 
@@ -75,7 +75,8 @@ function extractViewableCount(slidesCell: string): number | null {
     const match = slidesCell.match(
         /\((\d+)\s+viewable\)|View\s+(\d+)\s+of\s+\d+/i
     );
-    return match ? Number(match[1] ?? match[2]) : null;
+    if (match) return Number(match[1] ?? match[2]);
+    return /^View$/i.test(slidesCell.trim()) ? 1 : null;
 }
 
 function extractLeadingCount(label: string): number | null {
@@ -906,23 +907,17 @@ test.describe('pathology summary and clinical-data surfaces', () => {
     }) => {
         const delayedUrls: string[] = [];
         const delayMs = 7000;
-        const delayAndFetch = async (url: string) => {
-            delayedUrls.push(url);
+        const delayAndFetch = async (route: Route) => {
+            delayedUrls.push(route.request().url());
             await new Promise(resolve => setTimeout(resolve, delayMs));
-            const response = await fetch(url);
-            const body = await response.text();
-            return {
-                status: response.status,
-                contentType:
-                    response.headers.get('content-type') || 'application/json',
-                body,
-            };
+            const response = await route.fetch();
+            await route.fulfill({ response });
         };
 
         await page.route(
             `**/api/wsi/v2/hierarchy/${DEV_PATHOLOGY.studyId}/${DEV_PATHOLOGY.summaryFailureCaseId}`,
             async route => {
-                await route.fulfill(await delayAndFetch(route.request().url()));
+                await delayAndFetch(route);
             }
         );
         await page.goto(

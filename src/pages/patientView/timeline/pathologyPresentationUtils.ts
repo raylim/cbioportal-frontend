@@ -338,7 +338,9 @@ export function formatPathologyLinkoutLabel(
     servableCount: number,
     totalCount: number
 ): string {
-    return `View ${servableCount} of ${totalCount}`;
+    return servableCount >= totalCount
+        ? 'View'
+        : `View ${servableCount} of ${totalCount}`;
 }
 
 export function groupPathologyPresentationItems(
