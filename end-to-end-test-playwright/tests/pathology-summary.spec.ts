@@ -76,7 +76,7 @@ function extractViewableCount(slidesCell: string): number | null {
         /\((\d+)\s+viewable\)|View\s+(\d+)\s+of\s+\d+/i
     );
     if (match) return Number(match[1] ?? match[2]);
-    return /^View$/i.test(slidesCell.trim()) ? 1 : null;
+    return /\bView\b/i.test(slidesCell) ? 1 : null;
 }
 
 function extractLeadingCount(label: string): number | null {
