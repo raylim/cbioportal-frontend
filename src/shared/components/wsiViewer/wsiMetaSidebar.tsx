@@ -164,6 +164,7 @@ function WsiMetaSidebarComponent({
     seqRows,
     sample,
     mutationDataStatus,
+    dataVersion,
 }: {
     width: number;
     showImageProperties: boolean;
@@ -173,7 +174,13 @@ function WsiMetaSidebarComponent({
     seqRows: MetaRow[];
     sample: Sample | null;
     mutationDataStatus: WsiMutationDataStatus;
+    /** Invalidates the memoized sidebar when enrichment mutates a sample in place. */
+    dataVersion?: number;
 }) {
+    // Keep the version in the component's props so React.memo observes
+    // staged molecular/CNA/SV updates even when the sample object is mutated
+    // in place to preserve hierarchy identity.
+    void dataVersion;
     const showMskImpact = hasMskImpactContent(
         sample,
         seqRows,

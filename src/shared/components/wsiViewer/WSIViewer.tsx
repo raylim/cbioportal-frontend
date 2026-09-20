@@ -1934,6 +1934,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
                     seqRows={this.sidebarSeqRowsForRender}
                     sample={this.sidebarImpactSample}
                     mutationDataStatus={this.mutationDataStatus}
+                    dataVersion={this.hierarchyDataVersion}
                 />
             </div>
         );
