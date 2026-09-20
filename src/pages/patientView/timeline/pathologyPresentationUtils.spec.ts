@@ -45,6 +45,15 @@ describe('pathology presentation linkouts', () => {
         );
     });
 
+    it('does not add a fallback timepoint to unmatched WSI linkouts', () => {
+        expect(
+            markPathologyLinkoutScope(
+                '/patient/wsiHESlides?matchLevel=Unmatched&specimenKey=unmatched%3A%3A35%3A%3A5',
+                -18
+            )
+        ).not.toContain('timepointDays=');
+    });
+
     it('preserves the specimen key for a single-specimen link', () => {
         const item = makeItem();
 

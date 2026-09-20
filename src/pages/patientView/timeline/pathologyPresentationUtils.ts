@@ -133,8 +133,10 @@ export function markPathologyLinkoutScope(
             return linkout;
         }
         target.searchParams.set('wsiScope', 'linkout');
+        const matchLevel = target.searchParams.get('matchLevel');
         if (
             !target.searchParams.has('timepointDays') &&
+            matchLevel?.toUpperCase() !== 'UNMATCHED' &&
             timepointDays != null &&
             Number.isFinite(timepointDays)
         ) {
