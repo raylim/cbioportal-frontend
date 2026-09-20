@@ -28,9 +28,9 @@ function makeItem(
 }
 
 describe('pathology presentation linkouts', () => {
-    it('uses a concise View label when every slide is servable', () => {
-        expect(formatPathologyLinkoutLabel(2, 2)).toBe('View');
-        expect(formatPathologyLinkoutLabel(3, 2)).toBe('View');
+    it('reports viewable and total pathology slide counts in link labels', () => {
+        expect(formatPathologyLinkoutLabel(2, 2)).toBe('View 2 of 2');
+        expect(formatPathologyLinkoutLabel(3, 2)).toBe('View 3 of 2');
         expect(formatPathologyLinkoutLabel(1, 2)).toBe('View 1 of 2');
     });
 
