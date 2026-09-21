@@ -36,6 +36,7 @@ import { BLOCK_LABEL_TIP, compareSamplesByTimepoint } from './wsiNavUtils';
 import { WsiNavPanel } from './wsiNavPanel';
 import {
     WsiInitialSlideLoadPerformance,
+    WsiSlideSelectionResult,
     WsiViewerController,
     WsiViewerControllerHost,
 } from './wsiViewerController';
@@ -420,6 +421,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
             getSelectedSample: () => this.selectedSample,
             getSelectedMeta: () => this.selectedMeta,
             clearSelectedSlide: () => {
+                this.annotationController.invalidatePendingRequests();
                 this.selectedSlide = null;
                 this.selectedSample = null;
                 this.selectedMeta = null;
@@ -476,7 +478,10 @@ export default class WSIViewer extends React.Component<Props, {}> {
         }
     }
 
-    selectSlide(slide: Slide, sample: Sample): Promise<void> {
+    selectSlide(
+        slide: Slide,
+        sample: Sample
+    ): Promise<WsiSlideSelectionResult> {
         return this.controller.selectSlide(slide, sample);
     }
 
@@ -601,7 +606,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
             this.hierarchy = null; // stops the prefetchSlideMetadata loop
         })();
         this.controller.dispose();
-        this.annotationController.detachViewer();
+        this.annotationController.invalidatePendingRequests();
         this.handleSidebarResizeEnd();
     }
 
@@ -652,16 +657,28 @@ export default class WSIViewer extends React.Component<Props, {}> {
         if (!this.selectedSlide || !this.selectedSample || !this.selectedMeta) {
             return null;
         }
+        const slideId = this.selectedSlide.image_id;
+        const sampleId = this.selectedSample.sample_id;
+        const studyId = this.props.studyId || '';
+        const patientId = this.props.patientId;
         const width = this.selectedMeta.dimensions.width;
         const height = this.selectedMeta.dimensions.height;
-        const slideId = this.selectedSlide.image_id;
-        const studyId = this.props.studyId || '';
         const viewport = await this.controller.captureAgentViewportAfterDraw();
-        if (!viewport) return null;
+        if (
+            !viewport ||
+            this.props.studyId !== studyId ||
+            this.props.patientId !== patientId ||
+            this.selectedSlide?.image_id !== slideId ||
+            this.selectedSample?.sample_id !== sampleId ||
+            this.selectedMeta?.dimensions.width !== width ||
+            this.selectedMeta?.dimensions.height !== height
+        ) {
+            return null;
+        }
         return {
             study_id: studyId,
-            patient_id: this.props.patientId,
-            sample_id: this.selectedSample.sample_id,
+            patient_id: patientId,
+            sample_id: sampleId,
             slide_id: slideId,
             stain_name: this.selectedSlide.stain_name,
             match_level: this.activePathologyFilter?.matchLevel,
@@ -706,14 +723,13 @@ export default class WSIViewer extends React.Component<Props, {}> {
         return (
             proposal.study_id === context.study_id &&
             proposal.slide_id === context.slide_id &&
-            (!proposalContext ||
-                (proposalContext.study_id === context.study_id &&
-                    proposalContext.patient_id === context.patient_id &&
-                    proposalContext.slide_id === context.slide_id &&
-                    viewport?.source_fingerprint ===
-                        context.viewport.source_fingerprint &&
-                    viewport?.viewer_generation ===
-                        context.viewport.viewer_generation))
+            !!proposalContext &&
+            proposalContext.study_id === context.study_id &&
+            proposalContext.patient_id === context.patient_id &&
+            proposalContext.slide_id === context.slide_id &&
+            viewport?.source_fingerprint ===
+                context.viewport.source_fingerprint &&
+            viewport?.viewer_generation === context.viewport.viewer_generation
         );
     }
 
@@ -779,12 +795,18 @@ export default class WSIViewer extends React.Component<Props, {}> {
                         'That slide is not available under the current filters.',
                 };
             }
-            await this.controller.selectSlide(entry.slide, entry.sample);
-            return this.selectedSlide?.image_id === slideId
+            const selection = await this.controller.selectSlide(
+                entry.slide,
+                entry.sample
+            );
+            return selection.status === 'ready' &&
+                this.selectedSlide?.image_id === slideId
                 ? { success: true, detail: 'Slide selected.' }
                 : {
                       success: false,
-                      detail: 'The slide could not be selected.',
+                      detail:
+                          selection.detail ||
+                          'The slide could not be selected.',
                   };
         }
 
@@ -861,12 +883,14 @@ export default class WSIViewer extends React.Component<Props, {}> {
             if (nextTimepoint !== undefined) {
                 this.props.onTimepointChange?.(this.timepointDays);
             }
-            await this.reselectSlideForCurrentFilters();
-            return this.selectedSlide
+            const selection = await this.reselectSlideForCurrentFilters();
+            return selection?.status === 'ready'
                 ? { success: true, detail: 'Filters applied.' }
                 : {
                       success: false,
-                      detail: 'No slide matches the requested filters.',
+                      detail:
+                          selection?.detail ||
+                          'No slide matches the requested filters.',
                   };
         }
 
@@ -887,8 +911,13 @@ export default class WSIViewer extends React.Component<Props, {}> {
             if (!this.controller.goToCoordinates(x, y)) {
                 return { success: false, detail: 'The viewer is not ready.' };
             }
-            await this.controller.captureAgentViewportAfterDraw();
-            return { success: true, detail: 'Coordinates updated.' };
+            const viewport = await this.controller.captureAgentViewportAfterDraw();
+            return viewport
+                ? { success: true, detail: 'Coordinates updated.' }
+                : {
+                      success: false,
+                      detail: 'The viewer changed while moving.',
+                  };
         }
 
         if (actionType === 'zoom') {
@@ -903,8 +932,13 @@ export default class WSIViewer extends React.Component<Props, {}> {
             if (!this.controller.setZoom(zoom)) {
                 return { success: false, detail: 'The viewer is not ready.' };
             }
-            await this.controller.captureAgentViewportAfterDraw();
-            return { success: true, detail: 'Zoom updated.' };
+            const viewport = await this.controller.captureAgentViewportAfterDraw();
+            return viewport
+                ? { success: true, detail: 'Zoom updated.' }
+                : {
+                      success: false,
+                      detail: 'The viewer changed while zooming.',
+                  };
         }
 
         return { success: false, detail: 'The viewer action is unsupported.' };
@@ -1227,10 +1261,14 @@ export default class WSIViewer extends React.Component<Props, {}> {
         await this.controller.selectSlide(next.slide, next.sample);
     }
 
-    private async reselectSlideForCurrentFilters(): Promise<void> {
+    private async reselectSlideForCurrentFilters(): Promise<WsiSlideSelectionResult | null> {
         const servableSlides = this.servableSlides;
         if (!this.hierarchy || !servableSlides.length) {
-            return;
+            return {
+                status: 'failed',
+                slideId: '',
+                detail: 'No slide matches the requested filters.',
+            };
         }
 
         const preferredImageIds = getPathologyPreferredImageIds(
@@ -1264,11 +1302,24 @@ export default class WSIViewer extends React.Component<Props, {}> {
         });
         if (!matchingSlides.length) {
             this.controller.clearSelectedSlide();
-            return;
+            return {
+                status: 'failed',
+                slideId: '',
+                detail: 'No slide matches the requested filters.',
+            };
         }
 
         const next = matchingSlides[0];
-        await this.controller.selectSlide(next.slide, next.sample);
+        if (
+            this.selectedSlide?.image_id === next.slide.image_id &&
+            this.selectedSample?.sample_id === next.sample.sample_id &&
+            this.viewerReady &&
+            this.tilesReady &&
+            this.error === null
+        ) {
+            return { status: 'ready', slideId: next.slide.image_id };
+        }
+        return this.controller.selectSlide(next.slide, next.sample);
     }
 
     @action.bound

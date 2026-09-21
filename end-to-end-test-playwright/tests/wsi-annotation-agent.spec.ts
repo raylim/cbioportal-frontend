@@ -214,6 +214,7 @@ test('applies an approved navigation proposal to the native viewer', async ({
             body: '[]',
         })
     );
+    let navigationContext: Record<string, unknown>;
     await page.route('**/wsi/agent/chat', async route => {
         const request = JSON.parse(route.request().postData() || '{}') as {
             context: {
@@ -227,6 +228,7 @@ test('applies an approved navigation proposal to the native viewer', async ({
             };
             session_id: string;
         };
+        navigationContext = request.context;
         const proposal = {
             id: 'proposal-navigation-1',
             session_id: request.session_id,
@@ -279,6 +281,7 @@ test('applies an approved navigation proposal to the native viewer', async ({
                     payload: {
                         action: 'go_to_coordinates',
                         parameters: { x: 100, y: 120 },
+                        context: navigationContext,
                     },
                     status: 'approved',
                     created_at: new Date().toISOString(),
@@ -292,8 +295,22 @@ test('applies an approved navigation proposal to the native viewer', async ({
                 status: 200,
                 contentType: 'application/json',
                 body: JSON.stringify({
-                    success: true,
-                    detail: 'Coordinates updated.',
+                    id: 'proposal-navigation-1',
+                    session_id: 'browser-e2e',
+                    action_type: 'viewer_action',
+                    study_id: STUDY_ID,
+                    slide_id: IMAGE_ID,
+                    payload: {
+                        action: 'go_to_coordinates',
+                        parameters: { x: 100, y: 120 },
+                        context: navigationContext,
+                    },
+                    status: 'completed',
+                    created_at: new Date().toISOString(),
+                    outcome: {
+                        success: true,
+                        detail: 'Coordinates updated.',
+                    },
                 }),
             })
     );

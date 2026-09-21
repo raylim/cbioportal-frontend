@@ -16,10 +16,27 @@ if (process.env.PW_SUITE === 'wsi' && process.env.WSI_CHILD_CONTRACT !== '1') {
         test('loads the standalone hierarchy viewer without molecular enrichment', async ({
             page,
         }) => {
-            test.skip(
-                !baseUrl,
-                'WSI_VIEWER_BASE_URL is required for foundation E2E'
-            );
+            if (!baseUrl) {
+                const enrichmentRequests = await installFoundationMocks(page);
+                const pageErrors: string[] = [];
+                page.on('pageerror', error => pageErrors.push(error.message));
+                await page.goto(
+                    `/wsi/patient/${MOCK_PATIENT_ID}?studyId=${MOCK_STUDY_ID}#wsi:slide=${MOCK_IMAGE_ID}&x=256&y=256&z=0.75`
+                );
+                await expect(
+                    page.getByTestId('wsi-route-unavailable')
+                ).toHaveCount(0);
+                await expect(
+                    page.getByTestId('wsi-filtered-slide-count')
+                ).toHaveText('Showing 1 slide', { timeout: 30000 });
+                await expect(page.getByTitle('Zoom in')).toBeVisible({
+                    timeout: 30000,
+                });
+                await expect(page.getByTitle('Fit to view')).toBeVisible();
+                expect(enrichmentRequests).toEqual([]);
+                expect(pageErrors).toEqual([]);
+                return;
+            }
 
             const enrichmentRequests: string[] = [];
             const consoleErrors: string[] = [];

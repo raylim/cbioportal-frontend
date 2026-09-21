@@ -62,6 +62,14 @@ export type WsiInitialSlideLoadOutcome =
     | 'tile_timeout'
     | 'selection_timeout';
 
+export type WsiSlideSelectionStatus = 'ready' | 'failed' | 'cancelled';
+
+export interface WsiSlideSelectionResult {
+    status: WsiSlideSelectionStatus;
+    slideId: string;
+    detail?: string;
+}
+
 export interface WsiInitialSlideLoadPerformance {
     loadSeq: number;
     slideId: string;
@@ -159,6 +167,13 @@ export class WsiViewerController {
     private navigatorScheduled = false;
     private navigatorIdleHandle: number | null = null;
     private navigatorTimer: ReturnType<typeof setTimeout> | null = null;
+    private selectionWaiters = new Map<
+        number,
+        {
+            slideId: string;
+            resolve: (result: WsiSlideSelectionResult) => void;
+        }
+    >();
     private restoreHashViewportForNextSelection = false;
     private initialSlideImageId: string | undefined = undefined;
     private initialSlideLoadTrace: {
@@ -200,6 +215,7 @@ export class WsiViewerController {
     }
 
     dispose() {
+        this.resolveSelectionWaiter(this.mountSeq, 'cancelled');
         this.mountSeq++;
         this.nativeTileReadySeq = null;
         this.nativeTileDrawnSeq = null;
@@ -453,6 +469,17 @@ export class WsiViewerController {
         this.maybeReportInitialSlideLoadPerformance(loadSeq);
     }
 
+    private resolveSelectionWaiter(
+        seq: number,
+        status: WsiSlideSelectionStatus,
+        detail?: string
+    ) {
+        const waiter = this.selectionWaiters.get(seq);
+        if (!waiter) return;
+        this.selectionWaiters.delete(seq);
+        waiter.resolve({ status, slideId: waiter.slideId, detail });
+    }
+
     private primeOpenSeadragonLoad() {
         if (this.openSeadragon) {
             return Promise.resolve(this.openSeadragon);
@@ -584,6 +611,7 @@ export class WsiViewerController {
     }
 
     private cancelActiveMount(): void {
+        this.resolveSelectionWaiter(this.mountSeq, 'cancelled');
         this.mountSeq++;
         this.nativeTileReadySeq = null;
         this.nativeTileDrawnSeq = null;
@@ -1032,14 +1060,15 @@ export class WsiViewerController {
         slide: Slide,
         sample: Sample,
         restoreHashViewport = this.restoreHashViewportForNextSelection
-    ): Promise<void> {
+    ): Promise<WsiSlideSelectionResult> {
         if (
             this.host.getSelectedSlide()?.image_id === slide.image_id &&
             this.host.getSelectedSample()?.sample_id === sample.sample_id &&
             this.host.getSelectedMeta() != null &&
-            this.osdViewer != null
+            this.osdViewer != null &&
+            this.nativeTileReadySeq === this.mountSeq
         ) {
-            return;
+            return { status: 'ready', slideId: slide.image_id };
         }
         this.cancelActiveMount();
         this.restoreHashViewportForNextSelection = false;
@@ -1052,11 +1081,26 @@ export class WsiViewerController {
             this.spinnerTimer = null;
         }
         const seq = this.mountSeq;
+        const selectionResult = new Promise<WsiSlideSelectionResult>(resolve =>
+            this.selectionWaiters.set(seq, {
+                slideId: slide.image_id,
+                resolve,
+            })
+        );
         this.scheduleSelectionTimeout(
             seq,
             'Slide viewer did not finish loading. Try another slide.'
         );
-        await this.mountOSD(slide, seq, restoreHashViewport);
+        try {
+            await this.mountOSD(slide, seq, restoreHashViewport);
+        } catch (error) {
+            this.resolveSelectionWaiter(
+                seq,
+                'failed',
+                error instanceof Error ? error.message : 'Slide viewer failed.'
+            );
+        }
+        return selectionResult;
     }
 
     async retrySelectedSlide(): Promise<void> {
@@ -1223,6 +1267,7 @@ export class WsiViewerController {
             this.clearThumbnailPreview();
             this.host.setSpinnerVisible(false);
             this.host.setTilesReady(true);
+            this.resolveSelectionWaiter(seq, 'failed', errorMessage);
             this.finishInitialSlideLoad(
                 this.initialSlideLoadTrace?.loadSeq ?? this.hierarchyLoadSeq,
                 'selection_timeout'
@@ -1266,6 +1311,7 @@ export class WsiViewerController {
                 'success'
             );
         }
+        this.resolveSelectionWaiter(seq, 'ready');
         this.startBackgroundWorkIfReady(seq);
     }
 
@@ -1366,6 +1412,11 @@ export class WsiViewerController {
             this.clearThumbnailPreview();
             this.host.setSpinnerVisible(false);
             this.host.setTilesReady(true);
+            this.resolveSelectionWaiter(
+                seq,
+                'failed',
+                'Slide tiles did not load. The slide server may be unavailable.'
+            );
             this.finishInitialSlideLoad(
                 this.initialSlideLoadTrace?.loadSeq ?? this.hierarchyLoadSeq,
                 'tile_timeout'
@@ -1432,6 +1483,7 @@ export class WsiViewerController {
     }
 
     captureAgentViewport(): WsiAgentViewport | null {
+        if (this.nativeTileReadySeq !== this.mountSeq) return null;
         const canvas: HTMLCanvasElement | null =
             this.osdViewer?.drawer?.canvas ?? this.osdViewer?.canvas ?? null;
         const viewport = this.osdViewer?.viewport;
@@ -1515,8 +1567,13 @@ export class WsiViewerController {
 
     captureAgentViewportAfterDraw(): Promise<WsiAgentViewport | null> {
         const viewer = this.osdViewer;
+        const seq = this.mountSeq;
         if (!viewer?.addHandler || !viewer?.removeHandler) {
-            return Promise.resolve(this.captureAgentViewport());
+            return Promise.resolve(
+                viewer === this.osdViewer && seq === this.mountSeq
+                    ? this.captureAgentViewport()
+                    : null
+            );
         }
         const viewport = viewer.viewport;
         const hasPendingViewportChange = () => {
@@ -1556,7 +1613,11 @@ export class WsiViewerController {
                     cancelAnimationFrame(frame);
                 }
                 if (timer !== null) clearTimeout(timer);
-                resolve(this.captureAgentViewport());
+                resolve(
+                    seq === this.mountSeq && this.osdViewer === viewer
+                        ? this.captureAgentViewport()
+                        : null
+                );
             };
             finishIfSettled = () => {
                 if (!hasPendingViewportChange()) finish();
@@ -1595,6 +1656,11 @@ export class WsiViewerController {
         this.host.setViewerReady(false);
         this.host.setSpinnerVisible(false);
         this.host.setTilesReady(true);
+        this.resolveSelectionWaiter(
+            seq,
+            'failed',
+            'The slide viewer failed to open.'
+        );
         this.finishInitialSlideLoad(
             this.initialSlideLoadTrace?.loadSeq ?? this.hierarchyLoadSeq,
             'osd_open_failed'
@@ -1638,6 +1704,11 @@ export class WsiViewerController {
         this.clearThumbnailPreview();
         this.host.setSpinnerVisible(false);
         this.host.setTilesReady(true);
+        this.resolveSelectionWaiter(
+            seq,
+            'failed',
+            'Slide tiles could not be loaded.'
+        );
         this.finishInitialSlideLoad(
             this.initialSlideLoadTrace?.loadSeq ?? this.hierarchyLoadSeq,
             'tile_failed'
@@ -1684,6 +1755,11 @@ export class WsiViewerController {
                 // request cannot leave the viewer in a perpetual loading state.
                 this.host.setSpinnerVisible(false);
                 this.host.setTilesReady(true);
+                this.resolveSelectionWaiter(
+                    seq,
+                    'failed',
+                    'Slide metadata failed.'
+                );
                 this.finishInitialSlideLoad(
                     this.initialSlideLoadTrace?.loadSeq ??
                         this.hierarchyLoadSeq,
@@ -1760,6 +1836,11 @@ export class WsiViewerController {
             this.host.setViewerReady(false);
             this.host.setSpinnerVisible(false);
             this.host.setTilesReady(true);
+            this.resolveSelectionWaiter(
+                seq,
+                'failed',
+                'The slide viewer failed to initialize.'
+            );
             this.finishInitialSlideLoad(
                 this.initialSlideLoadTrace?.loadSeq ?? this.hierarchyLoadSeq,
                 'osd_init_failed'
@@ -1786,6 +1867,11 @@ export class WsiViewerController {
             this.clearThumbnailPreview();
             this.host.setSpinnerVisible(false);
             this.host.setTilesReady(true);
+            this.resolveSelectionWaiter(
+                seq,
+                'failed',
+                'The slide viewer failed to open.'
+            );
             this.finishInitialSlideLoad(
                 this.initialSlideLoadTrace?.loadSeq ?? this.hierarchyLoadSeq,
                 'osd_open_failed'
