@@ -26,9 +26,12 @@ if (process.env.WSI_CHILD_CONTRACT !== '1') {
             const requiredRequestFailures: string[] = [];
             await page.addInitScript(() => {
                 const metrics: unknown[] = [];
-                window.addEventListener('wsi-initial-slide-performance', event => {
-                    metrics.push((event as CustomEvent).detail);
-                });
+                window.addEventListener(
+                    'wsi-initial-slide-performance',
+                    event => {
+                        metrics.push((event as CustomEvent).detail);
+                    }
+                );
                 (window as any).__wsiInitialSlidePerformance = metrics;
             });
             page.on('request', request => {
@@ -80,7 +83,9 @@ if (process.env.WSI_CHILD_CONTRACT !== '1') {
                 .toBeGreaterThan(0);
             const performance = await page.evaluate(
                 () =>
-                    ((window as any).__wsiInitialSlidePerformance || []).slice(-1)[0]
+                    ((window as any).__wsiInitialSlidePerformance || []).slice(
+                        -1
+                    )[0]
             );
             expect(performance.outcome).toBe('success');
             expect(performance.firstTileReadyMs).toBeGreaterThan(0);
