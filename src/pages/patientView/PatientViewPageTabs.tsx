@@ -392,28 +392,29 @@ export function SummaryTimelineSection({
                 )}
                 {augmentedEventsState.undatedPathologySlideCount != null &&
                     augmentedEventsState.undatedPathologySlideCount > 0 && (
-                    <div
-                        className="alert alert-info"
-                        data-testid="undated-pathology-slides-notice"
-                    >
-                        {augmentedEventsState.undatedPathologySlideCount}{' '}
-                        pathology slide
-                        {augmentedEventsState.undatedPathologySlideCount === 1
-                            ? ''
-                            : 's'}{' '}
-                        do not have a verified procedure date and are kept
-                        separate from the dated timeline.{' '}
-                        <a
-                            href={`/patient/wsiHESlides?studyId=${encodeURIComponent(
-                                studyId
-                            )}&caseId=${encodeURIComponent(
-                                patientId
-                            )}&timepointDays=undated`}
+                        <div
+                            className="alert alert-info"
+                            data-testid="undated-pathology-slides-notice"
                         >
-                            View undated slides
-                        </a>
-                    </div>
-                )}
+                            {augmentedEventsState.undatedPathologySlideCount}{' '}
+                            pathology slide
+                            {augmentedEventsState.undatedPathologySlideCount ===
+                            1
+                                ? ''
+                                : 's'}{' '}
+                            do not have a verified procedure date and are kept
+                            separate from the dated timeline.{' '}
+                            <a
+                                href={`/patient/wsiHESlides?studyId=${encodeURIComponent(
+                                    studyId
+                                )}&caseId=${encodeURIComponent(
+                                    patientId
+                                )}&timepointDays=undated`}
+                            >
+                                View undated slides
+                            </a>
+                        </div>
+                    )}
                 <div
                     style={{
                         marginTop: 20,
@@ -1033,7 +1034,6 @@ export function tabs(
         </MSKTab>
     );
 
-    const tileServerUrl = getServerConfig().msk_wsi_tile_server_url;
     if (tileServerUrl) {
         const patientId = pageComponent.patientViewPageStore.patientId;
         const studyId = pageComponent.patientViewPageStore.studyId;

@@ -65,8 +65,6 @@ const PATIENT_VIEW_URL_PROPS = {
 
             showOnlySelectedMutationsInChart: '',
             logScaleChart: '',
-            showOnlySelectedMutationsInChart: '',
-            logScaleChart: '',
             yAxisDataRangeInChart: '',
             showOnlySelectedMutationsInTable: '',
         },
