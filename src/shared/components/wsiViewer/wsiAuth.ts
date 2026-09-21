@@ -237,3 +237,71 @@ export function clearWsiSlideAccess(studyId?: string): void {
     slideAccess.clear();
     pendingSlideAccess.clear();
 }
+
+type AnnotationTokenResponse = {
+    access_token: string;
+    expires_in: number;
+};
+
+type AnnotationAccessToken = {
+    value: string;
+    expiresAt: number;
+};
+
+const annotationTokens = new Map<string, AnnotationAccessToken>();
+const pendingAnnotationTokens = new Map<string, Promise<string>>();
+
+async function requestAnnotationToken(studyId: string): Promise<string> {
+    const url = new URL(
+        buildCBioPortalAPIUrl('api/wsi/access-token'),
+        typeof window === 'undefined'
+            ? 'http://localhost'
+            : window.location.origin
+    );
+    url.searchParams.set('studyId', studyId);
+    url.searchParams.set('purpose', 'annotations');
+    const response = await fetch(url.toString(), {
+        credentials: 'same-origin',
+        cache: 'no-store',
+    });
+    if (!response.ok) {
+        throw new Error(`WSI authorization failed (${response.status})`);
+    }
+    const payload = (await response.json()) as AnnotationTokenResponse;
+    if (!payload.access_token || !Number.isFinite(payload.expires_in)) {
+        throw new Error('Invalid WSI authorization response');
+    }
+    annotationTokens.set(studyId, {
+        value: payload.access_token,
+        expiresAt: Date.now() + payload.expires_in * 1000,
+    });
+    return payload.access_token;
+}
+
+export function getAnnotationAccessToken(studyId: string): Promise<string> {
+    if (!studyId) {
+        return Promise.reject(new Error('WSI study scope is required'));
+    }
+    const cached = annotationTokens.get(studyId);
+    if (cached && cached.expiresAt > Date.now() + 30_000) {
+        return Promise.resolve(cached.value);
+    }
+    let request = pendingAnnotationTokens.get(studyId);
+    if (!request) {
+        request = requestAnnotationToken(studyId).finally(() => {
+            pendingAnnotationTokens.delete(studyId);
+        });
+        pendingAnnotationTokens.set(studyId, request);
+    }
+    return request;
+}
+
+export function clearAnnotationAccessToken(studyId?: string): void {
+    if (studyId) {
+        annotationTokens.delete(studyId);
+        pendingAnnotationTokens.delete(studyId);
+        return;
+    }
+    annotationTokens.clear();
+    pendingAnnotationTokens.clear();
+}
