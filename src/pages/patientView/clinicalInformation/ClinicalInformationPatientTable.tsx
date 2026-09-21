@@ -9,7 +9,7 @@ import { DownloadControlOption, isUrl } from 'cbioportal-frontend-commons';
 import autobind from 'autobind-decorator';
 import { formatPercentValue } from 'cbioportal-utils';
 import { getServerConfig } from 'config/config';
-import { getClinicalAttributeDisplayName } from 'shared/lib/ClinicalAttributeDisplay';
+import { getClinicalAttributeDisplayName } from '../ClinicalAttributeDisplay';
 
 export interface IClinicalInformationPatientTableProps {
     data: ClinicalData[];

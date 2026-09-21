@@ -12,10 +12,7 @@ export function getClinicalAttributeDisplayName(
         | Pick<ClinicalAttribute, 'clinicalAttributeId' | 'displayName'>
         | undefined
 ): string {
-    if (!clinicalAttribute) {
-        return '';
-    }
-
+    if (!clinicalAttribute) return '';
     return (
         CLINICAL_ATTRIBUTE_DISPLAY_NAME_OVERRIDES[
             clinicalAttribute.clinicalAttributeId

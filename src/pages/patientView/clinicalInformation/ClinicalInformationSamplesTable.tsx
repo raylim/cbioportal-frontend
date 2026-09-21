@@ -15,7 +15,7 @@ import { SHOW_ALL_PAGE_SIZE } from '../../../shared/components/paginationControl
 import { sortByClinicalAttributePriorityThenName } from '../../../shared/lib/SortUtils';
 import { DownloadControlOption, isUrl } from 'cbioportal-frontend-commons';
 import { getServerConfig } from 'config/config';
-import { getClinicalAttributeDisplayName } from 'shared/lib/ClinicalAttributeDisplay';
+import { getClinicalAttributeDisplayName } from '../ClinicalAttributeDisplay';
 
 interface IClinicalInformationSamplesTableProps {
     samples?: ClinicalDataBySampleId[];
