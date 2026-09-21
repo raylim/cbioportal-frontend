@@ -316,6 +316,14 @@ function parseTimepointDays(
     return Number.isSafeInteger(days) ? days : undefined;
 }
 
+function getStudyDisplayName(
+    studyMetaData: { result?: { name?: string } } | undefined,
+    studyId: string
+): string {
+    const studyName = studyMetaData?.result?.name?.trim();
+    return studyName || studyId;
+}
+
 function getWsiPathologyFilter(query: {
     wsiScope?: string;
     sampleId?: string;
@@ -1248,6 +1256,38 @@ export function tabs(
     //                 ></MSKTab>
     //             );
     //         })}
+
+    const wsiTabIndex = tabs.findIndex(
+        tab => tab.props.id === PatientViewPageTabs.WSIHESlides
+    );
+    if (wsiTabIndex < 0) {
+        return tabs;
+    }
+
+    const [wsiTab] = tabs.splice(wsiTabIndex, 1);
+    if (hasServablePathologySlides !== true) {
+        return tabs;
+    }
+
+    const wsiViewer = React.isValidElement(wsiTab.props.children)
+        ? React.cloneElement(wsiTab.props.children, {
+              studyName: getStudyDisplayName(
+                  pageComponent.patientViewPageStore.studyMetaData,
+                  pageComponent.patientViewPageStore.studyId
+              ),
+          })
+        : wsiTab.props.children;
+    const patientWsiTab = React.cloneElement(wsiTab, {
+        children: wsiViewer,
+    });
+    const resourceTabIndex = tabs.findIndex(
+        tab => tab.props.id === PatientViewPageTabs.FilesAndLinks
+    );
+    tabs.splice(
+        resourceTabIndex < 0 ? tabs.length : resourceTabIndex,
+        0,
+        patientWsiTab
+    );
 
     return tabs;
 }
