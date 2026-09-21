@@ -101,6 +101,90 @@ describe('WsiAnnotationController', () => {
         ).toEqual(['new']);
     });
 
+    it('does not attach a delayed write to the next slide', async () => {
+        let resolveWrite!: (response: Response) => void;
+        const writeResponse = new Promise<Response>(resolve => {
+            resolveWrite = resolve;
+        });
+        jest.spyOn(global, 'fetch').mockImplementation(async (_url, init) => {
+            if (init?.method === 'POST') return writeResponse;
+            return { ok: true, json: async () => [] } as Response;
+        });
+        const controller = new WsiAnnotationController(
+            'https://tiles.example',
+            'study1',
+            token
+        );
+
+        controller.beginSlide('slide-a');
+        await new Promise(resolve => setTimeout(resolve, 0));
+        const pendingWrite = (controller as any).createAnnotation({
+            id: 'client-a',
+            body: [
+                {
+                    type: 'TextualBody',
+                    value: 'AI region',
+                    purpose: 'commenting',
+                },
+            ],
+            target: {
+                source: 'slide-a',
+                selector: {
+                    type: 'FragmentSelector',
+                    value: 'xywh=pixel:1,2,3,4',
+                },
+            },
+            layerName: 'AI review',
+            color: '#f5a623',
+            colorName: 'AI review',
+        });
+        controller.beginSlide('slide-b');
+        resolveWrite({
+            ok: true,
+            json: async () => apiAnnotation('saved-on-a'),
+        } as Response);
+        await pendingWrite;
+
+        expect(controller.annotations).toEqual([]);
+    });
+
+    it('does not reload the next slide after a stale conflict response', async () => {
+        let resolveUpdate!: (response: Response) => void;
+        jest.spyOn(global, 'fetch').mockImplementation((url, init) => {
+            if (init?.method === 'PUT') {
+                return new Promise(resolve => {
+                    resolveUpdate = resolve;
+                });
+            }
+            return Promise.resolve({ ok: true, json: async () => [] } as Response);
+        });
+        const controller = new WsiAnnotationController(
+            'https://tiles.example',
+            'study1',
+            token
+        );
+
+        controller.beginSlide('slide-a');
+        await new Promise(resolve => setTimeout(resolve, 0));
+        (controller as any).annotations = [
+            (controller as any).fromApi(apiAnnotation('a1'), 'slide-a'),
+        ];
+        const update = (controller as any).updateAnnotation(
+            (controller as any).annotations[0]
+        );
+        controller.beginSlide('slide-b');
+        resolveUpdate({ ok: false, status: 409 } as Response);
+        await update;
+
+        expect(controller.error).toBeNull();
+        expect(controller.annotations).toEqual([]);
+        expect(
+            (global.fetch as jest.Mock).mock.calls.filter(
+                call => call[1]?.method === undefined
+            )
+        ).toHaveLength(2);
+    });
+
     it('reports an unauthorized annotation load without exposing partial data', async () => {
         jest.spyOn(global, 'fetch').mockResolvedValue({
             ok: false,

@@ -308,6 +308,16 @@ export class WsiAnnotationController {
     }
 
     @action.bound
+    invalidatePendingRequests() {
+        this.generation += 1;
+        this.abortController?.abort();
+        this.abortController = null;
+        this.slideId = null;
+        this.loading = false;
+        this.destroyAnnotorious();
+    }
+
+    @action.bound
     setTool(tool: WsiAnnotationTool) {
         this.activeTool = tool;
         this.customDrawPreview = null;
@@ -575,6 +585,13 @@ export class WsiAnnotationController {
                 }
             );
             if (response.status === 409) {
+                if (
+                    context.generation !== this.generation ||
+                    context.slideId !== this.slideId ||
+                    context.signal.aborted
+                ) {
+                    return;
+                }
                 await this.reloadCurrentSlide(
                     'Annotation changed elsewhere; reloaded latest data.'
                 );
@@ -618,7 +635,9 @@ export class WsiAnnotationController {
         this.abortController?.abort();
         this.abortController = new AbortController();
         await this.loadAnnotations(slideId, generation);
-        this.error = message;
+        if (generation === this.generation && this.slideId === slideId) {
+            this.error = message;
+        }
     }
 
     private replaceAnnotation(oldId: string, replacement: WsiAnnotation) {
