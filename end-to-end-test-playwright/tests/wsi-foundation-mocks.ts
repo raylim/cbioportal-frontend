@@ -75,8 +75,18 @@ const pixel = Buffer.from(
     'base64'
 );
 
-export async function installFoundationMocks(page: Page): Promise<string[]> {
+export interface FoundationMockOptions {
+    enableAnnotations?: boolean;
+    enableAgent?: boolean;
+}
+
+export async function installFoundationMocks(
+    page: Page,
+    options: FoundationMockOptions = {}
+): Promise<string[]> {
     const enrichmentRequests: string[] = [];
+    const annotationApiUrl =
+        options.enableAnnotations || options.enableAgent ? '/wsi' : '';
     await page.addInitScript(() => {
         window.localStorage.setItem(
             'frontendConfig',
@@ -102,6 +112,8 @@ export async function installFoundationMocks(page: Page): Promise<string[]> {
                 authenticationMethod: 'none',
                 msk_wsi_tile_server_url: '/wsi',
                 msk_wsi_authentication_enabled: false,
+                msk_wsi_annotation_api_url: annotationApiUrl,
+                msk_wsi_agent_enabled: Boolean(options.enableAgent),
             }),
         })
     );
