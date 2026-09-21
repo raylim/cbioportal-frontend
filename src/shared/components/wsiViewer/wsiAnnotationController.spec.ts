@@ -172,6 +172,7 @@ describe('WsiAnnotationController', () => {
         const update = (controller as any).updateAnnotation(
             (controller as any).annotations[0]
         );
+        await new Promise(resolve => setTimeout(resolve, 0));
         controller.beginSlide('slide-b');
         resolveUpdate({ ok: false, status: 409 } as Response);
         await update;
