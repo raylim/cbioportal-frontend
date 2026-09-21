@@ -17,10 +17,6 @@ import {
     groupPathologyPresentationItems,
     markPathologyLinkoutScope,
 } from './pathologyPresentationUtils';
-import {
-    getBoundedMapCacheValue,
-    setBoundedMapCacheValue,
-} from './boundedMapCache';
 
 class EventsTable extends LazyMobXTable<{}> {}
 
@@ -33,11 +29,6 @@ const PATHOLOGY_TABLE_HEADERS = [
     'SLIDES',
     'LINKOUT',
 ];
-const MAX_CLINICAL_EVENT_TABLE_CACHE_ENTRIES = 100;
-const MAX_PATHOLOGY_CLINICAL_TABLE_CACHE_ENTRIES = 100;
-const MAX_CLINICAL_EVENT_TABLE_HEADER_CACHE_ENTRIES = 100;
-const MAX_PARTITIONED_CLINICAL_EVENTS_CACHE_ENTRIES = 100;
-
 type ClinicalEventTableData = { [eventType: string]: string[][] };
 
 type ClinicalEventTableSection = {
@@ -46,7 +37,7 @@ type ClinicalEventTableSection = {
     columns: ClinicalEventTableColumn[];
 };
 
-type ClinicalEventTableCacheEntry = {
+type ClinicalEventTablePayload = {
     data: ClinicalEventTableData;
     sections: ClinicalEventTableSection[];
 };
@@ -58,16 +49,10 @@ type PartitionedClinicalEventsEntry = {
     wsiPathologyEventsSignature: string;
 };
 
-type CachedClinicalEventTableHeaderEntry = {
+type ClinicalEventTableHeader = {
     cleanedHeaderRow: string[];
     columns: ClinicalEventTableColumn[];
-    headerSignature: string;
     visibleColumnIndices: number[];
-};
-
-type CachedClinicalEventTableColumnsEntry = {
-    columns: ClinicalEventTableColumn[];
-    headerSignature: string;
 };
 
 type ClinicalEventTableColumn = {
@@ -83,49 +68,6 @@ type ClinicalEventTableColumn = {
 };
 
 type PathologyLinkoutClickHandler = (href: string) => boolean;
-
-const clinicalEventTableCache = new Map<string, ClinicalEventTableCacheEntry>();
-const pathologyClinicalTableCache = new Map<string, string[][]>();
-const partitionedClinicalEventsCache = new Map<
-    string,
-    PartitionedClinicalEventsEntry
->();
-const clinicalEventTableHeaderCache = new Map<
-    string,
-    CachedClinicalEventTableHeaderEntry
->();
-const clinicalEventTableColumnsCache = new WeakMap<
-    string[],
-    CachedClinicalEventTableColumnsEntry
->();
-
-function buildClinicalEventTableCacheKey(
-    events: ClinicalEvent[],
-    studyId: string,
-    patientId: string,
-    eventsSignature?: string
-): string {
-    return `${studyId}::${patientId}::${eventsSignature ||
-        buildTimelineEventsSignature(events)}`;
-}
-
-function getCachedPathologyClinicalTableData(
-    cacheKey: string
-): string[][] | undefined {
-    return getBoundedMapCacheValue(pathologyClinicalTableCache, cacheKey);
-}
-
-function setCachedPathologyClinicalTableData(
-    cacheKey: string,
-    rows: string[][]
-): string[][] {
-    return setBoundedMapCacheValue(
-        pathologyClinicalTableCache,
-        cacheKey,
-        rows,
-        MAX_PATHOLOGY_CLINICAL_TABLE_CACHE_ENTRIES
-    );
-}
 
 function buildPathologyClinicalTableDataUncached(
     events: ClinicalEvent[]
@@ -169,21 +111,7 @@ function buildPathologyClinicalTableData(
     patientId: string,
     eventsSignature?: string
 ): string[][] {
-    const cacheKey = buildClinicalEventTableCacheKey(
-        events,
-        studyId,
-        patientId,
-        eventsSignature
-    );
-    const cached = getCachedPathologyClinicalTableData(cacheKey);
-    if (cached) {
-        return cached;
-    }
-
-    return setCachedPathologyClinicalTableData(
-        cacheKey,
-        buildPathologyClinicalTableDataUncached(events)
-    );
+    return buildPathologyClinicalTableDataUncached(events);
 }
 
 export function buildClinicalEventTableData(
@@ -200,51 +128,10 @@ export function buildClinicalEventTableData(
     ).data;
 }
 
-function getCachedClinicalEventTablePayload(
-    cacheKey: string
-): ClinicalEventTableCacheEntry | undefined {
-    return getBoundedMapCacheValue(clinicalEventTableCache, cacheKey);
-}
-
-function setCachedClinicalEventTablePayload(
-    cacheKey: string,
-    payload: ClinicalEventTableCacheEntry
-): ClinicalEventTableCacheEntry {
-    return setBoundedMapCacheValue(
-        clinicalEventTableCache,
-        cacheKey,
-        payload,
-        MAX_CLINICAL_EVENT_TABLE_CACHE_ENTRIES
-    );
-}
-
-function getCachedPartitionedClinicalEvents(
-    cacheKey: string
-): PartitionedClinicalEventsEntry | undefined {
-    return getBoundedMapCacheValue(partitionedClinicalEventsCache, cacheKey);
-}
-
-function setCachedPartitionedClinicalEvents(
-    cacheKey: string,
-    entry: PartitionedClinicalEventsEntry
-): PartitionedClinicalEventsEntry {
-    return setBoundedMapCacheValue(
-        partitionedClinicalEventsCache,
-        cacheKey,
-        entry,
-        MAX_PARTITIONED_CLINICAL_EVENTS_CACHE_ENTRIES
-    );
-}
-
 function getPartitionedClinicalEvents(
     events: ClinicalEvent[],
     topLevelSignature: string
 ): PartitionedClinicalEventsEntry {
-    const cached = getCachedPartitionedClinicalEvents(topLevelSignature);
-    if (cached) {
-        return cached;
-    }
-
     const wsiPathologyEvents: ClinicalEvent[] = [];
     const nonWsiEvents: ClinicalEvent[] = [];
     const wsiPathologyEventSignatures: string[] = [];
@@ -264,12 +151,12 @@ function getPartitionedClinicalEvents(
         }
     }
 
-    return setCachedPartitionedClinicalEvents(topLevelSignature, {
+    return {
         nonWsiEvents,
         nonWsiEventsSignature: nonWsiEventSignatures.join('||'),
         wsiPathologyEvents,
         wsiPathologyEventsSignature: wsiPathologyEventSignatures.join('||'),
-    });
+    };
 }
 
 function buildClinicalEventTableDataUncached(
@@ -306,14 +193,6 @@ function makeColumns(
     onPathologyLinkoutClick?: PathologyLinkoutClickHandler
 ): ClinicalEventTableColumn[] {
     const headerSignature = headerRow.join('|');
-    const cached = onPathologyLinkoutClick
-        ? undefined
-        : clinicalEventTableColumnsCache.get(headerRow);
-
-    if (cached && cached.headerSignature === headerSignature) {
-        return cached.columns;
-    }
-
     const columns = new Array<ClinicalEventTableColumn>(headerRow.length);
     for (let index = 0; index < headerRow.length; index += 1) {
         const item = headerRow[index];
@@ -388,48 +267,13 @@ function makeColumns(
         };
     }
 
-    if (!onPathologyLinkoutClick) {
-        clinicalEventTableColumnsCache.set(headerRow, {
-            columns,
-            headerSignature,
-        });
-    }
-
     return columns;
-}
-
-function getCachedClinicalEventTableHeader(
-    headerSignature: string
-): CachedClinicalEventTableHeaderEntry | undefined {
-    return getBoundedMapCacheValue(
-        clinicalEventTableHeaderCache,
-        headerSignature
-    );
-}
-
-function setCachedClinicalEventTableHeader(
-    headerSignature: string,
-    entry: CachedClinicalEventTableHeaderEntry
-): CachedClinicalEventTableHeaderEntry {
-    return setBoundedMapCacheValue(
-        clinicalEventTableHeaderCache,
-        headerSignature,
-        entry,
-        MAX_CLINICAL_EVENT_TABLE_HEADER_CACHE_ENTRIES
-    );
 }
 
 function getPreparedClinicalEventTableHeader(
     headerRow: string[],
     onPathologyLinkoutClick?: PathologyLinkoutClickHandler
-): CachedClinicalEventTableHeaderEntry {
-    const headerSignature = headerRow.join('|');
-    const cached = onPathologyLinkoutClick
-        ? undefined
-        : getCachedClinicalEventTableHeader(headerSignature);
-    if (cached) {
-        return cached;
-    }
+): ClinicalEventTableHeader {
 
     const visibleColumnIndices: number[] = [];
     for (let index = 0; index < headerRow.length; index += 1) {
@@ -447,12 +291,9 @@ function getPreparedClinicalEventTableHeader(
     const entry = {
         cleanedHeaderRow,
         columns: makeColumns(cleanedHeaderRow, onPathologyLinkoutClick),
-        headerSignature,
         visibleColumnIndices,
     };
-    return onPathologyLinkoutClick
-        ? entry
-        : setCachedClinicalEventTableHeader(headerSignature, entry);
+    return entry;
 }
 
 function prepareClinicalEventTableSections(
@@ -516,19 +357,7 @@ function getPreparedClinicalEventTablePayload(
     patientId: string,
     eventsSignature?: string,
     onPathologyLinkoutClick?: PathologyLinkoutClickHandler
-): ClinicalEventTableCacheEntry {
-    const cacheKey = buildClinicalEventTableCacheKey(
-        events,
-        studyId,
-        patientId,
-        eventsSignature
-    );
-    const cached = onPathologyLinkoutClick
-        ? undefined
-        : getCachedClinicalEventTablePayload(cacheKey);
-    if (cached) {
-        return cached;
-    }
+): ClinicalEventTablePayload {
 
     const data = buildClinicalEventTableDataUncached(
         events,
@@ -543,9 +372,7 @@ function getPreparedClinicalEventTablePayload(
             onPathologyLinkoutClick
         ),
     };
-    return onPathologyLinkoutClick
-        ? entry
-        : setCachedClinicalEventTablePayload(cacheKey, entry);
+    return entry;
 }
 
 const ClinicalEventsTables: React.FunctionComponent<{

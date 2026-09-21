@@ -25,11 +25,6 @@ import {
 } from 'cbioportal-ts-api-client';
 import { getColor, getTextWidth } from 'cbioportal-frontend-commons';
 import ReactMarkdown from 'react-markdown';
-import { buildClinicalEventsSignature } from './clinicalEventSignatureUtils';
-import {
-    buildTimelineCaseMetaDataSignature,
-    buildTimelineSampleManagerSignature,
-} from './timelineInputSignatureUtils';
 import {
     buildPathologyPresentationItemsFromTimelineEvents,
     markPathologyLinkoutScope,
@@ -37,8 +32,6 @@ import {
 } from './pathologyPresentationUtils';
 
 const OTHER = 'Other';
-const MAX_BASE_CONFIG_CACHE_ENTRIES = 50;
-const MAX_SORTED_TRACKS_CACHE_ENTRIES = 100;
 const PATHOLOGY_TRACK_COLORS: Record<string, string> = {
     'H&E': '#1f77b4',
     IHC: '#c66a00',
@@ -49,10 +42,6 @@ const PATHOLOGY_NON_SERVABLE_TRACK_COLOR = '#7a7a7a';
 
 export type PathologyLinkoutClickHandler = (href: string) => boolean;
 
-type CachedTimelineEventAttributesSignatureEntry = {
-    orderedSnapshot: string;
-    signature: string;
-};
 type SampleTooltipAttributeRow = Readonly<{ key: string; value: string }>;
 
 type SampleTimelineTooltipData = Readonly<{
@@ -60,39 +49,13 @@ type SampleTimelineTooltipData = Readonly<{
     sampleId?: string;
 }>;
 
-type CachedTimelineSortConfigEntry = {
+type ResolvedTimelineSortConfig = {
     signature: string;
     sortOrderEntries: string[];
     trackStructureEntries: string[];
     trackStructuresByRoot: { [rootTrack: string]: string[] };
     upperSortOrder: string[];
 };
-
-type CachedSampleTimelineTooltipDataEntry = {
-    clinicalDataRef?: ClinicalDataBySampleId['clinicalData'];
-    clinicalSignature: string;
-    eventSignature: string;
-    tooltipData: SampleTimelineTooltipData;
-};
-
-const sampleTimelineTooltipDataCache = new WeakMap<
-    TimelineEvent['event']['attributes'],
-    CachedSampleTimelineTooltipDataEntry
->();
-const timelineEventAttributesSignatureCache = new WeakMap<
-    TimelineEvent['event']['attributes'],
-    CachedTimelineEventAttributesSignatureEntry
->();
-const sampleClinicalDataSignatureCache = new WeakMap<
-    ClinicalDataBySampleId['clinicalData'],
-    CachedTimelineEventAttributesSignatureEntry
->();
-const timelineSortConfigCache = new WeakMap<
-    ITimelineConfig,
-    CachedTimelineSortConfigEntry
->();
-const baseConfigCache = new Map<string, ITimelineConfig>();
-const sortedTracksCache = new Map<string, TimelineTrackSpecification[]>();
 
 function freezeSampleTimelineTooltipData(tooltipData: {
     orderedAttributes: SampleTooltipAttributeRow[];
@@ -207,44 +170,13 @@ function cloneTimelineConfig(config: ITimelineConfig): ITimelineConfig {
     };
 }
 
-function getCachedBaseConfig(cacheKey: string): ITimelineConfig | undefined {
-    const cached = baseConfigCache.get(cacheKey);
-    if (!cached) {
-        return undefined;
-    }
-
-    baseConfigCache.delete(cacheKey);
-    baseConfigCache.set(cacheKey, cached);
-    return cloneTimelineConfig(cached);
-}
-
-function setCachedBaseConfig(
-    cacheKey: string,
-    config: ITimelineConfig
-): ITimelineConfig {
-    if (baseConfigCache.has(cacheKey)) {
-        baseConfigCache.delete(cacheKey);
-    }
-    const cachedConfig = cloneTimelineConfig(config);
-    baseConfigCache.set(cacheKey, cachedConfig);
-
-    if (baseConfigCache.size > MAX_BASE_CONFIG_CACHE_ENTRIES) {
-        const oldestKey = baseConfigCache.keys().next().value;
-        if (oldestKey) {
-            baseConfigCache.delete(oldestKey);
-        }
-    }
-
-    return config;
-}
-
 function buildTimelineSortConfigSignature(baseConfig: ITimelineConfig): string {
     return getResolvedTimelineSortConfig(baseConfig).signature;
 }
 
 function getResolvedTimelineSortConfig(
     baseConfig: ITimelineConfig
-): CachedTimelineSortConfigEntry {
+): ResolvedTimelineSortConfig {
     const sourceSortOrder = baseConfig.sortOrder || [];
     const sortOrderEntries = new Array<string>(sourceSortOrder.length);
     for (let index = 0; index < sourceSortOrder.length; index += 1) {
@@ -267,23 +199,7 @@ function getResolvedTimelineSortConfig(
             trackStructuresByRoot[structure[0]] = structure;
         }
     }
-    const cached = timelineSortConfigCache.get(baseConfig);
-
-    if (
-        cached &&
-        cached.sortOrderEntries.length === sortOrderEntries.length &&
-        cached.trackStructureEntries.length === trackStructureEntries.length &&
-        cached.sortOrderEntries.every(
-            (entry, index) => entry === sortOrderEntries[index]
-        ) &&
-        cached.trackStructureEntries.every(
-            (entry, index) => entry === trackStructureEntries[index]
-        )
-    ) {
-        return cached;
-    }
-
-    const resolved = {
+    return {
         signature: `${sortOrderEntries.join('|')}::${trackStructureEntries.join(
             '|'
         )}`,
@@ -292,41 +208,6 @@ function getResolvedTimelineSortConfig(
         trackStructuresByRoot,
         upperSortOrder: sortOrderEntries,
     };
-    timelineSortConfigCache.set(baseConfig, resolved);
-    return resolved;
-}
-
-function getCachedSortedTracks(
-    cacheKey: string
-): TimelineTrackSpecification[] | undefined {
-    const cached = sortedTracksCache.get(cacheKey);
-    if (!cached) {
-        return undefined;
-    }
-
-    sortedTracksCache.delete(cacheKey);
-    sortedTracksCache.set(cacheKey, cached);
-    return cached;
-}
-
-function setCachedSortedTracks(
-    cacheKey: string,
-    tracks: TimelineTrackSpecification[]
-): TimelineTrackSpecification[] {
-    if (sortedTracksCache.has(cacheKey)) {
-        sortedTracksCache.delete(cacheKey);
-    }
-    const cachedTracks = cloneTrackSpecifications(tracks);
-    sortedTracksCache.set(cacheKey, cachedTracks);
-
-    if (sortedTracksCache.size > MAX_SORTED_TRACKS_CACHE_ENTRIES) {
-        const oldestKey = sortedTracksCache.keys().next().value;
-        if (oldestKey) {
-            sortedTracksCache.delete(oldestKey);
-        }
-    }
-
-    return tracks;
 }
 
 function cloneTrackSpecifications(
@@ -382,18 +263,7 @@ function buildTimelineEventAttributesSignature(
         }
         orderedSnapshot += `${attribute.key}:${attribute.value}`;
     }
-    const signature = orderedSnapshot;
-    const cached = timelineEventAttributesSignatureCache.get(attributes);
-
-    if (cached && cached.orderedSnapshot === orderedSnapshot) {
-        return cached.signature;
-    }
-
-    timelineEventAttributesSignatureCache.set(attributes, {
-        orderedSnapshot,
-        signature,
-    });
-    return signature;
+    return orderedSnapshot;
 }
 
 function buildClinicalDataSignature(
@@ -408,18 +278,7 @@ function buildClinicalDataSignature(
         }
         orderedSnapshot += `${entry.clinicalAttributeId}:${entry.value}`;
     }
-    const signature = orderedSnapshot;
-    const cached = sampleClinicalDataSignatureCache.get(clinicalData);
-
-    if (cached && cached.orderedSnapshot === orderedSnapshot) {
-        return cached.signature;
-    }
-
-    sampleClinicalDataSignatureCache.set(clinicalData, {
-        orderedSnapshot,
-        signature,
-    });
-    return signature;
+    return orderedSnapshot;
 }
 
 function shouldShowSampleTimelineTooltipAttribute(key: string): boolean {
@@ -440,24 +299,6 @@ function getSampleTimelineTooltipData(
     sampleWithClinicalData?: ClinicalDataBySampleId
 ): SampleTimelineTooltipData {
     const eventAttributes = event.event.attributes || [];
-    const eventSignature = buildTimelineEventAttributesSignature(
-        eventAttributes
-    );
-    const clinicalDataRef = sampleWithClinicalData?.clinicalData;
-    const clinicalSignature = buildClinicalDataSignature(
-        sampleWithClinicalData
-    );
-    const cached = sampleTimelineTooltipDataCache.get(eventAttributes);
-
-    if (
-        cached &&
-        cached.eventSignature === eventSignature &&
-        cached.clinicalDataRef === clinicalDataRef &&
-        cached.clinicalSignature === clinicalSignature
-    ) {
-        return cached.tooltipData;
-    }
-
     const attributes = new Map<string, string>();
     for (let index = 0; index < eventAttributes.length; index += 1) {
         const attr = eventAttributes[index];
@@ -494,13 +335,6 @@ function getSampleTimelineTooltipData(
     const tooltipData = freezeSampleTimelineTooltipData({
         orderedAttributes,
         sampleId: sampleWithClinicalData?.id,
-    });
-
-    sampleTimelineTooltipDataCache.set(eventAttributes, {
-        clinicalDataRef,
-        clinicalSignature,
-        eventSignature,
-        tooltipData,
     });
 
     return tooltipData;
@@ -1127,18 +961,6 @@ export function buildBaseConfig(
     caseMetaData: ISampleMetaDeta,
     onPathologyLinkoutClick?: PathologyLinkoutClickHandler
 ) {
-    const cacheKey = `${buildTimelineSampleManagerSignature(
-        sampleManager
-    )}::${buildTimelineCaseMetaDataSignature(caseMetaData)}`;
-    // A linkout handler is a view-specific closure. Do not reuse a cached
-    // config that was created with a different handler (or no handler).
-    const cached = onPathologyLinkoutClick
-        ? undefined
-        : getCachedBaseConfig(cacheKey);
-    if (cached) {
-        return cached;
-    }
-
     let baseConfig: ITimelineConfig = {
         sortOrder: [
             'Specimen',
@@ -1471,9 +1293,7 @@ export function buildBaseConfig(
         ],
     };
 
-    return onPathologyLinkoutClick
-        ? baseConfig
-        : setCachedBaseConfig(cacheKey, baseConfig);
+    return baseConfig;
 }
 
 export function sortTracks(
@@ -1482,13 +1302,6 @@ export function sortTracks(
     dataSignature?: string
 ): TimelineTrackSpecification[] {
     const resolvedSortConfig = getResolvedTimelineSortConfig(baseConfig);
-    const cacheKey = `${resolvedSortConfig.signature}::${dataSignature ||
-        buildClinicalEventsSignature(data)}`;
-    const cached = getCachedSortedTracks(cacheKey);
-    if (cached) {
-        return cloneTrackSpecifications(cached);
-    }
-
     const dataByEventType: { [eventType: string]: ClinicalEvent[] } = {};
     const encounteredTrackTypes: string[] = [];
     const configuredTrackTypes = new Set(resolvedSortConfig.upperSortOrder);
@@ -1544,7 +1357,7 @@ export function sortTracks(
         }
     }
 
-    return setCachedSortedTracks(cacheKey, trackSpecifications);
+    return trackSpecifications;
 }
 
 function collapseOTHERTracks(rootTrack: TimelineTrackSpecification) {

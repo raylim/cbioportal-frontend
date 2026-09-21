@@ -32,16 +32,11 @@ import {
 } from './timelineInputSignatureUtils';
 import { isWsiPathologyClinicalEvent } from './pathologyClinicalEventUtils';
 import { PATHOLOGY_EVENT_ATTRIBUTE_KEYS } from './pathologyTimelineUtils';
-import { buildClinicalEventsSignature } from './clinicalEventSignatureUtils';
 import {
     buildPathologyPresentationGroupKey,
     buildPathologyPresentationItemsFromClinicalEvents,
     groupPathologyPresentationItems,
 } from './pathologyPresentationUtils';
-import {
-    getBoundedMapCacheValue,
-    setBoundedMapCacheValue,
-} from './boundedMapCache';
 
 export interface ISampleMetaDeta {
     color: { [sampleId: string]: string };
@@ -72,32 +67,6 @@ interface ITimelinePortalFlags {
     isGenieBpcStudy: boolean;
     isHtanOhsuPatient: boolean;
     isToxicityPortal: boolean;
-}
-
-const MAX_TIMELINE_WRAPPER_CACHE_ENTRIES = 100;
-
-const nestedPathologyTimelineCache = new Map<string, ClinicalEvent[]>();
-const timelinePortalExtrasCache = new Map<string, ClinicalEvent[]>();
-const collapsedPathologyTimelineCache = new Map<string, ClinicalEvent[]>();
-
-function getCachedTimelineWrapperArray(
-    cache: Map<string, ClinicalEvent[]>,
-    key: string
-): ClinicalEvent[] | undefined {
-    return getBoundedMapCacheValue(cache, key);
-}
-
-function setCachedTimelineWrapperArray(
-    cache: Map<string, ClinicalEvent[]>,
-    key: string,
-    value: ClinicalEvent[]
-): ClinicalEvent[] {
-    return setBoundedMapCacheValue(
-        cache,
-        key,
-        value,
-        MAX_TIMELINE_WRAPPER_CACHE_ENTRIES
-    );
 }
 
 const HTAN_OHSU_EXTRA_EVENT: ClinicalEvent = {
@@ -145,42 +114,19 @@ export function getTimelineDataWithPortalExtras(
         return timelineData;
     }
 
-    const cacheKey = `${timelineDataSignature ||
-        buildTimelineEventsSignature(timelineData)}::htan-ohsu`;
-    const cached = getCachedTimelineWrapperArray(
-        timelinePortalExtrasCache,
-        cacheKey
-    );
-    if (cached) {
-        return cached;
-    }
-
     const nextTimelineData = new Array<ClinicalEvent>(timelineData.length + 1);
     for (let index = 0; index < timelineData.length; index += 1) {
         nextTimelineData[index] = timelineData[index];
     }
     nextTimelineData[timelineData.length] = HTAN_OHSU_EXTRA_EVENT;
 
-    return setCachedTimelineWrapperArray(
-        timelinePortalExtrasCache,
-        cacheKey,
-        nextTimelineData
-    );
+    return nextTimelineData;
 }
 
 export function nestPathologyTimelineTracks(
     events: ClinicalEvent[],
     eventsSignature?: string
 ): ClinicalEvent[] {
-    const cacheKey = eventsSignature || buildTimelineEventsSignature(events);
-    const cached = getCachedTimelineWrapperArray(
-        nestedPathologyTimelineCache,
-        cacheKey
-    );
-    if (cached) {
-        return cached;
-    }
-
     let nestedEvents: ClinicalEvent[] | undefined;
     for (let index = 0; index < events.length; index += 1) {
         const event = events[index];
@@ -266,11 +212,7 @@ export function nestPathologyTimelineTracks(
         });
     }
 
-    return setCachedTimelineWrapperArray(
-        nestedPathologyTimelineCache,
-        cacheKey,
-        nestedEvents || events
-    );
+    return nestedEvents || events;
 }
 
 type GroupedPathologyTimelineEvent = {
@@ -363,17 +305,6 @@ export function collapsePathologyTimelineEvents(
     events: ClinicalEvent[],
     eventsSignature?: string
 ): ClinicalEvent[] {
-    const cacheKey =
-        eventsSignature ||
-        buildClinicalEventsSignature(events, { includeUniqueKeys: false });
-    const cached = getCachedTimelineWrapperArray(
-        collapsedPathologyTimelineCache,
-        cacheKey
-    );
-    if (cached) {
-        return cached;
-    }
-
     const grouped = new Map<string, GroupedPathologyTimelineEvent>();
     const pathologyEvents: ClinicalEvent[] = [];
     let collapsedEvents: ClinicalEvent[] | undefined;
@@ -444,11 +375,7 @@ export function collapsePathologyTimelineEvents(
         );
     }
 
-    return setCachedTimelineWrapperArray(
-        collapsedPathologyTimelineCache,
-        cacheKey,
-        collapsedEvents
-    );
+    return collapsedEvents;
 }
 
 export const TimelineWrapperContent: React.FunctionComponent<ITimelineWrapperContentProps> = observer(

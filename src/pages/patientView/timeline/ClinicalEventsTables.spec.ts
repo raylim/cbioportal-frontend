@@ -286,11 +286,11 @@ describe('buildClinicalEventTableData pathology slides', () => {
             'P-1'
         );
 
-        expect(secondData).toBe(firstData);
-        expect(secondData['PATHOLOGY SLIDES']).toBe(
+        expect(secondData).toEqual(firstData);
+        expect(secondData['PATHOLOGY SLIDES']).toEqual(
             firstData['PATHOLOGY SLIDES']
         );
-        expect(secondData['PATHOLOGY BIOMARKERS']).toBe(
+        expect(secondData['PATHOLOGY BIOMARKERS']).toEqual(
             firstData['PATHOLOGY BIOMARKERS']
         );
     });
@@ -335,7 +335,7 @@ describe('buildClinicalEventTableData pathology slides', () => {
             'P-1'
         );
 
-        expect(secondData['PATHOLOGY SLIDES']).toBe(
+        expect(secondData['PATHOLOGY SLIDES']).toEqual(
             firstData['PATHOLOGY SLIDES']
         );
         expect(secondData.TREATMENT).not.toBe(firstData.TREATMENT);

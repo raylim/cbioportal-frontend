@@ -83,7 +83,7 @@ describe('getTimelineDataWithPortalExtras', () => {
         expect(timelineData).toHaveLength(1);
     });
 
-    it('reuses cached portal-extra arrays for equivalent timeline snapshots', () => {
+    it('rebuilds portal extras from the current timeline snapshot', () => {
         const firstTimelineData = [
             {
                 eventType: 'TREATMENT',
@@ -106,7 +106,7 @@ describe('getTimelineDataWithPortalExtras', () => {
         const first = getTimelineDataWithPortalExtras(firstTimelineData, true);
         const second = getTimelineDataWithPortalExtras(secondTimelineData, true);
 
-        expect(second).toBe(first);
+        expect(second).toEqual(first);
     });
 });
 
@@ -186,7 +186,7 @@ describe('nestPathologyTimelineTracks', () => {
         });
     });
 
-    it('reuses cached nested pathology arrays for equivalent event snapshots', () => {
+    it('rebuilds nested pathology events from the current event snapshot', () => {
         const firstEvents = [
             {
                 eventType: 'PATHOLOGY SLIDES',
@@ -213,7 +213,7 @@ describe('nestPathologyTimelineTracks', () => {
         const first = nestPathologyTimelineTracks(firstEvents);
         const second = nestPathologyTimelineTracks(secondEvents);
 
-        expect(second).toBe(first);
+        expect(second).toEqual(first);
     });
 });
 
