@@ -523,8 +523,8 @@ export class WsiAnnotationController {
         }
     }
 
-    private async createAnnotation(annotation: WsiAnnotation) {
-        if (!this.slideId) return;
+    private async createAnnotation(annotation: WsiAnnotation): Promise<boolean> {
+        if (!this.slideId) return false;
         const context = {
             generation: this.generation,
             slideId: this.slideId,
@@ -563,7 +563,7 @@ export class WsiAnnotationController {
                 context.slideId !== this.slideId ||
                 context.signal?.aborted
             ) {
-                return;
+                return false;
             }
             const saved = this.fromApi(await response.json(), slideId);
             this.synchronizing = true;
@@ -579,17 +579,49 @@ export class WsiAnnotationController {
             } finally {
                 this.synchronizing = false;
             }
+            return true;
         } catch (_) {
             if (
                 context.generation !== this.generation ||
                 context.slideId !== this.slideId ||
                 context.signal?.aborted
             ) {
-                return;
+                return false;
             }
             this.removeAnnotationLocally(annotation.id);
             this.error = 'Unable to save annotation.';
+            return false;
         }
+    }
+
+    async createAgentAnnotation(input: {
+        label: string;
+        layerName: string;
+        color: string;
+        selector: string;
+    }): Promise<boolean> {
+        if (!this.slideId) return false;
+        return this.createAnnotation({
+            '@context': 'http://www.w3.org/ns/anno.jsonld',
+            type: 'Annotation',
+            id: `agent-${Date.now()}-${Math.random()
+                .toString(36)
+                .slice(2)}`,
+            body: [
+                {
+                    type: 'TextualBody',
+                    value: input.label,
+                    purpose: 'commenting',
+                },
+            ],
+            target: {
+                source: this.slideId,
+                selector: { type: 'SvgSelector', value: input.selector },
+            },
+            color: input.color,
+            colorName: input.layerName,
+            layerName: input.layerName,
+        });
     }
 
     private async updateAnnotation(annotation: WsiAnnotation) {
@@ -932,6 +964,14 @@ export class WsiAnnotationController {
             point
         );
         return { x: imagePoint.x, y: imagePoint.y };
+    }
+
+    getAgentViewerElementSize(): { width: number; height: number } {
+        const element = this.osdViewer?.element as HTMLElement | undefined;
+        return {
+            width: element?.clientWidth || 0,
+            height: element?.clientHeight || 0,
+        };
     }
 
     private async createCustomShape(

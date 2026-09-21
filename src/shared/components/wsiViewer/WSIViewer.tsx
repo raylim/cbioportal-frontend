@@ -44,6 +44,7 @@ import { clearPatientHierarchyCache } from './wsiHierarchyFetchCache';
 import {
     clearAnnotationAccessToken,
     clearWsiSlideAccess,
+    getAgentAccessToken,
     getAnnotationAccessToken,
     isWsiAuthEnabled,
 } from './wsiAuth';
@@ -57,6 +58,14 @@ import {
     WsiAnnotationTooltip,
     WsiAnnotationToolbar,
 } from './wsiAnnotationControls';
+import {
+    buildWsiAgentEmbeddingContext,
+    buildWsiAgentSvgSelector,
+    WsiAgentContext,
+    WsiAgentProposal,
+} from './wsiAgent';
+import { WsiAgentPanel } from './WsiAgentPanel';
+import { WsiAgentProposalOverlay } from './WsiAgentProposalOverlay';
 
 // ---- design tokens (matches iframe viewer) ----
 const C = {
@@ -190,6 +199,8 @@ export default class WSIViewer extends React.Component<Props, {}> {
     private isResizingSidebar = false;
     private controller: WsiViewerController;
     private annotationController: WsiAnnotationController;
+    @observable private agentProposals: WsiAgentProposal[] = [];
+    private agentViewerGeneration = 0;
     // Keep the hierarchy object identity stable while viewer state changes.
     // The observable version invalidates derived row caches.
     @observable private hierarchyDataVersion = 0;
@@ -425,8 +436,10 @@ export default class WSIViewer extends React.Component<Props, {}> {
             }),
             updateCursorPos: (x, y) => this.handleCursorMove(x, y),
             clearCursorPos: () => this.clearCursorPos(),
-            onSlideSelectionStarted: slide =>
-                this.annotationController.beginSlide(slide.image_id),
+            onSlideSelectionStarted: slide => {
+                this.agentViewerGeneration += 1;
+                this.annotationController.beginSlide(slide.image_id);
+            },
             onViewerOpened: (viewer, openSeadragon, slide) =>
                 this.annotationController.attachViewer(
                     viewer,
@@ -627,6 +640,156 @@ export default class WSIViewer extends React.Component<Props, {}> {
     private get activePathologyFilter(): PathologySlideFilter | undefined {
         return this.linkoutScopeActive ? this.props.pathologyFilter : undefined;
     }
+
+    private readonly getAgentToken = () =>
+        isWsiAuthEnabled()
+            ? getAgentAccessToken(
+                  this.props.studyId || '',
+                  this.controllerProps.authScope
+              )
+            : Promise.resolve('');
+
+    private readonly getAgentContext = (): WsiAgentContext | null => {
+        if (!this.selectedSlide || !this.selectedSample || !this.selectedMeta) {
+            return null;
+        }
+        const width = this.selectedMeta.dimensions.width;
+        const height = this.selectedMeta.dimensions.height;
+        const slideId = this.selectedSlide.image_id;
+        const studyId = this.props.studyId || '';
+        return {
+            study_id: studyId,
+            patient_id: this.props.patientId,
+            sample_id: this.selectedSample.sample_id,
+            slide_id: slideId,
+            stain_name: this.selectedSlide.stain_name,
+            match_level: this.activePathologyFilter?.matchLevel,
+            filters: {
+                stain: this.stainFilter,
+                match: this.matchFilter,
+                timepoint_days: this.timepointDays,
+            },
+            slide_metadata: { ...this.selectedMeta },
+            patient_context: {},
+            existing_annotations: this.annotationController.annotations.map(
+                annotation => ({
+                    id: annotation.id,
+                    label: annotation.body?.[0]?.value || '',
+                    layer_name: annotation.layerName || 'Default',
+                    color: annotation.color || '#3b82f6',
+                    version: annotation.version || 1,
+                })
+            ),
+            viewport: {
+                slide_width: width,
+                slide_height: height,
+                source_fingerprint: `${studyId}:${slideId}:${width}x${height}`,
+                capture_id: `${slideId}:${this.agentViewerGeneration}`,
+                viewer_generation: this.agentViewerGeneration,
+            },
+            embedding_context: buildWsiAgentEmbeddingContext(
+                studyId,
+                this.servableSlides.map(entry => entry.slide.image_id)
+            ),
+        };
+    };
+
+    @action.bound
+    private handleAgentProposal(proposal: WsiAgentProposal) {
+        const existing = this.agentProposals.findIndex(
+            item => item.id === proposal.id
+        );
+        this.agentProposals =
+            existing < 0
+                ? [...this.agentProposals, proposal]
+                : this.agentProposals.map(item =>
+                      item.id === proposal.id ? proposal : item
+                  );
+    }
+
+    private readonly applyAgentProposal = async (
+        proposal: WsiAgentProposal
+    ): Promise<{ success: boolean; detail: string }> => {
+        if (
+            proposal.action_type !== 'create_annotation' &&
+            proposal.action_type !== 'annotation_batch'
+        ) {
+            return {
+                success: false,
+                detail:
+                    'This proposal type is not supported by the native viewer yet.',
+            };
+        }
+        const context = this.getAgentContext();
+        const drafts =
+            proposal.action_type === 'annotation_batch' &&
+            Array.isArray(proposal.payload.annotations)
+                ? proposal.payload.annotations
+                : [proposal.payload];
+        if (
+            !context ||
+            context.slide_id !== proposal.slide_id ||
+            !drafts.length
+        ) {
+            return {
+                success: false,
+                detail:
+                    'The slide changed or the proposal geometry is invalid.',
+            };
+        }
+        for (const draft of drafts) {
+            const payload = draft as Record<string, unknown>;
+            const points = Array.isArray(payload.points)
+                ? payload.points.filter(
+                      (point: unknown): point is { x: number; y: number } =>
+                          !!point &&
+                          typeof point === 'object' &&
+                          typeof (point as { x?: unknown }).x === 'number' &&
+                          typeof (point as { y?: unknown }).y === 'number'
+                  )
+                : [];
+            if (points.length < 2) {
+                return {
+                    success: false,
+                    detail: 'The proposal geometry is invalid.',
+                };
+            }
+            const geometryType =
+                payload.geometry_type === 'polygon' ? 'polygon' : 'rectangle';
+            if (geometryType === 'polygon' && points.length < 3) {
+                return {
+                    success: false,
+                    detail: 'A polygon needs at least three points.',
+                };
+            }
+            const selector = buildWsiAgentSvgSelector(
+                geometryType,
+                points,
+                context.viewport
+            );
+            const success = await this.annotationController.createAgentAnnotation(
+                {
+                    label:
+                        typeof payload.label === 'string'
+                            ? payload.label
+                            : 'AI review',
+                    layerName:
+                        typeof payload.layer_name === 'string'
+                            ? payload.layer_name
+                            : 'AI review',
+                    color:
+                        typeof payload.color === 'string'
+                            ? payload.color
+                            : '#f5a623',
+                    selector,
+                }
+            );
+            if (!success) {
+                return { success: false, detail: 'Unable to save annotation.' };
+            }
+        }
+        return { success: true, detail: 'Annotation saved.' };
+    };
 
     private canReusePathologyFilterLocally(): boolean {
         return !!this.hierarchy?.slide_associations?.length;
@@ -1259,6 +1422,12 @@ export default class WSIViewer extends React.Component<Props, {}> {
                             controller={this.annotationController}
                         />
                     )}
+                    {this.props.agentEnabled && (
+                        <WsiAgentProposalOverlay
+                            controller={this.annotationController}
+                            proposals={this.agentProposals}
+                        />
+                    )}
                 </div>
 
                 <div
@@ -1318,6 +1487,17 @@ export default class WSIViewer extends React.Component<Props, {}> {
                         'Annotations (' +
                         this.annotationController.visibleAnnotationCount +
                         ')'
+                    }
+                    agentPanel={
+                        this.props.agentEnabled ? (
+                            <WsiAgentPanel
+                                apiUrl={this.props.annotationApiUrl || ''}
+                                getContext={this.getAgentContext}
+                                getToken={this.getAgentToken}
+                                applyProposal={this.applyAgentProposal}
+                                onProposal={this.handleAgentProposal}
+                            />
+                        ) : null
                     }
                 />
             </div>

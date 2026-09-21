@@ -140,6 +140,7 @@ function WsiMetaSidebarComponent({
     annotationLayersPanel,
     annotationPanel,
     annotationPanelTitle,
+    agentPanel,
 }: {
     width: number;
     showImageProperties: boolean;
@@ -149,6 +150,7 @@ function WsiMetaSidebarComponent({
     annotationLayersPanel?: React.ReactNode;
     annotationPanel?: React.ReactNode;
     annotationPanelTitle?: string;
+    agentPanel?: React.ReactNode;
 }) {
     return (
         <div
@@ -182,6 +184,9 @@ function WsiMetaSidebarComponent({
                 <SbSection title={annotationPanelTitle || 'Annotations'}>
                     {annotationPanel}
                 </SbSection>
+            )}
+            {agentPanel && (
+                <SbSection title="Research assistant">{agentPanel}</SbSection>
             )}
         </div>
     );
