@@ -1,4 +1,7 @@
-import { WsiTimepointSelection } from 'shared/components/wsiViewer/wsiViewerTypes';
+import {
+    WsiTimepointSelection,
+    WsiStainFilter,
+} from 'shared/components/wsiViewer/wsiViewerTypes';
 import URLWrapper from 'shared/lib/URLWrapper';
 import ExtendedRouterStore from 'shared/lib/ExtendedRouterStore';
 import { PagePath } from 'shared/enums/PagePaths';
@@ -11,7 +14,6 @@ import {
     PLOTS_TAB_URL_PARAMS,
 } from 'shared/components/plots/PlotsTabUrlParameters';
 import { clearWsiHashFromCurrentUrl } from 'shared/components/wsiViewer/wsiViewStateUtils';
-import { WsiStainFilter } from 'shared/components/wsiViewer/wsiViewerTypes';
 
 export type PatientViewUrlQuery = {
     studyId: string;
@@ -57,15 +59,15 @@ const PATIENT_VIEW_URL_PROPS = {
         isSessionProp: false,
         nestedObjectProps: {
             showTimeline: '',
-
             clusterHeatmap: '',
             transposeHeatmap: '',
             showMutationLabelsInHeatmap: '',
 
             showOnlySelectedMutationsInChart: '',
             logScaleChart: '',
+            showOnlySelectedMutationsInChart: '',
+            logScaleChart: '',
             yAxisDataRangeInChart: '',
-
             showOnlySelectedMutationsInTable: '',
         },
     },

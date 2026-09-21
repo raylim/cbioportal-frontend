@@ -1,4 +1,3 @@
-import { WsiTimepointSelection } from 'shared/components/wsiViewer/wsiViewerTypes';
 import { MSKTab, MSKTabs } from 'shared/components/MSKTabs/MSKTabs';
 import LoadingIndicator from 'shared/components/loadingIndicator/LoadingIndicator';
 import {
@@ -39,6 +38,7 @@ import {
     buildPathologySlideFilterSignature,
     PathologySlideFilter,
     WsiStainFilter,
+    WsiTimepointSelection,
 } from 'shared/components/wsiViewer/wsiViewerTypes';
 import {
     primeInitialWsiHierarchy,
@@ -296,7 +296,6 @@ export const PatientViewPathologySlidesTabGate = observer(
         );
     }
 );
-
 export function extractResourceIdFromTabId(tabId: string) {
     const match = new RegExp(`${PatientViewResourceTabPrefix}(.*)`).exec(tabId);
     if (match) {
@@ -315,14 +314,6 @@ function parseTimepointDays(
     }
     const days = Number(value);
     return Number.isSafeInteger(days) ? days : undefined;
-}
-
-function getStudyDisplayName(
-    studyMetaData: { result?: { name?: string } } | undefined,
-    studyId: string
-): string {
-    const studyName = studyMetaData?.result?.name?.trim();
-    return studyName || studyId;
 }
 
 function getWsiPathologyFilter(query: {
@@ -982,83 +973,6 @@ export function tabs(
         </MSKTab>
     );
 
-    if (tileServerUrl && hasServablePathologySlides === true) {
-        tabs.push(
-            <MSKTab
-                key={6.5}
-                id={PatientViewPageTabs.WSIHESlides}
-                linkText="Pathology Slides"
-                unmountOnHide={false}
-            >
-                <WSIViewer
-                    tileServerUrl={tileServerUrl}
-                    hierarchyUrl={buildPatientHierarchyApiUrl(
-                        pageComponent.patientViewPageStore.patientId,
-                        pageComponent.patientViewPageStore.studyId
-                    )}
-                    patientId={pageComponent.patientViewPageStore.patientId}
-                    height={WindowStore.size.height - 220}
-                    studyId={pageComponent.patientViewPageStore.studyId}
-                    studyName={getStudyDisplayName(
-                        pageComponent.patientViewPageStore.studyMetaData,
-                        pageComponent.patientViewPageStore.studyId
-                    )}
-                    initialStainFilter={
-                        pageComponent.urlWrapper.query.stainFilter === 'hne' ||
-                        pageComponent.urlWrapper.query.stainFilter === 'ihc' ||
-                        pageComponent.urlWrapper.query.stainFilter ===
-                            'other' ||
-                        pageComponent.urlWrapper.query.stainFilter === 'unknown'
-                            ? pageComponent.urlWrapper.query.stainFilter
-                            : 'all'
-                    }
-                    initialMatchFilter={
-                        pageComponent.urlWrapper.query.matchLevel?.toUpperCase() ===
-                        'PART'
-                            ? 'part'
-                            : pageComponent.urlWrapper.query.matchLevel?.toUpperCase() ===
-                              'BLOCK'
-                            ? 'block'
-                            : pageComponent.urlWrapper.query.matchLevel?.toUpperCase() ===
-                              'UNMATCHED'
-                            ? 'unmatched'
-                            : 'all'
-                    }
-                    initialTimepointDays={parseTimepointDays(
-                        pageComponent.urlWrapper.query.timepointDays
-                    )}
-                    onTimepointChange={days =>
-                        pageComponent.urlWrapper.setWsiTimepointDays(
-                            days,
-                            pageComponent.patientViewPageStore.patientId
-                        )
-                    }
-                    onStainFilterChange={filter =>
-                        pageComponent.urlWrapper.setWsiStainFilter(
-                            filter,
-                            pageComponent.patientViewPageStore.patientId
-                        )
-                    }
-                    onMatchFilterChange={filter =>
-                        pageComponent.urlWrapper.setWsiMatchFilter(
-                            filter,
-                            pageComponent.patientViewPageStore.patientId
-                        )
-                    }
-                    onClearFilters={() =>
-                        pageComponent.urlWrapper.clearWsiFilters(
-                            pageComponent.patientViewPageStore.patientId
-                        )
-                    }
-                    preferredSampleId={pageComponent.urlWrapper.query.sampleId}
-                    pathologyFilter={getWsiPathologyFilter(
-                        pageComponent.urlWrapper.query
-                    )}
-                />
-            </MSKTab>
-        );
-    }
-
     if (pageComponent.shouldShowResources)
         tabs.push(
             <MSKTab
@@ -1118,6 +1032,62 @@ export function tabs(
             </div>
         </MSKTab>
     );
+
+    const tileServerUrl = getServerConfig().msk_wsi_tile_server_url;
+    if (tileServerUrl) {
+        const patientId = pageComponent.patientViewPageStore.patientId;
+        const studyId = pageComponent.patientViewPageStore.studyId;
+        const query = urlWrapper.query;
+        tabs.push(
+            <MSKTab
+                key={6.5}
+                id={PatientViewPageTabs.WSIHESlides}
+                linkText="Pathology Slides"
+                unmountOnHide={false}
+            >
+                <WSIViewer
+                    tileServerUrl={tileServerUrl}
+                    hierarchyUrl={`/api/wsi/v2/hierarchy/${encodeURIComponent(
+                        studyId
+                    )}/${encodeURIComponent(patientId)}`}
+                    patientId={patientId}
+                    studyId={studyId}
+                    height={WindowStore.size.height - 220}
+                    initialStainFilter={
+                        ['hne', 'ihc', 'other', 'unknown'].includes(
+                            query.stainFilter || ''
+                        )
+                            ? (query.stainFilter as WsiStainFilter)
+                            : 'all'
+                    }
+                    initialMatchFilter={
+                        query.matchLevel?.toUpperCase() === 'PART'
+                            ? 'part'
+                            : query.matchLevel?.toUpperCase() === 'BLOCK'
+                            ? 'block'
+                            : query.matchLevel?.toUpperCase() === 'UNMATCHED'
+                            ? 'unmatched'
+                            : 'all'
+                    }
+                    initialTimepointDays={parseTimepointDays(
+                        query.timepointDays
+                    )}
+                    onTimepointChange={days =>
+                        urlWrapper.setWsiTimepointDays(days, patientId)
+                    }
+                    onStainFilterChange={filter =>
+                        urlWrapper.setWsiStainFilter(filter, patientId)
+                    }
+                    onMatchFilterChange={filter =>
+                        urlWrapper.setWsiMatchFilter(filter, patientId)
+                    }
+                    onClearFilters={() => urlWrapper.clearWsiFilters(patientId)}
+                    preferredSampleId={query.sampleId}
+                    pathologyFilter={getWsiPathologyFilter(query)}
+                />
+            </MSKTab>
+        );
+    }
 
     pageComponent.shouldShowTrialMatch &&
         tabs.push(
