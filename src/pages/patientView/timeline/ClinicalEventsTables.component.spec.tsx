@@ -109,7 +109,7 @@ describe('ClinicalEventsTables', () => {
                 clinicalEventsSignature,
             })
         );
-        expect(groupTimelineData).toHaveBeenCalledWith([], '');
+        expect(groupTimelineData).toHaveBeenCalledWith([]);
         expect(groupTimelineData).toHaveBeenCalledTimes(1);
 
         (

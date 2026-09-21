@@ -282,11 +282,10 @@ function buildClinicalEventTableDataUncached(
         eventsSignature || buildTimelineEventsSignature(events);
     const {
         nonWsiEvents,
-        nonWsiEventsSignature,
         wsiPathologyEvents,
         wsiPathologyEventsSignature,
     } = getPartitionedClinicalEvents(events, resolvedEventsSignature);
-    const data = groupTimelineData(nonWsiEvents, nonWsiEventsSignature);
+    const data = groupTimelineData(nonWsiEvents);
     if (data.PATHOLOGY) {
         data['PATHOLOGY BIOMARKERS'] = data.PATHOLOGY;
         delete data.PATHOLOGY;

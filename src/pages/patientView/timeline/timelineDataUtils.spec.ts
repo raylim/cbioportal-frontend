@@ -1,166 +1,59 @@
 import { ClinicalEvent } from 'cbioportal-ts-api-client';
-import * as clinicalEventSignatureUtils from './clinicalEventSignatureUtils';
 import { groupTimelineData } from './timelineDataUtils';
 
-function makeEvent(
-    overrides: Partial<ClinicalEvent> = {},
-    attributes: Array<{ key: string; value: string }> = []
+function event(
+    eventType: string,
+    attributes: Array<{ key: string; value: string }> = [],
+    start = 5
 ): ClinicalEvent {
     return {
-        eventType: 'TREATMENT',
+        eventType,
         patientId: 'P-1',
         studyId: 'study',
         uniquePatientKey: 'patient-key',
         uniqueSampleKey: 'sample-key',
-        startNumberOfDaysSinceDiagnosis: 5,
-        endNumberOfDaysSinceDiagnosis: 5,
+        startNumberOfDaysSinceDiagnosis: start,
+        endNumberOfDaysSinceDiagnosis: start,
         attributes,
-        ...overrides,
     } as ClinicalEvent;
 }
 
 describe('groupTimelineData', () => {
-    it('reuses the grouped event-type payload for equivalent same-order events', () => {
-        const firstEvents = [
-            makeEvent({}, [
-                { key: 'B', value: '2' },
-                { key: 'A', value: '1' },
-            ]),
-        ];
-        const secondEvents = [
-            makeEvent({}, [
-                { key: 'A', value: '1' },
-                { key: 'B', value: '2' },
-            ]),
-        ];
-
-        const firstData = groupTimelineData(firstEvents);
-        const secondData = groupTimelineData(secondEvents);
-
-        expect(secondData).toBe(firstData);
+    it('groups events and preserves first-seen attribute columns', () => {
+        expect(
+            groupTimelineData([
+                event('TREATMENT', [
+                    { key: 'B', value: '2' },
+                    { key: 'A', value: '1' },
+                ]),
+                event('TREATMENT', [{ key: 'C', value: '3' }]),
+                event('STATUS', [{ key: 'STATE', value: 'ACTIVE' }]),
+            ])
+        ).toEqual({
+            TREATMENT: [
+                ['PATIENT_ID', 'START_DATE', 'STOP_DATE', 'EVENT_TYPE', 'B', 'A', 'C'],
+                ['P-1', '5', '5', 'TREATMENT', '2', '1', ''],
+                ['P-1', '5', '5', 'TREATMENT', '', '', '3'],
+            ],
+            STATUS: [
+                ['PATIENT_ID', 'START_DATE', 'STOP_DATE', 'EVENT_TYPE', 'STATE'],
+                ['P-1', '5', '5', 'STATUS', 'ACTIVE'],
+            ],
+        });
     });
 
-    it('reuses cached row arrays for equivalent same-order events', () => {
-        const firstEvents = [
-            makeEvent({}, [
-                { key: 'B', value: '2' },
-                { key: 'A', value: '1' },
-            ]),
-        ];
-        const secondEvents = [
-            makeEvent({}, [
-                { key: 'A', value: '1' },
-                { key: 'B', value: '2' },
-            ]),
-        ];
+    it('recomputes ordinary timeline data after event changes', () => {
+        const events = [event('TREATMENT', [{ key: 'A', value: '1' }])];
+        const first = groupTimelineData(events);
+        events[0] = event('TREATMENT', [{ key: 'A', value: '9' }], 6);
 
-        const firstData = groupTimelineData(firstEvents);
-        const secondData = groupTimelineData(secondEvents);
-
-        expect(secondData.TREATMENT).toBe(firstData.TREATMENT);
-    });
-
-    it('reuses grouped data when the caller provides the same content signature', () => {
-        const firstEvents = [
-            makeEvent({}, [
-                { key: 'B', value: '2' },
-                { key: 'A', value: '1' },
-            ]),
-        ];
-        const secondEvents = [
-            makeEvent({}, [
-                { key: 'A', value: '1' },
-                { key: 'B', value: '2' },
-            ]),
-        ];
-        const sharedSignature =
-            'TREATMENT::P-1::study::patient-key::sample-key::5::5::A:1|B:2';
-
-        const firstData = groupTimelineData(firstEvents, sharedSignature);
-        const secondData = groupTimelineData(secondEvents, sharedSignature);
-
-        expect(secondData).toBe(firstData);
-        expect(secondData.TREATMENT).toBe(firstData.TREATMENT);
-    });
-
-    it('rebuilds row arrays when event content changes in place', () => {
-        const mutableEvents = [
-            makeEvent({}, [{ key: 'A', value: '1' }]),
-        ];
-
-        const firstData = groupTimelineData(mutableEvents);
-
-        mutableEvents[0] = makeEvent(
-            { startNumberOfDaysSinceDiagnosis: 6, endNumberOfDaysSinceDiagnosis: 6 },
-            [{ key: 'A', value: '9' }]
-        );
-
-        const secondData = groupTimelineData(mutableEvents);
-
-        expect(secondData.TREATMENT).not.toBe(firstData.TREATMENT);
-        expect(secondData.TREATMENT).toEqual([
-            ['PATIENT_ID', 'START_DATE', 'STOP_DATE', 'EVENT_TYPE', 'A'],
-            ['P-1', '6', '6', 'TREATMENT', '9'],
+        expect(groupTimelineData(events)).not.toBe(first);
+        expect(groupTimelineData(events).TREATMENT[1]).toEqual([
+            'P-1',
+            '6',
+            '6',
+            'TREATMENT',
+            '9',
         ]);
-    });
-
-    it('invalidates cached rows when scalar event fields mutate in place', () => {
-        const mutableEvent = makeEvent({}, [{ key: 'A', value: '1' }]);
-        const events = [mutableEvent];
-        const firstData = groupTimelineData(events);
-
-        mutableEvent.startNumberOfDaysSinceDiagnosis = 99;
-        const secondData = groupTimelineData(events);
-
-        expect(secondData.TREATMENT).not.toBe(firstData.TREATMENT);
-        expect(secondData.TREATMENT[1][1]).toBe('99');
-    });
-
-    it('does not collide when an attribute value contains signature delimiters', () => {
-        const firstData = groupTimelineData([
-            makeEvent({}, [{ key: 'NOTE', value: 'A|STATUS:B' }]),
-        ]);
-        const secondData = groupTimelineData([
-            makeEvent({}, [
-                { key: 'NOTE', value: 'A' },
-                { key: 'STATUS', value: 'B' },
-            ]),
-        ]);
-
-        expect(firstData.TREATMENT).not.toEqual(secondData.TREATMENT);
-    });
-
-    it('preserves first-seen attribute column order across multiple events', () => {
-        const data = groupTimelineData([
-            makeEvent({}, [
-                { key: 'B', value: '2' },
-                { key: 'A', value: '1' },
-            ]),
-            makeEvent({}, [{ key: 'C', value: '3' }]),
-        ]);
-
-        expect(data.TREATMENT).toEqual([
-            ['PATIENT_ID', 'START_DATE', 'STOP_DATE', 'EVENT_TYPE', 'B', 'A', 'C'],
-            ['P-1', '5', '5', 'TREATMENT', '2', '1', ''],
-            ['P-1', '5', '5', 'TREATMENT', '', '', '3'],
-        ]);
-    });
-
-    it('builds grouped signatures in one pass across mixed event types', () => {
-        const buildClinicalEventSignatureSpy = jest.spyOn(
-            clinicalEventSignatureUtils,
-            'buildClinicalEventSignature'
-        );
-        const events = [
-            makeEvent({ eventType: 'TREATMENT' }, [{ key: 'A', value: '1' }]),
-            makeEvent({ eventType: 'STATUS' }, [{ key: 'B', value: '2' }]),
-            makeEvent({ eventType: 'TREATMENT' }, [{ key: 'C', value: '3' }]),
-        ];
-
-        groupTimelineData(events);
-
-        expect(buildClinicalEventSignatureSpy).toHaveBeenCalledTimes(
-            events.length
-        );
     });
 });
