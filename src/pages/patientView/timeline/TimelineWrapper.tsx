@@ -60,6 +60,44 @@ export interface ITimelineWrapperContentProps extends ITimelineProps {
     timelineDataSignature?: string;
 }
 
+function buildTimelineSampleManagerSignature(
+    sampleManager: SampleManager
+): string {
+    return (sampleManager.samples || [])
+        .map(sample => {
+            const clinicalData = (sample.clinicalData || [])
+                .map(
+                    item =>
+                        `${item.clinicalAttributeId || ''}:${item.value || ''}`
+                )
+                .sort((left, right) => left.localeCompare(right))
+                .join('|');
+            return `${sample.id || ''}::${clinicalData}`;
+        })
+        .join('||');
+}
+
+function buildTimelineCaseMetaDataSignature(
+    caseMetaData: ISampleMetaDeta
+): string {
+    const sampleIds = new Set<string>();
+    [caseMetaData.color, caseMetaData.index, caseMetaData.label].forEach(
+        values =>
+            Object.keys(values || {}).forEach(sampleId =>
+                sampleIds.add(sampleId)
+            )
+    );
+    return Array.from(sampleIds)
+        .sort((left, right) => left.localeCompare(right))
+        .map(
+            sampleId =>
+                `${sampleId}:${caseMetaData.color[sampleId] || ''}:${
+                    caseMetaData.index[sampleId] ?? ''
+                }:${caseMetaData.label[sampleId] || ''}`
+        )
+        .join('|');
+}
+
 interface ITimelinePortalFlags {
     isGenieBpcStudy: boolean;
     isHtanOhsuPatient: boolean;
@@ -400,7 +438,7 @@ export const TimelineWrapperContent: React.FunctionComponent<ITimelineWrapperCon
                     timelineData,
                     resolvedTimelineDataSignature
                 ),
-            [timelineData, resolvedTimelineDataSignature]
+            [resolvedTimelineDataSignature]
         );
         const collapsedTimelineDataSignature = useMemo(
             () =>
@@ -415,7 +453,7 @@ export const TimelineWrapperContent: React.FunctionComponent<ITimelineWrapperCon
                     collapsedTimelineData,
                     collapsedTimelineDataSignature
                 ),
-            [collapsedTimelineData, collapsedTimelineDataSignature]
+            [collapsedTimelineDataSignature]
         );
         const timelineDataWithPortalExtrasSignature = isHtanOhsuPatient
             ? `${collapsedTimelineDataSignature}::htan-ohsu`
@@ -427,11 +465,13 @@ export const TimelineWrapperContent: React.FunctionComponent<ITimelineWrapperCon
                     isHtanOhsuPatient,
                     collapsedTimelineDataSignature
                 ),
-            [
-                isHtanOhsuPatient,
-                nestedTimelineData,
-                collapsedTimelineDataSignature,
-            ]
+            [isHtanOhsuPatient, collapsedTimelineDataSignature]
+        );
+        const caseMetaDataSignature = buildTimelineCaseMetaDataSignature(
+            caseMetaData
+        );
+        const sampleManagerSignature = buildTimelineSampleManagerSignature(
+            sampleManager
         );
 
         const store = useMemo(() => {
@@ -465,9 +505,8 @@ export const TimelineWrapperContent: React.FunctionComponent<ITimelineWrapperCon
             isGenieBpcStudy,
             isHtanOhsuPatient,
             isToxicityPortal,
-            caseMetaData,
-            sampleManager,
-            timelineDataWithPortalExtras,
+            caseMetaDataSignature,
+            sampleManagerSignature,
             timelineDataWithPortalExtrasSignature,
             onPathologyLinkoutClick,
         ]);

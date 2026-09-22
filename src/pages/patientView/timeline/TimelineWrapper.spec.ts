@@ -104,10 +104,7 @@ describe('getTimelineDataWithPortalExtras', () => {
         ] as ClinicalEvent[];
 
         const first = getTimelineDataWithPortalExtras(firstTimelineData, true);
-        const second = getTimelineDataWithPortalExtras(
-            secondTimelineData,
-            true
-        );
+        const second = getTimelineDataWithPortalExtras(secondTimelineData, true);
 
         expect(second).toEqual(first);
     });
@@ -315,9 +312,8 @@ describe('TimelineWrapper', () => {
                 studyId: 'study',
             },
         ] as ClinicalEvent[];
-        const clinicalEventsSignature = buildTimelineEventsSignature(
-            clinicalEvents
-        );
+        const clinicalEventsSignature =
+            buildTimelineEventsSignature(clinicalEvents);
         const clinicalSamples = [
             {
                 id: 'S-1',
@@ -441,12 +437,12 @@ describe('TimelineWrapper', () => {
             ] as any,
             mutationProfileId: 'profile',
         };
-        (usePathologyAugmentedClinicalEventsState as jest.Mock).mockReturnValue(
-            {
-                events: clinicalEvents,
-                eventsSignature: 'augmented-signature',
-            }
-        );
+        (
+            usePathologyAugmentedClinicalEventsState as jest.Mock
+        ).mockReturnValue({
+            events: clinicalEvents,
+            eventsSignature: 'augmented-signature',
+        });
 
         let renderer!: TestRenderer.ReactTestRenderer;
         TestRenderer.act(() => {
@@ -486,12 +482,12 @@ describe('TimelineWrapper', () => {
             ] as any,
             mutationProfileId: 'profile',
         };
-        (usePathologyAugmentedClinicalEventsState as jest.Mock).mockReturnValue(
-            {
-                events: timelineData,
-                eventsSignature: buildTimelineEventsSignature(timelineData),
-            }
-        );
+        (
+            usePathologyAugmentedClinicalEventsState as jest.Mock
+        ).mockReturnValue({
+            events: timelineData,
+            eventsSignature: buildTimelineEventsSignature(timelineData),
+        });
 
         let renderer!: TestRenderer.ReactTestRenderer;
         TestRenderer.act(() => {
@@ -553,14 +549,12 @@ describe('TimelineWrapper', () => {
             ] as any,
             mutationProfileId: 'profile',
         };
-        (usePathologyAugmentedClinicalEventsState as jest.Mock).mockReturnValue(
-            {
-                events: firstTimelineData,
-                eventsSignature: buildTimelineEventsSignature(
-                    firstTimelineData
-                ),
-            }
-        );
+        (
+            usePathologyAugmentedClinicalEventsState as jest.Mock
+        ).mockReturnValue({
+            events: firstTimelineData,
+            eventsSignature: buildTimelineEventsSignature(firstTimelineData),
+        });
 
         let renderer!: TestRenderer.ReactTestRenderer;
         TestRenderer.act(() => {
@@ -572,14 +566,12 @@ describe('TimelineWrapper', () => {
         expect(sortTracks).toHaveBeenCalledTimes(1);
         expect(TimelineStore).toHaveBeenCalledTimes(1);
 
-        (usePathologyAugmentedClinicalEventsState as jest.Mock).mockReturnValue(
-            {
-                events: secondTimelineData,
-                eventsSignature: buildTimelineEventsSignature(
-                    secondTimelineData
-                ),
-            }
-        );
+        (
+            usePathologyAugmentedClinicalEventsState as jest.Mock
+        ).mockReturnValue({
+            events: secondTimelineData,
+            eventsSignature: buildTimelineEventsSignature(secondTimelineData),
+        });
 
         TestRenderer.act(() => {
             renderer.update(React.createElement(TimelineWrapper, props));
@@ -590,7 +582,7 @@ describe('TimelineWrapper', () => {
         renderer.unmount();
     });
 
-    it('rebuilds tracks when a new case-metadata object is supplied', () => {
+    it('does not rebuild tracks when rerendered with equivalent case metadata', () => {
         const timelineData: ClinicalEvent[] = [
             {
                 eventType: 'SPECIMEN',
@@ -627,12 +619,12 @@ describe('TimelineWrapper', () => {
             ] as any,
             mutationProfileId: 'profile',
         };
-        (usePathologyAugmentedClinicalEventsState as jest.Mock).mockReturnValue(
-            {
-                events: timelineData,
-                eventsSignature: buildTimelineEventsSignature(timelineData),
-            }
-        );
+        (
+            usePathologyAugmentedClinicalEventsState as jest.Mock
+        ).mockReturnValue({
+            events: timelineData,
+            eventsSignature: buildTimelineEventsSignature(timelineData),
+        });
 
         let renderer!: TestRenderer.ReactTestRenderer;
         TestRenderer.act(() => {
@@ -650,12 +642,12 @@ describe('TimelineWrapper', () => {
             );
         });
 
-        expect(sortTracks).toHaveBeenCalledTimes(2);
-        expect(TimelineStore).toHaveBeenCalledTimes(2);
+        expect(sortTracks).toHaveBeenCalledTimes(1);
+        expect(TimelineStore).toHaveBeenCalledTimes(1);
         renderer.unmount();
     });
 
-    it('rebuilds tracks when a new sample-manager object is supplied', () => {
+    it('does not rebuild tracks when rerendered with an equivalent sample manager wrapper', () => {
         const timelineData: ClinicalEvent[] = [
             {
                 eventType: 'SPECIMEN',
@@ -708,12 +700,12 @@ describe('TimelineWrapper', () => {
             ] as any,
             mutationProfileId: 'profile',
         };
-        (usePathologyAugmentedClinicalEventsState as jest.Mock).mockReturnValue(
-            {
-                events: timelineData,
-                eventsSignature: buildTimelineEventsSignature(timelineData),
-            }
-        );
+        (
+            usePathologyAugmentedClinicalEventsState as jest.Mock
+        ).mockReturnValue({
+            events: timelineData,
+            eventsSignature: buildTimelineEventsSignature(timelineData),
+        });
 
         let renderer!: TestRenderer.ReactTestRenderer;
         TestRenderer.act(() => {
@@ -731,8 +723,8 @@ describe('TimelineWrapper', () => {
             );
         });
 
-        expect(sortTracks).toHaveBeenCalledTimes(2);
-        expect(TimelineStore).toHaveBeenCalledTimes(2);
+        expect(sortTracks).toHaveBeenCalledTimes(1);
+        expect(TimelineStore).toHaveBeenCalledTimes(1);
         renderer.unmount();
     });
 });
