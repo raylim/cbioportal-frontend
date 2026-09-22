@@ -405,6 +405,111 @@ async function installRoutes(
     );
 
     await page.route(
+        `**/api/studies/${STUDY_ID}/molecular-profiles**`,
+        async route => {
+            const alterationType = new URL(
+                route.request().url()
+            ).searchParams.get('molecularAlterationType');
+            const profileId =
+                alterationType === 'COPY_NUMBER_ALTERATION'
+                    ? 'mock-cna'
+                    : alterationType === 'STRUCTURAL_VARIANT'
+                    ? 'mock-sv'
+                    : 'mock-mutations';
+            await route.fulfill({
+                status: 200,
+                contentType: 'application/json',
+                body: JSON.stringify([
+                    {
+                        molecularProfileId: profileId,
+                        molecularAlterationType: alterationType,
+                    },
+                ]),
+            });
+        }
+    );
+
+    await page.route('**/api/mutations/fetch**', async route =>
+        route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify([
+                {
+                    sampleId: SAMPLE_ID,
+                    entrezGeneId: 3845,
+                    gene: {
+                        hugoGeneSymbol: 'KRAS',
+                        entrezGeneId: 3845,
+                    },
+                    proteinChange: 'p.G12D',
+                    mutationType: 'Missense_Mutation',
+                    tumorAltCount: 20,
+                    tumorRefCount: 80,
+                    proteinPosStart: 12,
+                    proteinPosEnd: 12,
+                },
+            ]),
+        })
+    );
+
+    await page.route(
+        '**/api/molecular-profiles/mock-cna/molecular-data/fetch**',
+        async route =>
+            route.fulfill({
+                status: 200,
+                contentType: 'application/json',
+                body: JSON.stringify([
+                    {
+                        sampleId: SAMPLE_ID,
+                        value: 2,
+                        entrezGeneId: 7157,
+                        gene: {
+                            entrezGeneId: 7157,
+                            hugoGeneSymbol: 'TP53',
+                            cytoband: '17p13.1',
+                        },
+                    },
+                ]),
+            })
+    );
+
+    await page.route('**/api/cna-genes/fetch**', async route =>
+        route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify([]),
+        })
+    );
+
+    await page.route('**/api/structural-variant/fetch**', async route =>
+        route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify([
+                {
+                    sampleId: SAMPLE_ID,
+                    site1HugoSymbol: 'EML4',
+                    site2HugoSymbol: 'ALK',
+                    site1EntrezGeneId: 27436,
+                    site2EntrezGeneId: 238,
+                    variantClass: 'FUSION',
+                    svStatus: 'SOMATIC',
+                },
+            ]),
+        })
+    );
+
+    await page.route(
+        '**/api/mutation-counts-by-position/fetch**',
+        async route =>
+            route.fulfill({
+                status: 200,
+                contentType: 'application/json',
+                body: JSON.stringify([]),
+            })
+    );
+
+    await page.route(
         `**/api/wsi/v2/slides/${STUDY_ID}/*/access`,
         async route => {
             const pathSegments = new URL(route.request().url()).pathname.split(
@@ -899,6 +1004,47 @@ test.describe('native WSI pathology contract with mocked services', () => {
                 request => request.origin === pageOrigin
             )
         ).toBe(true);
+    });
+
+    test('renders reference-sample mutations, CNAs, and structural variants on the RHS', async ({
+        page,
+    }) => {
+        await configureMockedWsi(page);
+        await installRoutes(page);
+
+        await gotoWithOptionalLogin(page, viewerUrl());
+        const sidebar = page.locator('[data-testid="wsi-metadata-sidebar"]');
+        await expect(sidebar).toContainText('MSK-IMPACT', { timeout: 30000 });
+        await expect(sidebar).toContainText('KRAS', { timeout: 30000 });
+        await expect(sidebar).toContainText('G12D', { timeout: 30000 });
+        await expect(sidebar).toContainText('TP53', { timeout: 30000 });
+        await expect(sidebar).toContainText('AMP', { timeout: 30000 });
+        await expect(sidebar).toContainText('EML4', { timeout: 30000 });
+        await expect(sidebar).toContainText('ALK', { timeout: 30000 });
+        await expect(sidebar).toContainText('FUSION', { timeout: 30000 });
+    });
+
+    test('uses the reference sample for RHS variants when an unmatched slide is selected', async ({
+        page,
+    }) => {
+        const hierarchyWithServableUnmatched = JSON.parse(
+            JSON.stringify(hierarchy)
+        );
+        hierarchyWithServableUnmatched.sampleGroups[1].parts[0].blocks[0].slides[0].canServeTiles = true;
+        await configureMockedWsi(page);
+        await installRoutes(
+            page,
+            baseClinicalEvents,
+            hierarchyWithServableUnmatched
+        );
+
+        await gotoWithOptionalLogin(page, viewerUrl('mock-unmatched-1'));
+        await expect(
+            page.locator('[data-testid="wsi-slide-item-mock-unmatched-1"]')
+        ).toBeVisible({ timeout: 30000 });
+        const sidebar = page.locator('[data-testid="wsi-metadata-sidebar"]');
+        await expect(sidebar).toContainText('KRAS', { timeout: 30000 });
+        await expect(sidebar).toContainText('G12D');
     });
 
 });
