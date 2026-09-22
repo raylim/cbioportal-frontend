@@ -91,18 +91,6 @@ const WSI_PATIENT_SLIDE_ATTRIBUTE_IDS = new Set<string>(
     WSI_PATIENT_SLIDE_COLUMNS.map(column => column.attributeId)
 );
 
-const WSI_SAMPLE_TO_PATIENT_SLIDE_ATTRIBUTES = [
-    ['WSI_SAMPLE_SLIDE_COUNT', 'WSI_PATIENT_SLIDE_COUNT'],
-    [
-        'WSI_SAMPLE_PART_MATCHED_SLIDE_COUNT',
-        'WSI_PATIENT_PART_MATCHED_SLIDE_COUNT',
-    ],
-    [
-        'WSI_SAMPLE_BLOCK_MATCHED_SLIDE_COUNT',
-        'WSI_PATIENT_BLOCK_MATCHED_SLIDE_COUNT',
-    ],
-] as const;
-
 export function resolveClinicalDataSortAttributeId(
     field: string | undefined,
     clinicalAttributes: ClinicalAttribute[]
@@ -116,57 +104,9 @@ export function resolveClinicalDataSortAttributeId(
     );
     if (attribute) return attribute.clinicalAttributeId;
 
-    return WSI_PATIENT_SLIDE_COLUMNS.find(column => column.displayName === field)
-        ?.attributeId;
-}
-
-export function addPatientWsiSlideCounts(
-    rows: Array<{ [attributeId: string]: string }>,
-    allowSampleAggregation = true
-): Array<{ [attributeId: string]: string }> {
-    if (!allowSampleAggregation) {
-        return rows;
-    }
-
-    const totalsByPatient = new Map<string, Record<string, number>>();
-
-    rows.forEach(row => {
-        const patientKey = `${row.studyId || ''}::${row.patientId || ''}`;
-        if (!row.patientId) return;
-        const totals = totalsByPatient.get(patientKey) || {};
-        WSI_SAMPLE_TO_PATIENT_SLIDE_ATTRIBUTES.forEach(
-            ([sampleAttributeId, patientAttributeId]) => {
-                const sampleCount = Number(row[sampleAttributeId]);
-                if (Number.isFinite(sampleCount)) {
-                    totals[patientAttributeId] =
-                        (totals[patientAttributeId] || 0) + sampleCount;
-                }
-            }
-        );
-        totalsByPatient.set(patientKey, totals);
-    });
-
-    return rows.map(row => {
-        const totals = totalsByPatient.get(
-            `${row.studyId || ''}::${row.patientId || ''}`
-        );
-        if (!totals) return row;
-        return {
-            ...row,
-            ...Object.fromEntries(
-                Object.entries(totals)
-                    .filter(([attributeId]) => {
-                        const directValue = row[attributeId];
-                        return (
-                            directValue === undefined ||
-                            directValue === '' ||
-                            !Number.isFinite(Number(directValue))
-                        );
-                    })
-                    .map(([attributeId, value]) => [attributeId, String(value)])
-            ),
-        };
-    });
+    return WSI_PATIENT_SLIDE_COLUMNS.find(
+        column => column.displayName === field
+    )?.attributeId;
 }
 
 type SortCriteria = {
@@ -210,10 +150,7 @@ export async function fetchClinicalDataForStudyViewClinicalDataTab(
 
     return {
         totalItems: sampleClinicalDataResponse.totalItems,
-        data: addPatientWsiSlideCounts(
-            _.values(aggregatedSampleClinicalData),
-            false
-        ),
+        data: _.values(aggregatedSampleClinicalData),
     };
 }
 
@@ -485,6 +422,14 @@ export class ClinicalDataTab extends React.Component<
         // for this reason we need to wait for visible attributes to be populated
         // this simplest way to await this is just no avoid rendering the table when there are
         // no visibleAttributes
+        const hasWsiClinicalAttributes = this.props.store.visibleAttributesForClinicalData.some(
+            chartMeta =>
+                chartMeta.clinicalAttribute !== undefined &&
+                WSI_PATIENT_SLIDE_ATTRIBUTE_IDS.has(
+                    chartMeta.clinicalAttribute.clinicalAttributeId
+                )
+        );
+
         return (
             <span data-test="clinical-data-tab-content">
                 <WindowWidthBox offset={60}>
@@ -564,7 +509,9 @@ export class ClinicalDataTab extends React.Component<
                                             DownloadControlOption.SHOW_ALL
                                         }
                                         showCountHeader={false}
-                                        showColumnVisibility={true}
+                                        showColumnVisibility={
+                                            hasWsiClinicalAttributes
+                                        }
                                         onFilterTextChange={searchTerm =>
                                             (this.clinicalDataTabSearchTerm = searchTerm)
                                         }

@@ -402,6 +402,7 @@ const ClinicalEventsTables: React.FunctionComponent<{
                 onPathologyLinkoutClick
             ),
         [
+            augmentedEvents,
             resolvedAugmentedEventsSignature,
             patientId,
             studyId,
