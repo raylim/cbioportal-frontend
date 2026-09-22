@@ -10,6 +10,7 @@ import { clearPatientHierarchyCache } from 'shared/components/wsiViewer/wsiHiera
 import { PatientHierarchy } from 'shared/components/wsiViewer/wsiViewerTypes';
 import { ClinicalEvent } from 'cbioportal-ts-api-client';
 import * as wsiSlideUtils from 'shared/components/wsiViewer/wsiSlideUtils';
+import { getLoadConfig } from 'config/config';
 
 const mockReportWsiAssociationIntegrity = jest.fn();
 
@@ -17,6 +18,10 @@ jest.mock('shared/lib/tracking', () => ({
     reportWsiAssociationIntegrity: (...args: unknown[]) =>
         mockReportWsiAssociationIntegrity(...args),
 }));
+
+beforeAll(() => {
+    getLoadConfig().apiRoot = '/';
+});
 
 function makeSlide(
     overrides: Partial<
@@ -86,9 +91,7 @@ function makeHierarchy(
                     specimen_key: `block::${part.part_number}::${block.block_number}`,
                     slide_type:
                         slide.slide_type ||
-                        (slide.is_ihc
-                            ? ('IHC' as const)
-                            : ('H&E' as const)),
+                        (slide.is_ihc ? ('IHC' as const) : ('H&E' as const)),
                     procedure_date_days: slide.slide_timepoint_days,
                     timepoint_source: slide.slide_timepoint_source,
                     stain_name: slide.stain_name,
@@ -1717,5 +1720,38 @@ describe('buildPatientHierarchyApiUrl', () => {
         expect(buildPatientHierarchyApiUrl('P/007', 'study/one')).toBe(
             '/api/wsi/v2/hierarchy/study%2Fone/P%2F007'
         );
+    });
+});
+
+describe('buildTimelineEventsSignature', () => {
+    it('does not make ordinary timeline events part of the WSI signature', () => {
+        const pathologyEvent = {
+            eventType: 'PATHOLOGY SLIDES',
+            patientId: 'P-1',
+            studyId: 'study',
+            startNumberOfDaysSinceDiagnosis: 1,
+            attributes: [{ key: 'SAMPLE_ID', value: 'S-1' }],
+        } as ClinicalEvent;
+        const ordinaryEvent = {
+            eventType: 'TREATMENT',
+            patientId: 'P-1',
+            studyId: 'study',
+            startNumberOfDaysSinceDiagnosis: 2,
+            attributes: [{ key: 'DRUG', value: 'A' }],
+        } as ClinicalEvent;
+
+        const withOrdinaryEvent = buildTimelineEventsSignature([
+            pathologyEvent,
+            ordinaryEvent,
+        ]);
+        ordinaryEvent.attributes![0].value = 'B';
+
+        expect(
+            buildTimelineEventsSignature([pathologyEvent, ordinaryEvent])
+        ).toBe(withOrdinaryEvent);
+        pathologyEvent.attributes![0].value = 'S-2';
+        expect(
+            buildTimelineEventsSignature([pathologyEvent, ordinaryEvent])
+        ).not.toBe(withOrdinaryEvent);
     });
 });
