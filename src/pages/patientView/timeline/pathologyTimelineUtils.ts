@@ -831,10 +831,7 @@ export function buildPathologyTimelineEvents(
 }
 
 export function buildTimelineEventsSignature(events: ClinicalEvent[]): string {
-    const pathologyEvents = events.filter(
-        event => event.eventType.toUpperCase() === PATHOLOGY_EVENT_TYPE
-    );
-    return buildClinicalEventsSignature(pathologyEvents, {
+    return buildClinicalEventsSignature(events, {
         includeUniqueKeys: false,
     });
 }
