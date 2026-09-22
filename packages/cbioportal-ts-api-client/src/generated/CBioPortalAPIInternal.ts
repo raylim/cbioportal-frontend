@@ -234,6 +234,9 @@ export type ClinicalEvent = {
 
         'uniquePatientKey': string
 
+        /** Patient timeline pathology events may carry their sample identity. */
+        'uniqueSampleKey'?: string
+
 };
 export type ClinicalEventAttributeRequest = {
     'clinicalEventRequests': Array < ClinicalEventRequest >
@@ -242,7 +245,8 @@ export type ClinicalEventAttributeRequest = {
 
 };
 export type ClinicalEventData = {
-    'clinicalEventId': number
+    /** The timeline endpoint omits this identifier for synthesized pathology attributes. */
+    'clinicalEventId'?: number
 
         'key': string
 
