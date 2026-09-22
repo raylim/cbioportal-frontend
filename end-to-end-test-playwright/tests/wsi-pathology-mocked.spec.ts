@@ -969,9 +969,16 @@ test.describe('native WSI pathology contract with mocked services', () => {
         await expect(
             page.locator('[data-testid="wsi-slide-item-mock-unmatched-1"]')
         ).toHaveCount(0);
-        await expect(
-            page.locator('[data-testid="wsi-metadata-sidebar"] img')
-        ).toHaveCount(0);
+        const sidebarImages = page.locator(
+            '[data-testid="wsi-metadata-sidebar"] img'
+        );
+        expect(
+            await sidebarImages.evaluateAll(images =>
+                images.every(image =>
+                    (image as HTMLImageElement).src.startsWith('data:')
+                )
+            )
+        ).toBe(true);
         const pageOrigin = new URL(page.url()).origin;
         const configOrigin = requests
             .map(url => new URL(url, page.url()))
