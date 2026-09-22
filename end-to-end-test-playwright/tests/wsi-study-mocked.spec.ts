@@ -74,8 +74,10 @@ async function installStudyMocks(page: Page) {
         window.localStorage.setItem(
             'frontendConfig',
             JSON.stringify({
+                apiRoot: '/',
                 serverConfig: {
                     authenticationMethod: 'none',
+                    sessionServiceEnabled: true,
                     clinical_attribute_product_limit: 5000,
                     skin_hide_download_controls: 'SHOW_ALL',
                 },
@@ -88,7 +90,9 @@ async function installStudyMocks(page: Page) {
             contentType: 'application/json',
             body: JSON.stringify({
                 app_name: 'wsi-study-contract',
+                apiRoot: '/',
                 authenticationMethod: 'none',
+                sessionServiceEnabled: true,
                 clinical_attribute_product_limit: 5000,
                 skin_hide_download_controls: 'SHOW_ALL',
             }),
@@ -98,8 +102,11 @@ async function installStudyMocks(page: Page) {
         const request = route.request();
         const url = new URL(request.url());
         const path = url.pathname;
+        const apiPath = path.includes('/api/')
+            ? path.slice(path.indexOf('/api/'))
+            : path;
 
-        if (path === '/api/studies' && request.method() === 'GET') {
+        if (apiPath === '/api/studies' && request.method() === 'GET') {
             await route.fulfill({
                 status: 200,
                 contentType: 'application/json',
@@ -107,7 +114,7 @@ async function installStudyMocks(page: Page) {
             });
             return;
         }
-        if (path === `/api/studies/${STUDY_ID}`) {
+        if (apiPath === `/api/studies/${STUDY_ID}`) {
             await route.fulfill({
                 status: 200,
                 contentType: 'application/json',
@@ -115,7 +122,7 @@ async function installStudyMocks(page: Page) {
             });
             return;
         }
-        if (path === '/api/molecular-profiles/fetch') {
+        if (apiPath === '/api/molecular-profiles/fetch') {
             await route.fulfill({
                 status: 200,
                 contentType: 'application/json',
@@ -123,7 +130,7 @@ async function installStudyMocks(page: Page) {
             });
             return;
         }
-        if (path === '/api/clinical-attributes/fetch') {
+        if (apiPath === '/api/clinical-attributes/fetch') {
             await route.fulfill({
                 status: 200,
                 contentType: 'application/json',
@@ -131,9 +138,22 @@ async function installStudyMocks(page: Page) {
             });
             return;
         }
+        if (apiPath === '/api/clinical-attributes/counts/fetch') {
+            await route.fulfill({
+                status: 200,
+                contentType: 'application/json',
+                body: JSON.stringify(
+                    clinicalAttributes.map(attribute => ({
+                        clinicalAttributeId: attribute.clinicalAttributeId,
+                        count: 1,
+                    }))
+                ),
+            });
+            return;
+        }
         if (
-            path === '/api/samples/fetch' ||
-            path === '/api/filtered-samples/fetch'
+            apiPath === '/api/samples/fetch' ||
+            apiPath === '/api/filtered-samples/fetch'
         ) {
             await route.fulfill({
                 status: 200,
@@ -142,7 +162,7 @@ async function installStudyMocks(page: Page) {
             });
             return;
         }
-        if (path === '/api/clinical-data-table/fetch') {
+        if (apiPath === '/api/clinical-data-table/fetch') {
             await route.fulfill({
                 status: 200,
                 contentType: 'application/json',
@@ -151,11 +171,43 @@ async function installStudyMocks(page: Page) {
             });
             return;
         }
-        if (path === '/api/clinical-data/fetch') {
+        if (apiPath === '/api/clinical-data/fetch') {
             await route.fulfill({
                 status: 200,
                 contentType: 'application/json',
                 body: JSON.stringify([]),
+            });
+            return;
+        }
+        if (apiPath === '/api/clinical-data-counts/fetch') {
+            await route.fulfill({
+                status: 200,
+                contentType: 'application/json',
+                body: JSON.stringify([
+                    {
+                        attributeId: 'CANCER_TYPE',
+                        counts: [
+                            { value: 'Contract cohort', count: 1, freq: 1 },
+                        ],
+                    },
+                ]),
+            });
+            return;
+        }
+        if (apiPath === '/api/clinical-data-bin-counts/fetch') {
+            await route.fulfill({
+                status: 200,
+                contentType: 'application/json',
+                body: JSON.stringify(
+                    clinicalAttributes
+                        .filter(attribute => attribute.datatype === 'NUMBER')
+                        .map(attribute => ({
+                            attributeId: attribute.clinicalAttributeId,
+                            count: 1,
+                            start: 1,
+                            end: 3,
+                        }))
+                ),
             });
             return;
         }
@@ -181,33 +233,39 @@ test.describe('WSI study presentation browser contract', () => {
 
         await page.goto(`/study/clinicalData?id=${STUDY_ID}`);
 
-        const content = page.getByTestId('clinical-data-tab-content');
+        const content = page.locator('[data-test="clinical-data-tab-content"]');
         await expect(content).toBeVisible({ timeout: 30000 });
         await expect(content.getByText('1 results')).toBeVisible({
             timeout: 30000,
         });
         await expect(
-            content.getByTestId('WSI Slides per Patient')
+            content.locator('[data-test="WSI Slides per Patient"]')
         ).toBeVisible();
-        await expect(content.getByTestId('Contract cohort')).toBeVisible();
+        await expect(
+            content.locator('[data-test="Contract cohort"]')
+        ).toBeVisible();
 
         await content.getByRole('button', { name: /Columns/ }).click();
         await expect(
-            page.locator('[data-id="WSI_PATIENT_PART_MATCHED_SLIDE_COUNT"]')
+            page.locator('[data-id="WSI Slides per Patient, Part-matched"]')
         ).toBeVisible();
         await page
-            .locator('[data-id="WSI_PATIENT_PART_MATCHED_SLIDE_COUNT"]')
+            .locator('[data-id="WSI Slides per Patient, Part-matched"]')
             .click();
         await page
-            .locator('[data-id="WSI_PATIENT_BLOCK_MATCHED_SLIDE_COUNT"]')
+            .locator('[data-id="WSI Slides per Patient, Block-matched"]')
             .click();
         await content.getByRole('button', { name: /Columns/ }).click();
 
         await expect(
-            content.getByTestId('WSI Slides per Patient, Part-matched')
+            content.locator(
+                '[data-test="WSI Slides per Patient, Part-matched"]'
+            )
         ).toBeVisible();
         await expect(
-            content.getByTestId('WSI Slides per Patient, Block-matched')
+            content.locator(
+                '[data-test="WSI Slides per Patient, Block-matched"]'
+            )
         ).toBeVisible();
         expect(pageErrors).toEqual([]);
     });
