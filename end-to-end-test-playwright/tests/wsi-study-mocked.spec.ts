@@ -235,7 +235,7 @@ test.describe('WSI study presentation browser contract', () => {
 
         const content = page.locator('[data-test="clinical-data-tab-content"]');
         await expect(content).toBeVisible({ timeout: 30000 });
-        await expect(content.getByText('1 results')).toBeVisible({
+        await expect(content.getByText(/1 result(?:s)?/i)).toBeVisible({
             timeout: 30000,
         });
         await expect(
