@@ -32,21 +32,11 @@ import * as React from 'react';
 import { observer } from 'mobx-react-lite';
 import SampleManager from 'pages/patientView/SampleManager';
 import PatientViewUrlWrapper from 'pages/patientView/PatientViewUrlWrapper';
-import WSIViewer from 'shared/components/wsiViewer/WSIViewer';
-import { buildWsiHierarchyApiUrl } from 'shared/components/wsiViewer/wsiUrls';
-import { readWsiHashState } from 'shared/components/wsiViewer/wsiViewStateUtils';
 import {
-    buildPathologySlideFilterSignature,
     PathologySlideFilter,
     WsiStainFilter,
     WsiTimepointSelection,
 } from 'shared/components/wsiViewer/wsiViewerTypes';
-import {
-    primeInitialWsiHierarchy,
-    warmInitialWsiSlide,
-} from 'shared/components/wsiViewer/wsiViewerWarmup';
-import { fetchPatientHierarchyReadOnly } from 'shared/components/wsiViewer/wsiHierarchyFetchCache';
-import { getServableSlideIdsForPathologyFilterReadOnly } from 'shared/components/wsiViewer/wsiSlideUtils';
 import { CompactVAFPlot } from 'pages/patientView/genomicOverview/CompactVAFPlot';
 import {
     computeMutationFrequencyBySample,
@@ -59,11 +49,8 @@ import MutationTableWrapper from './mutation/MutationTableWrapper';
 import { PatientViewPageInner } from 'pages/patientView/PatientViewPage';
 import { Else, If } from 'react-if';
 import { PatientViewPlotsTabWrapper } from './PatientViewPlotsTabWrapper';
-import {
-    buildPatientHierarchyApiUrl,
-    buildTimelineEventsSignature,
-    hasServableDiagnosticSlides,
-} from 'pages/patientView/timeline/pathologyTimelineUtils';
+import WsiPatientViewEntryPoint from 'shared/components/wsiViewer/WsiPatientViewEntryPoint';
+import { buildTimelineEventsSignature } from 'pages/patientView/timeline/pathologyTimelineUtils';
 import { usePathologyAugmentedClinicalEventsState } from 'pages/patientView/timeline/usePathologyAugmentedClinicalEvents';
 
 export enum PatientViewPageTabs {
@@ -88,215 +75,6 @@ export function getPatientViewResourceTabId(resourceId: string) {
     return `${PatientViewResourceTabPrefix}${resourceId}`;
 }
 
-function PatientViewWsiPreloader({
-    tileServerUrl,
-    patientId,
-    studyId,
-    activeTabId,
-    initialStainFilter,
-    pathologyFilter,
-}: {
-    tileServerUrl?: string | null;
-    patientId?: string;
-    studyId?: string;
-    activeTabId?: string;
-    initialStainFilter: WsiStainFilter;
-    pathologyFilter?: PathologySlideFilter;
-}) {
-    const pathologyFilterSignature = React.useMemo(
-        () => buildPathologySlideFilterSignature(pathologyFilter),
-        [
-            pathologyFilter?.matchLevel,
-            pathologyFilter?.sampleId,
-            pathologyFilter?.specimenKey,
-        ]
-    );
-
-    React.useEffect(() => {
-        if (
-            !tileServerUrl ||
-            !patientId ||
-            !studyId ||
-            activeTabId === PatientViewPageTabs.WSIHESlides
-        ) {
-            return;
-        }
-
-        let idleHandle: number | null = null;
-        let timer: ReturnType<typeof setTimeout> | null = null;
-        let cancelled = false;
-        const hierarchyUrl = buildPatientHierarchyApiUrl(patientId, studyId);
-
-        void primeInitialWsiHierarchy({
-            hierarchyUrl,
-        }).catch(() => {
-            // Ignore preload failures; the gate/viewer handles real load errors.
-        });
-
-        const warmViewer = () => {
-            idleHandle = null;
-            timer = null;
-            if (cancelled) {
-                return;
-            }
-
-            const hashState = readWsiHashState();
-            void warmInitialWsiSlide({
-                tileServerUrl,
-                hierarchyUrl,
-                studyId,
-                preferredSlideId: hashState?.slideId,
-                stainFilter: initialStainFilter,
-                pathologyFilter,
-            }).catch(() => {
-                // Ignore warmup failures; the viewer handles real load errors.
-            });
-        };
-
-        if (
-            typeof window !== 'undefined' &&
-            typeof window.requestIdleCallback === 'function'
-        ) {
-            idleHandle = window.requestIdleCallback(warmViewer, {
-                timeout: 1500,
-            });
-        } else {
-            timer = setTimeout(warmViewer, 500);
-        }
-
-        return () => {
-            cancelled = true;
-            if (
-                idleHandle !== null &&
-                typeof window !== 'undefined' &&
-                typeof window.cancelIdleCallback === 'function'
-            ) {
-                window.cancelIdleCallback(idleHandle);
-            }
-            if (timer !== null) {
-                clearTimeout(timer);
-            }
-        };
-    }, [
-        activeTabId,
-        initialStainFilter,
-        patientId,
-        studyId,
-        tileServerUrl,
-        pathologyFilterSignature,
-    ]);
-
-    return null;
-}
-
-export const PatientViewPathologySlidesTabGate = observer(
-    function PatientViewPathologySlidesTabGate({
-        tileServerUrl,
-        patientId,
-        studyId,
-        activeTabId,
-        hasLoadedSampleIds,
-        pathologyFilter,
-        onUnavailableRoute,
-        children,
-    }: {
-        tileServerUrl?: string | null;
-        patientId?: string;
-        studyId?: string;
-        activeTabId?: string;
-        hasLoadedSampleIds?: boolean;
-        pathologyFilter?: PathologySlideFilter;
-        onUnavailableRoute?: () => void;
-        children: (hasServableSlides: boolean | undefined) => React.ReactNode;
-    }) {
-        const [hasServableSlides, setHasServableSlides] = React.useState<
-            boolean | undefined
-        >(undefined);
-        const isActiveWsiRoute =
-            activeTabId === PatientViewPageTabs.WSIHESlides;
-        const pathologyFilterSignature = React.useMemo(
-            () => buildPathologySlideFilterSignature(pathologyFilter),
-            [
-                pathologyFilter?.matchLevel,
-                pathologyFilter?.sampleId,
-                pathologyFilter?.specimenKey,
-            ]
-        );
-
-        React.useEffect(() => {
-            if (
-                !tileServerUrl ||
-                !patientId ||
-                !studyId ||
-                (!isActiveWsiRoute && !hasLoadedSampleIds && !pathologyFilter)
-            ) {
-                setHasServableSlides(undefined);
-                return;
-            }
-
-            let cancelled = false;
-            const controller = new AbortController();
-            const hierarchyUrl = buildPatientHierarchyApiUrl(
-                patientId,
-                studyId
-            );
-            setHasServableSlides(undefined);
-            const hierarchyPromise = fetchPatientHierarchyReadOnly(
-                hierarchyUrl,
-                controller.signal
-            );
-
-            void hierarchyPromise
-                .then(hierarchy => {
-                    const nextHasServableSlides = pathologyFilter
-                        ? !!getServableSlideIdsForPathologyFilterReadOnly(
-                              hierarchy,
-                              pathologyFilter
-                          )?.size
-                        : hasServableDiagnosticSlides(hierarchy);
-                    if (!cancelled) {
-                        setHasServableSlides(nextHasServableSlides);
-                        if (!nextHasServableSlides && isActiveWsiRoute) {
-                            onUnavailableRoute?.();
-                        }
-                    }
-                })
-                .catch(() => {
-                    // A rejected hierarchy request is unresolved availability,
-                    // not evidence that the patient has no servable slides.
-                });
-
-            return () => {
-                cancelled = true;
-                controller.abort();
-            };
-        }, [
-            activeTabId,
-            hasLoadedSampleIds,
-            isActiveWsiRoute,
-            onUnavailableRoute,
-            patientId,
-            pathologyFilterSignature,
-            studyId,
-            tileServerUrl,
-        ]);
-
-        return (
-            <>
-                {children(
-                    !tileServerUrl ||
-                        !patientId ||
-                        !studyId ||
-                        (!isActiveWsiRoute &&
-                            !hasLoadedSampleIds &&
-                            !pathologyFilter)
-                        ? undefined
-                        : hasServableSlides
-                )}
-            </>
-        );
-    }
-);
 export function extractResourceIdFromTabId(tabId: string) {
     const match = new RegExp(`${PatientViewResourceTabPrefix}(.*)`).exec(tabId);
     if (match) {
@@ -310,19 +88,9 @@ function parseTimepointDays(
     value: string | undefined
 ): WsiTimepointSelection | undefined {
     if (value === 'undated') return value;
-    if (!value || !/^-?\d+$/.test(value)) {
-        return undefined;
-    }
+    if (!value || !/^-?\d+$/.test(value)) return undefined;
     const days = Number(value);
     return Number.isSafeInteger(days) ? days : undefined;
-}
-
-function getStudyDisplayName(
-    studyMetaData: { result?: { name?: string } } | undefined,
-    studyId: string
-): string {
-    const studyName = studyMetaData?.result?.name?.trim();
-    return studyName || studyId;
 }
 
 function getWsiPathologyFilter(query: {
@@ -331,11 +99,7 @@ function getWsiPathologyFilter(query: {
     matchLevel?: string;
     specimenKey?: string;
 }): PathologySlideFilter | undefined {
-    // A sampleId by itself is the normal patient-view preferred sample. Only
-    // an explicit linkout scope constrains the initial slide set.
-    if (query.wsiScope !== 'linkout') {
-        return undefined;
-    }
+    if (query.wsiScope !== 'linkout') return undefined;
     return {
         sampleId: query.sampleId,
         matchLevel: query.matchLevel,
@@ -455,72 +219,26 @@ export function patientViewTabs(
     urlWrapper: PatientViewUrlWrapper,
     sampleManager: SampleManager | null
 ) {
-    const tileServerUrl = getServerConfig().msk_wsi_tile_server_url;
-    const activeTabId = urlWrapper.activeTabId;
     const helpWidgetPath = urlWrapper.routing.location.pathname;
-    const clinicalDataGroupedBySample =
-        pageInstance.patientViewPageStore.clinicalDataGroupedBySample;
-    const initialStainFilter =
-        urlWrapper.query.stainFilter === 'hne' ||
-        urlWrapper.query.stainFilter === 'ihc' ||
-        urlWrapper.query.stainFilter === 'other' ||
-        urlWrapper.query.stainFilter === 'unknown'
-            ? urlWrapper.query.stainFilter
-            : 'all';
-    const pathologyFilter = getWsiPathologyFilter(urlWrapper.query);
     return (
-        <>
-            {tileServerUrl && (
-                <PatientViewWsiPreloader
-                    tileServerUrl={tileServerUrl}
-                    patientId={pageInstance.patientViewPageStore.patientId}
-                    studyId={pageInstance.patientViewPageStore.studyId}
-                    activeTabId={activeTabId}
-                    initialStainFilter={initialStainFilter}
-                    pathologyFilter={pathologyFilter}
-                />
-            )}
-            <PatientViewPathologySlidesTabGate
-                tileServerUrl={tileServerUrl}
-                patientId={pageInstance.patientViewPageStore.patientId}
-                studyId={pageInstance.patientViewPageStore.studyId}
-                activeTabId={activeTabId}
-                hasLoadedSampleIds={clinicalDataGroupedBySample.isComplete}
-                pathologyFilter={pathologyFilter}
-                onUnavailableRoute={() =>
-                    urlWrapper.redirectUnavailableWsiRoute()
-                }
-            >
-                {hasServableSlides => (
-                    <MSKTabs
-                        id="patientViewPageTabs"
-                        key={urlWrapper.hash}
-                        activeTabId={activeTabId}
-                        onTabClick={(id: string) => urlWrapper.setActiveTab(id)}
-                        className="mainTabs"
-                        getPaginationWidth={WindowStore.getWindowWidth}
-                        contentWindowExtra={
-                            <HelpWidget path={helpWidgetPath} />
-                        }
-                    >
-                        {tabs(
-                            pageInstance,
-                            sampleManager,
-                            urlWrapper,
-                            hasServableSlides
-                        )}
-                    </MSKTabs>
-                )}
-            </PatientViewPathologySlidesTabGate>
-        </>
+        <MSKTabs
+            id="patientViewPageTabs"
+            key={urlWrapper.hash}
+            activeTabId={urlWrapper.activeTabId}
+            onTabClick={(id: string) => urlWrapper.setActiveTab(id)}
+            className="mainTabs"
+            getPaginationWidth={WindowStore.getWindowWidth}
+            contentWindowExtra={<HelpWidget path={helpWidgetPath} />}
+        >
+            {tabs(pageInstance, sampleManager, urlWrapper)}
+        </MSKTabs>
     );
 }
 
 export function tabs(
     pageComponent: PatientViewPageInner,
     sampleManager: SampleManager | null,
-    urlWrapper: PatientViewUrlWrapper,
-    hasServablePathologySlides?: boolean
+    urlWrapper: PatientViewUrlWrapper
 ) {
     const tabs: JSX.Element[] = [];
     const serverConfig = getServerConfig();
@@ -554,7 +272,7 @@ export function tabs(
                 pageComponent.patientViewPageStore.clinicalEvents.isComplete &&
                 (pageComponent.patientViewPageStore.clinicalEvents.result
                     .length > 0 ||
-                    hasServablePathologySlides === true) &&
+                    !!getServerConfig().msk_wsi_tile_server_url) &&
                 pageComponent.patientViewPageStore.clinicalDataGroupedBySample
                     .isComplete && (
                     <SummaryTimelineSection
@@ -1044,58 +762,68 @@ export function tabs(
     );
 
     if (tileServerUrl) {
-        const patientId = pageComponent.patientViewPageStore.patientId;
-        const studyId = pageComponent.patientViewPageStore.studyId;
         const query = urlWrapper.query;
+        const initialStainFilter = ['hne', 'ihc', 'other', 'unknown'].includes(
+            query.stainFilter || ''
+        )
+            ? (query.stainFilter as WsiStainFilter)
+            : 'all';
+        const initialMatchFilter =
+            query.matchLevel?.toUpperCase() === 'PART'
+                ? 'part'
+                : query.matchLevel?.toUpperCase() === 'BLOCK'
+                ? 'block'
+                : query.matchLevel?.toUpperCase() === 'UNMATCHED'
+                ? 'unmatched'
+                : 'all';
+        const pathologyFilter = getWsiPathologyFilter(query);
         tabs.push(
             <MSKTab
-                key={6.5}
+                key={6}
                 id={PatientViewPageTabs.WSIHESlides}
                 linkText="Pathology Slides"
                 unmountOnHide={false}
             >
-                <WSIViewer
+                <WsiPatientViewEntryPoint
+                    patientId={pageComponent.patientViewPageStore.patientId}
+                    studyId={pageComponent.patientViewPageStore.studyId}
                     tileServerUrl={tileServerUrl}
-                    hierarchyUrl={buildWsiHierarchyApiUrl(studyId, patientId)}
-                    patientId={patientId}
-                    studyId={studyId}
                     authScope={
                         pageComponent.props.appStore.userName ||
                         getServerConfig().user_display_name ||
                         'anonymousUser'
                     }
                     height={WindowStore.size.height - 220}
-                    initialStainFilter={
-                        ['hne', 'ihc', 'other', 'unknown'].includes(
-                            query.stainFilter || ''
-                        )
-                            ? (query.stainFilter as WsiStainFilter)
-                            : 'all'
-                    }
-                    initialMatchFilter={
-                        query.matchLevel?.toUpperCase() === 'PART'
-                            ? 'part'
-                            : query.matchLevel?.toUpperCase() === 'BLOCK'
-                            ? 'block'
-                            : query.matchLevel?.toUpperCase() === 'UNMATCHED'
-                            ? 'unmatched'
-                            : 'all'
-                    }
+                    initialStainFilter={initialStainFilter}
+                    initialMatchFilter={initialMatchFilter}
                     initialTimepointDays={parseTimepointDays(
                         query.timepointDays
                     )}
                     onTimepointChange={days =>
-                        urlWrapper.setWsiTimepointDays(days, patientId)
+                        urlWrapper.setWsiTimepointDays(
+                            days,
+                            pageComponent.patientViewPageStore.patientId
+                        )
                     }
                     onStainFilterChange={filter =>
-                        urlWrapper.setWsiStainFilter(filter, patientId)
+                        urlWrapper.setWsiStainFilter(
+                            filter,
+                            pageComponent.patientViewPageStore.patientId
+                        )
                     }
                     onMatchFilterChange={filter =>
-                        urlWrapper.setWsiMatchFilter(filter, patientId)
+                        urlWrapper.setWsiMatchFilter(
+                            filter,
+                            pageComponent.patientViewPageStore.patientId
+                        )
                     }
-                    onClearFilters={() => urlWrapper.clearWsiFilters(patientId)}
+                    onClearFilters={() =>
+                        urlWrapper.clearWsiFilters(
+                            pageComponent.patientViewPageStore.patientId
+                        )
+                    }
                     preferredSampleId={query.sampleId}
-                    pathologyFilter={getWsiPathologyFilter(query)}
+                    pathologyFilter={pathologyFilter}
                 />
             </MSKTab>
         );
@@ -1184,8 +912,7 @@ export function tabs(
                 id={PatientViewPageTabs.MRNA}
                 linkText={
                     <span>
-                        mRNA{' '}
-                        <strong className={'beta-text'}>Beta!</strong>
+                        mRNA <strong className={'beta-text'}>Beta!</strong>
                     </span>
                 }
             >
@@ -1201,8 +928,7 @@ export function tabs(
                 id={PatientViewPageTabs.Plots}
                 linkText={
                     <span>
-                        Plots{' '}
-                        <strong className={'beta-text'}>Beta!</strong>
+                        Plots <strong className={'beta-text'}>Beta!</strong>
                     </span>
                 }
             >
@@ -1210,8 +936,8 @@ export function tabs(
                     .isComplete &&
                 pageComponent.patientViewPageStore.highlightedCancerTypes
                     .isComplete &&
-                pageComponent.patientViewPageStore.highlightedDetailedCancerTypes
-                    .isComplete ? (
+                pageComponent.patientViewPageStore
+                    .highlightedDetailedCancerTypes.isComplete ? (
                     <PatientViewPlotsTabWrapper
                         store={pageComponent.patientViewPageStore}
                         urlWrapper={urlWrapper}
@@ -1262,38 +988,6 @@ export function tabs(
     //                 ></MSKTab>
     //             );
     //         })}
-
-    const wsiTabIndex = tabs.findIndex(
-        tab => tab.props.id === PatientViewPageTabs.WSIHESlides
-    );
-    if (wsiTabIndex < 0) {
-        return tabs;
-    }
-
-    const [wsiTab] = tabs.splice(wsiTabIndex, 1);
-    if (hasServablePathologySlides !== true) {
-        return tabs;
-    }
-
-    const wsiViewer = React.isValidElement(wsiTab.props.children)
-        ? React.cloneElement(wsiTab.props.children, {
-              studyName: getStudyDisplayName(
-                  pageComponent.patientViewPageStore.studyMetaData,
-                  pageComponent.patientViewPageStore.studyId
-              ),
-          })
-        : wsiTab.props.children;
-    const patientWsiTab = React.cloneElement(wsiTab, {
-        children: wsiViewer,
-    });
-    const resourceTabIndex = tabs.findIndex(
-        tab => tab.props.id === PatientViewPageTabs.FilesAndLinks
-    );
-    tabs.splice(
-        resourceTabIndex < 0 ? tabs.length : resourceTabIndex,
-        0,
-        patientWsiTab
-    );
 
     return tabs;
 }

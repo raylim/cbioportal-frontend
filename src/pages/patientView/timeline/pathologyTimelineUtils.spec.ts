@@ -1724,7 +1724,7 @@ describe('buildPatientHierarchyApiUrl', () => {
 });
 
 describe('buildTimelineEventsSignature', () => {
-    it('does not make ordinary timeline events part of the WSI signature', () => {
+    it('keeps ordinary timeline events in the shared timeline signature', () => {
         const pathologyEvent = {
             eventType: 'PATHOLOGY SLIDES',
             patientId: 'P-1',
@@ -1748,7 +1748,7 @@ describe('buildTimelineEventsSignature', () => {
 
         expect(
             buildTimelineEventsSignature([pathologyEvent, ordinaryEvent])
-        ).toBe(withOrdinaryEvent);
+        ).not.toBe(withOrdinaryEvent);
         pathologyEvent.attributes![0].value = 'S-2';
         expect(
             buildTimelineEventsSignature([pathologyEvent, ordinaryEvent])
