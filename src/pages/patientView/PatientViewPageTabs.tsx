@@ -21,8 +21,6 @@ import ResourcesTab, {
     RESOURCES_TAB_NAME,
 } from 'pages/patientView/resources/ResourcesTab';
 import PathologyReport from 'pages/patientView/pathologyReport/PathologyReport';
-import IFrameLoader from 'shared/components/iframeLoader/IFrameLoader';
-import { getDigitalSlideArchiveIFrameUrl } from 'shared/api/urls';
 import TrialMatchTable from 'pages/patientView/trialMatch/TrialMatchTable';
 import MutationalSignaturesContainer from 'pages/patientView/mutationalSignatures/MutationalSignaturesContainer';
 import MrnaTabContent from 'pages/patientView/mrna/MrnaTabContent';
@@ -60,8 +58,6 @@ export enum PatientViewPageTabs {
     ClinicalData = 'clinicalData',
     FilesAndLinks = 'filesAndLinks',
     PathologyReport = 'pathologyReport',
-    TissueImage = 'tissueImage',
-    MSKTissueImage = 'MSKTissueImage',
     WSIHESlides = 'wsiHESlides',
     TrialMatchTab = 'trialMatchTab',
     MutationalSignatures = 'mutationalSignatures',
@@ -740,24 +736,6 @@ export function tabs(
                         }
                     />
                 )}
-            </div>
-        </MSKTab>
-    );
-
-    tabs.push(
-        <MSKTab
-            key={5}
-            id={PatientViewPageTabs.TissueImage}
-            linkText="Tissue Image"
-            hide={pageComponent.hideTissueImageTab}
-        >
-            <div>
-                <IFrameLoader
-                    height={WindowStore.size.height - 220}
-                    url={getDigitalSlideArchiveIFrameUrl(
-                        pageComponent.patientViewPageStore.patientId
-                    )}
-                />
             </div>
         </MSKTab>
     );

@@ -40,11 +40,7 @@ import { IGisticData } from 'shared/model/Gistic';
 import MrnaExprRankCache from 'shared/cache/MrnaExprRankCache';
 import request from 'superagent';
 import DiscreteCNACache from 'shared/cache/DiscreteCNACache';
-import {
-    getDarwinUrl,
-    getDigitalSlideArchiveMetaUrl,
-    getGenomeNexusHgvsgUrl,
-} from '../../../shared/api/urls';
+import { getDarwinUrl, getGenomeNexusHgvsgUrl } from '../../../shared/api/urls';
 import PubMedCache from 'shared/cache/PubMedCache';
 import GenomeNexusCache from 'shared/cache/GenomeNexusCache';
 import GenomeNexusMutationAssessorCache from 'shared/cache/GenomeNexusMutationAssessorCache';
@@ -261,17 +257,6 @@ export function getUniqueStudyIds(cohortIds: string[]) {
             return id.split(':')[0];
         })
     );
-}
-
-export async function checkForTissueImage(patientId: string): Promise<boolean> {
-    if (/TCGA/.test(patientId) === false) {
-        return false;
-    } else {
-        let resp = await request.get(getDigitalSlideArchiveMetaUrl(patientId));
-
-        // if the count is greater than 0, there is a slide for this patient
-        return resp.body && resp.body.total_count && resp.body.total_count > 0;
-    }
 }
 
 export type PathologyReportPDF = {
@@ -2365,19 +2350,6 @@ export class PatientViewPageStore {
             // fail silently
         },
     });
-
-    readonly hasTissueImageIFrameUrl = remoteData(
-        {
-            await: () => [this.derivedPatientId],
-            invoke: async () => {
-                return checkForTissueImage(this.patientId);
-            },
-            onError: () => {
-                // fail silently
-            },
-        },
-        false
-    );
 
     readonly uncalledMutationData = remoteData(
         {
