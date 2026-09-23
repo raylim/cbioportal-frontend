@@ -1,11 +1,6 @@
 import { MSKTab, MSKTabs } from 'shared/components/MSKTabs/MSKTabs';
 import LoadingIndicator from 'shared/components/loadingIndicator/LoadingIndicator';
-import {
-    ClinicalDataBySampleId,
-    ClinicalEvent,
-    Sample,
-} from 'cbioportal-ts-api-client';
-import { TimelineWrapperContent } from 'pages/patientView/timeline/TimelineWrapper';
+import TimelineWrapper from 'pages/patientView/timeline/TimelineWrapper';
 import WindowStore from 'shared/components/window/WindowStore';
 import GenomicOverview from 'pages/patientView/genomicOverview/GenomicOverview';
 import { defaultAlleleFrequencyHeaderTooltip } from 'pages/patientView/mutation/PatientViewMutationTable';
@@ -24,19 +19,15 @@ import PathologyReport from 'pages/patientView/pathologyReport/PathologyReport';
 import IFrameLoader from 'shared/components/iframeLoader/IFrameLoader';
 import { getDigitalSlideArchiveIFrameUrl } from 'shared/api/urls';
 import TrialMatchTable from 'pages/patientView/trialMatch/TrialMatchTable';
+import _ from 'lodash';
 import MutationalSignaturesContainer from 'pages/patientView/mutationalSignatures/MutationalSignaturesContainer';
 import MrnaTabContent from 'pages/patientView/mrna/MrnaTabContent';
 import { FeatureFlagEnum } from 'shared/featureFlags';
 import { buildCustomTabs } from 'shared/lib/customTabs/customTabHelpers';
 import * as React from 'react';
-import { observer } from 'mobx-react-lite';
 import SampleManager from 'pages/patientView/SampleManager';
+import PatientViewPage from 'pages/patientView/PatientViewPage';
 import PatientViewUrlWrapper from 'pages/patientView/PatientViewUrlWrapper';
-import {
-    PathologySlideFilter,
-    WsiStainFilter,
-    WsiTimepointSelection,
-} from 'shared/components/wsiViewer/wsiViewerTypes';
 import { CompactVAFPlot } from 'pages/patientView/genomicOverview/CompactVAFPlot';
 import {
     computeMutationFrequencyBySample,
@@ -49,10 +40,6 @@ import MutationTableWrapper from './mutation/MutationTableWrapper';
 import { PatientViewPageInner } from 'pages/patientView/PatientViewPage';
 import { Else, If } from 'react-if';
 import { PatientViewPlotsTabWrapper } from './PatientViewPlotsTabWrapper';
-import WsiPatientViewEntryPoint from 'shared/components/wsiViewer/WsiPatientViewEntryPoint';
-import { buildTimelineEventsSignature } from 'pages/patientView/timeline/pathologyTimelineUtils';
-import { usePathologyAugmentedClinicalEventsState } from 'pages/patientView/timeline/usePathologyAugmentedClinicalEvents';
-import { hasWsiPathologyClinicalEvents } from 'pages/patientView/timeline/pathologyClinicalEventUtils';
 
 export enum PatientViewPageTabs {
     Summary = 'summary',
@@ -62,7 +49,6 @@ export enum PatientViewPageTabs {
     PathologyReport = 'pathologyReport',
     TissueImage = 'tissueImage',
     MSKTissueImage = 'MSKTissueImage',
-    WSIHESlides = 'wsiHESlides',
     TrialMatchTab = 'trialMatchTab',
     MutationalSignatures = 'mutationalSignatures',
     PathwayMapper = 'pathways',
@@ -85,142 +71,11 @@ export function extractResourceIdFromTabId(tabId: string) {
     }
 }
 
-function parseTimepointDays(
-    value: string | undefined
-): WsiTimepointSelection | undefined {
-    if (value === 'undated') return value;
-    if (!value || !/^-?\d+$/.test(value)) return undefined;
-    const days = Number(value);
-    return Number.isSafeInteger(days) ? days : undefined;
-}
-
-function getWsiPathologyFilter(query: {
-    wsiScope?: string;
-    sampleId?: string;
-    matchLevel?: string;
-    specimenKey?: string;
-}): PathologySlideFilter | undefined {
-    if (query.wsiScope !== 'linkout') return undefined;
-    return {
-        sampleId: query.sampleId,
-        matchLevel: query.matchLevel,
-        specimenKey: query.specimenKey,
-    };
-}
-
-export function SummaryTimelineSection({
-    dataStore,
-    caseMetaData,
-    clinicalEvents,
-    patientId,
-    studyId,
-    sampleManager,
-    width,
-    samples,
-    clinicalSamples,
-    mutationProfileId,
-    onPathologyLinkoutClick,
-}: {
-    dataStore: any;
-    caseMetaData: {
-        color: { [sampleId: string]: string };
-        index: { [sampleId: string]: number };
-        label: { [sampleId: string]: string };
-    };
-    clinicalEvents: ClinicalEvent[];
-    patientId: string;
-    studyId: string;
-    sampleManager: SampleManager;
-    width: number;
-    samples: Sample[];
-    clinicalSamples: ClinicalDataBySampleId[];
-    mutationProfileId: string;
-    onPathologyLinkoutClick?: (href: string) => boolean;
-}) {
-    const clinicalEventsSignature = React.useMemo(
-        () => buildTimelineEventsSignature(clinicalEvents),
-        [clinicalEvents]
-    );
-    const augmentedEventsState = usePathologyAugmentedClinicalEventsState({
-        clinicalEvents,
-        clinicalEventsSignature,
-        patientId,
-        samples: clinicalSamples,
-        studyId,
-        includeUndatedPathology: true,
-    });
-    const augmentedEvents = augmentedEventsState.events;
-    const augmentedEventsSignature = augmentedEventsState.eventsSignature;
-
-    return (
-        <>
-            <div>
-                {augmentedEventsState.hierarchyLoadState === 'error' && (
-                    <div
-                        className="alert alert-warning"
-                        data-testid="wsi-hierarchy-load-error"
-                    >
-                        Undated pathology slides are temporarily unavailable.
-                        The dated clinical timeline is still shown.
-                    </div>
-                )}
-                {augmentedEventsState.undatedPathologySlideCount != null &&
-                    augmentedEventsState.undatedPathologySlideCount > 0 && (
-                        <div
-                            className="alert alert-info"
-                            data-testid="undated-pathology-slides-notice"
-                        >
-                            {augmentedEventsState.undatedPathologySlideCount}{' '}
-                            pathology slide
-                            {augmentedEventsState.undatedPathologySlideCount ===
-                            1
-                                ? ''
-                                : 's'}{' '}
-                            do not have a verified procedure date and are kept
-                            separate from the dated timeline.{' '}
-                            <a
-                                href={`/patient/wsiHESlides?studyId=${encodeURIComponent(
-                                    studyId
-                                )}&caseId=${encodeURIComponent(
-                                    patientId
-                                )}&timepointDays=undated`}
-                            >
-                                View undated slides
-                            </a>
-                        </div>
-                    )}
-                <div
-                    style={{
-                        marginTop: 20,
-                        marginBottom: 20,
-                    }}
-                >
-                    <TimelineWrapperContent
-                        dataStore={dataStore}
-                        caseMetaData={caseMetaData}
-                        data={clinicalEvents}
-                        timelineData={augmentedEvents}
-                        timelineDataSignature={augmentedEventsSignature}
-                        sampleManager={sampleManager}
-                        width={width}
-                        samples={samples}
-                        clinicalSamples={clinicalSamples}
-                        mutationProfileId={mutationProfileId}
-                        onPathologyLinkoutClick={onPathologyLinkoutClick}
-                    />
-                </div>
-                <hr />
-            </div>
-        </>
-    );
-}
-
 export function patientViewTabs(
     pageInstance: PatientViewPageInner,
     urlWrapper: PatientViewUrlWrapper,
     sampleManager: SampleManager | null
 ) {
-    const helpWidgetPath = urlWrapper.routing.location.pathname;
     return (
         <MSKTabs
             id="patientViewPageTabs"
@@ -229,7 +84,9 @@ export function patientViewTabs(
             onTabClick={(id: string) => urlWrapper.setActiveTab(id)}
             className="mainTabs"
             getPaginationWidth={WindowStore.getWindowWidth}
-            contentWindowExtra={<HelpWidget path={helpWidgetPath} />}
+            contentWindowExtra={
+                <HelpWidget path={urlWrapper.routing.location.pathname} />
+            }
         >
             {tabs(pageInstance, sampleManager, urlWrapper)}
         </MSKTabs>
@@ -242,68 +99,52 @@ export function tabs(
     urlWrapper: PatientViewUrlWrapper
 ) {
     const tabs: JSX.Element[] = [];
-    const serverConfig = getServerConfig();
-    const tileServerUrl = serverConfig.msk_wsi_tile_server_url;
-    const activeSampleIds = sampleManager
-        ? sampleManager.getActiveSampleIdsInOrder()
-        : [];
-    const customDriverName = serverConfig.oncoprint_custom_driver_annotation_binary_menu_label!;
-    const customDriverDescription = serverConfig.oncoprint_custom_driver_annotation_binary_menu_description!;
-    const customDriverTiersName = serverConfig.oncoprint_custom_driver_annotation_tiers_menu_label!;
-    const customDriverTiersDescription = serverConfig.oncoprint_custom_driver_annotation_tiers_menu_description!;
-    const clinicalEvents =
-        pageComponent.patientViewPageStore.clinicalEvents.result;
-    const clinicalEventsSignature = clinicalEvents
-        ? buildTimelineEventsSignature(clinicalEvents)
-        : undefined;
-    const onPathologyLinkoutClick = urlWrapper.navigateToWsiLinkout;
-
     tabs.push(
         <MSKTab key={0} id={PatientViewPageTabs.Summary} linkText="Summary">
             <LoadingIndicator
                 isLoading={
-                    pageComponent.patientViewPageStore.clinicalEvents
-                        .isPending ||
-                    pageComponent.patientViewPageStore
-                        .clinicalDataGroupedBySample.isPending
+                    pageComponent.patientViewPageStore.clinicalEvents.isPending
                 }
             />
 
             {!!sampleManager &&
                 pageComponent.patientViewPageStore.clinicalEvents.isComplete &&
-                (pageComponent.patientViewPageStore.clinicalEvents.result
-                    .length > 0 ||
-                    !!getServerConfig().msk_wsi_tile_server_url) &&
-                pageComponent.patientViewPageStore.clinicalDataGroupedBySample
-                    .isComplete && (
-                    <SummaryTimelineSection
-                        dataStore={pageComponent.patientViewMutationDataStore}
-                        caseMetaData={{
-                            color: sampleManager.sampleColors,
-                            label: sampleManager.sampleLabels,
-                            index: sampleManager.sampleIndex,
-                        }}
-                        clinicalEvents={
-                            pageComponent.patientViewPageStore.clinicalEvents
-                                .result
-                        }
-                        patientId={pageComponent.patientViewPageStore.patientId}
-                        studyId={pageComponent.patientViewPageStore.studyId}
-                        sampleManager={sampleManager}
-                        width={WindowStore.size.width}
-                        samples={
-                            pageComponent.patientViewPageStore.samples.result
-                        }
-                        clinicalSamples={
-                            pageComponent.patientViewPageStore
-                                .clinicalDataGroupedBySample.result
-                        }
-                        mutationProfileId={
-                            pageComponent.patientViewPageStore
-                                .mutationMolecularProfileId.result!
-                        }
-                        onPathologyLinkoutClick={onPathologyLinkoutClick}
-                    />
+                pageComponent.patientViewPageStore.clinicalEvents.result
+                    .length > 0 && (
+                    <div>
+                        <div
+                            style={{
+                                marginTop: 20,
+                                marginBottom: 20,
+                            }}
+                        >
+                            <TimelineWrapper
+                                dataStore={
+                                    pageComponent.patientViewMutationDataStore
+                                }
+                                caseMetaData={{
+                                    color: sampleManager.sampleColors,
+                                    label: sampleManager.sampleLabels,
+                                    index: sampleManager.sampleIndex,
+                                }}
+                                data={
+                                    pageComponent.patientViewPageStore
+                                        .clinicalEvents.result
+                                }
+                                sampleManager={sampleManager}
+                                width={WindowStore.size.width}
+                                samples={
+                                    pageComponent.patientViewPageStore.samples
+                                        .result
+                                }
+                                mutationProfileId={
+                                    pageComponent.patientViewPageStore
+                                        .mutationMolecularProfileId.result!
+                                }
+                            />
+                        </div>
+                        <hr />
+                    </div>
                 )}
 
             <LoadingIndicator
@@ -398,7 +239,11 @@ export function tabs(
                     patientViewPageStore={pageComponent.patientViewPageStore}
                     dataStore={pageComponent.patientViewMutationDataStore}
                     sampleManager={sampleManager}
-                    sampleIds={activeSampleIds}
+                    sampleIds={
+                        sampleManager
+                            ? sampleManager.getActiveSampleIdsInOrder()
+                            : []
+                    }
                     mergeOncoKbIcons={
                         pageComponent.mergeMutationTableOncoKbIcons
                     }
@@ -493,16 +338,32 @@ export function tabs(
                 onSelectGenePanel={pageComponent.toggleGenePanelModal}
                 mergeOncoKbIcons={pageComponent.mergeMutationTableOncoKbIcons}
                 onOncoKbIconToggle={pageComponent.handleOncoKbIconToggle}
-                enableOncoKb={serverConfig.show_oncokb}
-                sampleIds={activeSampleIds}
+                enableOncoKb={getServerConfig().show_oncokb}
+                sampleIds={
+                    sampleManager
+                        ? sampleManager.getActiveSampleIdsInOrder()
+                        : []
+                }
                 namespaceColumns={
                     pageComponent.patientViewPageStore.namespaceColumnConfig
                         .structVar
                 }
-                customDriverName={customDriverName}
-                customDriverDescription={customDriverDescription}
-                customDriverTiersName={customDriverTiersName}
-                customDriverTiersDescription={customDriverTiersDescription}
+                customDriverName={
+                    getServerConfig()
+                        .oncoprint_custom_driver_annotation_binary_menu_label!
+                }
+                customDriverDescription={
+                    getServerConfig()
+                        .oncoprint_custom_driver_annotation_binary_menu_description!
+                }
+                customDriverTiersName={
+                    getServerConfig()
+                        .oncoprint_custom_driver_annotation_tiers_menu_label!
+                }
+                customDriverTiersDescription={
+                    getServerConfig()
+                        .oncoprint_custom_driver_annotation_tiers_menu_description!
+                }
             />
 
             <hr />
@@ -518,10 +379,10 @@ export function tabs(
                     .isComplete && (
                     <div data-test="patientview-copynumber-table">
                         <If
-                            condition={Boolean(
+                            condition={
                                 pageComponent.patientViewPageStore
                                     .discreteMolecularProfile.result
-                            )}
+                            }
                         >
                             <Else>
                                 <div className="alert alert-info" role="alert">
@@ -534,9 +395,13 @@ export function tabs(
                                 dataStore={
                                     pageComponent.patientViewCnaDataStore
                                 }
-                                sampleIds={activeSampleIds}
+                                sampleIds={
+                                    sampleManager
+                                        ? sampleManager.getActiveSampleIdsInOrder()
+                                        : []
+                                }
                                 sampleManager={sampleManager}
-                                enableOncoKb={serverConfig.show_oncokb}
+                                enableOncoKb={getServerConfig().show_oncokb}
                                 columnVisibility={
                                     pageComponent.cnaTableColumnVisibility
                                 }
@@ -564,13 +429,21 @@ export function tabs(
                                     pageComponent.patientViewPageStore
                                         .namespaceColumnConfig.cna
                                 }
-                                customDriverName={customDriverName}
-                                customDriverDescription={
-                                    customDriverDescription
+                                customDriverName={
+                                    getServerConfig()
+                                        .oncoprint_custom_driver_annotation_binary_menu_label!
                                 }
-                                customDriverTiersName={customDriverTiersName}
+                                customDriverDescription={
+                                    getServerConfig()
+                                        .oncoprint_custom_driver_annotation_binary_menu_description!
+                                }
+                                customDriverTiersName={
+                                    getServerConfig()
+                                        .oncoprint_custom_driver_annotation_tiers_menu_label!
+                                }
                                 customDriverTiersDescription={
-                                    customDriverTiersDescription
+                                    getServerConfig()
+                                        .oncoprint_custom_driver_annotation_tiers_menu_description!
                                 }
                             />
                         </If>
@@ -599,10 +472,22 @@ export function tabs(
                         pageComponent.mergeMutationTableOncoKbIcons
                     }
                     onOncoKbIconToggle={pageComponent.handleOncoKbIconToggle}
-                    customDriverName={customDriverName}
-                    customDriverDescription={customDriverDescription}
-                    customDriverTiersName={customDriverTiersName}
-                    customDriverTiersDescription={customDriverTiersDescription}
+                    customDriverName={
+                        getServerConfig()
+                            .oncoprint_custom_driver_annotation_binary_menu_label!
+                    }
+                    customDriverDescription={
+                        getServerConfig()
+                            .oncoprint_custom_driver_annotation_binary_menu_description!
+                    }
+                    customDriverTiersName={
+                        getServerConfig()
+                            .oncoprint_custom_driver_annotation_tiers_menu_label!
+                    }
+                    customDriverTiersDescription={
+                        getServerConfig()
+                            .oncoprint_custom_driver_annotation_tiers_menu_description!
+                    }
                 />
             </MSKTab>
         );
@@ -618,7 +503,7 @@ export function tabs(
     // lookup is pending. The tab's own content renders a loader until the
     // profile/data loads, then either the plot or a "no mRNA data" message.
     const expressionTabsEnabled =
-        serverConfig.app_name === 'mskcc-portal' ||
+        getServerConfig().app_name === 'mskcc-portal' ||
         pageComponent.props.appStore.featureFlagStore.has(
             FeatureFlagEnum.PATIENT_MRNA_TAB
         );
@@ -686,17 +571,13 @@ export function tabs(
                 )}
             </div>
 
+            <h2 className={'divider'}>Timeline Data</h2>
+
             {pageComponent.patientViewPageStore.clinicalEvents.isComplete && (
                 <ClinicalEventsTables
-                    clinicalEvents={clinicalEvents}
-                    clinicalEventsSignature={clinicalEventsSignature}
-                    patientId={pageComponent.patientViewPageStore.patientId}
-                    studyId={pageComponent.patientViewPageStore.studyId}
-                    samples={
-                        pageComponent.patientViewPageStore
-                            .clinicalDataGroupedBySample.result || []
+                    clinicalEvents={
+                        pageComponent.patientViewPageStore.clinicalEvents.result
                     }
-                    onPathologyLinkoutClick={onPathologyLinkoutClick}
                 />
             )}
         </MSKTab>
@@ -762,88 +643,6 @@ export function tabs(
         </MSKTab>
     );
 
-    // Keep ordinary patient navigation unchanged when the study has no slide
-    // identifiers. The viewer route remains directly addressable, but the tab
-    // is advertised only for patients that can actually have slides.
-    const clinicalDataForSamples =
-        pageComponent.patientViewPageStore.clinicalDataForSamples;
-    const hasWsiSlideData = Boolean(
-        hasWsiPathologyClinicalEvents(clinicalEvents ?? []) ||
-            (clinicalDataForSamples?.isComplete &&
-                clinicalDataForSamples.result?.some(
-                    sample => sample.clinicalAttributeId === 'MSK_SLIDE_ID'
-                ))
-    );
-    const isWsiDeepLink =
-        urlWrapper.activeTabId === PatientViewPageTabs.WSIHESlides;
-    if (tileServerUrl && (hasWsiSlideData || isWsiDeepLink)) {
-        const query = urlWrapper.query;
-        const initialStainFilter = ['hne', 'ihc', 'other', 'unknown'].includes(
-            query.stainFilter || ''
-        )
-            ? (query.stainFilter as WsiStainFilter)
-            : 'all';
-        const initialMatchFilter =
-            query.matchLevel?.toUpperCase() === 'PART'
-                ? 'part'
-                : query.matchLevel?.toUpperCase() === 'BLOCK'
-                ? 'block'
-                : query.matchLevel?.toUpperCase() === 'UNMATCHED'
-                ? 'unmatched'
-                : 'all';
-        const pathologyFilter = getWsiPathologyFilter(query);
-        tabs.push(
-            <MSKTab
-                key={6}
-                id={PatientViewPageTabs.WSIHESlides}
-                linkText="Pathology Slides"
-                unmountOnHide={false}
-            >
-                <WsiPatientViewEntryPoint
-                    patientId={pageComponent.patientViewPageStore.patientId}
-                    studyId={pageComponent.patientViewPageStore.studyId}
-                    tileServerUrl={tileServerUrl}
-                    authScope={
-                        pageComponent.props.appStore.userName ||
-                        getServerConfig().user_display_name ||
-                        'anonymousUser'
-                    }
-                    height={WindowStore.size.height - 220}
-                    initialStainFilter={initialStainFilter}
-                    initialMatchFilter={initialMatchFilter}
-                    initialTimepointDays={parseTimepointDays(
-                        query.timepointDays
-                    )}
-                    onTimepointChange={days =>
-                        urlWrapper.setWsiTimepointDays(
-                            days,
-                            pageComponent.patientViewPageStore.patientId
-                        )
-                    }
-                    onStainFilterChange={filter =>
-                        urlWrapper.setWsiStainFilter(
-                            filter,
-                            pageComponent.patientViewPageStore.patientId
-                        )
-                    }
-                    onMatchFilterChange={filter =>
-                        urlWrapper.setWsiMatchFilter(
-                            filter,
-                            pageComponent.patientViewPageStore.patientId
-                        )
-                    }
-                    onClearFilters={() =>
-                        urlWrapper.clearWsiFilters(
-                            pageComponent.patientViewPageStore.patientId
-                        )
-                    }
-                    preferredSampleId={query.sampleId}
-                    pathologyFilter={pathologyFilter}
-                />
-            </MSKTab>
-        );
-    }
-
     pageComponent.shouldShowTrialMatch &&
         tabs.push(
             <MSKTab
@@ -875,10 +674,10 @@ export function tabs(
                         .mutationalSignatureMolecularProfiles.isPending ||
                     pageComponent.patientViewPageStore
                         .initialMutationalSignatureVersion.isPending ||
-                    Object.keys(
+                    _.isEmpty(
                         pageComponent.patientViewPageStore
                             .mutationalSignatureDataGroupByVersion.result
-                    ).length === 0
+                    )
                 }
             >
                 <MutationalSignaturesContainer
@@ -927,7 +726,8 @@ export function tabs(
                 id={PatientViewPageTabs.MRNA}
                 linkText={
                     <span>
-                        mRNA <strong className={'beta-text'}>Beta!</strong>
+                        mRNA{' '}
+                        <strong className={'beta-text'}>Beta!</strong>
                     </span>
                 }
             >
@@ -943,7 +743,8 @@ export function tabs(
                 id={PatientViewPageTabs.Plots}
                 linkText={
                     <span>
-                        Plots <strong className={'beta-text'}>Beta!</strong>
+                        Plots{' '}
+                        <strong className={'beta-text'}>Beta!</strong>
                     </span>
                 }
             >
@@ -951,8 +752,8 @@ export function tabs(
                     .isComplete &&
                 pageComponent.patientViewPageStore.highlightedCancerTypes
                     .isComplete &&
-                pageComponent.patientViewPageStore
-                    .highlightedDetailedCancerTypes.isComplete ? (
+                pageComponent.patientViewPageStore.highlightedDetailedCancerTypes
+                    .isComplete ? (
                     <PatientViewPlotsTabWrapper
                         store={pageComponent.patientViewPageStore}
                         urlWrapper={urlWrapper}
