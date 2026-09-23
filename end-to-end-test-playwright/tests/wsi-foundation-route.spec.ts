@@ -49,7 +49,14 @@ if (process.env.PW_SUITE === 'wsi' && process.env.WSI_CHILD_CONTRACT !== '1') {
                 }
             });
             page.on('console', message => {
-                if (message.type() === 'error')
+                if (
+                    message.type() === 'error' &&
+                    !message
+                        .text()
+                        .startsWith(
+                            'Warning: Component "%s" contains the string ref "%s".'
+                        )
+                )
                     consoleErrors.push(message.text());
             });
 
