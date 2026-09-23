@@ -774,7 +774,9 @@ export function tabs(
                     sample => sample.clinicalAttributeId === 'MSK_SLIDE_ID'
                 ))
     );
-    if (tileServerUrl && hasWsiSlideData) {
+    const isWsiDeepLink =
+        urlWrapper.activeTabId === PatientViewPageTabs.WSIHESlides;
+    if (tileServerUrl && (hasWsiSlideData || isWsiDeepLink)) {
         const query = urlWrapper.query;
         const initialStainFilter = ['hne', 'ihc', 'other', 'unknown'].includes(
             query.stainFilter || ''
