@@ -469,6 +469,9 @@ const ClinicalEventsTablesWithAugmentation: React.FunctionComponent<{
         patientId,
         samples,
         studyId,
+        // Load the hierarchy while the clinical-data table is mounted so a
+        // scoped slide linkout can reuse the association data.
+        includeUndatedPathology: true,
     });
     const augmentedEvents = augmentedEventsState.events;
     const augmentedEventsSignature = augmentedEventsState.eventsSignature;
