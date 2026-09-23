@@ -107,6 +107,7 @@ describe('ClinicalEventsTables', () => {
             expect.objectContaining({
                 clinicalEvents,
                 clinicalEventsSignature,
+                includeUndatedPathology: true,
             })
         );
         expect(groupTimelineData).toHaveBeenCalledWith([]);
