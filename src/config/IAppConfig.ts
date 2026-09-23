@@ -66,8 +66,6 @@ export interface IServerConfig {
     ptmSources: string[] | undefined;
     oncoprint_hide_vus_default: boolean;
     oncokb_public_api_url: string | null;
-    digital_slide_archive_iframe_url: string | null;
-    digital_slide_archive_meta_url: string | null;
     mdacc_heatmap_meta_url: string | null;
     mdacc_heatmap_patient_url: string | null;
     pubmed_url: string | null;
