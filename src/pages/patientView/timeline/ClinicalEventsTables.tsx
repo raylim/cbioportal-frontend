@@ -471,7 +471,9 @@ const ClinicalEventsTablesWithAugmentation: React.FunctionComponent<{
         studyId,
         // Load the hierarchy while the clinical-data table is mounted so a
         // scoped slide linkout can reuse the association data.
-        includeUndatedPathology: true,
+        includeUndatedPathology: Boolean(
+            getServerConfig().msk_wsi_tile_server_url
+        ),
     });
     const augmentedEvents = augmentedEventsState.events;
     const augmentedEventsSignature = augmentedEventsState.eventsSignature;
