@@ -16,8 +16,6 @@ import ResourcesTab, {
     RESOURCES_TAB_NAME,
 } from 'pages/patientView/resources/ResourcesTab';
 import PathologyReport from 'pages/patientView/pathologyReport/PathologyReport';
-import IFrameLoader from 'shared/components/iframeLoader/IFrameLoader';
-import { getDigitalSlideArchiveIFrameUrl } from 'shared/api/urls';
 import TrialMatchTable from 'pages/patientView/trialMatch/TrialMatchTable';
 import _ from 'lodash';
 import MutationalSignaturesContainer from 'pages/patientView/mutationalSignatures/MutationalSignaturesContainer';
@@ -47,8 +45,6 @@ export enum PatientViewPageTabs {
     ClinicalData = 'clinicalData',
     FilesAndLinks = 'filesAndLinks',
     PathologyReport = 'pathologyReport',
-    TissueImage = 'tissueImage',
-    MSKTissueImage = 'MSKTissueImage',
     TrialMatchTab = 'trialMatchTab',
     MutationalSignatures = 'mutationalSignatures',
     PathwayMapper = 'pathways',
@@ -625,24 +621,6 @@ export function tabs(
         </MSKTab>
     );
 
-    tabs.push(
-        <MSKTab
-            key={5}
-            id={PatientViewPageTabs.TissueImage}
-            linkText="Tissue Image"
-            hide={pageComponent.hideTissueImageTab}
-        >
-            <div>
-                <IFrameLoader
-                    height={WindowStore.size.height - 220}
-                    url={getDigitalSlideArchiveIFrameUrl(
-                        pageComponent.patientViewPageStore.patientId
-                    )}
-                />
-            </div>
-        </MSKTab>
-    );
-
     pageComponent.shouldShowTrialMatch &&
         tabs.push(
             <MSKTab
@@ -726,8 +704,7 @@ export function tabs(
                 id={PatientViewPageTabs.MRNA}
                 linkText={
                     <span>
-                        mRNA{' '}
-                        <strong className={'beta-text'}>Beta!</strong>
+                        mRNA <strong className={'beta-text'}>Beta!</strong>
                     </span>
                 }
             >
@@ -743,8 +720,7 @@ export function tabs(
                 id={PatientViewPageTabs.Plots}
                 linkText={
                     <span>
-                        Plots{' '}
-                        <strong className={'beta-text'}>Beta!</strong>
+                        Plots <strong className={'beta-text'}>Beta!</strong>
                     </span>
                 }
             >
@@ -752,8 +728,8 @@ export function tabs(
                     .isComplete &&
                 pageComponent.patientViewPageStore.highlightedCancerTypes
                     .isComplete &&
-                pageComponent.patientViewPageStore.highlightedDetailedCancerTypes
-                    .isComplete ? (
+                pageComponent.patientViewPageStore
+                    .highlightedDetailedCancerTypes.isComplete ? (
                     <PatientViewPlotsTabWrapper
                         store={pageComponent.patientViewPageStore}
                         urlWrapper={urlWrapper}
