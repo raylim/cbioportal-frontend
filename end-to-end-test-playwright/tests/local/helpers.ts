@@ -115,6 +115,43 @@ export async function keycloakLogin(page: Page, timeoutMs = 30000) {
                 `basic WSI login failed with HTTP ${response.status()}`
             );
         }
+        // Keep this explicit even though page.request normally synchronizes
+        // cookies with the browser context.  The portal response is the
+        // authentication contract under test, and explicitly installing its
+        // session cookie makes the following HTTPS proxy navigation
+        // deterministic across Playwright versions.
+        const portalHost = new URL(authPortal).hostname;
+        const cookies = response
+            .headersArray()
+            .filter(header => header.name.toLowerCase() === 'set-cookie')
+            .map(header => {
+                const [pair] = header.value.split(';');
+                const [name, ...valueParts] = pair.split('=');
+                if (!name || valueParts.length === 0) return null;
+                return {
+                    name,
+                    value: valueParts.join('='),
+                    domain: portalHost,
+                    path: '/',
+                };
+            })
+            .filter(
+                (
+                    cookie
+                ): cookie is {
+                    name: string;
+                    value: string;
+                    domain: string;
+                    path: string;
+                } => cookie !== null
+            );
+        if (cookies.length > 0) {
+            await page.context().addCookies(cookies);
+        }
+        await page.goto(authPortal, {
+            timeout: timeoutMs,
+            waitUntil: 'domcontentloaded',
+        });
         return;
     }
 
