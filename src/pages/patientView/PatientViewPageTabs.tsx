@@ -40,7 +40,6 @@ import MutationTableWrapper from './mutation/MutationTableWrapper';
 import { PatientViewPageInner } from 'pages/patientView/PatientViewPage';
 import { Else, If } from 'react-if';
 import { PatientViewPlotsTabWrapper } from './PatientViewPlotsTabWrapper';
-import WsiPatientViewEntryPoint from 'shared/components/wsiViewer/WsiPatientViewEntryPoint';
 
 export enum PatientViewPageTabs {
     Summary = 'summary',
@@ -50,7 +49,6 @@ export enum PatientViewPageTabs {
     PathologyReport = 'pathologyReport',
     TissueImage = 'tissueImage',
     MSKTissueImage = 'MSKTissueImage',
-    WSIHESlides = 'wsiHESlides',
     TrialMatchTab = 'trialMatchTab',
     MutationalSignatures = 'mutationalSignatures',
     PathwayMapper = 'pathways',
@@ -644,41 +642,6 @@ export function tabs(
             </div>
         </MSKTab>
     );
-
-    const tileServerUrl = getServerConfig().msk_wsi_tile_server_url;
-    // Keep the ordinary patient navigation unchanged when the study has no
-    // slide identifiers. The viewer route remains directly addressable, but
-    // the tab is advertised only for patients that can actually have slides.
-    const clinicalDataForSamples =
-        pageComponent.patientViewPageStore.clinicalDataForSamples;
-    const hasWsiSlideData = Boolean(
-        clinicalDataForSamples?.isComplete &&
-            clinicalDataForSamples.result?.some(
-                sample => sample.clinicalAttributeId === 'MSK_SLIDE_ID'
-            )
-    );
-    if (tileServerUrl && hasWsiSlideData) {
-        tabs.push(
-            <MSKTab
-                key={6}
-                id={PatientViewPageTabs.WSIHESlides}
-                linkText="Pathology Slides"
-                unmountOnHide={false}
-            >
-                <WsiPatientViewEntryPoint
-                    patientId={pageComponent.patientViewPageStore.patientId}
-                    studyId={pageComponent.patientViewPageStore.studyId}
-                    tileServerUrl={tileServerUrl}
-                    authScope={
-                        pageComponent.props.appStore.userName ||
-                        getServerConfig().user_display_name ||
-                        'anonymousUser'
-                    }
-                    height={WindowStore.size.height - 220}
-                />
-            </MSKTab>
-        );
-    }
 
     pageComponent.shouldShowTrialMatch &&
         tabs.push(
