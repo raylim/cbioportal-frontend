@@ -13,6 +13,7 @@ export default function WsiPatientViewRoute({ match, location }: Props) {
     const query = parse(location.search || '');
     const studyId = typeof query.studyId === 'string' ? query.studyId : '';
     const tileServerUrl = getServerConfig().msk_wsi_tile_server_url;
+    const annotationApiUrl = getServerConfig().msk_wsi_annotation_api_url;
 
     if (!studyId || !tileServerUrl) {
         return (
@@ -33,6 +34,7 @@ export default function WsiPatientViewRoute({ match, location }: Props) {
             studyId={studyId}
             tileServerUrl={tileServerUrl}
             authScope={getServerConfig().user_display_name || 'anonymousUser'}
+            annotationApiUrl={annotationApiUrl}
             height={height}
         />
     );

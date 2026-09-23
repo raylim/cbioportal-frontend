@@ -137,12 +137,18 @@ function WsiMetaSidebarComponent({
     wsiRows,
     showPathology,
     pathRows,
+    annotationLayersPanel,
+    annotationPanel,
+    annotationPanelTitle,
 }: {
     width: number;
     showImageProperties: boolean;
     wsiRows: MetaRow[];
     showPathology: boolean;
     pathRows: MetaRow[];
+    annotationLayersPanel?: React.ReactNode;
+    annotationPanel?: React.ReactNode;
+    annotationPanelTitle?: string;
 }) {
     return (
         <div
@@ -169,6 +175,14 @@ function WsiMetaSidebarComponent({
                 {showPathology ? <MetaTable rows={pathRows} /> : <EmptyState />}
             </SbSection>
 
+            {annotationLayersPanel && (
+                <SbSection title="Layers">{annotationLayersPanel}</SbSection>
+            )}
+            {annotationPanel && (
+                <SbSection title={annotationPanelTitle || 'Annotations'}>
+                    {annotationPanel}
+                </SbSection>
+            )}
         </div>
     );
 }
