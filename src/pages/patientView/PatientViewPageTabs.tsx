@@ -52,6 +52,7 @@ import { PatientViewPlotsTabWrapper } from './PatientViewPlotsTabWrapper';
 import WsiPatientViewEntryPoint from 'shared/components/wsiViewer/WsiPatientViewEntryPoint';
 import { buildTimelineEventsSignature } from 'pages/patientView/timeline/pathologyTimelineUtils';
 import { usePathologyAugmentedClinicalEventsState } from 'pages/patientView/timeline/usePathologyAugmentedClinicalEvents';
+import { hasWsiPathologyClinicalEvents } from 'pages/patientView/timeline/pathologyClinicalEventUtils';
 
 export enum PatientViewPageTabs {
     Summary = 'summary',
@@ -767,10 +768,11 @@ export function tabs(
     const clinicalDataForSamples =
         pageComponent.patientViewPageStore.clinicalDataForSamples;
     const hasWsiSlideData = Boolean(
-        clinicalDataForSamples?.isComplete &&
-            clinicalDataForSamples.result?.some(
-                sample => sample.clinicalAttributeId === 'MSK_SLIDE_ID'
-            )
+        hasWsiPathologyClinicalEvents(clinicalEvents ?? []) ||
+            (clinicalDataForSamples?.isComplete &&
+                clinicalDataForSamples.result?.some(
+                    sample => sample.clinicalAttributeId === 'MSK_SLIDE_ID'
+                ))
     );
     if (tileServerUrl && hasWsiSlideData) {
         const query = urlWrapper.query;
