@@ -25,6 +25,7 @@ import {
     StudyViewFilter,
     MolecularProfileFilter,
 } from 'cbioportal-ts-api-client';
+import { shouldHideLegacyHeResourceTab } from 'shared/lib/ResourcePolicy';
 import { getClient } from '../../../shared/api/cbioportalClientInstance';
 import { PatientViewPlotsStore } from './PatientViewPlotsStore';
 import internalClient from '../../../shared/api/cbioportalInternalClientInstance';
@@ -1784,7 +1785,10 @@ export class PatientViewPageStore {
             // open resources which have `openByDefault` set to true
             if (defs) {
                 for (const def of defs)
-                    if (def.openByDefault)
+                    if (
+                        def.openByDefault &&
+                        !shouldHideLegacyHeResourceTab(def.resourceId)
+                    )
                         this.setResourceTabOpen(def.resourceId, true);
             }
         },

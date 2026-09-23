@@ -38,6 +38,8 @@ import MutationTableWrapper from './mutation/MutationTableWrapper';
 import { PatientViewPageInner } from 'pages/patientView/PatientViewPage';
 import { Else, If } from 'react-if';
 import { PatientViewPlotsTabWrapper } from './PatientViewPlotsTabWrapper';
+import WsiPatientViewEntryPoint from 'shared/components/wsiViewer/WsiPatientViewEntryPoint';
+import { shouldHideLegacyHeResourceTab } from 'shared/lib/ResourcePolicy';
 
 export enum PatientViewPageTabs {
     Summary = 'summary',
@@ -50,6 +52,7 @@ export enum PatientViewPageTabs {
     PathwayMapper = 'pathways',
     MRNA = 'mrna',
     Plots = 'plots',
+    WSIHESlides = 'wsiHESlides',
 }
 
 export const PatientViewResourceTabPrefix = 'openResource_';
@@ -533,6 +536,30 @@ export function tabs(
         </MSKTab>
     );
 
+    const tileServerUrl = getServerConfig().msk_wsi_tile_server_url;
+    if (tileServerUrl) {
+        tabs.push(
+            <MSKTab
+                key={6}
+                id={PatientViewPageTabs.WSIHESlides}
+                linkText="Pathology Slides"
+                unmountOnHide={false}
+            >
+                <WsiPatientViewEntryPoint
+                    patientId={pageComponent.patientViewPageStore.patientId}
+                    studyId={pageComponent.patientViewPageStore.studyId}
+                    tileServerUrl={tileServerUrl}
+                    authScope={
+                        pageComponent.props.appStore.userName ||
+                        getServerConfig().user_display_name ||
+                        'anonymousUser'
+                    }
+                    height={WindowStore.size.height - 220}
+                />
+            </MSKTab>
+        );
+    }
+
     tabs.push(
         <MSKTab
             key={2}
@@ -745,9 +772,21 @@ export function tabs(
         );
     }
 
-    pageComponent.resourceTabs.component &&
-        /* @ts-ignore */
-        tabs.push(...pageComponent.resourceTabs.component);
+    if (pageComponent.resourceTabs.component) {
+        const resourceTabs = Array.isArray(pageComponent.resourceTabs.component)
+            ? pageComponent.resourceTabs.component
+            : [pageComponent.resourceTabs.component];
+        tabs.push(
+            ...resourceTabs.filter(
+                (tab: JSX.Element) =>
+                    !shouldHideLegacyHeResourceTab(
+                        tab.props && tab.props.id
+                            ? extractResourceIdFromTabId(tab.props.id)
+                            : undefined
+                    )
+            )
+        );
+    }
 
     tabs.push(...buildCustomTabs(pageComponent.customTabs));
 

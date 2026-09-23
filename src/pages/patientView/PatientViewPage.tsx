@@ -62,6 +62,10 @@ import { getNavCaseIdsCache } from 'shared/lib/handleLongUrls';
 import PatientViewPageHeader from 'pages/patientView/PatientViewPageHeader';
 import { MAX_URL_LENGTH } from 'pages/studyView/studyPageHeader/ActionButtons';
 import LoadingIndicator from 'shared/components/loadingIndicator/LoadingIndicator';
+import {
+    shouldHideLegacyHeResource,
+    shouldHideLegacyHeResourceTab,
+} from 'shared/lib/ResourcePolicy';
 
 export interface IPatientViewPageProps {
     routing: any;
@@ -268,19 +272,21 @@ export class PatientViewPageInner extends React.Component<
 
     @computed
     get shouldShowResources(): boolean {
-        const tabId: string = this.urlWrapper.activeTabId;
-        if (tabId === 'filesAndLinks') {
-            return true;
-        }
-
-        if (this.pageStore.resourceIdToResourceData.isComplete) {
-            return _.some(
-                this.pageStore.resourceIdToResourceData.result,
-                data => data.length > 0
-            );
-        } else {
+        if (!this.pageStore.resourceIdToResourceData.isComplete) {
             return false;
         }
+
+        const resourceGroups = this.pageStore.resourceIdToResourceData.result;
+        for (const resourceId in resourceGroups) {
+            const data = resourceGroups[resourceId];
+            for (const resource of data) {
+                if (!shouldHideLegacyHeResource(resource)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     @computed
@@ -430,7 +436,9 @@ export class PatientViewPageInner extends React.Component<
         ],
         render: () => {
             const openDefinitions = this.pageStore.resourceDefinitions.result!.filter(
-                d => this.pageStore.isResourceTabOpen(d.resourceId)
+                d =>
+                    this.pageStore.isResourceTabOpen(d.resourceId) &&
+                    !shouldHideLegacyHeResourceTab(d.resourceId)
             );
             const sorted = _.sortBy(openDefinitions, d => d.priority);
             const resourceDataById = this.pageStore.resourceIdToResourceData
