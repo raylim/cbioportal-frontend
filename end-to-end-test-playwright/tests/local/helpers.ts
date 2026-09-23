@@ -82,6 +82,42 @@ export async function localStackHasWsiCapabilityEndpoint(
  * additional waitForFunction guard.
  */
 export async function keycloakLogin(page: Page, timeoutMs = 30000) {
+    // The full-stack WSI contract runs against the portal's
+    // `saml_plus_basic` mode.  Establish the same server-side session used by
+    // the API contract directly when a basic test password is supplied.  The
+    // browser and portal share the localhost cookie domain, so the session is
+    // also sent through the frontend proxy.  This keeps the WSI browser gate
+    // focused on portal authorization and viewer behavior; the SAML redirect
+    // itself remains covered by the portal authentication suite.
+    const basicPassword = process.env.WSI_BASIC_LOGIN_PASSWORD;
+    if (
+        process.env.WSI_AUTHENTICATED_E2E === 'true' &&
+        basicPassword
+    ) {
+        const authPortal =
+            process.env.WSI_AUTH_PORTAL_URL ?? 'http://localhost:8080';
+        const response = await page.request.post(
+            `${authPortal}/j_spring_security_check`,
+            {
+                form: {
+                    j_username:
+                        process.env.WSI_BASIC_LOGIN_USERNAME ?? 'wsi-ci-user',
+                    j_password: basicPassword,
+                    user_id:
+                        process.env.WSI_BASIC_LOGIN_USERNAME ?? 'wsi-ci-user',
+                },
+                maxRedirects: 0,
+                failOnStatusCode: false,
+            }
+        );
+        if (response.status() !== 302) {
+            throw new Error(
+                `basic WSI login failed with HTTP ${response.status()}`
+            );
+        }
+        return;
+    }
+
     // page.goto resolves at the 'load' event of whatever document it
     // first lands on, which during the SAML round-trip is often the
     // intermediate /saml2/authenticate auto-submit form (a static HTML
