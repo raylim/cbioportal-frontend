@@ -45,7 +45,15 @@ export async function localStackUsesSaml(
 }
 
 export async function ensureLocalLogin(page: Page, baseUrl: string) {
-    await page.goto(baseUrl);
+    // The frontend dev server is intentionally a public origin and does not
+    // start the SAML flow by itself.  In the authenticated WSI contract,
+    // begin at the portal origin so the browser obtains its session cookie
+    // before navigating back to the frontend proxy.
+    const loginUrl =
+        process.env.WSI_AUTHENTICATED_E2E === 'true'
+            ? (process.env.WSI_AUTH_PORTAL_URL ?? baseUrl)
+            : baseUrl;
+    await page.goto(loginUrl);
     await keycloakLogin(page);
 }
 
