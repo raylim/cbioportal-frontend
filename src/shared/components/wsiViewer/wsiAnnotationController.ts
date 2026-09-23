@@ -475,7 +475,11 @@ export class WsiAnnotationController {
         await this.deleteAnnotation(id);
     }
 
-    private async request(path: string, init: RequestInit = {}) {
+    private async request(
+        path: string,
+        init: RequestInit = {},
+        signal: AbortSignal | undefined = this.abortController?.signal
+    ) {
         const token = await this.getToken();
         const headers = new Headers(init.headers);
         headers.set('Content-Type', 'application/json');
@@ -483,7 +487,7 @@ export class WsiAnnotationController {
         return fetch(`${this.apiUrl}${path}`, {
             ...init,
             headers,
-            signal: this.abortController?.signal,
+            signal,
         });
     }
 
@@ -521,8 +525,14 @@ export class WsiAnnotationController {
 
     private async createAnnotation(annotation: WsiAnnotation) {
         if (!this.slideId) return;
+        const context = {
+            generation: this.generation,
+            slideId: this.slideId,
+            signal: this.abortController?.signal,
+        };
+        const slideId = context.slideId;
         const payload = {
-            slide_id: this.slideId,
+            slide_id: slideId,
             study_id: this.studyId || '',
             body: {
                 label: annotation.body?.[0]?.value || '',
@@ -536,15 +546,26 @@ export class WsiAnnotationController {
             visible_to: [],
         };
         try {
-            const response = await this.request('/annotations', {
-                method: 'POST',
-                body: JSON.stringify(payload),
-            });
+            const response = await this.request(
+                '/annotations',
+                {
+                    method: 'POST',
+                    body: JSON.stringify(payload),
+                },
+                context.signal
+            );
             if (!response.ok)
                 throw new Error(
                     `Annotation create failed (${response.status})`
                 );
-            const saved = this.fromApi(await response.json(), this.slideId);
+            if (
+                context.generation !== this.generation ||
+                context.slideId !== this.slideId ||
+                context.signal?.aborted
+            ) {
+                return;
+            }
+            const saved = this.fromApi(await response.json(), slideId);
             this.synchronizing = true;
             try {
                 this.annotations = [
@@ -559,12 +580,24 @@ export class WsiAnnotationController {
                 this.synchronizing = false;
             }
         } catch (_) {
+            if (
+                context.generation !== this.generation ||
+                context.slideId !== this.slideId ||
+                context.signal?.aborted
+            ) {
+                return;
+            }
             this.removeAnnotationLocally(annotation.id);
             this.error = 'Unable to save annotation.';
         }
     }
 
     private async updateAnnotation(annotation: WsiAnnotation) {
+        const context = {
+            generation: this.generation,
+            slideId: this.slideId,
+            signal: this.abortController?.signal,
+        };
         try {
             const response = await this.request(
                 `/annotations/${encodeURIComponent(annotation.id)}`,
@@ -582,13 +615,14 @@ export class WsiAnnotationController {
                         target: { selector: annotation.target.selector },
                         version: annotation.version || 1,
                     }),
-                }
+                },
+                context.signal
             );
             if (response.status === 409) {
                 if (
                     context.generation !== this.generation ||
                     context.slideId !== this.slideId ||
-                    context.signal.aborted
+                    context.signal?.aborted
                 ) {
                     return;
                 }
@@ -601,29 +635,63 @@ export class WsiAnnotationController {
                 throw new Error(
                     `Annotation update failed (${response.status})`
                 );
+            if (
+                context.generation !== this.generation ||
+                context.slideId !== this.slideId ||
+                context.signal?.aborted
+            ) {
+                return;
+            }
             this.replaceAnnotation(
                 annotation.id,
                 this.fromApi(await response.json(), this.slideId || '')
             );
         } catch (_) {
+            if (
+                context.generation !== this.generation ||
+                context.slideId !== this.slideId ||
+                context.signal?.aborted
+            ) {
+                return;
+            }
             await this.reloadCurrentSlide('Unable to update annotation.');
         }
     }
 
     private async deleteAnnotation(id: string) {
+        const context = {
+            generation: this.generation,
+            slideId: this.slideId,
+            signal: this.abortController?.signal,
+        };
         try {
             const response = await this.request(
                 `/annotations/${encodeURIComponent(id)}`,
                 {
                     method: 'DELETE',
-                }
+                },
+                context.signal
             );
             if (!response.ok && response.status !== 404)
                 throw new Error(
                     `Annotation delete failed (${response.status})`
                 );
+            if (
+                context.generation !== this.generation ||
+                context.slideId !== this.slideId ||
+                context.signal?.aborted
+            ) {
+                return;
+            }
             this.removeAnnotationLocally(id);
         } catch (_) {
+            if (
+                context.generation !== this.generation ||
+                context.slideId !== this.slideId ||
+                context.signal?.aborted
+            ) {
+                return;
+            }
             await this.reloadCurrentSlide('Unable to delete annotation.');
         }
     }

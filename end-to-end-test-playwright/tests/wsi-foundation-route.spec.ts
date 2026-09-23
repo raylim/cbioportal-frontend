@@ -89,6 +89,9 @@ if (process.env.PW_SUITE === 'wsi' && process.env.WSI_CHILD_CONTRACT !== '1') {
             );
             expect(performance.outcome).toBe('success');
             expect(performance.firstTileReadyMs).toBeGreaterThan(0);
+            await expect(
+                page.locator('.navigator .openseadragon-message')
+            ).toHaveCount(0);
             expect(enrichmentRequests).toEqual([]);
             expect(requiredRequestFailures).toEqual([]);
             expect(consoleErrors).toEqual([]);

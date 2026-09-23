@@ -41,7 +41,12 @@ import {
 } from './wsiViewerController';
 import { loadOpenSeadragon } from './wsiOpenSeadragonLoader';
 import { clearPatientHierarchyCache } from './wsiHierarchyFetchCache';
-import { clearWsiSlideAccess } from './wsiAuth';
+import {
+    clearAnnotationAccessToken,
+    clearWsiSlideAccess,
+    getAnnotationAccessToken,
+    isWsiAuthEnabled,
+} from './wsiAuth';
 import { clearWsiThumbnailFetchCache } from './wsiThumbnailFetchCache';
 import { clearSlideMetadataCache } from './wsiMetadataFetchCache';
 import { WsiAnnotationController } from './wsiAnnotationController';
@@ -52,7 +57,6 @@ import {
     WsiAnnotationTooltip,
     WsiAnnotationToolbar,
 } from './wsiAnnotationControls';
-import { getAnnotationAccessToken, isWsiAuthEnabled } from './wsiAuth';
 
 // ---- design tokens (matches iframe viewer) ----
 const C = {
@@ -331,7 +335,12 @@ export default class WSIViewer extends React.Component<Props, {}> {
             props.studyId,
             () =>
                 isWsiAuthEnabled()
-                    ? getAnnotationAccessToken(this.props.studyId || '')
+                    ? getAnnotationAccessToken(
+                          this.props.studyId || '',
+                          this.props.authScope ||
+                              getServerConfig().user_display_name ||
+                              'anonymousUser'
+                      )
                     : Promise.resolve('')
         );
         this.controller = new WsiViewerController(
@@ -537,6 +546,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
         if (authScopeChanged) {
             clearPatientHierarchyCache();
             clearWsiSlideAccess();
+            clearAnnotationAccessToken(this.props.studyId);
             clearSlideMetadataCache();
             clearWsiThumbnailFetchCache();
         }

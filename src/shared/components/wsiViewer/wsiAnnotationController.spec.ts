@@ -1,3 +1,7 @@
+/**
+ * @jest-environment jsdom
+ */
+
 import { WsiAnnotationController } from './wsiAnnotationController';
 import { createOSDAnnotator } from '@annotorious/openseadragon';
 
@@ -156,7 +160,10 @@ describe('WsiAnnotationController', () => {
                     resolveUpdate = resolve;
                 });
             }
-            return Promise.resolve({ ok: true, json: async () => [] } as Response);
+            return Promise.resolve({
+                ok: true,
+                json: async () => [],
+            } as Response);
         });
         const controller = new WsiAnnotationController(
             'https://tiles.example',
