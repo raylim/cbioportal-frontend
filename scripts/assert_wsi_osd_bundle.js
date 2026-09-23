@@ -54,9 +54,27 @@ function assertWsiOsdBundle(options = {}) {
     const osdBundlePath =
         osdChunkNames.length === 1
             ? path.join(reactAppDir, osdChunkNames[0])
-            : bundleEntries.find(({ bundle }) =>
-                  bundle.includes('openseadragon')
-              )?.bundlePath;
+            : [
+                  ...bundleEntries,
+                  ...fs
+                      .readdirSync(reactAppDir)
+                      .filter(name => name.endsWith('.js'))
+                      .filter(
+                          name =>
+                              !bundleEntries.some(
+                                  entry =>
+                                      entry.bundlePath ===
+                                      path.join(reactAppDir, name)
+                              )
+                      )
+                      .map(name => ({
+                          bundlePath: path.join(reactAppDir, name),
+                          bundle: fs.readFileSync(
+                              path.join(reactAppDir, name),
+                              'utf8'
+                          ),
+                      })),
+              ].find(({ bundle }) => /openseadragon/i.test(bundle))?.bundlePath;
 
     if (!osdBundlePath) {
         throw new Error(
