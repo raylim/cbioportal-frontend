@@ -5,6 +5,7 @@ import {
     clearPatientHierarchyCache,
     fetchPatientHierarchyReadOnly,
     hasCachedPatientHierarchy,
+    WsiHierarchyFetchError,
 } from './wsiHierarchyFetchCache';
 
 jest.mock('shared/api/urls', () => ({
@@ -55,6 +56,20 @@ describe('wsiHierarchyFetchCache read-only contract', () => {
 
         expect(fetchMock).toHaveBeenCalledTimes(1);
         expect(second).toBe(first);
+    });
+
+    it('preserves the HTTP status for callers that distinguish missing data', async () => {
+        (global as any).fetch = jest.fn().mockResolvedValue({
+            ok: false,
+            status: 404,
+        });
+
+        await expect(
+            fetchPatientHierarchyReadOnly('https://tiles.example.com/patient/P-1')
+        ).rejects.toEqual(expect.any(WsiHierarchyFetchError));
+        await expect(
+            fetchPatientHierarchyReadOnly('https://tiles.example.com/patient/P-1')
+        ).rejects.toMatchObject({ status: 404, name: 'WsiHierarchyFetchError' });
     });
 
     it('isolates cached hierarchy data by authenticated subject', async () => {
