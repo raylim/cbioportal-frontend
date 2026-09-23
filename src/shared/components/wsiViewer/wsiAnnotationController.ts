@@ -523,7 +523,9 @@ export class WsiAnnotationController {
         }
     }
 
-    private async createAnnotation(annotation: WsiAnnotation): Promise<boolean> {
+    private async createAnnotation(
+        annotation: WsiAnnotation
+    ): Promise<boolean> {
         if (!this.slideId) return false;
         const context = {
             generation: this.generation,
@@ -622,6 +624,36 @@ export class WsiAnnotationController {
             colorName: input.layerName,
             layerName: input.layerName,
         });
+    }
+
+    @action.bound
+    adoptAgentAnnotations(items: Array<Record<string, unknown>>) {
+        const slideId = this.slideId;
+        if (!slideId) return;
+        const saved = items
+            .filter(item => {
+                const itemSlideId = item.slide_id;
+                const itemStudyId = item.study_id;
+                return (
+                    itemSlideId === slideId &&
+                    (typeof itemStudyId !== 'string' ||
+                        !this.studyId ||
+                        itemStudyId === this.studyId)
+                );
+            })
+            .map(item => this.fromApi(item, slideId));
+        if (!saved.length) return;
+        const savedById = new Map(
+            saved.map(annotation => [annotation.id, annotation])
+        );
+        this.annotations = [
+            ...this.annotations.filter(
+                annotation => !savedById.has(annotation.id)
+            ),
+            ...saved,
+        ];
+        this.applyLayerFilter();
+        this.refreshStyle();
     }
 
     private async updateAnnotation(annotation: WsiAnnotation) {
@@ -972,6 +1004,30 @@ export class WsiAnnotationController {
             width: element?.clientWidth || 0,
             height: element?.clientHeight || 0,
         };
+    }
+
+    getAgentViewerElementPoint(imagePoint: {
+        x: number;
+        y: number;
+    }): { x: number; y: number } | null {
+        if (!this.osdViewer?.viewport || !this.openSeadragon) return null;
+        const viewportPoint = this.osdViewer.viewport.imageToViewportCoordinates(
+            new this.openSeadragon.Point(imagePoint.x, imagePoint.y)
+        );
+        const pixel = this.osdViewer.viewport.pixelFromPoint(
+            viewportPoint,
+            true
+        );
+        return { x: pixel.x, y: pixel.y };
+    }
+
+    subscribeAgentViewerChanges(callback: () => void): () => void {
+        const viewer = this.osdViewer;
+        if (!viewer?.addHandler) return () => {};
+        const events = ['viewport-change', 'animation-finish', 'resize'];
+        events.forEach(event => viewer.addHandler(event, callback));
+        return () =>
+            events.forEach(event => viewer.removeHandler?.(event, callback));
     }
 
     private async createCustomShape(

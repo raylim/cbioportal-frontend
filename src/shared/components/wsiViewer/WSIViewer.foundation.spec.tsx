@@ -104,9 +104,9 @@ describe('WSIViewer foundation behavior', () => {
             makeSlide('slide-b', false),
         ]);
 
-        expect(instance.servableSlides.map((entry: any) => entry.slide.image_id)).toEqual([
-            'slide-a',
-        ]);
+        expect(
+            instance.servableSlides.map((entry: any) => entry.slide.image_id)
+        ).toEqual(['slide-a']);
         expect(instance.servableSlides[0].sample.sample_id).toBe('S-1');
     });
 
@@ -116,7 +116,9 @@ describe('WSIViewer foundation behavior', () => {
 
     it('renders loading and failure states without a hierarchy', () => {
         const instance = makeInstance();
-        expect(TestRenderer.create(instance.render()).root.findByType('div')).toBeTruthy();
+        expect(
+            TestRenderer.create(instance.render()).root.findByType('div')
+        ).toBeTruthy();
 
         action(() => {
             instance.loading = false;
@@ -143,5 +145,90 @@ describe('WSIViewer foundation behavior', () => {
         expect(readWsiHashState()).toBeNull();
         window.location.hash = '#wsi:slide=slide-a&x=bad&y=2&z=1';
         expect(readWsiHashState()).toBeNull();
+    });
+
+    it('applies approved viewer navigation actions through the controller', async () => {
+        const instance = makeInstance();
+        const slideA = makeSlide('slide-a');
+        const slideB = makeSlide('slide-b');
+        instance.hierarchy = makeHierarchy([slideA, slideB]);
+        instance.selectedSlide = slideA;
+        instance.selectedSample = instance.hierarchy.samples[0];
+        instance.selectedMeta = { dimensions: { width: 1000, height: 800 } };
+        const controller = {
+            selectSlide: jest.fn(async (slide: any) => {
+                instance.selectedSlide = slide;
+            }),
+            goToCoordinates: jest.fn(() => true),
+            setZoom: jest.fn(() => true),
+            captureAgentViewportAfterDraw: jest.fn(async () => null),
+        };
+        instance.controller = controller as any;
+        const context = {
+            study_id: 'study-a',
+            patient_id: 'P-1',
+            slide_id: 'slide-a',
+            filters: {},
+            slide_metadata: {},
+            patient_context: {},
+            existing_annotations: [],
+            viewport: {
+                slide_width: 1000,
+                slide_height: 800,
+                source_fingerprint: 'source-a',
+                capture_id: 'capture-a',
+                viewer_generation: 1,
+            },
+        };
+        (instance as any).getAgentContext = jest
+            .fn()
+            .mockResolvedValue(context);
+
+        const proposal = (
+            action: string,
+            parameters: Record<string, unknown>
+        ) => ({
+            id: `proposal-${action}`,
+            session_id: 'session-a',
+            action_type: 'viewer_action',
+            study_id: 'study-a',
+            slide_id: 'slide-a',
+            payload: {
+                action,
+                parameters,
+                context: {
+                    study_id: 'study-a',
+                    patient_id: 'P-1',
+                    slide_id: 'slide-a',
+                    viewport: {
+                        source_fingerprint: 'source-a',
+                        viewer_generation: 1,
+                    },
+                },
+            },
+            status: 'pending',
+            created_at: new Date().toISOString(),
+        });
+
+        await expect(
+            (instance as any).applyAgentProposal(
+                proposal('select_slide', { slide_id: 'slide-b' })
+            )
+        ).resolves.toMatchObject({ success: true });
+        await expect(
+            (instance as any).applyAgentProposal(
+                proposal('go_to_coordinates', { x: 40, y: 50 })
+            )
+        ).resolves.toMatchObject({ success: true });
+        await expect(
+            (instance as any).applyAgentProposal(proposal('zoom', { zoom: 2 }))
+        ).resolves.toMatchObject({ success: true });
+
+        expect(controller.selectSlide).toHaveBeenCalledWith(
+            slideB,
+            instance.hierarchy.samples[0]
+        );
+        expect(controller.goToCoordinates).toHaveBeenCalledWith(40, 50);
+        expect(controller.setZoom).toHaveBeenCalledWith(2);
     });
 });

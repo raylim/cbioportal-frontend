@@ -238,6 +238,34 @@ export function clearWsiSlideAccess(studyId?: string): void {
     pendingSlideAccess.clear();
 }
 
+export function getWsiSourceFingerprint(access: WsiSlideAccess): string {
+    let sourceDigest = '';
+    try {
+        const encodedPayload = access.accessToken.split('.')[1];
+        if (encodedPayload) {
+            const normalized = encodedPayload
+                .replace(/-/g, '+')
+                .replace(/_/g, '/');
+            const decoded = atob(
+                normalized + '='.repeat((4 - (normalized.length % 4)) % 4)
+            );
+            const payload = JSON.parse(decoded) as {
+                tile_source_sha256?: unknown;
+            };
+            if (
+                typeof payload.tile_source_sha256 === 'string' &&
+                /^[0-9a-f]{64}$/.test(payload.tile_source_sha256)
+            ) {
+                sourceDigest = payload.tile_source_sha256;
+            }
+        }
+    } catch (_) {
+        // Use the source URL when the capability payload is unavailable.
+    }
+    const source = sourceDigest || access.sourceUrl;
+    return `wsi-v2:${source}:${access.tileMetadata.dimensions.width}x${access.tileMetadata.dimensions.height}`;
+}
+
 type AnnotationTokenResponse = {
     access_token: string;
     expires_in: number;
@@ -250,6 +278,8 @@ type AnnotationAccessToken = {
 
 const annotationTokens = new Map<string, AnnotationAccessToken>();
 const pendingAnnotationTokens = new Map<string, Promise<string>>();
+const agentTokens = new Map<string, AnnotationAccessToken>();
+const pendingAgentTokens = new Map<string, Promise<string>>();
 
 function purposeTokenKey(
     studyId: string,
@@ -289,6 +319,36 @@ async function requestAnnotationToken(
     return payload.access_token;
 }
 
+async function requestAgentToken(
+    studyId: string,
+    authScope: string
+): Promise<string> {
+    const url = new URL(
+        buildCBioPortalAPIUrl('api/wsi/access-token'),
+        typeof window === 'undefined'
+            ? 'http://localhost'
+            : window.location.origin
+    );
+    url.searchParams.set('studyId', studyId);
+    url.searchParams.set('purpose', 'agent');
+    const response = await fetch(url.toString(), {
+        credentials: 'same-origin',
+        cache: 'no-store',
+    });
+    if (!response.ok) {
+        throw new Error(`WSI authorization failed (${response.status})`);
+    }
+    const payload = (await response.json()) as AnnotationTokenResponse;
+    if (!payload.access_token || !Number.isFinite(payload.expires_in)) {
+        throw new Error('Invalid WSI authorization response');
+    }
+    agentTokens.set(purposeTokenKey(studyId, 'agent', authScope), {
+        value: payload.access_token,
+        expiresAt: Date.now() + payload.expires_in * 1000,
+    });
+    return payload.access_token;
+}
+
 export function getAnnotationAccessToken(
     studyId: string,
     authScope = 'anonymousUser'
@@ -311,6 +371,28 @@ export function getAnnotationAccessToken(
     return request;
 }
 
+export function getAgentAccessToken(
+    studyId: string,
+    authScope = 'anonymousUser'
+): Promise<string> {
+    if (!studyId) {
+        return Promise.reject(new Error('WSI study scope is required'));
+    }
+    const key = purposeTokenKey(studyId, 'agent', authScope);
+    const cached = agentTokens.get(key);
+    if (cached && cached.expiresAt > Date.now() + 30_000) {
+        return Promise.resolve(cached.value);
+    }
+    let request = pendingAgentTokens.get(key);
+    if (!request) {
+        request = requestAgentToken(studyId, authScope).finally(() => {
+            pendingAgentTokens.delete(key);
+        });
+        pendingAgentTokens.set(key, request);
+    }
+    return request;
+}
+
 export function clearAnnotationAccessToken(studyId?: string): void {
     if (studyId) {
         for (const key of annotationTokens.keys()) {
@@ -320,8 +402,16 @@ export function clearAnnotationAccessToken(studyId?: string): void {
             if (key.endsWith(`::${studyId}`))
                 pendingAnnotationTokens.delete(key);
         }
+        for (const key of agentTokens.keys()) {
+            if (key.endsWith(`::${studyId}`)) agentTokens.delete(key);
+        }
+        for (const key of pendingAgentTokens.keys()) {
+            if (key.endsWith(`::${studyId}`)) pendingAgentTokens.delete(key);
+        }
         return;
     }
     annotationTokens.clear();
     pendingAnnotationTokens.clear();
+    agentTokens.clear();
+    pendingAgentTokens.clear();
 }

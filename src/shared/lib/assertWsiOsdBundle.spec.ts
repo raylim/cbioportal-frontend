@@ -63,6 +63,25 @@ describe('assertWsiOsdBundle', () => {
         }
     });
 
+    it('accepts OpenSeadragon in a bundler-generated unnamed chunk', () => {
+        const { root, distDir } = makeTempDist();
+        try {
+            writeBundleFixture(distDir, {
+                'reactapp/common.bundle.js': 'window.__common__ = true;',
+                'reactapp/main.app.js': 'window.__main__ = true;',
+                'reactapp/490.abc.chunk.js': 'window.OpenSeadragon = true;',
+            });
+
+            const result = assertWsiOsdBundle({ distDir });
+
+            expect(path.basename(result.osdBundlePath)).toBe(
+                '490.abc.chunk.js'
+            );
+        } finally {
+            fs.rmSync(root, { recursive: true, force: true });
+        }
+    });
+
     it('fails when OpenSeadragon is missing from all emitted bundles', () => {
         const { root, distDir } = makeTempDist();
         try {

@@ -389,9 +389,18 @@ export function WsiAgentPanel({
                         throw new Error(detail);
                     }
                     const committed = (await commit.json()) as CommitResult;
-                    onCommittedAnnotations?.(committed.annotations || []);
                     upsertProposal(committed.action);
                     setHasApprovedAnnotation(true);
+                    const postCommitContext = await getContext();
+                    const stillCurrent =
+                        postCommitContext?.slide_id === proposal.slide_id &&
+                        postCommitContext.viewport.source_fingerprint ===
+                            sourceFingerprint &&
+                        postCommitContext.viewport.viewer_generation ===
+                            viewerGeneration;
+                    if (stillCurrent) {
+                        onCommittedAnnotations?.(committed.annotations || []);
+                    }
                     return;
                 }
                 const approval = await fetch(

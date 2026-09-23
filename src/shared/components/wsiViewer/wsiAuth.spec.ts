@@ -1,6 +1,7 @@
 import {
     clearAnnotationAccessToken,
     clearWsiSlideAccess,
+    getAgentAccessToken,
     getAnnotationAccessToken,
     getWsiSlideAccess,
     isWsiAuthEnabled,
@@ -157,6 +158,35 @@ describe('WSI access capability', () => {
     it('always enables the source-bound WSI capability contract', () => {
         mockServerConfig.authenticationMethod = 'false';
         expect(isWsiAuthEnabled()).toBe(true);
+    });
+
+    it('does not reuse agent capabilities across authenticated subjects', async () => {
+        jest.spyOn(global, 'fetch')
+            .mockResolvedValueOnce({
+                ok: true,
+                json: async () => ({
+                    access_token: 'agent-a',
+                    expires_in: 300,
+                }),
+            } as Response)
+            .mockResolvedValueOnce({
+                ok: true,
+                json: async () => ({
+                    access_token: 'agent-b',
+                    expires_in: 300,
+                }),
+            } as Response);
+
+        await expect(getAgentAccessToken('study-1', 'user-a')).resolves.toBe(
+            'agent-a'
+        );
+        await expect(getAgentAccessToken('study-1', 'user-b')).resolves.toBe(
+            'agent-b'
+        );
+        expect((global.fetch as jest.Mock).mock.calls[0][0]).toContain(
+            'purpose=agent'
+        );
+        expect(global.fetch).toHaveBeenCalledTimes(2);
     });
 
     it('rejects a schema-v2 metadata object with a non-current decode policy', async () => {

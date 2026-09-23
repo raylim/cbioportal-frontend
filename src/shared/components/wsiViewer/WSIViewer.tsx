@@ -60,7 +60,7 @@ import {
 } from './wsiAnnotationControls';
 import {
     buildWsiAgentEmbeddingContext,
-    buildWsiAgentSvgSelector,
+    buildWsiAgentSvgSelectorFromSlidePoints,
     WsiAgentContext,
     WsiAgentProposal,
 } from './wsiAgent';
@@ -125,6 +125,7 @@ interface Props {
     /** Authenticated subject scope used to isolate protected in-memory caches. */
     authScope?: string;
     annotationApiUrl?: string | null;
+    agentEnabled?: boolean;
 }
 
 interface CoordBarViewerState {
@@ -200,7 +201,6 @@ export default class WSIViewer extends React.Component<Props, {}> {
     private controller: WsiViewerController;
     private annotationController: WsiAnnotationController;
     @observable private agentProposals: WsiAgentProposal[] = [];
-    private agentViewerGeneration = 0;
     // Keep the hierarchy object identity stable while viewer state changes.
     // The observable version invalidates derived row caches.
     @observable private hierarchyDataVersion = 0;
@@ -437,7 +437,6 @@ export default class WSIViewer extends React.Component<Props, {}> {
             updateCursorPos: (x, y) => this.handleCursorMove(x, y),
             clearCursorPos: () => this.clearCursorPos(),
             onSlideSelectionStarted: slide => {
-                this.agentViewerGeneration += 1;
                 this.annotationController.beginSlide(slide.image_id);
             },
             onViewerOpened: (viewer, openSeadragon, slide) =>
@@ -649,7 +648,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
               )
             : Promise.resolve('');
 
-    private readonly getAgentContext = (): WsiAgentContext | null => {
+    private readonly getAgentContext = async (): Promise<WsiAgentContext | null> => {
         if (!this.selectedSlide || !this.selectedSample || !this.selectedMeta) {
             return null;
         }
@@ -657,6 +656,8 @@ export default class WSIViewer extends React.Component<Props, {}> {
         const height = this.selectedMeta.dimensions.height;
         const slideId = this.selectedSlide.image_id;
         const studyId = this.props.studyId || '';
+        const viewport = await this.controller.captureAgentViewportAfterDraw();
+        if (!viewport) return null;
         return {
             study_id: studyId,
             patient_id: this.props.patientId,
@@ -681,11 +682,9 @@ export default class WSIViewer extends React.Component<Props, {}> {
                 })
             ),
             viewport: {
+                ...viewport,
                 slide_width: width,
                 slide_height: height,
-                source_fingerprint: `${studyId}:${slideId}:${width}x${height}`,
-                capture_id: `${slideId}:${this.agentViewerGeneration}`,
-                viewer_generation: this.agentViewerGeneration,
             },
             embedding_context: buildWsiAgentEmbeddingContext(
                 studyId,
@@ -693,6 +692,223 @@ export default class WSIViewer extends React.Component<Props, {}> {
             ),
         };
     };
+
+    private agentProposalContextMatches(
+        proposal: WsiAgentProposal,
+        context: WsiAgentContext
+    ): boolean {
+        const proposalContext = proposal.payload.context as
+            | Record<string, unknown>
+            | undefined;
+        const viewport = proposalContext?.viewport as
+            | Record<string, unknown>
+            | undefined;
+        return (
+            proposal.study_id === context.study_id &&
+            proposal.slide_id === context.slide_id &&
+            (!proposalContext ||
+                (proposalContext.study_id === context.study_id &&
+                    proposalContext.patient_id === context.patient_id &&
+                    proposalContext.slide_id === context.slide_id &&
+                    viewport?.source_fingerprint ===
+                        context.viewport.source_fingerprint &&
+                    viewport?.viewer_generation ===
+                        context.viewport.viewer_generation))
+        );
+    }
+
+    private slideMatchesAgentFilters(entry: { slide: Slide; sample: Sample }) {
+        if (!this.hierarchy) return false;
+        const preferredImageIds = getPathologyPreferredImageIds(
+            this.hierarchy,
+            this.activePathologyFilter
+        );
+        if (preferredImageIds && !preferredImageIds.has(entry.slide.image_id)) {
+            return false;
+        }
+        if (!matchesWsiStainFilter(entry.slide, this.stainFilter)) {
+            return false;
+        }
+        const associations = getServableSlideAssociationsByImageIdReadOnly(
+            this.hierarchy.slide_associations
+        );
+        if (
+            !matchesWsiTimepointFilter(
+                entry.slide,
+                associations.get(entry.slide.image_id),
+                this.timepointDays
+            )
+        ) {
+            return false;
+        }
+        return (
+            this.matchFilter === 'all' ||
+            associations.get(entry.slide.image_id)?.match_level ===
+                this.matchFilter.toUpperCase()
+        );
+    }
+
+    private async applyAgentViewerAction(
+        proposal: WsiAgentProposal,
+        context: WsiAgentContext
+    ): Promise<{ success: boolean; detail: string }> {
+        if (!this.agentProposalContextMatches(proposal, context)) {
+            return {
+                success: false,
+                detail:
+                    'The viewer changed; ask the assistant to regenerate the proposal.',
+            };
+        }
+        const actionType = proposal.payload.action;
+        const parameters = proposal.payload.parameters as
+            | Record<string, unknown>
+            | undefined;
+        if (!parameters || typeof actionType !== 'string') {
+            return { success: false, detail: 'The viewer action is invalid.' };
+        }
+
+        if (actionType === 'select_slide') {
+            const slideId = parameters.slide_id;
+            const entry = this.servableSlides.find(
+                candidate => candidate.slide.image_id === slideId
+            );
+            if (!entry || !this.slideMatchesAgentFilters(entry)) {
+                return {
+                    success: false,
+                    detail:
+                        'That slide is not available under the current filters.',
+                };
+            }
+            await this.controller.selectSlide(entry.slide, entry.sample);
+            return this.selectedSlide?.image_id === slideId
+                ? { success: true, detail: 'Slide selected.' }
+                : {
+                      success: false,
+                      detail: 'The slide could not be selected.',
+                  };
+        }
+
+        if (actionType === 'set_filters') {
+            const allowedKeys = new Set([
+                'stain_filter',
+                'match_filter',
+                'timepoint_days',
+            ]);
+            if (Object.keys(parameters).some(key => !allowedKeys.has(key))) {
+                return {
+                    success: false,
+                    detail: 'The filter action is invalid.',
+                };
+            }
+            const nextStain = parameters.stain_filter;
+            const nextMatch = parameters.match_filter;
+            const nextTimepoint = parameters.timepoint_days;
+            if (
+                nextStain !== undefined &&
+                !['all', 'hne', 'ihc', 'other', 'unknown'].includes(
+                    String(nextStain)
+                )
+            ) {
+                return {
+                    success: false,
+                    detail: 'The stain filter is invalid.',
+                };
+            }
+            if (
+                nextMatch !== undefined &&
+                !['all', 'part', 'block', 'unmatched'].includes(
+                    String(nextMatch)
+                )
+            ) {
+                return {
+                    success: false,
+                    detail: 'The match filter is invalid.',
+                };
+            }
+            if (
+                nextTimepoint !== undefined &&
+                nextTimepoint !== null &&
+                nextTimepoint !== 'undated' &&
+                (typeof nextTimepoint !== 'number' ||
+                    !Number.isFinite(nextTimepoint))
+            ) {
+                return {
+                    success: false,
+                    detail: 'The timepoint filter is invalid.',
+                };
+            }
+            this.releaseLinkoutScope();
+            action(() => {
+                if (nextStain !== undefined) {
+                    this.stainFilter = nextStain as WsiStainFilter;
+                }
+                if (nextMatch !== undefined) {
+                    this.matchFilter = nextMatch as PathologySlideMatchFilter;
+                }
+                if (nextTimepoint !== undefined) {
+                    this.timepointDays =
+                        nextTimepoint === null
+                            ? undefined
+                            : (nextTimepoint as WsiTimepointSelection);
+                }
+            })();
+            if (nextStain !== undefined) {
+                this.props.onStainFilterChange?.(this.stainFilter);
+            }
+            if (nextMatch !== undefined) {
+                this.props.onMatchFilterChange?.(this.matchFilter);
+            }
+            if (nextTimepoint !== undefined) {
+                this.props.onTimepointChange?.(this.timepointDays);
+            }
+            await this.reselectSlideForCurrentFilters();
+            return this.selectedSlide
+                ? { success: true, detail: 'Filters applied.' }
+                : {
+                      success: false,
+                      detail: 'No slide matches the requested filters.',
+                  };
+        }
+
+        if (actionType === 'go_to_coordinates') {
+            const x = parameters.x;
+            const y = parameters.y;
+            if (
+                typeof x !== 'number' ||
+                typeof y !== 'number' ||
+                !Number.isFinite(x) ||
+                !Number.isFinite(y)
+            ) {
+                return {
+                    success: false,
+                    detail: 'The coordinates are invalid.',
+                };
+            }
+            if (!this.controller.goToCoordinates(x, y)) {
+                return { success: false, detail: 'The viewer is not ready.' };
+            }
+            await this.controller.captureAgentViewportAfterDraw();
+            return { success: true, detail: 'Coordinates updated.' };
+        }
+
+        if (actionType === 'zoom') {
+            const zoom = parameters.zoom;
+            if (
+                typeof zoom !== 'number' ||
+                !Number.isFinite(zoom) ||
+                zoom <= 0
+            ) {
+                return { success: false, detail: 'The zoom value is invalid.' };
+            }
+            if (!this.controller.setZoom(zoom)) {
+                return { success: false, detail: 'The viewer is not ready.' };
+            }
+            await this.controller.captureAgentViewportAfterDraw();
+            return { success: true, detail: 'Zoom updated.' };
+        }
+
+        return { success: false, detail: 'The viewer action is unsupported.' };
+    }
 
     @action.bound
     private handleAgentProposal(proposal: WsiAgentProposal) {
@@ -710,6 +926,15 @@ export default class WSIViewer extends React.Component<Props, {}> {
     private readonly applyAgentProposal = async (
         proposal: WsiAgentProposal
     ): Promise<{ success: boolean; detail: string }> => {
+        if (proposal.action_type === 'viewer_action') {
+            const context = await this.getAgentContext();
+            return context
+                ? this.applyAgentViewerAction(proposal, context)
+                : {
+                      success: false,
+                      detail: 'The viewer is not ready.',
+                  };
+        }
         if (
             proposal.action_type !== 'create_annotation' &&
             proposal.action_type !== 'annotation_batch'
@@ -720,7 +945,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
                     'This proposal type is not supported by the native viewer yet.',
             };
         }
-        const context = this.getAgentContext();
+        const context = await this.getAgentContext();
         const drafts =
             proposal.action_type === 'annotation_batch' &&
             Array.isArray(proposal.payload.annotations)
@@ -740,13 +965,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
         for (const draft of drafts) {
             const payload = draft as Record<string, unknown>;
             const points = Array.isArray(payload.points)
-                ? payload.points.filter(
-                      (point: unknown): point is { x: number; y: number } =>
-                          !!point &&
-                          typeof point === 'object' &&
-                          typeof (point as { x?: unknown }).x === 'number' &&
-                          typeof (point as { y?: unknown }).y === 'number'
-                  )
+                ? (payload.points as Array<{ x: number; y: number }>)
                 : [];
             if (points.length < 2) {
                 return {
@@ -762,10 +981,35 @@ export default class WSIViewer extends React.Component<Props, {}> {
                     detail: 'A polygon needs at least three points.',
                 };
             }
-            const selector = buildWsiAgentSvgSelector(
+            if (
+                points.some(
+                    point =>
+                        !point ||
+                        !Number.isFinite(point.x) ||
+                        !Number.isFinite(point.y)
+                ) ||
+                payload.geometry_version !== 2 ||
+                payload.coordinate_space !== 'slide_pixels' ||
+                points.some(
+                    point =>
+                        point.x < 0 ||
+                        point.y < 0 ||
+                        point.x > context.viewport.slide_width ||
+                        point.y > context.viewport.slide_height
+                ) ||
+                payload.source_fingerprint !==
+                    context.viewport.source_fingerprint ||
+                payload.viewer_generation !== context.viewport.viewer_generation
+            ) {
+                return {
+                    success: false,
+                    detail:
+                        'The annotation proposal is stale; ask the assistant to regenerate it.',
+                };
+            }
+            const selector = buildWsiAgentSvgSelectorFromSlidePoints(
                 geometryType,
-                points,
-                context.viewport
+                points
             );
             const success = await this.annotationController.createAgentAnnotation(
                 {
@@ -789,6 +1033,12 @@ export default class WSIViewer extends React.Component<Props, {}> {
             }
         }
         return { success: true, detail: 'Annotation saved.' };
+    };
+
+    private readonly adoptCommittedAgentAnnotations = (
+        annotations: Array<Record<string, unknown>>
+    ) => {
+        this.annotationController.adoptAgentAnnotations(annotations);
     };
 
     private canReusePathologyFilterLocally(): boolean {
@@ -1495,6 +1745,9 @@ export default class WSIViewer extends React.Component<Props, {}> {
                                 getContext={this.getAgentContext}
                                 getToken={this.getAgentToken}
                                 applyProposal={this.applyAgentProposal}
+                                onCommittedAnnotations={
+                                    this.adoptCommittedAgentAnnotations
+                                }
                                 onProposal={this.handleAgentProposal}
                             />
                         ) : null
