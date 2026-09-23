@@ -64,11 +64,6 @@ export default defineConfig({
     timeout: 120_000,
 
     expect: {
-        // The localdb stack can spend several seconds hydrating an otherwise
-        // ready page under CircleCI load. Keep the same assertions and
-        // screenshots, but allow normal service latency before declaring a
-        // required element absent.
-        timeout: 15_000,
         toHaveScreenshot: {
             maxDiffPixelRatio: 0.01,
             threshold: 0.2,
