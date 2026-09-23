@@ -766,8 +766,7 @@ export function tabs(
     // is advertised only for patients that can actually have slides.
     const hasWsiSlideData =
         pageComponent.patientViewPageStore.clinicalDataForSamples.isComplete &&
-        _.some(
-            pageComponent.patientViewPageStore.clinicalDataForSamples.result,
+        pageComponent.patientViewPageStore.clinicalDataForSamples.result.some(
             sample => sample.clinicalAttributeId === 'MSK_SLIDE_ID'
         );
     if (tileServerUrl && hasWsiSlideData) {
