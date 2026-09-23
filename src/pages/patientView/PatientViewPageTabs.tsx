@@ -764,11 +764,14 @@ export function tabs(
     // Keep ordinary patient navigation unchanged when the study has no slide
     // identifiers. The viewer route remains directly addressable, but the tab
     // is advertised only for patients that can actually have slides.
-    const hasWsiSlideData =
-        pageComponent.patientViewPageStore.clinicalDataForSamples.isComplete &&
-        pageComponent.patientViewPageStore.clinicalDataForSamples.result.some(
-            sample => sample.clinicalAttributeId === 'MSK_SLIDE_ID'
-        );
+    const clinicalDataForSamples =
+        pageComponent.patientViewPageStore.clinicalDataForSamples;
+    const hasWsiSlideData = Boolean(
+        clinicalDataForSamples?.isComplete &&
+            clinicalDataForSamples.result?.some(
+                sample => sample.clinicalAttributeId === 'MSK_SLIDE_ID'
+            )
+    );
     if (tileServerUrl && hasWsiSlideData) {
         const query = urlWrapper.query;
         const initialStainFilter = ['hne', 'ihc', 'other', 'unknown'].includes(
