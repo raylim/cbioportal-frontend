@@ -646,7 +646,16 @@ export function tabs(
     );
 
     const tileServerUrl = getServerConfig().msk_wsi_tile_server_url;
-    if (tileServerUrl) {
+    // Keep the ordinary patient navigation unchanged when the study has no
+    // slide identifiers. The viewer route remains directly addressable, but
+    // the tab is advertised only for patients that can actually have slides.
+    const hasWsiSlideData =
+        pageComponent.patientViewPageStore.clinicalDataForSamples.isComplete &&
+        _.some(
+            pageComponent.patientViewPageStore.clinicalDataForSamples.result,
+            sample => sample.clinicalAttributeId === 'MSK_SLIDE_ID'
+        );
+    if (tileServerUrl && hasWsiSlideData) {
         tabs.push(
             <MSKTab
                 key={6}
