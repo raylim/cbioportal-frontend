@@ -1,4 +1,6 @@
-import { ClinicalEvent } from 'cbioportal-ts-api-client';
+import { ClinicalEvent, ClinicalEventData } from 'cbioportal-ts-api-client';
+
+type ClinicalEventAttribute = Pick<ClinicalEventData, 'key' | 'value'>;
 
 type CachedAttributeSignatureEntry = {
     orderedSnapshot: string;
@@ -21,7 +23,7 @@ type CachedEventsSignatureEntry = {
 };
 
 const attributeSignatureCache = new WeakMap<
-    NonNullable<ClinicalEvent['attributes']>,
+    ClinicalEventAttribute[],
     CachedAttributeSignatureEntry
 >();
 
@@ -34,14 +36,17 @@ function signatureValue(value: unknown): string {
         ? text
         : `~${encodeURIComponent(text)}`;
 }
-const eventSignatureCache = new WeakMap<ClinicalEvent, CachedEventSignatureEntry>();
+const eventSignatureCache = new WeakMap<
+    ClinicalEvent,
+    CachedEventSignatureEntry
+>();
 const eventsSignatureCache = new WeakMap<
     ClinicalEvent[],
     CachedEventsSignatureEntry
 >();
 
 export function buildClinicalEventAttributesSignature(
-    attributes: ClinicalEvent['attributes']
+    attributes: ClinicalEventAttribute[]
 ): string {
     if (!attributes?.length) {
         return '';
@@ -80,7 +85,9 @@ export function buildClinicalEventSignature(
         uniqueSampleKey?: string;
     };
     const attributes = event.attributes;
-    const attributeSignature = buildClinicalEventAttributesSignature(attributes);
+    const attributeSignature = buildClinicalEventAttributesSignature(
+        attributes
+    );
     const cached = eventSignatureCache.get(event);
 
     const snapshot = [
@@ -150,7 +157,9 @@ export function buildClinicalEventsSignature(
     let signature = orderedSnapshot;
     if (ignoreOrder && eventSignatures.length > 1) {
         const unorderedEventSignatures = [...eventSignatures];
-        unorderedEventSignatures.sort((left, right) => left.localeCompare(right));
+        unorderedEventSignatures.sort((left, right) =>
+            left.localeCompare(right)
+        );
         signature = unorderedEventSignatures.join('||');
     }
 

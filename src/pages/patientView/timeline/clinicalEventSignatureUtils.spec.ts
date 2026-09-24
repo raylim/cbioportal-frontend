@@ -34,9 +34,9 @@ describe('clinicalEventSignatureUtils', () => {
             { key: 'B', value: '2' },
         ];
 
-        expect(
-            buildClinicalEventAttributesSignature(firstAttributes)
-        ).toBe(buildClinicalEventAttributesSignature(secondAttributes));
+        expect(buildClinicalEventAttributesSignature(firstAttributes)).toBe(
+            buildClinicalEventAttributesSignature(secondAttributes)
+        );
     });
 
     it('recomputes the cached attribute signature when attribute values mutate in place', () => {
@@ -45,10 +45,14 @@ describe('clinicalEventSignatureUtils', () => {
             { key: 'B', value: '2' },
         ];
 
-        expect(buildClinicalEventAttributesSignature(attributes)).toBe('A:1|B:2');
+        expect(buildClinicalEventAttributesSignature(attributes)).toBe(
+            'A:1|B:2'
+        );
 
         attributes[1].value = '9';
-        expect(buildClinicalEventAttributesSignature(attributes)).toBe('A:1|B:9');
+        expect(buildClinicalEventAttributesSignature(attributes)).toBe(
+            'A:1|B:9'
+        );
     });
 
     it('can omit unique keys for pathology-style signatures', () => {
@@ -111,7 +115,7 @@ describe('clinicalEventSignatureUtils', () => {
         ];
 
         const first = buildClinicalEventsSignature(events);
-        events[1].attributes = [{ key: 'Y', value: '9' }];
+        events[1].attributes = [{ clinicalEventId: 0, key: 'Y', value: '9' }];
 
         const second = buildClinicalEventsSignature(events);
 

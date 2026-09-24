@@ -90,7 +90,7 @@ describe('getTimelineDataWithPortalExtras', () => {
                 patientId: 'P-1',
                 startNumberOfDaysSinceDiagnosis: 1,
                 studyId: 'study',
-                attributes: [{ key: 'A', value: '1' }],
+                attributes: [{ clinicalEventId: 0, key: 'A', value: '1' }],
             },
         ] as ClinicalEvent[];
         const secondTimelineData = [
@@ -99,12 +99,15 @@ describe('getTimelineDataWithPortalExtras', () => {
                 patientId: 'P-1',
                 startNumberOfDaysSinceDiagnosis: 1,
                 studyId: 'study',
-                attributes: [{ key: 'A', value: '1' }],
+                attributes: [{ clinicalEventId: 0, key: 'A', value: '1' }],
             },
         ] as ClinicalEvent[];
 
         const first = getTimelineDataWithPortalExtras(firstTimelineData, true);
-        const second = getTimelineDataWithPortalExtras(secondTimelineData, true);
+        const second = getTimelineDataWithPortalExtras(
+            secondTimelineData,
+            true
+        );
 
         expect(second).toEqual(first);
     });
@@ -138,7 +141,13 @@ describe('nestPathologyTimelineTracks', () => {
         const slides = {
             eventType: 'PATHOLOGY SLIDES',
             patientId: 'P-1',
-            attributes: [{ key: 'SUBTYPE', value: 'H&E (Non-viewable)' }],
+            attributes: [
+                {
+                    clinicalEventId: 0,
+                    key: 'SUBTYPE',
+                    value: 'H&E (Non-viewable)',
+                },
+            ],
         } as ClinicalEvent;
 
         const result = nestPathologyTimelineTracks([biomarker, slides]);
@@ -166,9 +175,9 @@ describe('nestPathologyTimelineTracks', () => {
             eventType: 'PATHOLOGY',
             patientId: 'P-1',
             attributes: [
-                { key: 'PATHOLOGY_TYPE', value: 'Slides' },
-                { key: 'SUBTYPE', value: 'Other' },
-                { key: 'IMAGE_COUNT', value: '1' },
+                { clinicalEventId: 0, key: 'PATHOLOGY_TYPE', value: 'Slides' },
+                { clinicalEventId: 0, key: 'SUBTYPE', value: 'Other' },
+                { clinicalEventId: 0, key: 'IMAGE_COUNT', value: '1' },
             ],
         } as ClinicalEvent;
 
@@ -181,6 +190,7 @@ describe('nestPathologyTimelineTracks', () => {
             )?.value
         ).toBe('Slides');
         expect(nested.attributes).toContainEqual({
+            clinicalEventId: 0,
             key: 'SUBTYPE',
             value: 'Other',
         });
@@ -191,7 +201,13 @@ describe('nestPathologyTimelineTracks', () => {
             {
                 eventType: 'PATHOLOGY SLIDES',
                 patientId: 'P-1',
-                attributes: [{ key: 'SUBTYPE', value: 'H&E (Non-viewable)' }],
+                attributes: [
+                    {
+                        clinicalEventId: 0,
+                        key: 'SUBTYPE',
+                        value: 'H&E (Non-viewable)',
+                    },
+                ],
                 startNumberOfDaysSinceDiagnosis: 5,
                 studyId: 'study',
                 uniquePatientKey: 'patient-key',
@@ -202,7 +218,13 @@ describe('nestPathologyTimelineTracks', () => {
             {
                 eventType: 'PATHOLOGY SLIDES',
                 patientId: 'P-1',
-                attributes: [{ key: 'SUBTYPE', value: 'H&E (Non-viewable)' }],
+                attributes: [
+                    {
+                        clinicalEventId: 0,
+                        key: 'SUBTYPE',
+                        value: 'H&E (Non-viewable)',
+                    },
+                ],
                 startNumberOfDaysSinceDiagnosis: 5,
                 studyId: 'study',
                 uniquePatientKey: 'patient-key',
@@ -229,15 +251,32 @@ describe('collapsePathologyTimelineEvents', () => {
                 uniquePatientKey: 'study_P-1',
                 uniqueSampleKey: 'path-1',
                 attributes: [
-                    { key: 'SAMPLE_ID', value: 'S-1' },
-                    { key: 'SUBTYPE', value: 'H&E' },
-                    { key: 'MATCH_LEVEL', value: 'PART' },
-                    { key: 'SPECIMEN', value: 'Part 1 / Block A1' },
-                    { key: 'IMAGE_COUNT', value: '2' },
-                    { key: 'NON_SERVABLE_IMAGE_COUNT', value: '0' },
-                    { key: 'TOTAL_IMAGE_COUNT', value: '2' },
-                    { key: 'TIMEPOINT_SOURCE', value: 'Procedure' },
+                    { clinicalEventId: 0, key: 'SAMPLE_ID', value: 'S-1' },
+                    { clinicalEventId: 0, key: 'SUBTYPE', value: 'H&E' },
+                    { clinicalEventId: 0, key: 'MATCH_LEVEL', value: 'PART' },
                     {
+                        clinicalEventId: 0,
+                        key: 'SPECIMEN',
+                        value: 'Part 1 / Block A1',
+                    },
+                    { clinicalEventId: 0, key: 'IMAGE_COUNT', value: '2' },
+                    {
+                        clinicalEventId: 0,
+                        key: 'NON_SERVABLE_IMAGE_COUNT',
+                        value: '0',
+                    },
+                    {
+                        clinicalEventId: 0,
+                        key: 'TOTAL_IMAGE_COUNT',
+                        value: '2',
+                    },
+                    {
+                        clinicalEventId: 0,
+                        key: 'TIMEPOINT_SOURCE',
+                        value: 'Procedure',
+                    },
+                    {
+                        clinicalEventId: 0,
                         key: 'LINKOUT',
                         value:
                             '/patient/wsiHESlides?studyId=study&caseId=P-1&sampleId=S-1&stainFilter=hne&matchLevel=PART&specimenKey=part%3A%3A1',
@@ -253,15 +292,32 @@ describe('collapsePathologyTimelineEvents', () => {
                 uniquePatientKey: 'study_P-1',
                 uniqueSampleKey: 'path-2',
                 attributes: [
-                    { key: 'SAMPLE_ID', value: 'S-1' },
-                    { key: 'SUBTYPE', value: 'H&E' },
-                    { key: 'MATCH_LEVEL', value: 'PART' },
-                    { key: 'SPECIMEN', value: 'Part 2 / Block B1' },
-                    { key: 'IMAGE_COUNT', value: '1' },
-                    { key: 'NON_SERVABLE_IMAGE_COUNT', value: '1' },
-                    { key: 'TOTAL_IMAGE_COUNT', value: '2' },
-                    { key: 'TIMEPOINT_SOURCE', value: 'Procedure' },
+                    { clinicalEventId: 0, key: 'SAMPLE_ID', value: 'S-1' },
+                    { clinicalEventId: 0, key: 'SUBTYPE', value: 'H&E' },
+                    { clinicalEventId: 0, key: 'MATCH_LEVEL', value: 'PART' },
                     {
+                        clinicalEventId: 0,
+                        key: 'SPECIMEN',
+                        value: 'Part 2 / Block B1',
+                    },
+                    { clinicalEventId: 0, key: 'IMAGE_COUNT', value: '1' },
+                    {
+                        clinicalEventId: 0,
+                        key: 'NON_SERVABLE_IMAGE_COUNT',
+                        value: '1',
+                    },
+                    {
+                        clinicalEventId: 0,
+                        key: 'TOTAL_IMAGE_COUNT',
+                        value: '2',
+                    },
+                    {
+                        clinicalEventId: 0,
+                        key: 'TIMEPOINT_SOURCE',
+                        value: 'Procedure',
+                    },
+                    {
+                        clinicalEventId: 0,
                         key: 'LINKOUT',
                         value:
                             '/patient/wsiHESlides?studyId=study&caseId=P-1&sampleId=S-1&stainFilter=hne&matchLevel=PART&specimenKey=part%3A%3A2',
@@ -275,14 +331,20 @@ describe('collapsePathologyTimelineEvents', () => {
         expect(collapsed).toHaveLength(1);
         expect(collapsed[0].attributes).toEqual(
             expect.arrayContaining([
-                { key: 'IMAGE_COUNT', value: '3' },
-                { key: 'NON_SERVABLE_IMAGE_COUNT', value: '1' },
-                { key: 'TOTAL_IMAGE_COUNT', value: '4' },
+                { clinicalEventId: 0, key: 'IMAGE_COUNT', value: '3' },
                 {
+                    clinicalEventId: 0,
+                    key: 'NON_SERVABLE_IMAGE_COUNT',
+                    value: '1',
+                },
+                { clinicalEventId: 0, key: 'TOTAL_IMAGE_COUNT', value: '4' },
+                {
+                    clinicalEventId: 0,
                     key: 'SPECIMEN',
                     value: 'Part 1 / Block A1, Part 2 / Block B1',
                 },
                 {
+                    clinicalEventId: 0,
                     key: 'LINKOUT',
                     value:
                         '/patient/wsiHESlides?studyId=study&caseId=P-1&sampleId=S-1&stainFilter=hne&matchLevel=PART',
@@ -312,8 +374,9 @@ describe('TimelineWrapper', () => {
                 studyId: 'study',
             },
         ] as ClinicalEvent[];
-        const clinicalEventsSignature =
-            buildTimelineEventsSignature(clinicalEvents);
+        const clinicalEventsSignature = buildTimelineEventsSignature(
+            clinicalEvents
+        );
         const clinicalSamples = [
             {
                 id: 'S-1',
@@ -437,12 +500,12 @@ describe('TimelineWrapper', () => {
             ] as any,
             mutationProfileId: 'profile',
         };
-        (
-            usePathologyAugmentedClinicalEventsState as jest.Mock
-        ).mockReturnValue({
-            events: clinicalEvents,
-            eventsSignature: 'augmented-signature',
-        });
+        (usePathologyAugmentedClinicalEventsState as jest.Mock).mockReturnValue(
+            {
+                events: clinicalEvents,
+                eventsSignature: 'augmented-signature',
+            }
+        );
 
         let renderer!: TestRenderer.ReactTestRenderer;
         TestRenderer.act(() => {
@@ -482,12 +545,12 @@ describe('TimelineWrapper', () => {
             ] as any,
             mutationProfileId: 'profile',
         };
-        (
-            usePathologyAugmentedClinicalEventsState as jest.Mock
-        ).mockReturnValue({
-            events: timelineData,
-            eventsSignature: buildTimelineEventsSignature(timelineData),
-        });
+        (usePathologyAugmentedClinicalEventsState as jest.Mock).mockReturnValue(
+            {
+                events: timelineData,
+                eventsSignature: buildTimelineEventsSignature(timelineData),
+            }
+        );
 
         let renderer!: TestRenderer.ReactTestRenderer;
         TestRenderer.act(() => {
@@ -511,8 +574,12 @@ describe('TimelineWrapper', () => {
                 patientId: 'P-1',
                 studyId: 'study',
                 attributes: [
-                    { key: 'SUBTYPE', value: 'H&E' },
-                    { key: 'PATHOLOGY_TYPE', value: 'Slides' },
+                    { clinicalEventId: 0, key: 'SUBTYPE', value: 'H&E' },
+                    {
+                        clinicalEventId: 0,
+                        key: 'PATHOLOGY_TYPE',
+                        value: 'Slides',
+                    },
                 ],
                 startNumberOfDaysSinceDiagnosis: 5,
                 endNumberOfDaysSinceDiagnosis: 5,
@@ -526,8 +593,12 @@ describe('TimelineWrapper', () => {
                 patientId: 'P-1',
                 studyId: 'study',
                 attributes: [
-                    { key: 'PATHOLOGY_TYPE', value: 'Slides' },
-                    { key: 'SUBTYPE', value: 'H&E' },
+                    {
+                        clinicalEventId: 0,
+                        key: 'PATHOLOGY_TYPE',
+                        value: 'Slides',
+                    },
+                    { clinicalEventId: 0, key: 'SUBTYPE', value: 'H&E' },
                 ],
                 startNumberOfDaysSinceDiagnosis: 5,
                 endNumberOfDaysSinceDiagnosis: 5,
@@ -549,12 +620,14 @@ describe('TimelineWrapper', () => {
             ] as any,
             mutationProfileId: 'profile',
         };
-        (
-            usePathologyAugmentedClinicalEventsState as jest.Mock
-        ).mockReturnValue({
-            events: firstTimelineData,
-            eventsSignature: buildTimelineEventsSignature(firstTimelineData),
-        });
+        (usePathologyAugmentedClinicalEventsState as jest.Mock).mockReturnValue(
+            {
+                events: firstTimelineData,
+                eventsSignature: buildTimelineEventsSignature(
+                    firstTimelineData
+                ),
+            }
+        );
 
         let renderer!: TestRenderer.ReactTestRenderer;
         TestRenderer.act(() => {
@@ -566,12 +639,14 @@ describe('TimelineWrapper', () => {
         expect(sortTracks).toHaveBeenCalledTimes(1);
         expect(TimelineStore).toHaveBeenCalledTimes(1);
 
-        (
-            usePathologyAugmentedClinicalEventsState as jest.Mock
-        ).mockReturnValue({
-            events: secondTimelineData,
-            eventsSignature: buildTimelineEventsSignature(secondTimelineData),
-        });
+        (usePathologyAugmentedClinicalEventsState as jest.Mock).mockReturnValue(
+            {
+                events: secondTimelineData,
+                eventsSignature: buildTimelineEventsSignature(
+                    secondTimelineData
+                ),
+            }
+        );
 
         TestRenderer.act(() => {
             renderer.update(React.createElement(TimelineWrapper, props));
@@ -588,7 +663,9 @@ describe('TimelineWrapper', () => {
                 eventType: 'SPECIMEN',
                 patientId: 'P-1',
                 studyId: 'study',
-                attributes: [{ key: 'SAMPLE_ID', value: 'S-1' }],
+                attributes: [
+                    { clinicalEventId: 0, key: 'SAMPLE_ID', value: 'S-1' },
+                ],
                 startNumberOfDaysSinceDiagnosis: 5,
                 endNumberOfDaysSinceDiagnosis: 5,
                 uniquePatientKey: 'patient-key',
@@ -619,12 +696,12 @@ describe('TimelineWrapper', () => {
             ] as any,
             mutationProfileId: 'profile',
         };
-        (
-            usePathologyAugmentedClinicalEventsState as jest.Mock
-        ).mockReturnValue({
-            events: timelineData,
-            eventsSignature: buildTimelineEventsSignature(timelineData),
-        });
+        (usePathologyAugmentedClinicalEventsState as jest.Mock).mockReturnValue(
+            {
+                events: timelineData,
+                eventsSignature: buildTimelineEventsSignature(timelineData),
+            }
+        );
 
         let renderer!: TestRenderer.ReactTestRenderer;
         TestRenderer.act(() => {
@@ -653,7 +730,9 @@ describe('TimelineWrapper', () => {
                 eventType: 'SPECIMEN',
                 patientId: 'P-1',
                 studyId: 'study',
-                attributes: [{ key: 'SAMPLE_ID', value: 'S-1' }],
+                attributes: [
+                    { clinicalEventId: 0, key: 'SAMPLE_ID', value: 'S-1' },
+                ],
                 startNumberOfDaysSinceDiagnosis: 5,
                 endNumberOfDaysSinceDiagnosis: 5,
                 uniquePatientKey: 'patient-key',
@@ -700,12 +779,12 @@ describe('TimelineWrapper', () => {
             ] as any,
             mutationProfileId: 'profile',
         };
-        (
-            usePathologyAugmentedClinicalEventsState as jest.Mock
-        ).mockReturnValue({
-            events: timelineData,
-            eventsSignature: buildTimelineEventsSignature(timelineData),
-        });
+        (usePathologyAugmentedClinicalEventsState as jest.Mock).mockReturnValue(
+            {
+                events: timelineData,
+                eventsSignature: buildTimelineEventsSignature(timelineData),
+            }
+        );
 
         let renderer!: TestRenderer.ReactTestRenderer;
         TestRenderer.act(() => {
