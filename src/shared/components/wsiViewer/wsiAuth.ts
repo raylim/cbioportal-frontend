@@ -137,7 +137,7 @@ export function getWsiSessionStorage(): Storage | null {
 
 const slideAccess = new Map<string, WsiSlideAccess>();
 const pendingSlideAccess = new Map<string, Promise<WsiSlideAccess>>();
-type ResourceAccessTarget = {
+export type ResourceAccessTarget = {
     patientId: string;
     resourceId: string;
     resourceDataId: string;
@@ -170,6 +170,15 @@ export function registerWsiResourceAccess(
             )
         )
     );
+}
+
+/** Registers a resource identity when a caller already has a selected slide. */
+export function registerWsiResourceAccessTarget(
+    studyId: string,
+    imageId: string,
+    target: ResourceAccessTarget
+): void {
+    resourceAccessTargets.set(resourceAccessKey(studyId, imageId), target);
 }
 
 function slideAccessKey(
@@ -274,8 +283,12 @@ export function clearWsiSlideAccess(studyId?: string): void {
         for (const key of pendingSlideAccess.keys()) {
             if (key.includes(`::${studyId}::`)) pendingSlideAccess.delete(key);
         }
+        for (const key of resourceAccessTargets.keys()) {
+            if (key.startsWith(`${studyId}::`)) resourceAccessTargets.delete(key);
+        }
         return;
     }
     slideAccess.clear();
     pendingSlideAccess.clear();
+    resourceAccessTargets.clear();
 }

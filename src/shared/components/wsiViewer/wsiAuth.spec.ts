@@ -2,6 +2,7 @@ import {
     clearWsiSlideAccess,
     getWsiSlideAccess,
     isWsiAuthEnabled,
+    registerWsiResourceAccessTarget,
 } from './wsiAuth';
 
 const mockServerConfig = { authenticationMethod: 'saml' };
@@ -35,6 +36,11 @@ describe('WSI access capability', () => {
                 return this.values.get(key.toLowerCase()) ?? null;
             }
         } as unknown) as typeof Headers;
+        registerWsiResourceAccessTarget('study-1', 'slide-1', {
+            patientId: 'patient-1',
+            resourceId: 'WSI_SAMPLE',
+            resourceDataId: '42',
+        });
     });
 
     it('enables WSI auth for saml-backed portals', () => {
@@ -77,7 +83,7 @@ describe('WSI access capability', () => {
         );
         expect(global.fetch).toHaveBeenCalledTimes(1);
         expect((global.fetch as jest.Mock).mock.calls[0][0]).toContain(
-            '/api/wsi/v2/slides/study-1/slide-1/access'
+            '/api/wsi/v2/resources/study-1/patient-1/WSI_SAMPLE/42/access'
         );
     });
 
