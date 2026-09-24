@@ -227,7 +227,9 @@ async function findSummaryTooltipMatch(
 test.describe('pathology summary and clinical-data surfaces', () => {
     test.beforeEach(async ({ page }) => {
         requireDevPathology();
-        await ensureLocalLogin(page, DEV_PATHOLOGY.baseUrl);
+        if (process.env.WSI_AUTHENTICATED_E2E === 'true') {
+            await ensureLocalLogin(page, DEV_PATHOLOGY.baseUrl);
+        }
     });
 
     test('summary timeline renders a pathology slides subgroup when slide events are present', async ({
