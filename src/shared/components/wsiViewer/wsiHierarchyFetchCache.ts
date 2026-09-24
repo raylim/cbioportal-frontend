@@ -8,6 +8,16 @@ import { normalizeWsiAuthScope } from './wsiAuth';
 
 const HIERARCHY_CACHE_TTL_MS = 5 * 60 * 1000;
 
+export class WsiHierarchyFetchError extends Error {
+    public readonly status: number;
+
+    constructor(status: number) {
+        super(`Server returned ${status}`);
+        this.name = 'WsiHierarchyFetchError';
+        this.status = status;
+    }
+}
+
 type CachedHierarchyEntry = {
     expiresAt: number;
     promise: Promise<PatientHierarchy>;
@@ -288,10 +298,10 @@ function getOrCreateHierarchyRequest(
     const promise = fetch(url, {
         cache: 'no-store',
         credentials: 'include',
-    })
+        })
         .then(async response => {
             if (!response.ok) {
-                throw new Error(`Server returned ${response.status}`);
+                throw new WsiHierarchyFetchError(response.status);
             }
             const payload = await response.json();
             const hierarchy = normalizeHierarchyPayload(
