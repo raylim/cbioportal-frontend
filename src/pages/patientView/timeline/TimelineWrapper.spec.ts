@@ -1,6 +1,8 @@
 import React from 'react';
 import TestRenderer from 'react-test-renderer';
 import { ClinicalEvent } from 'cbioportal-ts-api-client';
+
+type TimelineClinicalEvent = ClinicalEvent & { uniqueSampleKey?: string };
 import {
     collapsePathologyTimelineEvents,
     getTimelineDataWithPortalExtras,
@@ -32,14 +34,14 @@ jest.mock('./timelineDataUtils', () => ({
 
 describe('getTimelineDataWithPortalExtras', () => {
     it('returns the original array when no portal extras should be added', () => {
-        const timelineData: ClinicalEvent[] = ([
+        const timelineData: TimelineClinicalEvent[] = ([
             {
                 eventType: 'TREATMENT',
                 patientId: 'P-1',
                 startNumberOfDaysSinceDiagnosis: 1,
                 studyId: 'study',
             },
-        ] as unknown) as ClinicalEvent[];
+        ] as unknown) as TimelineClinicalEvent[];
 
         expect(getTimelineDataWithPortalExtras(timelineData, false)).toBe(
             timelineData
@@ -54,7 +56,7 @@ describe('getTimelineDataWithPortalExtras', () => {
                 startNumberOfDaysSinceDiagnosis: 1,
                 studyId: 'study',
             },
-        ] as unknown) as ClinicalEvent[];
+        ] as unknown) as TimelineClinicalEvent[];
 
         const result = getTimelineDataWithPortalExtras(timelineData, true);
 
@@ -72,7 +74,7 @@ describe('getTimelineDataWithPortalExtras', () => {
                 startNumberOfDaysSinceDiagnosis: 1,
                 studyId: 'study',
             },
-        ] as unknown) as ClinicalEvent[];
+        ] as unknown) as TimelineClinicalEvent[];
 
         expect(
             getTimelineDataWithPortalExtras(timelineData, true)
@@ -92,7 +94,7 @@ describe('getTimelineDataWithPortalExtras', () => {
                 studyId: 'study',
                 attributes: [{ clinicalEventId: 0, key: 'A', value: '1' }],
             },
-        ] as unknown) as ClinicalEvent[];
+        ] as unknown) as TimelineClinicalEvent[];
         const secondTimelineData = ([
             {
                 eventType: 'TREATMENT',
@@ -101,7 +103,7 @@ describe('getTimelineDataWithPortalExtras', () => {
                 studyId: 'study',
                 attributes: [{ clinicalEventId: 0, key: 'A', value: '1' }],
             },
-        ] as unknown) as ClinicalEvent[];
+        ] as unknown) as TimelineClinicalEvent[];
 
         const first = getTimelineDataWithPortalExtras(firstTimelineData, true);
         const second = getTimelineDataWithPortalExtras(
@@ -128,7 +130,7 @@ describe('nestPathologyTimelineTracks', () => {
                 studyId: 'study',
                 startNumberOfDaysSinceDiagnosis: 2,
             },
-        ] as unknown) as ClinicalEvent[];
+        ] as unknown) as TimelineClinicalEvent[];
 
         expect(nestPathologyTimelineTracks(events)).toBe(events);
     });
@@ -213,7 +215,7 @@ describe('nestPathologyTimelineTracks', () => {
                 uniquePatientKey: 'patient-key',
                 uniqueSampleKey: 'sample-key',
             },
-        ] as unknown) as ClinicalEvent[];
+        ] as unknown) as TimelineClinicalEvent[];
         const secondEvents = ([
             {
                 eventType: 'PATHOLOGY SLIDES',
@@ -230,7 +232,7 @@ describe('nestPathologyTimelineTracks', () => {
                 uniquePatientKey: 'patient-key',
                 uniqueSampleKey: 'sample-key',
             },
-        ] as unknown) as ClinicalEvent[];
+        ] as unknown) as TimelineClinicalEvent[];
 
         const first = nestPathologyTimelineTracks(firstEvents);
         const second = nestPathologyTimelineTracks(secondEvents);
@@ -324,7 +326,7 @@ describe('collapsePathologyTimelineEvents', () => {
                     },
                 ],
             },
-        ] as unknown) as ClinicalEvent[];
+        ] as unknown) as TimelineClinicalEvent[];
 
         const collapsed = collapsePathologyTimelineEvents(events);
 
@@ -373,7 +375,7 @@ describe('TimelineWrapper', () => {
                 startNumberOfDaysSinceDiagnosis: 1,
                 studyId: 'study',
             },
-        ] as unknown) as ClinicalEvent[];
+        ] as unknown) as TimelineClinicalEvent[];
         const clinicalEventsSignature = buildTimelineEventsSignature(
             clinicalEvents
         );
@@ -438,7 +440,7 @@ describe('TimelineWrapper', () => {
                 startNumberOfDaysSinceDiagnosis: 1,
                 studyId: 'study',
             },
-        ] as unknown) as ClinicalEvent[];
+        ] as unknown) as TimelineClinicalEvent[];
         const props = {
             dataStore: {} as any,
             data: clinicalEvents,
@@ -484,7 +486,7 @@ describe('TimelineWrapper', () => {
                 startNumberOfDaysSinceDiagnosis: 1,
                 studyId: 'study',
             },
-        ] as unknown) as ClinicalEvent[];
+        ] as unknown) as TimelineClinicalEvent[];
         const props = {
             dataStore: {} as any,
             data: clinicalEvents,
@@ -519,7 +521,7 @@ describe('TimelineWrapper', () => {
     });
 
     it('does not rebuild tracks after its store update rerenders', () => {
-        const timelineData: ClinicalEvent[] = [
+        const timelineData: TimelineClinicalEvent[] = [
             {
                 eventType: 'PATHOLOGY SLIDES',
                 patientId: 'P-1',
@@ -568,7 +570,7 @@ describe('TimelineWrapper', () => {
     });
 
     it('does not rebuild tracks when rerendered with equivalent timeline events', () => {
-        const firstTimelineData: ClinicalEvent[] = [
+        const firstTimelineData: TimelineClinicalEvent[] = [
             {
                 eventType: 'PATHOLOGY SLIDES',
                 patientId: 'P-1',
@@ -587,7 +589,7 @@ describe('TimelineWrapper', () => {
                 uniqueSampleKey: 'sample-key',
             },
         ];
-        const secondTimelineData: ClinicalEvent[] = [
+        const secondTimelineData: TimelineClinicalEvent[] = [
             {
                 eventType: 'PATHOLOGY SLIDES',
                 patientId: 'P-1',
@@ -658,7 +660,7 @@ describe('TimelineWrapper', () => {
     });
 
     it('does not rebuild tracks when rerendered with equivalent case metadata', () => {
-        const timelineData: ClinicalEvent[] = [
+        const timelineData: TimelineClinicalEvent[] = [
             {
                 eventType: 'SPECIMEN',
                 patientId: 'P-1',
@@ -725,7 +727,7 @@ describe('TimelineWrapper', () => {
     });
 
     it('does not rebuild tracks when rerendered with an equivalent sample manager wrapper', () => {
-        const timelineData: ClinicalEvent[] = [
+        const timelineData: TimelineClinicalEvent[] = [
             {
                 eventType: 'SPECIMEN',
                 patientId: 'P-1',
