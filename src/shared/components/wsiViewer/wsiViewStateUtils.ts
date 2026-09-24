@@ -1,11 +1,25 @@
 import { TileMetadata } from './wsiViewerTypes';
 
-export type WsiHashState = {
-    slideId: string;
+export type WsiHashViewport = {
     x: number;
     y: number;
     z: number;
 };
+
+/**
+ * A `#wsi:` hash selects a slide and may also carry a viewport. The selection
+ * form without coordinates (`#wsi:slide=X`) is written when a slide is chosen
+ * before its viewport is known.
+ */
+export type WsiHashState =
+    | ({ slideId: string } & WsiHashViewport)
+    | { slideId: string; x?: undefined; y?: undefined; z?: undefined };
+
+export function hasWsiHashViewport(
+    state: WsiHashState | null | undefined
+): state is { slideId: string } & WsiHashViewport {
+    return !!state && state.x !== undefined;
+}
 
 export function buildWsiHash({
     selectedSlideId,
@@ -58,7 +72,7 @@ export function writeSelectedSlideHashToCurrentUrl(
         return window.location.href;
     }
 
-    if (existing) {
+    if (hasWsiHashViewport(existing)) {
         return writeWsiHashToCurrentUrl(
             `wsi:slide=${encodeURIComponent(selectedSlideId)}&x=${Math.round(
                 existing.x
@@ -116,10 +130,15 @@ export function readWsiHashState(): WsiHashState | null {
     try {
         const params = new URLSearchParams(hash.slice(prefix.length));
         const slideId = params.get('slide') ?? '';
+        if (!slideId) return null;
+        if (!params.has('x') && !params.has('y') && !params.has('z')) {
+            return { slideId };
+        }
         const x = parseFloat(params.get('x') ?? 'NaN');
         const y = parseFloat(params.get('y') ?? 'NaN');
         const z = parseFloat(params.get('z') ?? 'NaN');
-        if (!slideId || !isFinite(x) || !isFinite(y) || !isFinite(z)) {
+        // A partial or malformed viewport is rejected rather than guessed.
+        if (!isFinite(x) || !isFinite(y) || !isFinite(z)) {
             return null;
         }
         return { slideId, x, y, z };

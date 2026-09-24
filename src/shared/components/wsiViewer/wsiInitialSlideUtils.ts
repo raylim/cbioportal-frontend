@@ -6,15 +6,27 @@ export interface InitialSlideEntry {
     sample: Sample;
 }
 
+export interface InitialSlideOptions {
+    preferredSampleId?: string;
+    /** Slide restored from the URL hash; takes precedence over all others. */
+    preferredSlideId?: string;
+    /** Slide named by an `imageId` link; used when no hash slide matches. */
+    requestedImageId?: string;
+    stainFilter: WsiStainFilter;
+}
+
+/**
+ * Picks the initial slide. Precedence: the hash slide, then the requested
+ * link slide, then the default ranking (preferred sample and stain, H&E,
+ * first). Unknown IDs fall through to the next level.
+ */
 function chooseInitialServableSlideInternal(
     allSlides: Iterable<InitialSlideEntry>,
-    options: {
-        preferredSampleId?: string;
-        preferredSlideId?: string;
-        stainFilter: WsiStainFilter;
+    options: InitialSlideOptions & {
         matchesEntry?: (entry: InitialSlideEntry) => boolean;
     }
 ): InitialSlideEntry | undefined {
+    let requested: InitialSlideEntry | undefined;
     let preferredSampleMatchingStain: InitialSlideEntry | undefined;
     let preferredSampleHne: InitialSlideEntry | undefined;
     let preferredSampleAny: InitialSlideEntry | undefined;
@@ -36,6 +48,13 @@ function chooseInitialServableSlideInternal(
             entry.slide.image_id === options.preferredSlideId
         ) {
             return entry;
+        }
+
+        if (
+            options.requestedImageId &&
+            entry.slide.image_id === options.requestedImageId
+        ) {
+            requested ??= entry;
         }
 
         const inPreferredSample =
@@ -65,6 +84,7 @@ function chooseInitialServableSlideInternal(
     }
 
     return (
+        requested ??
         preferredSampleMatchingStain ??
         preferredSampleHne ??
         preferredSampleAny ??
@@ -76,21 +96,14 @@ function chooseInitialServableSlideInternal(
 
 export function chooseInitialServableSlide(
     allSlides: InitialSlideEntry[],
-    options: {
-        preferredSampleId?: string;
-        preferredSlideId?: string;
-        stainFilter: WsiStainFilter;
-    }
+    options: InitialSlideOptions
 ): InitialSlideEntry | undefined {
     return chooseInitialServableSlideInternal(allSlides, options);
 }
 
 export function chooseInitialMatchingServableSlide(
     allSlides: Iterable<InitialSlideEntry>,
-    options: {
-        preferredSampleId?: string;
-        preferredSlideId?: string;
-        stainFilter: WsiStainFilter;
+    options: InitialSlideOptions & {
         matchesEntry: (entry: InitialSlideEntry) => boolean;
     }
 ): InitialSlideEntry | undefined {

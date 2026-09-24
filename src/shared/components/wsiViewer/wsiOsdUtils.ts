@@ -1,5 +1,5 @@
 import { TileMetadata } from './wsiViewerTypes';
-import { WsiHashState } from './wsiViewStateUtils';
+import { hasWsiHashViewport, WsiHashState } from './wsiViewStateUtils';
 import { buildWsiRequestHeaders } from './wsiUrls';
 
 const OSD_NAVIGATOR_BOTTOM_OFFSET_PX = '48px';
@@ -151,7 +151,10 @@ export function restoreOrHomeViewport({
     const viewport = osdViewer?.viewport;
     if (!viewport) return;
 
-    if (hashState && hashState.slideId === selectedSlideId) {
+    if (
+        hasWsiHashViewport(hashState) &&
+        hashState.slideId === selectedSlideId
+    ) {
         const maxX = meta?.dimensions.width
             ? meta.dimensions.width - 1
             : undefined;

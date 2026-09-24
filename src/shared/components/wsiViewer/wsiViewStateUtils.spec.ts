@@ -4,7 +4,9 @@
 import {
     buildWsiHash,
     clearWsiHashFromCurrentUrl,
+    hasWsiHashViewport,
     readWsiHashState,
+    writeSelectedSlideHashToCurrentUrl,
     writeWsiHashToCurrentUrl,
 } from './wsiViewStateUtils';
 
@@ -81,5 +83,41 @@ describe('wsiViewStateUtils', () => {
         clearWsiHashFromCurrentUrl();
         expect(window.location.hash).toBe('#other=1');
         expect(replaceStateSpy).not.toHaveBeenCalled();
+    });
+
+    it('reads a coordinate-less slide selection hash', () => {
+        window.location.hash = `#wsi:slide=${encodeURIComponent('slide id/1')}`;
+
+        const state = readWsiHashState();
+
+        expect(state).toEqual({ slideId: 'slide id/1' });
+        expect(hasWsiHashViewport(state)).toBe(false);
+    });
+
+    it('rejects a partial or malformed viewport', () => {
+        window.location.hash = '#wsi:slide=slide-1&x=1&y=2';
+        expect(readWsiHashState()).toBeNull();
+        window.location.hash = '#wsi:slide=slide-1&x=1&y=2&z=bad';
+        expect(readWsiHashState()).toBeNull();
+        window.location.hash = '#wsi:x=1&y=2&z=3';
+        expect(readWsiHashState()).toBeNull();
+    });
+
+    it('keeps a coordinate-less selection when switching slides', () => {
+        window.location.hash = '#wsi:slide=slide-1';
+
+        const href = writeSelectedSlideHashToCurrentUrl('slide-2');
+
+        expect(href).toMatch(/#wsi:slide=slide-2$/);
+        expect(readWsiHashState()).toEqual({ slideId: 'slide-2' });
+    });
+
+    it('carries the viewport when switching slides from a full hash', () => {
+        window.location.hash = '#wsi:slide=slide-1&x=1&y=2&z=3';
+
+        const href = writeSelectedSlideHashToCurrentUrl('slide-2');
+
+        expect(href).toContain('#wsi:slide=slide-2&x=1&y=2&z=3.000000');
+        expect(hasWsiHashViewport(readWsiHashState())).toBe(true);
     });
 });

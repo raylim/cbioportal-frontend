@@ -102,6 +102,12 @@ interface Props {
     pathologyFilter?: PathologySlideFilter;
     /** Authenticated subject scope used to isolate protected in-memory caches. */
     authScope?: string;
+    /**
+     * Slide named by an `imageId` viewer link. A URL hash selection wins over
+     * it; an ID absent from the loaded hierarchy shows a notice and falls
+     * back to the default slide without any backend lookup.
+     */
+    requestedImageId?: string;
 }
 
 interface CoordBarViewerState {
@@ -178,6 +184,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
     // Keep the hierarchy object identity stable while viewer state changes.
     // The observable version invalidates derived row caches.
     @observable private hierarchyDataVersion = 0;
+    @observable private requestedSlideNoticeDismissed = false;
     private slideSelectionTimer: ReturnType<typeof setTimeout> | null = null;
     private cachedWsiRows:
         | {
@@ -481,6 +488,8 @@ export default class WSIViewer extends React.Component<Props, {}> {
         const authScopeChanged = prev.authScope !== this.props.authScope;
         const preferredSampleChanged =
             prev.preferredSampleId !== this.props.preferredSampleId;
+        const requestedImageIdChanged =
+            prev.requestedImageId !== this.props.requestedImageId;
         const pathologyFilterChanged =
             !!prev.pathologyFilter !== !!this.props.pathologyFilter ||
             prev.pathologyFilter?.sampleId !==
@@ -504,6 +513,10 @@ export default class WSIViewer extends React.Component<Props, {}> {
 
         if (timepointFilterChanged) {
             this.timepointDays = this.props.initialTimepointDays;
+        }
+
+        if (requestedImageIdChanged) {
+            this.requestedSlideNoticeDismissed = false;
         }
 
         if (authScopeChanged) {
@@ -539,7 +552,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
             timepointFilterChanged
         ) {
             void this.reselectSlideForCurrentFilters();
-        } else if (preferredSampleChanged) {
+        } else if (preferredSampleChanged || requestedImageIdChanged) {
             void this.reselectPreferredSampleSlide();
         }
     }
@@ -726,6 +739,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
             {
                 preferredSampleId: this.props.preferredSampleId,
                 preferredSlideId: hashState?.slideId,
+                requestedImageId: this.props.requestedImageId,
                 stainFilter: this.stainFilter,
                 matchesEntry: entry =>
                     !preferredImageIds ||
@@ -835,6 +849,23 @@ export default class WSIViewer extends React.Component<Props, {}> {
                     sample
                 ).map(({ slide }) => ({ slide, sample }))
             );
+    }
+
+    /** True when an `imageId` link names a slide this patient cannot serve. */
+    @computed get requestedSlideUnavailable(): boolean {
+        const requestedImageId = this.props.requestedImageId;
+        return (
+            !!requestedImageId &&
+            !!this.hierarchy &&
+            !this.servableSlides.some(
+                entry => entry.slide.image_id === requestedImageId
+            )
+        );
+    }
+
+    @action.bound
+    private dismissRequestedSlideNotice() {
+        this.requestedSlideNoticeDismissed = true;
     }
 
     @computed get tileServerBase(): string {
@@ -1122,6 +1153,44 @@ export default class WSIViewer extends React.Component<Props, {}> {
                             <i className="fa fa-home" />
                         </button>
                     </div>
+                    {this.requestedSlideUnavailable &&
+                        !this.requestedSlideNoticeDismissed && (
+                            <div
+                                role="status"
+                                data-testid="wsi-requested-slide-unavailable"
+                                style={{
+                                    position: 'absolute',
+                                    top: 8,
+                                    left: '50%',
+                                    transform: 'translateX(-50%)',
+                                    zIndex: 120,
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: 8,
+                                    padding: '6px 10px',
+                                    borderRadius: 3,
+                                    color: C.text,
+                                    background: '#fcf8e3',
+                                    border: '1px solid #faebcc',
+                                    boxShadow: '0 1px 4px rgba(0,0,0,0.2)',
+                                    fontSize: 12,
+                                }}
+                            >
+                                <span>
+                                    The requested slide is not available.
+                                    Showing the default slide instead.
+                                </span>
+                                <button
+                                    type="button"
+                                    className="close"
+                                    aria-label="Dismiss"
+                                    onClick={this.dismissRequestedSlideNotice}
+                                    style={{ float: 'none', fontSize: 16 }}
+                                >
+                                    &times;
+                                </button>
+                            </div>
+                        )}
                     {this.spinnerVisible && selectedSlide && (
                         <div
                             data-testid="wsi-loading-spinner"

@@ -142,4 +142,22 @@ describe('buildOsdOptions', () => {
         expect(viewport.zoomTo).toHaveBeenCalledWith(4, undefined, true);
         expect(applyConstraints).toHaveBeenCalledWith(true);
     });
+
+    it('fits a slide selected by a coordinate-less hash to the view', () => {
+        const viewport = {
+            panTo: jest.fn(),
+            zoomTo: jest.fn(),
+            goHome: jest.fn(),
+        };
+
+        restoreOrHomeViewport({
+            osdViewer: { viewport },
+            hashState: { slideId: '42' },
+            selectedSlideId: '42',
+            openSeadragon: {},
+        });
+
+        expect(viewport.goHome).toHaveBeenCalledWith(true);
+        expect(viewport.panTo).not.toHaveBeenCalled();
+    });
 });

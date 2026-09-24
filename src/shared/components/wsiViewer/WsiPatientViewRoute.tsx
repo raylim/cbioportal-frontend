@@ -12,6 +12,12 @@ interface Props {
 export default function WsiPatientViewRoute({ match, location }: Props) {
     const query = parse(location.search || '');
     const studyId = typeof query.studyId === 'string' ? query.studyId : '';
+    // Viewer links name one slide: /wsi/patient/{patient}?studyId=..&imageId=..
+    // The router basename supplies any deployment context path.
+    const requestedImageId =
+        typeof query.imageId === 'string' && query.imageId
+            ? query.imageId
+            : undefined;
     const tileServerUrl = getServerConfig().msk_wsi_tile_server_url;
 
     if (!studyId || !tileServerUrl) {
@@ -34,6 +40,7 @@ export default function WsiPatientViewRoute({ match, location }: Props) {
             tileServerUrl={tileServerUrl}
             authScope={getServerConfig().user_display_name || 'anonymousUser'}
             height={height}
+            requestedImageId={requestedImageId}
         />
     );
 }

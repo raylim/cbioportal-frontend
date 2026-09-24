@@ -12,12 +12,16 @@ jest.mock('./wsiOpenSeadragonLoader', () => ({
     hasPreloadedOpenSeadragon: () => false,
 }));
 
-function makeInstance(url = 'https://tiles.example.com/patient/P-1') {
+function makeInstance(
+    url = 'https://tiles.example.com/patient/P-1',
+    extraProps: Record<string, unknown> = {}
+) {
     return new (WSIViewer as any)({
         tileServerUrl: url.replace(/\/patient\/[^/]+\/?$/, ''),
         hierarchyUrl: `/api/wsi/v2/hierarchy/study/P-1`,
         patientId: 'P-1',
         height: 500,
+        ...extraProps,
     });
 }
 
@@ -104,9 +108,9 @@ describe('WSIViewer foundation behavior', () => {
             makeSlide('slide-b', false),
         ]);
 
-        expect(instance.servableSlides.map((entry: any) => entry.slide.image_id)).toEqual([
-            'slide-a',
-        ]);
+        expect(
+            instance.servableSlides.map((entry: any) => entry.slide.image_id)
+        ).toEqual(['slide-a']);
         expect(instance.servableSlides[0].sample.sample_id).toBe('S-1');
     });
 
@@ -116,7 +120,9 @@ describe('WSIViewer foundation behavior', () => {
 
     it('renders loading and failure states without a hierarchy', () => {
         const instance = makeInstance();
-        expect(TestRenderer.create(instance.render()).root.findByType('div')).toBeTruthy();
+        expect(
+            TestRenderer.create(instance.render()).root.findByType('div')
+        ).toBeTruthy();
 
         action(() => {
             instance.loading = false;
@@ -143,5 +149,82 @@ describe('WSIViewer foundation behavior', () => {
         expect(readWsiHashState()).toBeNull();
         window.location.hash = '#wsi:slide=slide-a&x=bad&y=2&z=1';
         expect(readWsiHashState()).toBeNull();
+    });
+
+    it('parses a coordinate-less selection hash', () => {
+        window.location.hash = '#wsi:slide=slide-a';
+        expect(readWsiHashState()).toEqual({ slideId: 'slide-a' });
+    });
+
+    describe('requested imageId', () => {
+        const slides = () => [
+            makeSlide('slide-a'),
+            makeSlide('slide id/b #2'),
+            makeSlide('slide-c'),
+        ];
+
+        function loadedInstance(requestedImageId?: string) {
+            const instance = makeInstance(undefined, { requestedImageId });
+            action(() => {
+                instance.hierarchy = makeHierarchy(slides());
+                instance.loading = false;
+            })();
+            return instance;
+        }
+
+        it('selects the requested slide, including encoded IDs', () => {
+            const instance = loadedInstance('slide id/b #2');
+
+            expect(
+                instance.chooseInitialServableSlide(instance.servableSlides)
+                    .slide.image_id
+            ).toBe('slide id/b #2');
+            expect(instance.requestedSlideUnavailable).toBe(false);
+        });
+
+        it('lets a hash selection win over the requested slide', () => {
+            const instance = loadedInstance('slide id/b #2');
+            window.location.hash = '#wsi:slide=slide-c&x=10&y=20&z=1';
+
+            expect(
+                instance.chooseInitialServableSlide(instance.servableSlides)
+                    .slide.image_id
+            ).toBe('slide-c');
+        });
+
+        it('shows a notice and the default slide for an unknown ID', () => {
+            const instance = loadedInstance('missing-slide');
+
+            expect(
+                instance.chooseInitialServableSlide(instance.servableSlides)
+                    .slide.image_id
+            ).toBe('slide-a');
+            expect(instance.requestedSlideUnavailable).toBe(true);
+            const rendered = TestRenderer.create(instance.render());
+            const notice = rendered.root.findByProps({
+                'data-testid': 'wsi-requested-slide-unavailable',
+            });
+            expect(notice.findByType('span').children.join('')).toContain(
+                'The requested slide is not available'
+            );
+        });
+
+        it('treats a non-servable requested slide as unavailable', () => {
+            const instance = makeInstance(undefined, {
+                requestedImageId: 'slide-x',
+            });
+            action(() => {
+                instance.hierarchy = makeHierarchy([
+                    makeSlide('slide-a'),
+                    makeSlide('slide-x', false),
+                ]);
+            })();
+
+            expect(instance.requestedSlideUnavailable).toBe(true);
+        });
+
+        it('shows no notice without a requested slide', () => {
+            expect(loadedInstance().requestedSlideUnavailable).toBe(false);
+        });
     });
 });

@@ -177,3 +177,69 @@ describe('chooseInitialServableSlide', () => {
         ).toBe(accepted);
     });
 });
+
+describe('chooseInitialServableSlide requested image', () => {
+    const preferred = makeSample('S-preferred');
+    const other = makeSample('S-other');
+    const hne = { slide: makeSlide({ image_id: 'A' }), sample: preferred };
+    const encoded = {
+        slide: makeSlide({
+            image_id: 'slide id/2 #x',
+            is_hne: false,
+            is_ihc: true,
+            stain_name: 'IHC',
+        }),
+        sample: other,
+    };
+    const third = { slide: makeSlide({ image_id: 'C' }), sample: other };
+
+    it('selects the requested image over the default ranking', () => {
+        expect(
+            chooseInitialServableSlide([hne, encoded, third], {
+                preferredSampleId: 'S-preferred',
+                requestedImageId: 'slide id/2 #x',
+                stainFilter: 'hne',
+            })
+        ).toBe(encoded);
+    });
+
+    it('lets the hash slide win over the requested image', () => {
+        expect(
+            chooseInitialServableSlide([hne, encoded, third], {
+                preferredSlideId: 'C',
+                requestedImageId: 'slide id/2 #x',
+                stainFilter: 'all',
+            })
+        ).toBe(third);
+    });
+
+    it('uses the requested image when the hash slide is unknown', () => {
+        expect(
+            chooseInitialServableSlide([hne, encoded, third], {
+                preferredSlideId: 'missing',
+                requestedImageId: 'C',
+                stainFilter: 'all',
+            })
+        ).toBe(third);
+    });
+
+    it('falls back to the default slide for an unknown requested image', () => {
+        expect(
+            chooseInitialServableSlide([encoded, hne, third], {
+                preferredSampleId: 'S-preferred',
+                requestedImageId: 'missing',
+                stainFilter: 'all',
+            })
+        ).toBe(hne);
+    });
+
+    it('ignores a requested image excluded by the entry filter', () => {
+        expect(
+            chooseInitialMatchingServableSlide([hne, encoded, third], {
+                requestedImageId: 'slide id/2 #x',
+                stainFilter: 'all',
+                matchesEntry: entry => entry.sample === preferred,
+            })
+        ).toBe(hne);
+    });
+});
