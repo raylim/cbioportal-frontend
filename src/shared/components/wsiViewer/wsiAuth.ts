@@ -143,15 +143,30 @@ export type ResourceAccessTarget = {
     resourceDataId: string;
 };
 const resourceAccessTargets = new Map<string, ResourceAccessTarget>();
+/** Hierarchy refreshers keyed by study and patient, used after a stale 404. */
+const resourceAccessRefreshers = new Map<string, () => Promise<unknown>>();
+const pendingResourceAccessRefreshes = new Map<string, Promise<unknown>>();
 
 function resourceAccessKey(studyId: string, imageId: string): string {
     return `${studyId}::${imageId}`;
 }
 
+function resourcePatientKey(studyId: string, patientId: string): string {
+    return `${studyId}::${patientId}`;
+}
+
+/**
+ * Registers the resource identity of every slide in a loaded hierarchy. The
+ * hierarchy is authoritative for its study and patient, so targets from an
+ * earlier load of the same patient are replaced rather than merged; this
+ * prunes resource-data row IDs that a reimport has removed.
+ */
 export function registerWsiResourceAccess(
     studyId: string,
-    hierarchy: PatientHierarchy
+    hierarchy: PatientHierarchy,
+    refresh?: () => Promise<unknown>
 ): void {
+    clearWsiResourceAccessTargets(studyId, hierarchy.patient_id);
     hierarchy.samples.forEach(sample =>
         sample.parts.forEach(part =>
             part.blocks.forEach(block =>
@@ -170,6 +185,12 @@ export function registerWsiResourceAccess(
             )
         )
     );
+    if (refresh) {
+        resourceAccessRefreshers.set(
+            resourcePatientKey(studyId, hierarchy.patient_id),
+            refresh
+        );
+    }
 }
 
 /** Registers a resource identity when a caller already has a selected slide. */
@@ -181,25 +202,83 @@ export function registerWsiResourceAccessTarget(
     resourceAccessTargets.set(resourceAccessKey(studyId, imageId), target);
 }
 
-function slideAccessKey(
-    studyId: string,
-    imageId: string,
-    authScope: string
-): string {
-    return `${normalizeWsiAuthScope(authScope)}::${studyId}::${imageId}`;
+/**
+ * Removes registered resource identities. With no arguments every target is
+ * removed; with a study (and optionally a patient) only matching targets are.
+ */
+export function clearWsiResourceAccessTargets(
+    studyId?: string,
+    patientId?: string
+): void {
+    if (studyId === undefined) {
+        resourceAccessTargets.clear();
+        resourceAccessRefreshers.clear();
+        pendingResourceAccessRefreshes.clear();
+        return;
+    }
+    for (const [key, target] of resourceAccessTargets) {
+        if (
+            key.startsWith(`${studyId}::`) &&
+            (patientId === undefined || target.patientId === patientId)
+        ) {
+            resourceAccessTargets.delete(key);
+        }
+    }
+    const patientPrefix =
+        patientId === undefined
+            ? `${studyId}::`
+            : resourcePatientKey(studyId, patientId);
+    for (const refreshers of [
+        resourceAccessRefreshers,
+        pendingResourceAccessRefreshes,
+    ] as Array<Map<string, unknown>>) {
+        for (const key of refreshers.keys()) {
+            if (
+                patientId === undefined
+                    ? key.startsWith(patientPrefix)
+                    : key === patientPrefix
+            ) {
+                refreshers.delete(key);
+            }
+        }
+    }
 }
 
-async function requestSlideAccess(
+function refreshResourceAccessTargets(
     studyId: string,
-    imageId: string,
-    authScope: string
-): Promise<WsiSlideAccess> {
+    patientId: string
+): Promise<unknown> | undefined {
+    const key = resourcePatientKey(studyId, patientId);
+    const pending = pendingResourceAccessRefreshes.get(key);
+    if (pending) return pending;
+    const refresh = resourceAccessRefreshers.get(key);
+    if (!refresh) return undefined;
+    const request = refresh().finally(() => {
+        if (pendingResourceAccessRefreshes.get(key) === request) {
+            pendingResourceAccessRefreshes.delete(key);
+        }
+    });
+    pendingResourceAccessRefreshes.set(key, request);
+    return request;
+}
+
+function getResourceAccessTarget(
+    studyId: string,
+    imageId: string
+): ResourceAccessTarget {
     const target = resourceAccessTargets.get(
         resourceAccessKey(studyId, imageId)
     );
     if (!target) {
         throw new Error('WSI resource selection is unavailable');
     }
+    return target;
+}
+
+function fetchResourceAccess(
+    studyId: string,
+    target: ResourceAccessTarget
+): Promise<Response> {
     const url = new URL(
         buildCBioPortalAPIUrl(
             `api/wsi/v2/resources/${encodeURIComponent(
@@ -212,10 +291,49 @@ async function requestSlideAccess(
             ? 'http://localhost'
             : window.location.origin
     );
-    const response = await fetch(url.toString(), {
+    return fetch(url.toString(), {
         credentials: 'same-origin',
         cache: 'no-store',
     });
+}
+
+/**
+ * Access is cached per subject, slide and resource identity, so a capability
+ * issued for a resource-data row that a reimport replaced is never reused.
+ */
+function slideAccessKey(
+    studyId: string,
+    imageId: string,
+    authScope: string,
+    target: ResourceAccessTarget
+): string {
+    return [
+        normalizeWsiAuthScope(authScope),
+        studyId,
+        imageId,
+        target.patientId,
+        target.resourceId,
+        target.resourceDataId,
+    ].join('::');
+}
+
+async function requestSlideAccess(
+    studyId: string,
+    imageId: string,
+    authScope: string
+): Promise<WsiSlideAccess> {
+    let target = getResourceAccessTarget(studyId, imageId);
+    let response = await fetchResourceAccess(studyId, target);
+    if (response.status === 404) {
+        // A reimport can replace resource-data rows. Reload the hierarchy
+        // once, bypassing its cache, and retry with the new identity.
+        const refresh = refreshResourceAccessTargets(studyId, target.patientId);
+        if (refresh) {
+            await refresh;
+            target = getResourceAccessTarget(studyId, imageId);
+            response = await fetchResourceAccess(studyId, target);
+        }
+    }
     if (!response.ok) {
         throw new Error(`WSI authorization failed (${response.status})`);
     }
@@ -237,7 +355,10 @@ async function requestSlideAccess(
         ...payload,
         expiresAt: Date.now() + payload.expiresIn * 1000,
     };
-    slideAccess.set(slideAccessKey(studyId, imageId, authScope), access);
+    slideAccess.set(
+        slideAccessKey(studyId, imageId, authScope, target),
+        access
+    );
     return access;
 }
 
@@ -251,7 +372,16 @@ export function getWsiSlideAccess(
         return Promise.reject(new Error('WSI study and slide are required'));
     }
     const scopedAuth = normalizeWsiAuthScope(authScope);
-    const key = slideAccessKey(studyId, imageId, scopedAuth);
+    let target: ResourceAccessTarget;
+    try {
+        // Unknown images fail here, before any request or cached capability:
+        // access is only ever used for a resource identity published by a
+        // loaded hierarchy.
+        target = getResourceAccessTarget(studyId, imageId);
+    } catch (error) {
+        return Promise.reject(error);
+    }
+    const key = slideAccessKey(studyId, imageId, scopedAuth, target);
     if (!forceRefresh) {
         const cached = slideAccess.get(key);
         if (
@@ -283,12 +413,10 @@ export function clearWsiSlideAccess(studyId?: string): void {
         for (const key of pendingSlideAccess.keys()) {
             if (key.includes(`::${studyId}::`)) pendingSlideAccess.delete(key);
         }
-        for (const key of resourceAccessTargets.keys()) {
-            if (key.startsWith(`${studyId}::`)) resourceAccessTargets.delete(key);
-        }
+        clearWsiResourceAccessTargets(studyId);
         return;
     }
     slideAccess.clear();
     pendingSlideAccess.clear();
-    resourceAccessTargets.clear();
+    clearWsiResourceAccessTargets();
 }

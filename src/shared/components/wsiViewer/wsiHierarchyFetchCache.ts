@@ -4,13 +4,20 @@ import {
     WsiV2Hierarchy,
     WsiV2Slide,
 } from './wsiViewerTypes';
-import { normalizeWsiAuthScope, registerWsiResourceAccess } from './wsiAuth';
+import {
+    clearWsiResourceAccessTargets,
+    normalizeWsiAuthScope,
+    registerWsiResourceAccess,
+} from './wsiAuth';
 
 const HIERARCHY_CACHE_TTL_MS = 5 * 60 * 1000;
 
 type CachedHierarchyEntry = {
     expiresAt: number;
     promise: Promise<PatientHierarchy>;
+    /** Study whose resource access targets this entry registered. */
+    studyId?: string;
+    patientId?: string;
 };
 
 const hierarchyCache = new Map<string, CachedHierarchyEntry>();
@@ -220,26 +227,6 @@ function normalizeHierarchyPayload(
     );
 }
 
-function patientIdFromHierarchyUrl(url: string): string {
-    const baseUrl =
-        typeof window === 'undefined'
-            ? 'http://localhost'
-            : window.location.href;
-    const pathname = new URL(url, baseUrl).pathname;
-    return decodeURIComponent(pathname.split('/').pop() || '');
-}
-
-function studyIdFromHierarchyUrl(url: string): string {
-    const baseUrl =
-        typeof window === 'undefined'
-            ? 'http://localhost'
-            : window.location.href;
-    const segments = new URL(url, baseUrl).pathname
-        .split('/')
-        .filter(Boolean);
-    return decodeURIComponent(segments.at(-2) || '');
-}
-
 function clonePatientHierarchy(hierarchy: PatientHierarchy): PatientHierarchy {
     // The hierarchy is plain JSON and consumers mutate it after load, so return
     // a fresh deep copy to keep the shared cache immutable from callers.
@@ -285,20 +272,58 @@ function wrapWithAbort<T>(
     });
 }
 
+/**
+ * Publishes the resource identities of a hierarchy for slide access, but only
+ * while that hierarchy is still the cached one for its URL. A superseded
+ * response (for example one overtaken by a refresh) must not overwrite the
+ * newer targets.
+ */
+function registerIfCurrent(
+    url: string,
+    authScope: string | undefined,
+    promise: Promise<PatientHierarchy>,
+    hierarchy: PatientHierarchy,
+    studyId: string | undefined
+): void {
+    if (!studyId) return;
+    const current = hierarchyCache.get(hierarchyCacheKey(url, authScope));
+    if (current?.promise !== promise) return;
+    registerWsiResourceAccess(studyId, hierarchy, () =>
+        refreshPatientHierarchy(url, authScope, studyId, hierarchy.patient_id)
+    );
+}
+
 function getOrCreateHierarchyRequest(
     url: string,
-    authScope?: string
+    authScope: string | undefined,
+    studyId: string | undefined,
+    patientId: string | undefined,
+    bypassCache = false
 ): Promise<PatientHierarchy> {
     const cacheKey = hierarchyCacheKey(url, authScope);
     const now = Date.now();
     const cached = hierarchyCache.get(cacheKey);
-    if (cached && cached.expiresAt > now) {
-        return cached.promise;
+    if (!bypassCache && cached && cached.expiresAt > now) {
+        const cachedPromise = cached.promise;
+        const targetStudyId = studyId ?? cached.studyId;
+        if (studyId && !cached.studyId) {
+            cached.studyId = studyId;
+        }
+        return cachedPromise.then(hierarchy => {
+            registerIfCurrent(
+                url,
+                authScope,
+                cachedPromise,
+                hierarchy,
+                targetStudyId
+            );
+            return hierarchy;
+        });
     }
 
     const expiresAt = now + HIERARCHY_CACHE_TTL_MS;
 
-    const promise = fetch(url, {
+    const promise: Promise<PatientHierarchy> = fetch(url, {
         cache: 'no-store',
         credentials: 'include',
     })
@@ -309,10 +334,9 @@ function getOrCreateHierarchyRequest(
             const payload = await response.json();
             const hierarchy = normalizeHierarchyPayload(
                 payload,
-                patientIdFromHierarchyUrl(url)
+                patientId ?? ''
             );
-            const studyId = studyIdFromHierarchyUrl(url);
-            if (studyId) registerWsiResourceAccess(studyId, hierarchy);
+            registerIfCurrent(url, authScope, promise, hierarchy, studyId);
             return hierarchy;
         })
         .catch(error => {
@@ -326,33 +350,66 @@ function getOrCreateHierarchyRequest(
     hierarchyCache.set(cacheKey, {
         expiresAt,
         promise,
+        studyId,
+        patientId: patientId ?? '',
     });
     return promise;
+}
+
+/**
+ * Reloads a hierarchy from the network, replacing its cache entry and
+ * re-registering its resource access targets. Used when resource-data row
+ * IDs may have changed, for example after a reimport.
+ */
+export function refreshPatientHierarchy(
+    url: string,
+    authScope: string | undefined,
+    studyId: string,
+    patientId: string
+): Promise<PatientHierarchy> {
+    return getOrCreateHierarchyRequest(
+        url,
+        authScope,
+        studyId,
+        patientId,
+        true
+    );
 }
 
 export function seedPatientHierarchyCache(
     url: string,
     hierarchy: PatientHierarchy,
-    authScope?: string
+    authScope?: string,
+    studyId?: string
 ): void {
     const expiresAt = Date.now() + HIERARCHY_CACHE_TTL_MS;
     const cloned = clonePatientHierarchy(hierarchy);
+    const promise = Promise.resolve(cloned);
     hierarchyCache.set(hierarchyCacheKey(url, authScope), {
         expiresAt,
-        promise: Promise.resolve(cloned),
+        promise,
+        studyId,
+        patientId: cloned.patient_id,
     });
+    registerIfCurrent(url, authScope, promise, cloned, studyId);
 }
 
 export function seedPatientHierarchyCachePromise(
     url: string,
     hierarchyPromise: Promise<PatientHierarchy>,
-    authScope?: string
+    authScope?: string,
+    studyId?: string
 ): void {
     const cacheKey = hierarchyCacheKey(url, authScope);
     const expiresAt = Date.now() + HIERARCHY_CACHE_TTL_MS;
-    const promise = hierarchyPromise
+    const promise: Promise<PatientHierarchy> = hierarchyPromise
         .then(hierarchy => {
             const cloned = clonePatientHierarchy(hierarchy);
+            const current = hierarchyCache.get(cacheKey);
+            if (current?.promise === promise) {
+                current.patientId = cloned.patient_id;
+            }
+            registerIfCurrent(url, authScope, promise, cloned, studyId);
             return cloned;
         })
         .catch(error => {
@@ -366,18 +423,30 @@ export function seedPatientHierarchyCachePromise(
     hierarchyCache.set(cacheKey, {
         expiresAt,
         promise,
+        studyId,
     });
 
     // Keep rejection observable for awaiters while handling unused prefetch work.
     promise.catch(() => undefined);
 }
 
+/**
+ * Loads a patient hierarchy through the shared cache. When `studyId` is given,
+ * every returned hierarchy (network, cached or seeded) registers the resource
+ * identities that slide access requests use. `patientId` is recorded on the
+ * normalized hierarchy; the URL is never parsed for either identity.
+ */
 export async function fetchPatientHierarchyReadOnly(
     url: string,
     signal?: AbortSignal,
-    authScope?: string
+    authScope?: string,
+    studyId?: string,
+    patientId?: string
 ): Promise<PatientHierarchy> {
-    return wrapWithAbort(getOrCreateHierarchyRequest(url, authScope), signal);
+    return wrapWithAbort(
+        getOrCreateHierarchyRequest(url, authScope, studyId, patientId),
+        signal
+    );
 }
 
 export function hasCachedPatientHierarchy(
@@ -391,10 +460,16 @@ export function hasCachedPatientHierarchy(
 
 export function clearPatientHierarchyCache() {
     hierarchyCache.clear();
+    clearWsiResourceAccessTargets();
 }
 
 export function clearPatientHierarchyCacheEntry(url: string): void {
-    for (const key of hierarchyCache.keys()) {
-        if (key.endsWith(`::${url}`)) hierarchyCache.delete(key);
+    for (const [key, entry] of hierarchyCache) {
+        if (key.endsWith(`::${url}`)) {
+            hierarchyCache.delete(key);
+            if (entry.studyId && entry.patientId !== undefined) {
+                clearWsiResourceAccessTargets(entry.studyId, entry.patientId);
+            }
+        }
     }
 }

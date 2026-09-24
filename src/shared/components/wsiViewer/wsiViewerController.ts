@@ -84,6 +84,7 @@ export interface WsiViewerControllerHost {
     getProps(): {
         hierarchyUrl: string;
         studyId?: string;
+        patientId?: string;
         pathologyFilter?: PathologySlideFilter;
         authScope?: string;
     };
@@ -687,15 +688,22 @@ export class WsiViewerController {
         void this.primeOpenSeadragonLoad().catch(() => {});
 
         try {
-            const hierarchyUrl = this.host.getProps().hierarchyUrl;
+            const {
+                hierarchyUrl,
+                authScope,
+                studyId,
+                patientId,
+            } = this.host.getProps();
             const hierarchyCacheHit = hasCachedPatientHierarchy(
                 hierarchyUrl,
-                this.host.getProps().authScope
+                authScope
             );
             const hierarchy = await fetchPatientHierarchyReadOnly(
                 hierarchyUrl,
                 abortController.signal,
-                this.host.getProps().authScope
+                authScope,
+                studyId,
+                patientId
             );
             if (this.initialSlideLoadTrace?.loadSeq === loadSeq) {
                 this.initialSlideLoadTrace.hierarchyCacheHit = hierarchyCacheHit;

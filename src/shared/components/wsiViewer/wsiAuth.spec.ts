@@ -1,7 +1,9 @@
 import {
+    clearWsiResourceAccessTargets,
     clearWsiSlideAccess,
     getWsiSlideAccess,
     isWsiAuthEnabled,
+    registerWsiResourceAccess,
     registerWsiResourceAccessTarget,
 } from './wsiAuth';
 
@@ -168,5 +170,203 @@ describe('WSI access capability', () => {
         await expect(getWsiSlideAccess('study-1', 'slide-1')).rejects.toThrow(
             'Invalid WSI decode policy'
         );
+    });
+
+    describe('resource access targets', () => {
+        const validAccess = {
+            imageId: 'slide-1',
+            sourceUrl: 's3://bucket/slide-1.svs',
+            tileMetadata: {
+                dimensions: { width: 100, height: 80 },
+                levels: 1,
+                level_dimensions: [{ width: 100, height: 80 }],
+                level_downsamples: [1],
+                max_zoom: 0,
+                tile_size: 256,
+                safe_min_level: 0,
+            },
+            thumbnail: {
+                sourceUrl: 's3://bucket/thumbs/slide-1.jpg',
+                width: 128,
+                height: 96,
+                contentType: 'image/jpeg',
+            },
+            accessToken: 'token',
+            tokenType: 'Bearer',
+            expiresIn: 300,
+        };
+        const response = (status: number) =>
+            ({
+                ok: status >= 200 && status < 300,
+                status,
+                json: async () => validAccess,
+            } as Response);
+
+        function hierarchy(slides: Array<[string, string]>): any {
+            return {
+                patient_id: 'patient-1',
+                samples: [
+                    {
+                        sample_id: 'S-1',
+                        parts: [
+                            {
+                                blocks: [
+                                    {
+                                        slides: slides.map(
+                                            ([imageId, rowId]) => ({
+                                                image_id: imageId,
+                                                resource_id: 'WSI_SAMPLE',
+                                                resource_data_id: rowId,
+                                            })
+                                        ),
+                                    },
+                                ],
+                            },
+                        ],
+                    },
+                ],
+            };
+        }
+
+        function requestedPaths(): string[] {
+            return (global.fetch as jest.Mock).mock.calls.map(([url]) =>
+                new URL(String(url)).pathname.replace(
+                    '/api/wsi/v2/resources/',
+                    ''
+                )
+            );
+        }
+
+        beforeEach(() => {
+            clearWsiResourceAccessTargets();
+        });
+
+        it('rejects an unknown image before any request', async () => {
+            registerWsiResourceAccess('study-1', hierarchy([['slide-1', '1']]));
+
+            await expect(
+                getWsiSlideAccess('study-1', 'unknown-slide')
+            ).rejects.toThrow('WSI resource selection is unavailable');
+            await expect(
+                getWsiSlideAccess('other-study', 'slide-1')
+            ).rejects.toThrow('WSI resource selection is unavailable');
+            expect(global.fetch).not.toHaveBeenCalled();
+        });
+
+        it('replaces every target of a patient on re-registration', async () => {
+            registerWsiResourceAccess(
+                'study-1',
+                hierarchy([
+                    ['slide-1', '1'],
+                    ['slide-2', '2'],
+                ])
+            );
+            registerWsiResourceAccess('study-1', hierarchy([['slide-1', '7']]));
+            jest.spyOn(global, 'fetch').mockResolvedValue(response(200));
+
+            await getWsiSlideAccess('study-1', 'slide-1');
+            await expect(
+                getWsiSlideAccess('study-1', 'slide-2')
+            ).rejects.toThrow('WSI resource selection is unavailable');
+            expect(requestedPaths()).toEqual([
+                'study-1/patient-1/WSI_SAMPLE/7/access',
+            ]);
+        });
+
+        it('refreshes the hierarchy once and retries after a 404', async () => {
+            const refresh = jest.fn(async () => {
+                registerWsiResourceAccess(
+                    'study-1',
+                    hierarchy([['slide-1', '8']]),
+                    refresh
+                );
+            });
+            registerWsiResourceAccess(
+                'study-1',
+                hierarchy([['slide-1', '1']]),
+                refresh
+            );
+            jest.spyOn(global, 'fetch')
+                .mockResolvedValueOnce(response(404))
+                .mockResolvedValueOnce(response(200));
+
+            await expect(
+                getWsiSlideAccess('study-1', 'slide-1')
+            ).resolves.toEqual(
+                expect.objectContaining({ accessToken: 'token' })
+            );
+            expect(refresh).toHaveBeenCalledTimes(1);
+            expect(requestedPaths()).toEqual([
+                'study-1/patient-1/WSI_SAMPLE/1/access',
+                'study-1/patient-1/WSI_SAMPLE/8/access',
+            ]);
+        });
+
+        it('surfaces a second 404 without refreshing again', async () => {
+            const refresh = jest.fn(async () => undefined);
+            registerWsiResourceAccess(
+                'study-1',
+                hierarchy([['slide-1', '1']]),
+                refresh
+            );
+            jest.spyOn(global, 'fetch').mockResolvedValue(response(404));
+
+            await expect(
+                getWsiSlideAccess('study-1', 'slide-1')
+            ).rejects.toThrow('WSI authorization failed (404)');
+            expect(refresh).toHaveBeenCalledTimes(1);
+            expect(global.fetch).toHaveBeenCalledTimes(2);
+        });
+
+        it('rejects without a retry when the refreshed hierarchy dropped the slide', async () => {
+            const refresh = jest.fn(async () => {
+                registerWsiResourceAccess(
+                    'study-1',
+                    hierarchy([['slide-2', '9']]),
+                    refresh
+                );
+            });
+            registerWsiResourceAccess(
+                'study-1',
+                hierarchy([['slide-1', '1']]),
+                refresh
+            );
+            jest.spyOn(global, 'fetch').mockResolvedValue(response(404));
+
+            await expect(
+                getWsiSlideAccess('study-1', 'slide-1')
+            ).rejects.toThrow('WSI resource selection is unavailable');
+            expect(global.fetch).toHaveBeenCalledTimes(1);
+        });
+
+        it('does not refresh for access failures other than 404', async () => {
+            const refresh = jest.fn(async () => undefined);
+            registerWsiResourceAccess(
+                'study-1',
+                hierarchy([['slide-1', '1']]),
+                refresh
+            );
+            jest.spyOn(global, 'fetch').mockResolvedValue(response(403));
+
+            await expect(
+                getWsiSlideAccess('study-1', 'slide-1')
+            ).rejects.toThrow('WSI authorization failed (403)');
+            expect(refresh).not.toHaveBeenCalled();
+            expect(global.fetch).toHaveBeenCalledTimes(1);
+        });
+
+        it('reports a 404 once when no refresher is registered', async () => {
+            registerWsiResourceAccessTarget('study-1', 'slide-1', {
+                patientId: 'patient-1',
+                resourceId: 'WSI_SAMPLE',
+                resourceDataId: '42',
+            });
+            jest.spyOn(global, 'fetch').mockResolvedValue(response(404));
+
+            await expect(
+                getWsiSlideAccess('study-1', 'slide-1')
+            ).rejects.toThrow('WSI authorization failed (404)');
+            expect(global.fetch).toHaveBeenCalledTimes(1);
+        });
     });
 });

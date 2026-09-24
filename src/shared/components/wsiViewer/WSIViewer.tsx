@@ -577,6 +577,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
         return {
             hierarchyUrl: this.props.hierarchyUrl,
             studyId: this.props.studyId,
+            patientId: this.props.patientId,
             pathologyFilter: this.activePathologyFilter,
             authScope:
                 this.props.authScope ||
