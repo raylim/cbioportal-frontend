@@ -4,7 +4,7 @@ import {
     WsiV2Hierarchy,
     WsiV2Slide,
 } from './wsiViewerTypes';
-import { normalizeWsiAuthScope } from './wsiAuth';
+import { normalizeWsiAuthScope, registerWsiResourceAccess } from './wsiAuth';
 
 const HIERARCHY_CACHE_TTL_MS = 5 * 60 * 1000;
 
@@ -158,6 +158,8 @@ function normalizeV2Hierarchy(
                     block_label: block.blockLabel,
                     slides: block.slides.map(slide => ({
                         image_id: slide.imageId,
+                        resource_id: slide.resourceId,
+                        resource_data_id: slide.resourceDataId,
                         stain_name: slide.stainName,
                         stain_group: slide.stainGroup,
                         is_hne: slide.isHne,
@@ -225,6 +227,17 @@ function patientIdFromHierarchyUrl(url: string): string {
             : window.location.href;
     const pathname = new URL(url, baseUrl).pathname;
     return decodeURIComponent(pathname.split('/').pop() || '');
+}
+
+function studyIdFromHierarchyUrl(url: string): string {
+    const baseUrl =
+        typeof window === 'undefined'
+            ? 'http://localhost'
+            : window.location.href;
+    const segments = new URL(url, baseUrl).pathname
+        .split('/')
+        .filter(Boolean);
+    return decodeURIComponent(segments.at(-2) || '');
 }
 
 function clonePatientHierarchy(hierarchy: PatientHierarchy): PatientHierarchy {
@@ -298,6 +311,8 @@ function getOrCreateHierarchyRequest(
                 payload,
                 patientIdFromHierarchyUrl(url)
             );
+            const studyId = studyIdFromHierarchyUrl(url);
+            if (studyId) registerWsiResourceAccess(studyId, hierarchy);
             return hierarchy;
         })
         .catch(error => {

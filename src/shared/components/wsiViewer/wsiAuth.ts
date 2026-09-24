@@ -1,6 +1,6 @@
 import { buildCBioPortalAPIUrl } from 'shared/api/urls';
 import { getServerConfig } from 'config/config';
-import { WsiSlideAccess } from './wsiViewerTypes';
+import { PatientHierarchy, WsiSlideAccess } from './wsiViewerTypes';
 
 const CURRENT_WSI_DECODE_POLICY =
     'geometry-v2;tile-max=16777216;thumbnail-max=16777216';
@@ -137,6 +137,40 @@ export function getWsiSessionStorage(): Storage | null {
 
 const slideAccess = new Map<string, WsiSlideAccess>();
 const pendingSlideAccess = new Map<string, Promise<WsiSlideAccess>>();
+type ResourceAccessTarget = {
+    patientId: string;
+    resourceId: string;
+    resourceDataId: string;
+};
+const resourceAccessTargets = new Map<string, ResourceAccessTarget>();
+
+function resourceAccessKey(studyId: string, imageId: string): string {
+    return `${studyId}::${imageId}`;
+}
+
+export function registerWsiResourceAccess(
+    studyId: string,
+    hierarchy: PatientHierarchy
+): void {
+    hierarchy.samples.forEach(sample =>
+        sample.parts.forEach(part =>
+            part.blocks.forEach(block =>
+                block.slides.forEach(slide => {
+                    if (slide.resource_id && slide.resource_data_id) {
+                        resourceAccessTargets.set(
+                            resourceAccessKey(studyId, slide.image_id),
+                            {
+                                patientId: hierarchy.patient_id,
+                                resourceId: slide.resource_id,
+                                resourceDataId: slide.resource_data_id,
+                            }
+                        );
+                    }
+                })
+            )
+        )
+    );
+}
 
 function slideAccessKey(
     studyId: string,
@@ -151,11 +185,19 @@ async function requestSlideAccess(
     imageId: string,
     authScope: string
 ): Promise<WsiSlideAccess> {
+    const target = resourceAccessTargets.get(
+        resourceAccessKey(studyId, imageId)
+    );
+    if (!target) {
+        throw new Error('WSI resource selection is unavailable');
+    }
     const url = new URL(
         buildCBioPortalAPIUrl(
-            `api/wsi/v2/slides/${encodeURIComponent(
+            `api/wsi/v2/resources/${encodeURIComponent(
                 studyId
-            )}/${encodeURIComponent(imageId)}/access`
+            )}/${encodeURIComponent(target.patientId)}/${encodeURIComponent(
+                target.resourceId
+            )}/${encodeURIComponent(target.resourceDataId)}/access`
         ),
         typeof window === 'undefined'
             ? 'http://localhost'

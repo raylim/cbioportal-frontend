@@ -1,5 +1,7 @@
 export interface Slide {
     image_id: string;
+    resource_id?: string;
+    resource_data_id?: string;
     stain_name: string;
     stain_group: string;
     is_hne: boolean;
@@ -99,6 +101,8 @@ export interface PatientHierarchy {
 /** Wire format returned by the normalized WSI v2 hierarchy endpoint. */
 export interface WsiV2Slide {
     imageId: string;
+    resourceId?: string;
+    resourceDataId?: string;
     stainName: string;
     stainGroup: string;
     isHne: boolean;
