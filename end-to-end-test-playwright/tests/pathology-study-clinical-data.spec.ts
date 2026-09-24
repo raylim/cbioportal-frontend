@@ -1,21 +1,155 @@
 import { test, expect, Page } from '../fixtures';
-import { ensureLocalLogin } from './local/helpers';
 
 const DEV_STUDY = {
-    baseUrl: process.env.WSI_VIEWER_BASE_URL ?? '',
-    studyId: process.env.WSI_LIVE_STUDY_ID ?? 'msk_spectrum_tme_2022',
+    studyId: 'wsi-study-clinical-data-contract',
 } as const;
-const MSKIMPACT_BASE_URL = process.env.MSKIMPACT_BASE_URL ?? '';
-
-function requireDevStudy() {
-    test.skip(
-        !DEV_STUDY.baseUrl,
-        'WSI_VIEWER_BASE_URL not set — skipping dev-study pathology e2e tests'
-    );
-}
 
 function studyClinicalDataUrl() {
-    return `${DEV_STUDY.baseUrl}/study/clinicalData?id=${DEV_STUDY.studyId}`;
+    return `/study/clinicalData?id=${DEV_STUDY.studyId}`;
+}
+
+const study = {
+    studyId: DEV_STUDY.studyId,
+    name: 'WSI study clinical-data contract',
+    cancerTypeId: 'wsi-contract',
+    publicStudy: true,
+    groups: 'PUBLIC',
+    status: 0,
+    referenceGenome: 'hg19',
+};
+
+const samples = [
+    {
+        studyId: DEV_STUDY.studyId,
+        patientId: 'WSP-1',
+        sampleId: 'WSS-1',
+        uniquePatientKey: `${DEV_STUDY.studyId}_WSP-1`,
+        uniqueSampleKey: `${DEV_STUDY.studyId}_WSS-1`,
+    },
+    {
+        studyId: DEV_STUDY.studyId,
+        patientId: 'WSP-2',
+        sampleId: 'WSS-2',
+        uniquePatientKey: `${DEV_STUDY.studyId}_WSP-2`,
+        uniqueSampleKey: `${DEV_STUDY.studyId}_WSS-2`,
+    },
+];
+
+const clinicalAttributes = [
+    'WSI_SAMPLE_SLIDE_COUNT',
+    'WSI_PATIENT_SLIDE_COUNT',
+    'WSI_SAMPLE_PART_MATCHED_SLIDE_COUNT',
+    'WSI_SAMPLE_BLOCK_MATCHED_SLIDE_COUNT',
+    'WSI_PATIENT_PART_MATCHED_SLIDE_COUNT',
+    'WSI_PATIENT_BLOCK_MATCHED_SLIDE_COUNT',
+].map(clinicalAttributeId => ({
+    clinicalAttributeId,
+    displayName: clinicalAttributeId,
+    description: clinicalAttributeId,
+    datatype: 'NUMBER',
+    patientAttribute: true,
+    priority: 0,
+    studyId: DEV_STUDY.studyId,
+}));
+
+const sampleClinicalData = {
+    [samples[0].uniqueSampleKey]: [
+        { clinicalAttributeId: 'WSI_SAMPLE_SLIDE_COUNT', value: '7' },
+        {
+            clinicalAttributeId: 'WSI_SAMPLE_PART_MATCHED_SLIDE_COUNT',
+            value: '5',
+        },
+        {
+            clinicalAttributeId: 'WSI_SAMPLE_BLOCK_MATCHED_SLIDE_COUNT',
+            value: '4',
+        },
+    ],
+    [samples[1].uniqueSampleKey]: [
+        { clinicalAttributeId: 'WSI_SAMPLE_SLIDE_COUNT', value: '2' },
+        {
+            clinicalAttributeId: 'WSI_SAMPLE_PART_MATCHED_SLIDE_COUNT',
+            value: '1',
+        },
+        {
+            clinicalAttributeId: 'WSI_SAMPLE_BLOCK_MATCHED_SLIDE_COUNT',
+            value: '1',
+        },
+    ],
+};
+
+async function installStudyMocks(page: Page) {
+    await page.route('**/api/**', route =>
+        route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify([]),
+        })
+    );
+    await page.addInitScript(() => {
+        localStorage.setItem(
+            'frontendConfig',
+            JSON.stringify({
+                serverConfig: {
+                    authenticationMethod: 'none',
+                    skin_hide_download_controls: 'HIDE_ALL',
+                },
+            })
+        );
+    });
+    await page.route('**/config_service', route =>
+        route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify({
+                app_name: 'wsi-study-clinical-data-contract',
+                authenticationMethod: 'none',
+            }),
+        })
+    );
+    await page.route('**/api/studies**', route => {
+        if (new URL(route.request().url()).pathname !== '/api/studies') {
+            return route.fallback();
+        }
+        return route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify([study]),
+        });
+    });
+    await page.route('**/api/filtered-samples/fetch', route =>
+        route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify(samples),
+        })
+    );
+    await page.route('**/api/clinical-attributes/fetch', route =>
+        route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify(clinicalAttributes),
+        })
+    );
+    await page.route('**/api/clinical-data-table/fetch', async route => {
+        const requestBody = route.request().postDataJSON() as {
+            studyViewFilter?: { clinicalDataFilters?: unknown[] };
+        };
+        const filtered =
+            (requestBody.studyViewFilter?.clinicalDataFilters?.length ?? 0) > 0;
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            headers: { 'total-count': filtered ? '600' : '2' },
+            body: JSON.stringify({
+                byUniqueSampleKey: filtered
+                    ? {
+                          [samples[0].uniqueSampleKey]:
+                              sampleClinicalData[samples[0].uniqueSampleKey],
+                      }
+                    : sampleClinicalData,
+            }),
+        });
+    });
 }
 
 async function waitForClinicalDataTable(page: Page) {
@@ -130,8 +264,7 @@ async function sortColumnDescending(page: Page, headerName: string) {
 
 test.describe('study clinical data pathology columns', () => {
     test.beforeEach(async ({ page }) => {
-        requireDevStudy();
-        await ensureLocalLogin(page, DEV_STUDY.baseUrl);
+        await installStudyMocks(page);
     });
 
     test('exposes WSI slide columns through column visibility and sorts by WSI Slides per Patient', async ({
@@ -183,11 +316,7 @@ test.describe('study clinical data pathology columns', () => {
 
 test.describe('private MSK-IMPACT clinical data sorting', () => {
     test.beforeEach(async ({ page }) => {
-        test.skip(
-            !MSKIMPACT_BASE_URL,
-            'MSKIMPACT_BASE_URL not set — skipping private cohort sorting test'
-        );
-        await ensureLocalLogin(page, MSKIMPACT_BASE_URL);
+        await installStudyMocks(page);
     });
 
     test('keeps the filtered cohort total when sorting WSI slides in either direction', async ({
@@ -203,9 +332,7 @@ test.describe('private MSK-IMPACT clinical data sorting', () => {
                 ],
             })
         );
-        await page.goto(
-            `${MSKIMPACT_BASE_URL}/study/clinicalData?id=mskimpact#filterJson=${filterJson}`
-        );
+        await page.goto(`${studyClinicalDataUrl()}#filterJson=${filterJson}`);
         await waitForClinicalDataTable(page);
 
         const resultCount = page
