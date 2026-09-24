@@ -552,7 +552,12 @@ async function gotoWithOptionalLogin(
 
 test.describe('native WSI pathology contract with mocked services', () => {
     test.beforeEach(async ({ page }) => {
-        if (process.env.WSI_MOCK_SKIP_LOGIN === '1') return;
+        if (
+            process.env.WSI_MOCK_SKIP_LOGIN === '1' ||
+            process.env.WSI_AUTHENTICATED_E2E !== 'true'
+        ) {
+            return;
+        }
         await ensureLocalLogin(page, '/');
     });
 
