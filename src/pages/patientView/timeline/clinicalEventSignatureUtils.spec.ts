@@ -7,10 +7,10 @@ import {
 import * as clinicalEventSignatureUtils from './clinicalEventSignatureUtils';
 
 function makeEvent(
-    overrides: Partial<ClinicalEvent> = {},
+    overrides: Partial<ClinicalEvent> & { uniqueSampleKey?: string } = {},
     attributes: Array<{ key: string; value: string }> = []
 ): ClinicalEvent {
-    return {
+    return ({
         eventType: 'TREATMENT',
         patientId: 'P-1',
         studyId: 'study',
@@ -20,7 +20,7 @@ function makeEvent(
         endNumberOfDaysSinceDiagnosis: 5,
         attributes,
         ...overrides,
-    } as ClinicalEvent;
+    } as unknown) as ClinicalEvent;
 }
 
 describe('clinicalEventSignatureUtils', () => {

@@ -6,7 +6,7 @@ function event(
     attributes: Array<{ key: string; value: string }> = [],
     start = 5
 ): ClinicalEvent {
-    return {
+    return ({
         eventType,
         patientId: 'P-1',
         studyId: 'study',
@@ -15,7 +15,7 @@ function event(
         startNumberOfDaysSinceDiagnosis: start,
         endNumberOfDaysSinceDiagnosis: start,
         attributes,
-    } as ClinicalEvent;
+    } as unknown) as ClinicalEvent;
 }
 
 describe('groupTimelineData', () => {
@@ -31,12 +31,26 @@ describe('groupTimelineData', () => {
             ])
         ).toEqual({
             TREATMENT: [
-                ['PATIENT_ID', 'START_DATE', 'STOP_DATE', 'EVENT_TYPE', 'B', 'A', 'C'],
+                [
+                    'PATIENT_ID',
+                    'START_DATE',
+                    'STOP_DATE',
+                    'EVENT_TYPE',
+                    'B',
+                    'A',
+                    'C',
+                ],
                 ['P-1', '5', '5', 'TREATMENT', '2', '1', ''],
                 ['P-1', '5', '5', 'TREATMENT', '', '', '3'],
             ],
             STATUS: [
-                ['PATIENT_ID', 'START_DATE', 'STOP_DATE', 'EVENT_TYPE', 'STATE'],
+                [
+                    'PATIENT_ID',
+                    'START_DATE',
+                    'STOP_DATE',
+                    'EVENT_TYPE',
+                    'STATE',
+                ],
                 ['P-1', '5', '5', 'STATUS', 'ACTIVE'],
             ],
         });

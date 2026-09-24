@@ -1,10 +1,12 @@
-import { ClinicalEvent } from 'cbioportal-ts-api-client';
+import { ClinicalEvent, ClinicalEventData } from 'cbioportal-ts-api-client';
 import { TimelineEvent } from 'cbioportal-clinical-timeline';
 import {
     buildClinicalEventAttributesSignature,
     buildClinicalEventSignature,
 } from './clinicalEventSignatureUtils';
 import { PATHOLOGY_EVENT_ATTRIBUTE_KEYS } from './pathologyTimelineUtils';
+
+type ClinicalEventAttribute = Pick<ClinicalEventData, 'key' | 'value'>;
 
 export type PathologyPresentationItem = Readonly<{
     date: number | null | undefined;
@@ -197,7 +199,7 @@ export function joinDistinctPathologyValuesPair(
 }
 
 function readPathologyAttributeValue(
-    attributes: ClinicalEvent['attributes'],
+    attributes: ClinicalEventAttribute[],
     key: string
 ): string {
     for (let index = 0; index < (attributes || []).length; index += 1) {
@@ -209,7 +211,7 @@ function readPathologyAttributeValue(
 }
 
 export function extractPathologyPresentationItemFromAttributes(
-    attributes: ClinicalEvent['attributes'],
+    attributes: ClinicalEventAttribute[],
     date: number | null | undefined
 ): PathologyPresentationItem {
     const servableCount =

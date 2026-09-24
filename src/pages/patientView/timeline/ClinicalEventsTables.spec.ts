@@ -10,14 +10,13 @@ function makePathologyEvent(
     nonServableCount: number,
     overrides: Partial<ClinicalEvent> = {},
     extraAttributes: Array<{
-        clinicalEventId: 0;
         key: string;
         value: string;
         clinicalEventId?: number;
     }> = []
 ): ClinicalEvent {
     const totalCount = servableCount + nonServableCount;
-    return {
+    return ({
         attributes: [
             { clinicalEventId: 0, key: 'SUBTYPE', value: subtype },
             {
@@ -48,7 +47,7 @@ function makePathologyEvent(
         uniquePatientKey: 'study_P-1',
         uniqueSampleKey: `study_P-1-${date}-${subtype}`,
         ...overrides,
-    };
+    } as unknown) as ClinicalEvent;
 }
 
 function makePathologySlideEvent(
@@ -58,7 +57,6 @@ function makePathologySlideEvent(
     nonServableCount: number,
     overrides: Partial<ClinicalEvent> = {},
     extraAttributes: Array<{
-        clinicalEventId: 0;
         key: string;
         value: string;
         clinicalEventId?: number;
@@ -468,7 +466,7 @@ describe('buildClinicalEventTableData pathology slides', () => {
     });
 
     it('rebuilds non-WSI table rows when equivalent events arrive in a different order', () => {
-        const treatmentA = {
+        const treatmentA = ({
             eventType: 'TREATMENT',
             patientId: 'P-1',
             studyId: 'study',
@@ -477,8 +475,8 @@ describe('buildClinicalEventTableData pathology slides', () => {
             startNumberOfDaysSinceDiagnosis: 5,
             endNumberOfDaysSinceDiagnosis: 5,
             attributes: [{ clinicalEventId: 0, key: 'AGENT', value: 'Drug A' }],
-        } as ClinicalEvent;
-        const treatmentB = {
+        } as unknown) as ClinicalEvent;
+        const treatmentB = ({
             eventType: 'TREATMENT',
             patientId: 'P-1',
             studyId: 'study',
@@ -487,7 +485,7 @@ describe('buildClinicalEventTableData pathology slides', () => {
             startNumberOfDaysSinceDiagnosis: 10,
             endNumberOfDaysSinceDiagnosis: 10,
             attributes: [{ clinicalEventId: 0, key: 'AGENT', value: 'Drug B' }],
-        } as ClinicalEvent;
+        } as unknown) as ClinicalEvent;
 
         const firstData = buildClinicalEventTableData(
             [makePathologySlideEvent(-20, 'H&E', 2, 0), treatmentA, treatmentB],

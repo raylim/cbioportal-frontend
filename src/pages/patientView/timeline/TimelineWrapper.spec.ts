@@ -32,14 +32,14 @@ jest.mock('./timelineDataUtils', () => ({
 
 describe('getTimelineDataWithPortalExtras', () => {
     it('returns the original array when no portal extras should be added', () => {
-        const timelineData: ClinicalEvent[] = [
+        const timelineData: ClinicalEvent[] = ([
             {
                 eventType: 'TREATMENT',
                 patientId: 'P-1',
                 startNumberOfDaysSinceDiagnosis: 1,
                 studyId: 'study',
             },
-        ] as ClinicalEvent[];
+        ] as unknown) as ClinicalEvent[];
 
         expect(getTimelineDataWithPortalExtras(timelineData, false)).toBe(
             timelineData
@@ -47,14 +47,14 @@ describe('getTimelineDataWithPortalExtras', () => {
     });
 
     it('adds the HTAN extra event without mutating the original timeline data', () => {
-        const timelineData = [
+        const timelineData = ([
             {
                 eventType: 'TREATMENT',
                 patientId: 'P-1',
                 startNumberOfDaysSinceDiagnosis: 1,
                 studyId: 'study',
             },
-        ] as ClinicalEvent[];
+        ] as unknown) as ClinicalEvent[];
 
         const result = getTimelineDataWithPortalExtras(timelineData, true);
 
@@ -65,14 +65,14 @@ describe('getTimelineDataWithPortalExtras', () => {
     });
 
     it('does not accumulate extra events across repeated calls', () => {
-        const timelineData = [
+        const timelineData = ([
             {
                 eventType: 'TREATMENT',
                 patientId: 'P-1',
                 startNumberOfDaysSinceDiagnosis: 1,
                 studyId: 'study',
             },
-        ] as ClinicalEvent[];
+        ] as unknown) as ClinicalEvent[];
 
         expect(
             getTimelineDataWithPortalExtras(timelineData, true)
@@ -84,7 +84,7 @@ describe('getTimelineDataWithPortalExtras', () => {
     });
 
     it('rebuilds portal extras from the current timeline snapshot', () => {
-        const firstTimelineData = [
+        const firstTimelineData = ([
             {
                 eventType: 'TREATMENT',
                 patientId: 'P-1',
@@ -92,8 +92,8 @@ describe('getTimelineDataWithPortalExtras', () => {
                 studyId: 'study',
                 attributes: [{ clinicalEventId: 0, key: 'A', value: '1' }],
             },
-        ] as ClinicalEvent[];
-        const secondTimelineData = [
+        ] as unknown) as ClinicalEvent[];
+        const secondTimelineData = ([
             {
                 eventType: 'TREATMENT',
                 patientId: 'P-1',
@@ -101,7 +101,7 @@ describe('getTimelineDataWithPortalExtras', () => {
                 studyId: 'study',
                 attributes: [{ clinicalEventId: 0, key: 'A', value: '1' }],
             },
-        ] as ClinicalEvent[];
+        ] as unknown) as ClinicalEvent[];
 
         const first = getTimelineDataWithPortalExtras(firstTimelineData, true);
         const second = getTimelineDataWithPortalExtras(
@@ -115,7 +115,7 @@ describe('getTimelineDataWithPortalExtras', () => {
 
 describe('nestPathologyTimelineTracks', () => {
     it('returns the original array when there are no pathology events to nest', () => {
-        const events = [
+        const events = ([
             {
                 eventType: 'TREATMENT',
                 patientId: 'P-1',
@@ -128,17 +128,17 @@ describe('nestPathologyTimelineTracks', () => {
                 studyId: 'study',
                 startNumberOfDaysSinceDiagnosis: 2,
             },
-        ] as ClinicalEvent[];
+        ] as unknown) as ClinicalEvent[];
 
         expect(nestPathologyTimelineTracks(events)).toBe(events);
     });
 
     it('nests slides and biomarkers under a shared pathology event type', () => {
-        const biomarker = {
+        const biomarker = ({
             eventType: 'PATHOLOGY',
             patientId: 'P-1',
-        } as ClinicalEvent;
-        const slides = {
+        } as unknown) as ClinicalEvent;
+        const slides = ({
             eventType: 'PATHOLOGY SLIDES',
             patientId: 'P-1',
             attributes: [
@@ -148,7 +148,7 @@ describe('nestPathologyTimelineTracks', () => {
                     value: 'H&E (Non-viewable)',
                 },
             ],
-        } as ClinicalEvent;
+        } as unknown) as ClinicalEvent;
 
         const result = nestPathologyTimelineTracks([biomarker, slides]);
 
@@ -171,7 +171,7 @@ describe('nestPathologyTimelineTracks', () => {
     });
 
     it('preserves the normalized PATHOLOGY to Slides representation', () => {
-        const event = {
+        const event = ({
             eventType: 'PATHOLOGY',
             patientId: 'P-1',
             attributes: [
@@ -179,7 +179,7 @@ describe('nestPathologyTimelineTracks', () => {
                 { clinicalEventId: 0, key: 'SUBTYPE', value: 'Other' },
                 { clinicalEventId: 0, key: 'IMAGE_COUNT', value: '1' },
             ],
-        } as ClinicalEvent;
+        } as unknown) as ClinicalEvent;
 
         const [nested] = nestPathologyTimelineTracks([event]);
 
@@ -197,7 +197,7 @@ describe('nestPathologyTimelineTracks', () => {
     });
 
     it('rebuilds nested pathology events from the current event snapshot', () => {
-        const firstEvents = [
+        const firstEvents = ([
             {
                 eventType: 'PATHOLOGY SLIDES',
                 patientId: 'P-1',
@@ -213,8 +213,8 @@ describe('nestPathologyTimelineTracks', () => {
                 uniquePatientKey: 'patient-key',
                 uniqueSampleKey: 'sample-key',
             },
-        ] as ClinicalEvent[];
-        const secondEvents = [
+        ] as unknown) as ClinicalEvent[];
+        const secondEvents = ([
             {
                 eventType: 'PATHOLOGY SLIDES',
                 patientId: 'P-1',
@@ -230,7 +230,7 @@ describe('nestPathologyTimelineTracks', () => {
                 uniquePatientKey: 'patient-key',
                 uniqueSampleKey: 'sample-key',
             },
-        ] as ClinicalEvent[];
+        ] as unknown) as ClinicalEvent[];
 
         const first = nestPathologyTimelineTracks(firstEvents);
         const second = nestPathologyTimelineTracks(secondEvents);
@@ -241,7 +241,7 @@ describe('nestPathologyTimelineTracks', () => {
 
 describe('collapsePathologyTimelineEvents', () => {
     it('collapses specimen-split pathology slide events for the summary timeline', () => {
-        const events = [
+        const events = ([
             {
                 eventType: 'PATHOLOGY SLIDES',
                 patientId: 'P-1',
@@ -324,7 +324,7 @@ describe('collapsePathologyTimelineEvents', () => {
                     },
                 ],
             },
-        ] as ClinicalEvent[];
+        ] as unknown) as ClinicalEvent[];
 
         const collapsed = collapsePathologyTimelineEvents(events);
 
@@ -366,14 +366,14 @@ describe('TimelineWrapper', () => {
     });
 
     it('uses enriched clinical samples for pathology augmentation when provided', () => {
-        const clinicalEvents = [
+        const clinicalEvents = ([
             {
                 eventType: 'TREATMENT',
                 patientId: 'P-1',
                 startNumberOfDaysSinceDiagnosis: 1,
                 studyId: 'study',
             },
-        ] as ClinicalEvent[];
+        ] as unknown) as ClinicalEvent[];
         const clinicalEventsSignature = buildTimelineEventsSignature(
             clinicalEvents
         );
@@ -431,14 +431,14 @@ describe('TimelineWrapper', () => {
     });
 
     it('forwards a caller-provided clinical-events signature to the augmentation hook', () => {
-        const clinicalEvents = [
+        const clinicalEvents = ([
             {
                 eventType: 'TREATMENT',
                 patientId: 'P-1',
                 startNumberOfDaysSinceDiagnosis: 1,
                 studyId: 'study',
             },
-        ] as ClinicalEvent[];
+        ] as unknown) as ClinicalEvent[];
         const props = {
             dataStore: {} as any,
             data: clinicalEvents,
@@ -477,14 +477,14 @@ describe('TimelineWrapper', () => {
             pathologyTimelineUtils,
             'buildTimelineEventsSignature'
         );
-        const clinicalEvents = [
+        const clinicalEvents = ([
             {
                 eventType: 'TREATMENT',
                 patientId: 'P-1',
                 startNumberOfDaysSinceDiagnosis: 1,
                 studyId: 'study',
             },
-        ] as ClinicalEvent[];
+        ] as unknown) as ClinicalEvent[];
         const props = {
             dataStore: {} as any,
             data: clinicalEvents,

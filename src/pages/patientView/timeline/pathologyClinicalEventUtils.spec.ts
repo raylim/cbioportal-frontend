@@ -65,7 +65,9 @@ describe('pathologyClinicalEventUtils', () => {
         ]);
 
         expect(isWsiPathologyClinicalEvent(event)).toBe(true);
-        event.attributes = [{ key: 'SUBTYPE', value: 'H&E' }];
+        event.attributes = [
+            { clinicalEventId: 0, key: 'SUBTYPE', value: 'H&E' },
+        ];
         expect(isWsiPathologyClinicalEvent(event)).toBe(false);
     });
 });
