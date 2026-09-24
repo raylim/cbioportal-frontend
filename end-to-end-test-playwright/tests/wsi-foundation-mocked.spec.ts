@@ -4,7 +4,14 @@ import {
     STUDY_ID,
     PATIENT_ID,
     IMAGE_ID,
+    SECOND_IMAGE_ID,
 } from './wsi-foundation-mocks';
+
+function resourceAccessPath(url: string): string {
+    return decodeURIComponent(new URL(url).pathname)
+        .replace(/^.*\/api\/wsi\/v2\/resources\//, '')
+        .replace(/\/access$/, '');
+}
 
 if (process.env.PW_SUITE === 'wsi' && process.env.WSI_CHILD_CONTRACT !== '1') {
     test.describe('WSI foundation browser contract', () => {
@@ -113,6 +120,107 @@ if (process.env.PW_SUITE === 'wsi' && process.env.WSI_CHILD_CONTRACT !== '1') {
                 timeout: 30000,
             });
             expect(chunkRequests).toBeGreaterThanOrEqual(2);
+        });
+
+        test('opens the slide named by an encoded imageId link', async ({
+            page,
+        }) => {
+            const accessRequests: string[] = [];
+            await installFoundationMocks(page, {
+                includeSecondSlide: true,
+                accessRequests,
+            });
+
+            await page.goto(
+                `/wsi/patient/${PATIENT_ID}?studyId=${STUDY_ID}&imageId=${encodeURIComponent(
+                    SECOND_IMAGE_ID
+                )}`
+            );
+
+            await expect(
+                page.getByTestId('wsi-filtered-slide-count')
+            ).toHaveText('Showing 2 slides', { timeout: 30000 });
+            await expect(
+                page.getByTestId(`wsi-slide-item-${SECOND_IMAGE_ID}`)
+            ).toHaveAttribute('aria-current', 'true', { timeout: 30000 });
+            await expect(page.getByTitle('Fit to view')).toBeVisible({
+                timeout: 30000,
+            });
+            await expect(
+                page.getByTestId('wsi-requested-slide-unavailable')
+            ).toHaveCount(0);
+            await expect
+                .poll(() => accessRequests.map(resourceAccessPath), {
+                    timeout: 30000,
+                })
+                .toContain(`${STUDY_ID}/${PATIENT_ID}/WSI_SLIDE/102`);
+            expect(new URL(page.url()).hash).toContain(
+                `slide=${encodeURIComponent(SECOND_IMAGE_ID)}`
+            );
+        });
+
+        test('keeps a coordinate hash ahead of the imageId link', async ({
+            page,
+        }) => {
+            await installFoundationMocks(page, { includeSecondSlide: true });
+
+            await page.goto(
+                `/wsi/patient/${PATIENT_ID}?studyId=${STUDY_ID}&imageId=${encodeURIComponent(
+                    SECOND_IMAGE_ID
+                )}#wsi:slide=${IMAGE_ID}&x=256&y=256&z=0.75`
+            );
+
+            await expect(
+                page.getByTestId(`wsi-slide-item-${IMAGE_ID}`)
+            ).toHaveAttribute('aria-current', 'true', { timeout: 30000 });
+        });
+
+        test('shows a notice and the default slide for an unknown imageId without requesting it', async ({
+            page,
+        }) => {
+            const accessRequests: string[] = [];
+            await installFoundationMocks(page, {
+                includeSecondSlide: true,
+                accessRequests,
+            });
+
+            await page.goto(
+                `/wsi/patient/${PATIENT_ID}?studyId=${STUDY_ID}&imageId=missing-slide`
+            );
+
+            await expect(
+                page.getByTestId('wsi-requested-slide-unavailable')
+            ).toContainText('The requested slide is not available', {
+                timeout: 30000,
+            });
+            await expect(
+                page.getByTestId(`wsi-slide-item-${IMAGE_ID}`)
+            ).toHaveAttribute('aria-current', 'true', { timeout: 30000 });
+            await expect(page.getByTitle('Fit to view')).toBeVisible({
+                timeout: 30000,
+            });
+            await expect
+                .poll(() => accessRequests.length, { timeout: 30000 })
+                .toBeGreaterThan(0);
+            // Access is only requested for resource identities published by
+            // the hierarchy; the unknown image ID never reaches the backend.
+            expect(accessRequests.map(resourceAccessPath)).toContain(
+                `${STUDY_ID}/${PATIENT_ID}/WSI_SLIDE/101`
+            );
+            expect(
+                accessRequests
+                    .map(resourceAccessPath)
+                    .filter(
+                        path =>
+                            ![
+                                `${STUDY_ID}/${PATIENT_ID}/WSI_SLIDE/101`,
+                                `${STUDY_ID}/${PATIENT_ID}/WSI_SLIDE/102`,
+                            ].includes(path)
+                    )
+            ).toEqual([]);
+            expect(
+                accessRequests.some(url => url.includes('missing-slide'))
+            ).toBe(false);
         });
     });
 }
