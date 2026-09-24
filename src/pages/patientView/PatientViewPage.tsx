@@ -33,6 +33,7 @@ import { showCustomTab } from '../../shared/lib/customTabs';
 import { StudyLink } from '../../shared/components/StudyLink/StudyLink';
 import { QueryParams } from 'url';
 import { AppStore } from '../../AppStore';
+import request from 'superagent';
 import { remoteData, getBrowserWindow } from 'cbioportal-frontend-commons';
 import 'react-mutation-mapper/dist/styles.css';
 import 'react-table/react-table.css';
@@ -62,6 +63,10 @@ import { getNavCaseIdsCache } from 'shared/lib/handleLongUrls';
 import PatientViewPageHeader from 'pages/patientView/PatientViewPageHeader';
 import { MAX_URL_LENGTH } from 'pages/studyView/studyPageHeader/ActionButtons';
 import LoadingIndicator from 'shared/components/loadingIndicator/LoadingIndicator';
+import {
+    shouldHideLegacyHeResource,
+    shouldHideLegacyHeResourceTab,
+} from 'shared/lib/ResourcePolicy';
 
 export interface IPatientViewPageProps {
     routing: any;
@@ -268,19 +273,21 @@ export class PatientViewPageInner extends React.Component<
 
     @computed
     get shouldShowResources(): boolean {
-        const tabId: string = this.urlWrapper.activeTabId;
-        if (tabId === 'filesAndLinks') {
-            return true;
-        }
-
-        if (this.pageStore.resourceIdToResourceData.isComplete) {
-            return _.some(
-                this.pageStore.resourceIdToResourceData.result,
-                data => data.length > 0
-            );
-        } else {
+        if (!this.pageStore.resourceIdToResourceData.isComplete) {
             return false;
         }
+
+        const resourceGroups = this.pageStore.resourceIdToResourceData.result;
+        for (const resourceId in resourceGroups) {
+            const data = resourceGroups[resourceId];
+            for (const resource of data) {
+                if (!shouldHideLegacyHeResource(resource)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     @computed
@@ -288,16 +295,6 @@ export class PatientViewPageInner extends React.Component<
         return (
             this.pageStore.pathologyReport.isComplete &&
             this.pageStore.pathologyReport.result.length > 0
-        );
-    }
-
-    @computed
-    get hideTissueImageTab() {
-        return (
-            this.pageStore.hasTissueImageIFrameUrl.isPending ||
-            this.pageStore.hasTissueImageIFrameUrl.isError ||
-            (this.pageStore.hasTissueImageIFrameUrl.isComplete &&
-                !this.pageStore.hasTissueImageIFrameUrl.result)
         );
     }
 
@@ -440,7 +437,9 @@ export class PatientViewPageInner extends React.Component<
         ],
         render: () => {
             const openDefinitions = this.pageStore.resourceDefinitions.result!.filter(
-                d => this.pageStore.isResourceTabOpen(d.resourceId)
+                d =>
+                    this.pageStore.isResourceTabOpen(d.resourceId) &&
+                    !shouldHideLegacyHeResourceTab(d.resourceId)
             );
             const sorted = _.sortBy(openDefinitions, d => d.priority);
             const resourceDataById = this.pageStore.resourceIdToResourceData
@@ -759,6 +758,11 @@ export class PatientViewPageInner extends React.Component<
             <LoadingIndicator isLoading={true} center={true} size={'big'} />
         ),
         render: () => {
+            const shouldShowUnmatchedPathologyHeader =
+                this.urlWrapper.activeTabId ===
+                    PatientViewPageTabs.WSIHESlides &&
+                this.urlWrapper.query.matchLevel?.toUpperCase() === 'UNMATCHED';
+
             return (
                 <>
                     <div className="headBlock">
@@ -773,6 +777,15 @@ export class PatientViewPageInner extends React.Component<
                                 handlePatientClick={this.handlePatientClick}
                                 toggleGenePanelModal={this.toggleGenePanelModal}
                                 genePanelModal={this.genePanelModal}
+                                sampleSummaryOverride={
+                                    shouldShowUnmatchedPathologyHeader ? (
+                                        <div className="patientSample">
+                                            Unmatched pathology slides
+                                        </div>
+                                    ) : (
+                                        undefined
+                                    )
+                                }
                             />
                             <div className="studyMetaBar">
                                 <StudyLink
