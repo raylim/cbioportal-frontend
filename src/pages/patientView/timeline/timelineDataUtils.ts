@@ -30,7 +30,6 @@ function toTSV(events: ClinicalEvent[]): string {
 }
 
 function getRows(events: ClinicalEvent[]): string[][] {
-    // First get the extra columns
     const extraColumnsMap: { [columnKey: string]: any } = {};
     for (const event of events) {
         for (const attribute of event.attributes) {
@@ -39,7 +38,6 @@ function getRows(events: ClinicalEvent[]): string[][] {
     }
     const extraColumns = Object.keys(extraColumnsMap);
 
-    // Now put together the rows
     const rows: string[][] = [];
     rows.push(HEADERS.concat(extraColumns));
     for (const event of events) {
