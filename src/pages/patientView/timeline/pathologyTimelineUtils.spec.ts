@@ -219,14 +219,16 @@ describe('buildTimelineEventsSignature', () => {
             patientId: 'P-1',
             studyId: 'study',
             startNumberOfDaysSinceDiagnosis: 1,
-            attributes: [{ key: 'SAMPLE_ID', value: 'S-1' }],
+            attributes: [
+                { clinicalEventId: 0, key: 'SAMPLE_ID', value: 'S-1' },
+            ],
         } as ClinicalEvent;
         const ordinaryEvent = {
             eventType: 'TREATMENT',
             patientId: 'P-1',
             studyId: 'study',
             startNumberOfDaysSinceDiagnosis: 2,
-            attributes: [{ key: 'DRUG', value: 'A' }],
+            attributes: [{ clinicalEventId: 0, key: 'DRUG', value: 'A' }],
         } as ClinicalEvent;
 
         const withOrdinaryEvent = buildTimelineEventsSignature([

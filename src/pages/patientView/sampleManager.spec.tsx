@@ -51,7 +51,7 @@ describe('SampleManager', () => {
 
 function getClinicalEvent(sampleID: string): ClinicalEvent {
     return {
-        attributes: [{ key: 'SAMPLE_ID', value: sampleID }],
+        attributes: [{ clinicalEventId: 0, key: 'SAMPLE_ID', value: sampleID }],
         startNumberOfDaysSinceDiagnosis: 10,
         eventType: 'SPECIMEN',
     } as ClinicalEvent;

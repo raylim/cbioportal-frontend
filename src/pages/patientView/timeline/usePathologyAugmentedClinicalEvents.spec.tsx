@@ -13,10 +13,14 @@ const clinicalEvents = [
         studyId: 'study',
         startNumberOfDaysSinceDiagnosis: -5,
         attributes: [
-            { key: 'SUBTYPE', value: 'H&E' },
-            { key: 'IMAGE_COUNT', value: '2' },
-            { key: 'TOTAL_IMAGE_COUNT', value: '3' },
-            { key: 'TIMEPOINT_SOURCE', value: 'Procedure date' },
+            { clinicalEventId: 0, key: 'SUBTYPE', value: 'H&E' },
+            { clinicalEventId: 0, key: 'IMAGE_COUNT', value: '2' },
+            { clinicalEventId: 0, key: 'TOTAL_IMAGE_COUNT', value: '3' },
+            {
+                clinicalEventId: 0,
+                key: 'TIMEPOINT_SOURCE',
+                value: 'Procedure date',
+            },
         ],
     },
     {

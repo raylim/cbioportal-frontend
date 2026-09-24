@@ -112,12 +112,14 @@ const HTAN_OHSU_EXTRA_EVENT: PathologyTimelineEvent = {
     eventType: 'IMAGING',
     attributes: [
         {
+            clinicalEventId: 0,
             key: 'linkout',
             value:
                 'https://minerva-story-htan-ohsu-demo.surge.sh/#s=0#w=0#g=0#m=-1#a=-100_-100#v=0.5_0.5_0.5#o=-100_-100_1_1#p=Q',
         },
-        { key: 'ASSAY_TYPE', value: 'mIHC' },
+        { clinicalEventId: 0, key: 'ASSAY_TYPE', value: 'mIHC' },
         {
+            clinicalEventId: 0,
             key: 'FILE_FORMAT',
             value: 'OME-TIFF',
         },
@@ -316,6 +318,7 @@ function buildCollapsedPathologyTimelineEvent(
         )
     ) {
         nextAttributes.push({
+            clinicalEventId: 0,
             key: PATHOLOGY_EVENT_ATTRIBUTE_KEYS.linkout,
             value: group.linkout,
         });

@@ -9,19 +9,36 @@ function makePathologyEvent(
     servableCount: number,
     nonServableCount: number,
     overrides: Partial<ClinicalEvent> = {},
-    extraAttributes: Array<{ key: string; value: string }> = []
+    extraAttributes: Array<{
+        clinicalEventId: 0;
+        key: string;
+        value: string;
+        clinicalEventId?: number;
+    }> = []
 ): ClinicalEvent {
     const totalCount = servableCount + nonServableCount;
     return {
         attributes: [
-            { key: 'SUBTYPE', value: subtype },
-            { key: 'IMAGE_COUNT', value: String(servableCount) },
+            { clinicalEventId: 0, key: 'SUBTYPE', value: subtype },
             {
+                clinicalEventId: 0,
+                key: 'IMAGE_COUNT',
+                value: String(servableCount),
+            },
+            {
+                clinicalEventId: 0,
                 key: 'NON_SERVABLE_IMAGE_COUNT',
                 value: String(nonServableCount),
             },
-            { key: 'TOTAL_IMAGE_COUNT', value: String(totalCount) },
-            ...extraAttributes,
+            {
+                clinicalEventId: 0,
+                key: 'TOTAL_IMAGE_COUNT',
+                value: String(totalCount),
+            },
+            ...extraAttributes.map(attribute => ({
+                ...attribute,
+                clinicalEventId: attribute.clinicalEventId ?? 0,
+            })),
         ],
         endNumberOfDaysSinceDiagnosis: date,
         eventType: 'PATHOLOGY',
@@ -40,7 +57,12 @@ function makePathologySlideEvent(
     servableCount: number,
     nonServableCount: number,
     overrides: Partial<ClinicalEvent> = {},
-    extraAttributes: Array<{ key: string; value: string }> = []
+    extraAttributes: Array<{
+        clinicalEventId: 0;
+        key: string;
+        value: string;
+        clinicalEventId?: number;
+    }> = []
 ): ClinicalEvent {
     return {
         ...makePathologyEvent(
@@ -60,25 +82,43 @@ describe('buildClinicalEventTableData pathology slides', () => {
         const data = buildClinicalEventTableData(
             [
                 makePathologySlideEvent(-20, 'H&E', 2, 0, {}, [
-                    { key: 'SAMPLE_ID', value: 'S-1' },
-                    { key: 'MATCH_LEVEL', value: 'PART' },
-                    { key: 'SPECIMEN', value: 'Part 1 / Block A1' },
+                    { clinicalEventId: 0, key: 'SAMPLE_ID', value: 'S-1' },
+                    { clinicalEventId: 0, key: 'MATCH_LEVEL', value: 'PART' },
                     {
+                        clinicalEventId: 0,
+                        key: 'SPECIMEN',
+                        value: 'Part 1 / Block A1',
+                    },
+                    {
+                        clinicalEventId: 0,
                         key: 'LINKOUT',
                         value:
                             '/patient/wsiHESlides?studyId=study&caseId=P-1&sampleId=S-1&stainFilter=hne',
                     },
                 ]),
                 makePathologySlideEvent(-20, 'H&E', 0, 3, {}, [
-                    { key: 'SAMPLE_ID', value: 'Unmatched' },
-                    { key: 'MATCH_LEVEL', value: 'Unmatched' },
-                    { key: 'SPECIMEN', value: 'Part 2' },
+                    {
+                        clinicalEventId: 0,
+                        key: 'SAMPLE_ID',
+                        value: 'Unmatched',
+                    },
+                    {
+                        clinicalEventId: 0,
+                        key: 'MATCH_LEVEL',
+                        value: 'Unmatched',
+                    },
+                    { clinicalEventId: 0, key: 'SPECIMEN', value: 'Part 2' },
                 ]),
                 makePathologySlideEvent(-20, 'IHC', 1, 0, {}, [
-                    { key: 'SAMPLE_ID', value: 'S-1' },
-                    { key: 'MATCH_LEVEL', value: 'BLOCK' },
-                    { key: 'SPECIMEN', value: 'Part 1 / Block A1' },
+                    { clinicalEventId: 0, key: 'SAMPLE_ID', value: 'S-1' },
+                    { clinicalEventId: 0, key: 'MATCH_LEVEL', value: 'BLOCK' },
                     {
+                        clinicalEventId: 0,
+                        key: 'SPECIMEN',
+                        value: 'Part 1 / Block A1',
+                    },
+                    {
+                        clinicalEventId: 0,
                         key: 'LINKOUT',
                         value:
                             '/patient/wsiHESlides?studyId=study&caseId=P-1&sampleId=S-1&stainFilter=ihc',
@@ -125,7 +165,11 @@ describe('buildClinicalEventTableData pathology slides', () => {
         const data = buildClinicalEventTableData(
             [
                 makePathologySlideEvent(5, 'H&E', 0, 4, {}, [
-                    { key: 'SAMPLE_ID', value: 'Unmatched' },
+                    {
+                        clinicalEventId: 0,
+                        key: 'SAMPLE_ID',
+                        value: 'Unmatched',
+                    },
                 ]),
             ],
             'study',
@@ -139,10 +183,10 @@ describe('buildClinicalEventTableData pathology slides', () => {
         const data = buildClinicalEventTableData(
             [
                 makePathologySlideEvent(-20, 'H&E', 2, 0, {}, [
-                    { key: 'SAMPLE_ID', value: 'S-1' },
+                    { clinicalEventId: 0, key: 'SAMPLE_ID', value: 'S-1' },
                 ]),
                 makePathologySlideEvent(-10, 'H&E', 1, 0, {}, [
-                    { key: 'SAMPLE_ID', value: 'S-1' },
+                    { clinicalEventId: 0, key: 'SAMPLE_ID', value: 'S-1' },
                 ]),
             ],
             'study',
@@ -159,20 +203,30 @@ describe('buildClinicalEventTableData pathology slides', () => {
         const data = buildClinicalEventTableData(
             [
                 makePathologySlideEvent(-20, 'H&E', 2, 0, {}, [
-                    { key: 'SAMPLE_ID', value: 'S-1' },
-                    { key: 'MATCH_LEVEL', value: 'PART' },
-                    { key: 'SPECIMEN', value: 'Part 1 / Block A1' },
+                    { clinicalEventId: 0, key: 'SAMPLE_ID', value: 'S-1' },
+                    { clinicalEventId: 0, key: 'MATCH_LEVEL', value: 'PART' },
                     {
+                        clinicalEventId: 0,
+                        key: 'SPECIMEN',
+                        value: 'Part 1 / Block A1',
+                    },
+                    {
+                        clinicalEventId: 0,
                         key: 'LINKOUT',
                         value:
                             '/patient/wsiHESlides?studyId=study&caseId=P-1&sampleId=S-1&stainFilter=hne&matchLevel=PART&specimenKey=part%3A%3A1',
                     },
                 ]),
                 makePathologySlideEvent(-20, 'H&E', 1, 1, {}, [
-                    { key: 'SAMPLE_ID', value: 'S-1' },
-                    { key: 'MATCH_LEVEL', value: 'PART' },
-                    { key: 'SPECIMEN', value: 'Part 2 / Block B1' },
+                    { clinicalEventId: 0, key: 'SAMPLE_ID', value: 'S-1' },
+                    { clinicalEventId: 0, key: 'MATCH_LEVEL', value: 'PART' },
                     {
+                        clinicalEventId: 0,
+                        key: 'SPECIMEN',
+                        value: 'Part 2 / Block B1',
+                    },
+                    {
+                        clinicalEventId: 0,
                         key: 'LINKOUT',
                         value:
                             '/patient/wsiHESlides?studyId=study&caseId=P-1&sampleId=S-1&stainFilter=hne&matchLevel=PART&specimenKey=part%3A%3A2',
@@ -208,7 +262,7 @@ describe('buildClinicalEventTableData pathology slides', () => {
     it('does not treat pathology biomarker results as slide types', () => {
         const biomarkerEvent = makePathologyEvent(5, 'MMR Deficiency', 0, 0);
         biomarkerEvent.attributes = [
-            { key: 'SUBTYPE', value: 'MMR Deficiency' },
+            { clinicalEventId: 0, key: 'SUBTYPE', value: 'MMR Deficiency' },
         ];
 
         const data = buildClinicalEventTableData(
@@ -237,7 +291,7 @@ describe('buildClinicalEventTableData pathology slides', () => {
         const slideEvent = makePathologySlideEvent(-20, 'H&E', 2, 0);
         const biomarkerEvent = makePathologyEvent(-20, 'PD-L1 Positive', 0, 0);
         biomarkerEvent.attributes = [
-            { key: 'SUBTYPE', value: 'PD-L1 Positive' },
+            { clinicalEventId: 0, key: 'SUBTYPE', value: 'PD-L1 Positive' },
         ];
 
         const data = buildClinicalEventTableData(
@@ -256,22 +310,42 @@ describe('buildClinicalEventTableData pathology slides', () => {
             makePathologySlideEvent(-20, 'H&E', 2, 0),
             {
                 ...makePathologyEvent(5, 'PD-L1 Positive', 0, 0),
-                attributes: [{ key: 'SUBTYPE', value: 'PD-L1 Positive' }],
+                attributes: [
+                    {
+                        clinicalEventId: 0,
+                        key: 'SUBTYPE',
+                        value: 'PD-L1 Positive',
+                    },
+                ],
             },
         ];
         const secondEvents = [
             {
                 ...makePathologySlideEvent(-20, 'H&E', 2, 0),
                 attributes: [
-                    { key: 'TOTAL_IMAGE_COUNT', value: '2' },
-                    { key: 'NON_SERVABLE_IMAGE_COUNT', value: '0' },
-                    { key: 'IMAGE_COUNT', value: '2' },
-                    { key: 'SUBTYPE', value: 'H&E' },
+                    {
+                        clinicalEventId: 0,
+                        key: 'TOTAL_IMAGE_COUNT',
+                        value: '2',
+                    },
+                    {
+                        clinicalEventId: 0,
+                        key: 'NON_SERVABLE_IMAGE_COUNT',
+                        value: '0',
+                    },
+                    { clinicalEventId: 0, key: 'IMAGE_COUNT', value: '2' },
+                    { clinicalEventId: 0, key: 'SUBTYPE', value: 'H&E' },
                 ],
             },
             {
                 ...makePathologyEvent(5, 'PD-L1 Positive', 0, 0),
-                attributes: [{ key: 'SUBTYPE', value: 'PD-L1 Positive' }],
+                attributes: [
+                    {
+                        clinicalEventId: 0,
+                        key: 'SUBTYPE',
+                        value: 'PD-L1 Positive',
+                    },
+                ],
             },
         ];
 
@@ -307,7 +381,9 @@ describe('buildClinicalEventTableData pathology slides', () => {
                 uniqueSampleKey: 'study_P-1-treatment-1',
                 startNumberOfDaysSinceDiagnosis: 5,
                 endNumberOfDaysSinceDiagnosis: 5,
-                attributes: [{ key: 'AGENT', value: 'Drug A' }],
+                attributes: [
+                    { clinicalEventId: 0, key: 'AGENT', value: 'Drug A' },
+                ],
             } as ClinicalEvent,
         ];
         const secondEvents = [
@@ -320,7 +396,9 @@ describe('buildClinicalEventTableData pathology slides', () => {
                 uniqueSampleKey: 'study_P-1-treatment-2',
                 startNumberOfDaysSinceDiagnosis: 10,
                 endNumberOfDaysSinceDiagnosis: 10,
-                attributes: [{ key: 'AGENT', value: 'Drug B' }],
+                attributes: [
+                    { clinicalEventId: 0, key: 'AGENT', value: 'Drug B' },
+                ],
             } as ClinicalEvent,
         ];
 
@@ -352,7 +430,9 @@ describe('buildClinicalEventTableData pathology slides', () => {
                 uniqueSampleKey: 'study_P-1-treatment-1',
                 startNumberOfDaysSinceDiagnosis: 5,
                 endNumberOfDaysSinceDiagnosis: 5,
-                attributes: [{ key: 'AGENT', value: 'Drug A' }],
+                attributes: [
+                    { clinicalEventId: 0, key: 'AGENT', value: 'Drug A' },
+                ],
             } as ClinicalEvent,
         ];
 
@@ -396,7 +476,7 @@ describe('buildClinicalEventTableData pathology slides', () => {
             uniqueSampleKey: 'study_P-1-treatment-1',
             startNumberOfDaysSinceDiagnosis: 5,
             endNumberOfDaysSinceDiagnosis: 5,
-            attributes: [{ key: 'AGENT', value: 'Drug A' }],
+            attributes: [{ clinicalEventId: 0, key: 'AGENT', value: 'Drug A' }],
         } as ClinicalEvent;
         const treatmentB = {
             eventType: 'TREATMENT',
@@ -406,7 +486,7 @@ describe('buildClinicalEventTableData pathology slides', () => {
             uniqueSampleKey: 'study_P-1-treatment-2',
             startNumberOfDaysSinceDiagnosis: 10,
             endNumberOfDaysSinceDiagnosis: 10,
-            attributes: [{ key: 'AGENT', value: 'Drug B' }],
+            attributes: [{ clinicalEventId: 0, key: 'AGENT', value: 'Drug B' }],
         } as ClinicalEvent;
 
         const firstData = buildClinicalEventTableData(
@@ -446,7 +526,9 @@ describe('buildClinicalEventTableData pathology slides', () => {
                 uniqueSampleKey: 'study_P-1-treatment-1',
                 startNumberOfDaysSinceDiagnosis: 5,
                 endNumberOfDaysSinceDiagnosis: 5,
-                attributes: [{ key: 'AGENT', value: 'Drug A' }],
+                attributes: [
+                    { clinicalEventId: 0, key: 'AGENT', value: 'Drug A' },
+                ],
             } as ClinicalEvent,
             makePathologySlideEvent(-10, 'IHC', 1, 0),
         ];
