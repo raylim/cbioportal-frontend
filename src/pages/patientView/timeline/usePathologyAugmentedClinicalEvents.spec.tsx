@@ -6,7 +6,7 @@ import usePathologyAugmentedClinicalEvents, {
     usePathologyAugmentedClinicalEventsState,
 } from './usePathologyAugmentedClinicalEvents';
 
-const clinicalEvents = [
+const clinicalEvents = ([
     {
         eventType: 'PATHOLOGY SLIDES',
         patientId: 'P-1',
@@ -29,7 +29,7 @@ const clinicalEvents = [
         studyId: 'study',
         startNumberOfDaysSinceDiagnosis: 1,
     },
-] as ClinicalEvent[];
+] as unknown) as ClinicalEvent[];
 
 function HookProbe({
     onEvents,

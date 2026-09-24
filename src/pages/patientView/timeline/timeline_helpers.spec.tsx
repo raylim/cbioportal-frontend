@@ -63,7 +63,7 @@ function renderSampleTooltipRows(args: {
         uid: 'specimen-track',
     } as TimelineTrackSpecification;
     specimenRenderer.configureTrack(track);
-    const event = {
+    const event = ({
         start: 5,
         end: 5,
         event: {
@@ -75,7 +75,7 @@ function renderSampleTooltipRows(args: {
             attributes: args.eventAttributes,
         },
         containingTrack: track,
-    } as TimelineEvent;
+    } as unknown) as TimelineEvent;
 
     const renderer = TestRenderer.create(
         <div>{track.renderTooltip!(event)}</div>
@@ -294,7 +294,7 @@ describe('buildBaseConfig', () => {
             uid: 'specimen-track',
         } as TimelineTrackSpecification;
         specimenRenderer.configureTrack(track);
-        const event = {
+        const event = ({
             start: 5,
             end: 5,
             event: {
@@ -306,7 +306,7 @@ describe('buildBaseConfig', () => {
                 attributes: [{ key: 'SAMPLE_ID', value: 'S-1' }],
             },
             containingTrack: track,
-        } as TimelineEvent;
+        } as unknown) as TimelineEvent;
         const consoleErrorSpy = jest
             .spyOn(console, 'error')
             .mockImplementation(() => {});
@@ -330,7 +330,7 @@ describe('sortTracks', () => {
         overrides: Partial<ClinicalEvent> = {},
         attributes: Array<{ key: string; value: string }> = []
     ): ClinicalEvent {
-        return {
+        return ({
             eventType: 'TREATMENT',
             patientId: 'P-1',
             studyId: 'study',
@@ -340,7 +340,7 @@ describe('sortTracks', () => {
             endNumberOfDaysSinceDiagnosis: 5,
             attributes,
             ...overrides,
-        } as ClinicalEvent;
+        } as unknown) as ClinicalEvent;
     }
 
     it('reuses cached track-spec templates for equivalent event snapshots', () => {
@@ -440,7 +440,9 @@ describe('sortTracks', () => {
             } as any;
 
             const tracks = sortTracks(config, [
-                makeClinicalEvent({}, [{ key: 'AGENT', value: attributeValue }]),
+                makeClinicalEvent({}, [
+                    { key: 'AGENT', value: attributeValue },
+                ]),
             ]);
 
             assert.equal(tracks[0].tracks![0].type, attributeValue);
@@ -486,16 +488,13 @@ describe('sortTracks', () => {
     it('configures an explicit Other child when H&E and Other share a timepoint', () => {
         const config = buildBaseConfig({} as any, {} as any);
         const makePathologyEvent = (subtype: string) =>
-            makeClinicalEvent(
-                { eventType: 'PATHOLOGY' },
-                [
-                    { key: 'PATHOLOGY_TYPE', value: 'Slides' },
-                    { key: 'SUBTYPE', value: subtype },
-                    { key: 'IMAGE_COUNT', value: '1' },
-                    { key: 'NON_SERVABLE_IMAGE_COUNT', value: '0' },
-                    { key: 'TOTAL_IMAGE_COUNT', value: '1' },
-                ]
-            );
+            makeClinicalEvent({ eventType: 'PATHOLOGY' }, [
+                { key: 'PATHOLOGY_TYPE', value: 'Slides' },
+                { key: 'SUBTYPE', value: subtype },
+                { key: 'IMAGE_COUNT', value: '1' },
+                { key: 'NON_SERVABLE_IMAGE_COUNT', value: '0' },
+                { key: 'TOTAL_IMAGE_COUNT', value: '1' },
+            ]);
 
         const tracks = sortTracks(config, [
             makePathologyEvent('H&E'),
@@ -571,7 +570,7 @@ function makePathologyEvent({
     nonServableImageCount: string;
     subtype?: string;
 }): TimelineEvent {
-    return {
+    return ({
         event: {
             patientId: 'P-1',
             startNumberOfDaysSinceDiagnosis: 5,
@@ -587,7 +586,7 @@ function makePathologyEvent({
                 { key: 'LINKOUT', value: '/patient/wsiHESlides?studyId=study' },
             ],
         },
-    } as TimelineEvent;
+    } as unknown) as TimelineEvent;
 }
 
 describe('#allResultValuesAreNumerical', () => {

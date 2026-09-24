@@ -35,18 +35,18 @@ describe('ClinicalEventsTables', () => {
     });
 
     it('does not rebuild grouped table data when rerendered with equivalent augmented events', () => {
-        const clinicalEvents = [
+        const clinicalEvents = ([
             {
                 eventType: 'TREATMENT',
                 patientId: 'P-1',
                 studyId: 'study',
                 startNumberOfDaysSinceDiagnosis: 1,
             },
-        ] as ClinicalEvent[];
+        ] as unknown) as ClinicalEvent[];
         const clinicalEventsSignature = buildTimelineEventsSignature(
             clinicalEvents
         );
-        const firstEvents: ClinicalEvent[] = [
+        const firstEvents = ([
             {
                 eventType: 'PATHOLOGY SLIDES',
                 patientId: 'P-1',
@@ -71,9 +71,9 @@ describe('ClinicalEventsTables', () => {
                 uniquePatientKey: 'patient-key',
                 uniqueSampleKey: 'sample-key',
             },
-        ];
+        ] as unknown) as ClinicalEvent[];
         const firstEventsSignature = buildTimelineEventsSignature(firstEvents);
-        const secondEvents: ClinicalEvent[] = [
+        const secondEvents = ([
             {
                 eventType: 'PATHOLOGY SLIDES',
                 patientId: 'P-1',
@@ -98,7 +98,7 @@ describe('ClinicalEventsTables', () => {
                 uniquePatientKey: 'patient-key',
                 uniqueSampleKey: 'sample-key',
             },
-        ];
+        ] as unknown) as ClinicalEvent[];
         const props = {
             clinicalEvents,
             patientId: 'P-1',
@@ -152,14 +152,14 @@ describe('ClinicalEventsTables', () => {
     });
 
     it('forwards a caller-provided clinical-events signature to the augmentation hook', () => {
-        const clinicalEvents = [
+        const clinicalEvents = ([
             {
                 eventType: 'TREATMENT',
                 patientId: 'P-1',
                 studyId: 'study',
                 startNumberOfDaysSinceDiagnosis: 1,
             },
-        ] as ClinicalEvent[];
+        ] as unknown) as ClinicalEvent[];
         const props = {
             clinicalEvents,
             clinicalEventsSignature: 'provided-signature',
@@ -194,14 +194,14 @@ describe('ClinicalEventsTables', () => {
             pathologyTimelineUtils,
             'buildTimelineEventsSignature'
         );
-        const clinicalEvents = [
+        const clinicalEvents = ([
             {
                 eventType: 'TREATMENT',
                 patientId: 'P-1',
                 studyId: 'study',
                 startNumberOfDaysSinceDiagnosis: 1,
             },
-        ] as ClinicalEvent[];
+        ] as unknown) as ClinicalEvent[];
         const props = {
             clinicalEvents,
             clinicalEventsSignature: 'provided-signature',
@@ -227,14 +227,14 @@ describe('ClinicalEventsTables', () => {
     });
 
     it('shows a warning when the hierarchy fails while keeping the table mounted', () => {
-        const clinicalEvents = [
+        const clinicalEvents = ([
             {
                 eventType: 'TREATMENT',
                 patientId: 'P-1',
                 studyId: 'study',
                 startNumberOfDaysSinceDiagnosis: 1,
             },
-        ] as ClinicalEvent[];
+        ] as unknown) as ClinicalEvent[];
         (usePathologyAugmentedClinicalEventsState as jest.Mock).mockReturnValue(
             {
                 events: clinicalEvents,

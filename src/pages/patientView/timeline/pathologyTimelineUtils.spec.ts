@@ -214,7 +214,7 @@ describe('buildPatientHierarchyApiUrl', () => {
 
 describe('buildTimelineEventsSignature', () => {
     it('keeps ordinary timeline events in the shared timeline signature', () => {
-        const pathologyEvent = {
+        const pathologyEvent = ({
             eventType: 'PATHOLOGY SLIDES',
             patientId: 'P-1',
             studyId: 'study',
@@ -222,14 +222,14 @@ describe('buildTimelineEventsSignature', () => {
             attributes: [
                 { clinicalEventId: 0, key: 'SAMPLE_ID', value: 'S-1' },
             ],
-        } as ClinicalEvent;
-        const ordinaryEvent = {
+        } as unknown) as ClinicalEvent;
+        const ordinaryEvent = ({
             eventType: 'TREATMENT',
             patientId: 'P-1',
             studyId: 'study',
             startNumberOfDaysSinceDiagnosis: 2,
             attributes: [{ clinicalEventId: 0, key: 'DRUG', value: 'A' }],
-        } as ClinicalEvent;
+        } as unknown) as ClinicalEvent;
 
         const withOrdinaryEvent = buildTimelineEventsSignature([
             pathologyEvent,
