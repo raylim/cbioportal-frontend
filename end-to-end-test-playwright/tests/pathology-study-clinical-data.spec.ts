@@ -11,6 +11,7 @@ function studyClinicalDataUrl() {
 const study = {
     studyId: DEV_STUDY.studyId,
     name: 'WSI study clinical-data contract',
+    description: 'A deterministic study fixture for WSI clinical-data columns.',
     cancerTypeId: 'wsi-contract',
     publicStudy: true,
     groups: 'PUBLIC',
@@ -35,6 +36,17 @@ const samples = [
     },
 ];
 
+const filteredSamples = [
+    ...samples,
+    ...Array.from({ length: 499 }, (_, index) => ({
+        studyId: DEV_STUDY.studyId,
+        patientId: `WSP-F-${index + 1}`,
+        sampleId: `WSS-F-${index + 1}`,
+        uniquePatientKey: `${DEV_STUDY.studyId}_WSP-F-${index + 1}`,
+        uniqueSampleKey: `${DEV_STUDY.studyId}_WSS-F-${index + 1}`,
+    })),
+];
+
 const clinicalAttributes = [
     'WSI_SAMPLE_SLIDE_COUNT',
     'WSI_PATIENT_SLIDE_COUNT',
@@ -48,13 +60,14 @@ const clinicalAttributes = [
     description: clinicalAttributeId,
     datatype: 'NUMBER',
     patientAttribute: true,
-    priority: 0,
+    priority: 1,
     studyId: DEV_STUDY.studyId,
 }));
 
 const sampleClinicalData = {
     [samples[0].uniqueSampleKey]: [
         { clinicalAttributeId: 'WSI_SAMPLE_SLIDE_COUNT', value: '7' },
+        { clinicalAttributeId: 'WSI_PATIENT_SLIDE_COUNT', value: '7' },
         {
             clinicalAttributeId: 'WSI_SAMPLE_PART_MATCHED_SLIDE_COUNT',
             value: '5',
@@ -63,9 +76,18 @@ const sampleClinicalData = {
             clinicalAttributeId: 'WSI_SAMPLE_BLOCK_MATCHED_SLIDE_COUNT',
             value: '4',
         },
+        {
+            clinicalAttributeId: 'WSI_PATIENT_PART_MATCHED_SLIDE_COUNT',
+            value: '5',
+        },
+        {
+            clinicalAttributeId: 'WSI_PATIENT_BLOCK_MATCHED_SLIDE_COUNT',
+            value: '4',
+        },
     ],
     [samples[1].uniqueSampleKey]: [
         { clinicalAttributeId: 'WSI_SAMPLE_SLIDE_COUNT', value: '2' },
+        { clinicalAttributeId: 'WSI_PATIENT_SLIDE_COUNT', value: '2' },
         {
             clinicalAttributeId: 'WSI_SAMPLE_PART_MATCHED_SLIDE_COUNT',
             value: '1',
@@ -74,23 +96,74 @@ const sampleClinicalData = {
             clinicalAttributeId: 'WSI_SAMPLE_BLOCK_MATCHED_SLIDE_COUNT',
             value: '1',
         },
+        {
+            clinicalAttributeId: 'WSI_PATIENT_PART_MATCHED_SLIDE_COUNT',
+            value: '1',
+        },
+        {
+            clinicalAttributeId: 'WSI_PATIENT_BLOCK_MATCHED_SLIDE_COUNT',
+            value: '1',
+        },
     ],
 };
 
+function clinicalDataForSample(sample: typeof filteredSamples[number]) {
+    const sampleNumber = Number(sample.sampleId.match(/\d+$/)?.[0] || 1);
+    const count = (sampleNumber % 9) + 1;
+    return [
+        { clinicalAttributeId: 'WSI_SAMPLE_SLIDE_COUNT', value: `${count}` },
+        { clinicalAttributeId: 'WSI_PATIENT_SLIDE_COUNT', value: `${count}` },
+        {
+            clinicalAttributeId: 'WSI_SAMPLE_PART_MATCHED_SLIDE_COUNT',
+            value: `${Math.max(0, count - 1)}`,
+        },
+        {
+            clinicalAttributeId: 'WSI_PATIENT_PART_MATCHED_SLIDE_COUNT',
+            value: `${Math.max(0, count - 1)}`,
+        },
+        {
+            clinicalAttributeId: 'WSI_SAMPLE_BLOCK_MATCHED_SLIDE_COUNT',
+            value: `${Math.max(0, count - 2)}`,
+        },
+        {
+            clinicalAttributeId: 'WSI_PATIENT_BLOCK_MATCHED_SLIDE_COUNT',
+            value: `${Math.max(0, count - 2)}`,
+        },
+    ];
+}
+
+const filteredSampleClinicalData = Object.fromEntries(
+    filteredSamples.map(sample => [
+        sample.uniqueSampleKey,
+        clinicalDataForSample(sample),
+    ])
+);
+
 async function installStudyMocks(page: Page) {
-    await page.route('**/api/**', route =>
-        route.fulfill({
-            status: 200,
-            contentType: 'application/json',
-            body: JSON.stringify([]),
-        })
-    );
     await page.addInitScript(() => {
+        const win = window as any;
+        let frontendConfig = win.frontendConfig || {};
+        const localConfig = {
+            apiRoot: '/',
+            baseUrl: window.location.host,
+            frontendUrl: `${window.location.origin}/`,
+            configurationServiceUrl: '/config_service',
+        };
+        Object.defineProperty(win, 'frontendConfig', {
+            configurable: true,
+            get: () => frontendConfig,
+            set: value => {
+                frontendConfig = { ...value, ...localConfig };
+            },
+        });
+        frontendConfig = { ...frontendConfig, ...localConfig };
         localStorage.setItem(
             'frontendConfig',
             JSON.stringify({
                 serverConfig: {
                     authenticationMethod: 'none',
+                    sessionServiceEnabled: true,
+                    user_display_name: 'wsi-study-contract-user',
                     skin_hide_download_controls: 'HIDE_ALL',
                 },
             })
@@ -103,53 +176,78 @@ async function installStudyMocks(page: Page) {
             body: JSON.stringify({
                 app_name: 'wsi-study-clinical-data-contract',
                 authenticationMethod: 'none',
+                sessionServiceEnabled: true,
+                user_display_name: 'wsi-study-contract-user',
             }),
         })
     );
-    await page.route('**/api/studies**', route => {
-        if (new URL(route.request().url()).pathname !== '/api/studies') {
-            return route.fallback();
-        }
-        return route.fulfill({
-            status: 200,
-            contentType: 'application/json',
-            body: JSON.stringify([study]),
-        });
-    });
-    await page.route('**/api/filtered-samples/fetch', route =>
-        route.fulfill({
-            status: 200,
-            contentType: 'application/json',
-            body: JSON.stringify(samples),
-        })
+    await page.route('**/api/**', route =>
+        (async () => {
+            const pathname = new URL(route.request().url()).pathname;
+            if (pathname === '/api/studies') {
+                return route.fulfill({
+                    status: 200,
+                    contentType: 'application/json',
+                    body: JSON.stringify([study]),
+                });
+            }
+            if (pathname === '/api/filtered-samples/fetch') {
+                return route.fulfill({
+                    status: 200,
+                    contentType: 'application/json',
+                    body: JSON.stringify(filteredSamples),
+                });
+            }
+            if (pathname === '/api/clinical-attributes/fetch') {
+                return route.fulfill({
+                    status: 200,
+                    contentType: 'application/json',
+                    body: JSON.stringify(clinicalAttributes),
+                });
+            }
+            if (pathname === '/api/clinical-data-table/fetch') {
+                const requestBody = route.request().postDataJSON() as {
+                    studyViewFilter?: { clinicalDataFilters?: unknown[] };
+                    clinicalDataFilters?: unknown[];
+                };
+                const filtered =
+                    (requestBody.studyViewFilter?.clinicalDataFilters?.length ??
+                        requestBody.clinicalDataFilters?.length ??
+                        0) > 0;
+                return route.fulfill({
+                    status: 200,
+                    contentType: 'application/json',
+                    headers: { 'total-count': filtered ? '600' : '2' },
+                    body: JSON.stringify({
+                        byUniqueSampleKey: filtered
+                            ? filteredSampleClinicalData
+                            : sampleClinicalData,
+                    }),
+                });
+            }
+            if (pathname === '/api/session/settings/fetch') {
+                return route.fulfill({
+                    status: 200,
+                    contentType: 'application/json',
+                    body: JSON.stringify({
+                        chartSettings: [
+                            {
+                                id: 'WSI_PATIENT_SLIDE_COUNT',
+                                chartType: 'BAR_CHART',
+                                patientAttribute: true,
+                            },
+                        ],
+                        groupColors: {},
+                    }),
+                });
+            }
+            return route.fulfill({
+                status: 200,
+                contentType: 'application/json',
+                body: JSON.stringify([]),
+            });
+        })()
     );
-    await page.route('**/api/clinical-attributes/fetch', route =>
-        route.fulfill({
-            status: 200,
-            contentType: 'application/json',
-            body: JSON.stringify(clinicalAttributes),
-        })
-    );
-    await page.route('**/api/clinical-data-table/fetch', async route => {
-        const requestBody = route.request().postDataJSON() as {
-            studyViewFilter?: { clinicalDataFilters?: unknown[] };
-        };
-        const filtered =
-            (requestBody.studyViewFilter?.clinicalDataFilters?.length ?? 0) > 0;
-        await route.fulfill({
-            status: 200,
-            contentType: 'application/json',
-            headers: { 'total-count': filtered ? '600' : '2' },
-            body: JSON.stringify({
-                byUniqueSampleKey: filtered
-                    ? {
-                          [samples[0].uniqueSampleKey]:
-                              sampleClinicalData[samples[0].uniqueSampleKey],
-                      }
-                    : sampleClinicalData,
-            }),
-        });
-    });
 }
 
 async function waitForClinicalDataTable(page: Page) {
