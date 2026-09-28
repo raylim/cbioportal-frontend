@@ -4,6 +4,8 @@ import _ from 'lodash';
 import {
     getAttributeValue,
     ITrackEventConfig,
+    renderStack,
+    renderSuperscript,
     TimelineEvent,
     TimelineTrackSpecification,
 } from 'cbioportal-clinical-timeline';
@@ -12,7 +14,12 @@ import {
     buildWsiSampleTimelineMap,
     WsiSampleTimelineMap,
 } from 'shared/components/wsiViewer/wsiSampleTimeline';
-import SampleMarker from './SampleMarker';
+import { getTextWidth } from 'cbioportal-frontend-commons';
+import SampleMarker, { MultipleSampleMarker } from './SampleMarker';
+import {
+    getNumberRangeLabel,
+    getSortedSampleInfo,
+} from './TimelineWrapperUtils';
 import { ISampleMetaDeta } from './TimelineWrapper';
 import {
     buildPathologySlideRow,
@@ -47,6 +54,114 @@ export function pathologySlideMarkerSample(
         color: caseMetaData.color[sampleId] || '#333333',
         label,
     };
+}
+
+/** Fill of the marker for slides not linked to a sequenced sample. */
+export const UNMATCHED_MARKER_COLOR = '#999999';
+
+const SAMPLE_MARKER_RADIUS = 7;
+
+/**
+ * How a group of simultaneous PATHOLOGY SLIDES events is drawn:
+ * - "sample": every event belongs to one sample; its numbered marker.
+ * - "samples": events from several samples (unmatched ones add no number);
+ *   the multi-sample marker with each sample listed once.
+ * - "unmatched": no event belongs to a patient sample; a grey marker.
+ * `count` is the number of events, shown as a superscript when above one.
+ */
+export type PathologySlideGroupMarker = { count: number } & (
+    | { kind: 'sample'; sample: PathologySlideMarkerSample }
+    | { kind: 'samples'; samples: PathologySlideMarkerSample[] }
+    | { kind: 'unmatched' }
+);
+
+export function pathologySlideGroupMarker(
+    events: PathologySlideEvent[],
+    caseMetaData: ISampleMetaDeta
+): PathologySlideGroupMarker {
+    const count = events.length;
+    const markerSamples = events.map(e =>
+        pathologySlideMarkerSample(e, caseMetaData)
+    );
+    const samples = _.uniqBy(
+        markerSamples.filter(
+            (s): s is PathologySlideMarkerSample => s !== null
+        ),
+        s => s.sampleId
+    );
+    if (samples.length === 0) {
+        return { kind: 'unmatched', count };
+    }
+    if (samples.length === 1 && !markerSamples.includes(null)) {
+        return { kind: 'sample', sample: samples[0], count };
+    }
+    return { kind: 'samples', samples, count };
+}
+
+/** Superscript event count placed just right of a marker's top edge. */
+function countSuperscript(count: number, y: number, markerHalfWidth: number) {
+    return (
+        <g transform={`translate(${markerHalfWidth - 3} 0)`}>
+            {renderSuperscript(count, y)}
+        </g>
+    );
+}
+
+export function renderPathologySlideGroupMarker(
+    marker: PathologySlideGroupMarker,
+    y: number
+): JSX.Element {
+    let shape: JSX.Element;
+    let halfWidth: number;
+    switch (marker.kind) {
+        case 'sample':
+            shape = (
+                <SampleMarker
+                    color={marker.sample.color}
+                    label={marker.sample.label}
+                    y={y}
+                />
+            );
+            halfWidth = SAMPLE_MARKER_RADIUS;
+            break;
+        case 'samples': {
+            const colors = marker.samples.map(s => s.color);
+            const labels = marker.samples.map(s => s.label);
+            // Same width as MultipleSampleMarker's pill.
+            const label = getNumberRangeLabel(
+                getSortedSampleInfo(colors, labels).map(p => p.label)
+            );
+            halfWidth = Math.ceil(getTextWidth(label, 'Arial', '10px')) / 2 + 4;
+            shape = (
+                <MultipleSampleMarker colors={colors} labels={labels} y={y} />
+            );
+            break;
+        }
+        default:
+            if (marker.count > 1) {
+                shape = renderStack(
+                    _.times(marker.count, () => UNMATCHED_MARKER_COLOR),
+                    y
+                );
+                halfWidth = 4.5;
+            } else {
+                shape = (
+                    <circle
+                        cx="0"
+                        cy={y}
+                        r={SAMPLE_MARKER_RADIUS}
+                        fill={UNMATCHED_MARKER_COLOR}
+                    />
+                );
+                halfWidth = SAMPLE_MARKER_RADIUS;
+            }
+    }
+    return (
+        <g>
+            {shape}
+            {marker.count > 1 && countSuperscript(marker.count, y, halfWidth)}
+        </g>
+    );
 }
 
 export const PathologySlideTooltip: React.FunctionComponent<{
@@ -95,9 +210,9 @@ export const PathologySlideTooltip: React.FunctionComponent<{
 };
 
 /**
- * PATHOLOGY SLIDES track: a matched event is drawn as its sample's numbered,
- * colored marker and an unmatched one as the default grey point. Overlapping
- * events keep the default count-and-stack rendering, colored by sample.
+ * PATHOLOGY SLIDES track: events are drawn with the SampleManager's numbered,
+ * colored sample markers (see pathologySlideGroupMarker), with a count when
+ * several share a day.
  */
 export function pathologySlidesTrackConfig(
     caseMetaData: ISampleMetaDeta,
@@ -110,7 +225,8 @@ export function pathologySlidesTrackConfig(
             const markerSample = (e: TimelineEvent) =>
                 pathologySlideMarkerSample(e.event, caseMetaData);
 
-            cat.eventColorGetter = e => markerSample(e)?.color;
+            cat.eventColorGetter = e =>
+                markerSample(e)?.color || UNMATCHED_MARKER_COLOR;
 
             cat.sortSimultaneousEvents = (events: TimelineEvent[]) =>
                 _.sortBy<TimelineEvent>(events, [
@@ -121,17 +237,14 @@ export function pathologySlidesTrackConfig(
                     (e: TimelineEvent) => getAttributeValue('SUBTYPE', e) || '',
                 ]);
 
-            cat.renderEvents = (events: TimelineEvent[], y: number) => {
-                const sample =
-                    events.length === 1 ? markerSample(events[0]) : null;
-                return sample ? (
-                    <SampleMarker
-                        color={sample.color}
-                        label={sample.label}
-                        y={y}
-                    />
-                ) : null;
-            };
+            cat.renderEvents = (events: TimelineEvent[], y: number) =>
+                renderPathologySlideGroupMarker(
+                    pathologySlideGroupMarker(
+                        events.map(e => e.event),
+                        caseMetaData
+                    ),
+                    y
+                );
 
             cat.renderTooltip = (e: TimelineEvent) => (
                 <PathologySlideTooltip

@@ -13,8 +13,11 @@ import {
 import { ClinicalEvent } from 'cbioportal-ts-api-client';
 import SampleManager from 'pages/patientView/SampleManager';
 import { buildBaseConfig, sortTracks } from './timeline_helpers';
-import { pathologySlideMarkerSample } from './pathologySlidesTimeline';
-import SampleMarker from './SampleMarker';
+import {
+    pathologySlideGroupMarker,
+    pathologySlideMarkerSample,
+    UNMATCHED_MARKER_COLOR,
+} from './pathologySlidesTimeline';
 import { ISampleMetaDeta } from './TimelineWrapper';
 
 function event(
@@ -119,29 +122,124 @@ describe('pathologySlideMarkerSample', () => {
     });
 });
 
+describe('pathologySlideGroupMarker', () => {
+    const sample1 = {
+        sampleId: 'P-0000081-T01-IM3',
+        color: '#0000ff',
+        label: '1',
+    };
+    const sample2 = { sampleId: SAMPLE, color: '#ff0000', label: '2' };
+
+    it('uses one sample marker when every event has the same sample', () => {
+        expect(
+            pathologySlideGroupMarker(
+                [slide({}), slide({ SUBTYPE: 'IHC' })],
+                CASE_META
+            )
+        ).toEqual({ kind: 'sample', sample: sample2, count: 2 });
+    });
+
+    it('deduplicates samples of a mixed group and skips unmatched events', () => {
+        expect(
+            pathologySlideGroupMarker(
+                [
+                    slide({}),
+                    slide({ SUBTYPE: 'IHC' }),
+                    slide({ SAMPLE_ID: 'P-0000081-T01-IM3' }),
+                    slide({ MATCH_LEVEL: 'Unmatched' }),
+                ],
+                CASE_META
+            )
+        ).toEqual({ kind: 'samples', samples: [sample2, sample1], count: 4 });
+        expect(
+            pathologySlideGroupMarker(
+                [slide({}), slide({ MATCH_LEVEL: 'Unmatched' })],
+                CASE_META
+            )
+        ).toEqual({ kind: 'samples', samples: [sample2], count: 2 });
+    });
+
+    it('marks groups without a patient sample as unmatched', () => {
+        expect(
+            pathologySlideGroupMarker(
+                [
+                    slide({ MATCH_LEVEL: 'Unmatched' }),
+                    slide({ SAMPLE_ID: 'P-OTHER' }),
+                ],
+                CASE_META
+            )
+        ).toEqual({ kind: 'unmatched', count: 2 });
+    });
+});
+
 describe('PATHOLOGY SLIDES timeline track', () => {
+    function renderMarker(slides: ClinicalEvent[]) {
+        const track = pathologyTrack(slides);
+        const { container } = render(
+            <svg>{track.renderEvents!(track.items, 10)}</svg>
+        );
+        return {
+            track,
+            texts: Array.from(container.querySelectorAll('text')).map(
+                t => t.textContent
+            ),
+            fills: Array.from(
+                container.querySelectorAll('circle, ellipse, rect')
+            ).map(el => el.getAttribute('fill')),
+        };
+    }
+
     it('draws a matched event as its numbered sample marker', () => {
-        const track = pathologyTrack([slide({})]);
-        const marker = track.renderEvents!(track.items, 10) as JSX.Element;
-        expect(marker.type).toBe(SampleMarker);
-        expect(marker.props).toMatchObject({
-            color: '#ff0000',
-            label: '2',
-            y: 10,
-        });
+        const { track, texts, fills } = renderMarker([slide({})]);
+        expect(texts).toEqual(['2']);
+        expect(fills).toEqual(['#ff0000']);
         expect(track.eventColorGetter!(track.items[0])).toBe('#ff0000');
     });
 
-    it('uses default rendering for unmatched and overlapping events', () => {
-        const unmatched = pathologyTrack([slide({ MATCH_LEVEL: 'Unmatched' })]);
-        expect(unmatched.renderEvents!(unmatched.items, 10)).toBeNull();
-        expect(unmatched.eventColorGetter!(unmatched.items[0])).toBeUndefined();
-
-        const overlapping = pathologyTrack([
+    it("draws a same-sample group as the sample's marker with a count", () => {
+        const { texts, fills } = renderMarker([
             slide({}),
             slide({ SUBTYPE: 'IHC' }),
+            slide({ MATCH_LEVEL: 'BLOCK' }),
         ]);
-        expect(overlapping.renderEvents!(overlapping.items, 10)).toBeNull();
+        expect(texts).toEqual(['2', '3']);
+        expect(fills).toEqual(['#ff0000']);
+    });
+
+    it('lists each sample once in a mixed group', () => {
+        const mixed = renderMarker([
+            slide({}),
+            slide({ SUBTYPE: 'IHC' }),
+            slide({ SAMPLE_ID: 'P-0000081-T01-IM3' }),
+        ]);
+        // The sample tracks' multi-sample marker writes consecutive
+        // numbers as a range.
+        expect(mixed.texts).toEqual(['1-2', '3']);
+
+        const withUnmatched = renderMarker([
+            slide({}),
+            slide({ SUBTYPE: 'IHC' }),
+            slide({ MATCH_LEVEL: 'Unmatched' }),
+        ]);
+        expect(withUnmatched.texts).toEqual(['2', '3']);
+        expect(withUnmatched.fills).not.toContain(UNMATCHED_MARKER_COLOR);
+    });
+
+    it('draws unmatched events as grey markers', () => {
+        const single = renderMarker([slide({ MATCH_LEVEL: 'Unmatched' })]);
+        expect(single.texts).toEqual([]);
+        expect(single.fills).toEqual([UNMATCHED_MARKER_COLOR]);
+        expect(single.track.eventColorGetter!(single.track.items[0])).toBe(
+            UNMATCHED_MARKER_COLOR
+        );
+
+        const stack = renderMarker([
+            slide({ MATCH_LEVEL: 'Unmatched' }),
+            slide({ MATCH_LEVEL: 'Unmatched', SUBTYPE: 'IHC' }),
+        ]);
+        expect(stack.texts).toEqual(['2']);
+        expect(stack.fills).toContain(UNMATCHED_MARKER_COLOR);
+        expect(stack.fills).not.toContain('#ff0000');
     });
 
     it('orders simultaneous events by sample number, then stain', () => {
