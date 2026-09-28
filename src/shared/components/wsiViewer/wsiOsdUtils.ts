@@ -87,8 +87,6 @@ export function promoteOsdImageLoaderLimit(osdViewer: any): void {
 export function ensureNavigator({
     osdViewer,
     openSeadragon,
-    meta,
-    baseUrl,
     accessToken,
     sourceUrl,
 }: {
@@ -96,8 +94,6 @@ export function ensureNavigator({
     osdViewer: any;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     openSeadragon: any;
-    meta: TileMetadata;
-    baseUrl: string;
     accessToken?: string;
     sourceUrl: string;
 }) {
@@ -105,7 +101,12 @@ export function ensureNavigator({
         return osdViewer?.navigator ?? null;
     }
 
-    osdViewer.navigator = new openSeadragon.Navigator({
+    const originalTiledImage = osdViewer.world?.getItemAt?.(0);
+    if (!originalTiledImage) {
+        return null;
+    }
+
+    const navigator = new openSeadragon.Navigator({
         viewer: osdViewer,
         position: 'BOTTOM_RIGHT',
         sizeRatio: 0.2,
@@ -117,10 +118,14 @@ export function ensureNavigator({
         displayRegionColor: '#900',
         ajaxHeaders: buildWsiRequestHeaders(sourceUrl, accessToken),
         loadTilesWithAjax: Boolean(accessToken || sourceUrl),
-        tileSources: buildOsdTileSource(meta, baseUrl),
+    });
+    osdViewer.navigator = navigator;
+    navigator.addTiledImage({
+        tileSource: originalTiledImage.source,
+        originalTiledImage,
     });
     offsetNavigatorElement(osdViewer);
-    return osdViewer.navigator;
+    return navigator;
 }
 
 export function offsetNavigatorElement(

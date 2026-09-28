@@ -66,8 +66,6 @@ export interface IServerConfig {
     ptmSources: string[] | undefined;
     oncoprint_hide_vus_default: boolean;
     oncokb_public_api_url: string | null;
-    digital_slide_archive_iframe_url: string | null;
-    digital_slide_archive_meta_url: string | null;
     mdacc_heatmap_meta_url: string | null;
     mdacc_heatmap_patient_url: string | null;
     pubmed_url: string | null;
@@ -161,6 +159,7 @@ export interface IServerConfig {
      * Null/undefined = feature hidden.
      */
     msk_wsi_tile_server_url: string | null;
+    msk_wsi_annotation_api_url: string | null;
     query_product_limit: number;
     clinical_attribute_product_limit: number;
     dat_method: string;

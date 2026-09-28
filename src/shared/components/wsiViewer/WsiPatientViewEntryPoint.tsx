@@ -23,6 +23,7 @@ export interface WsiPatientViewEntryPointProps {
     onClearFilters?: () => void;
     preferredSampleId?: string;
     pathologyFilter?: PathologySlideFilter;
+    annotationApiUrl?: string | null;
 }
 
 // Keep the foundation viewer out of the common patient/study bundle. Most
@@ -58,6 +59,7 @@ export default function WsiPatientViewEntryPoint({
     onClearFilters,
     preferredSampleId,
     pathologyFilter,
+    annotationApiUrl,
 }: WsiPatientViewEntryPointProps) {
     const hierarchyUrl = buildWsiHierarchyApiUrl(studyId, patientId);
 
@@ -86,6 +88,7 @@ export default function WsiPatientViewEntryPoint({
                 onClearFilters={onClearFilters}
                 preferredSampleId={preferredSampleId}
                 pathologyFilter={pathologyFilter}
+                annotationApiUrl={annotationApiUrl}
             />
         </React.Suspense>
     );

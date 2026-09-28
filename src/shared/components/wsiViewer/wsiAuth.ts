@@ -237,3 +237,91 @@ export function clearWsiSlideAccess(studyId?: string): void {
     slideAccess.clear();
     pendingSlideAccess.clear();
 }
+
+type AnnotationTokenResponse = {
+    access_token: string;
+    expires_in: number;
+};
+
+type AnnotationAccessToken = {
+    value: string;
+    expiresAt: number;
+};
+
+const annotationTokens = new Map<string, AnnotationAccessToken>();
+const pendingAnnotationTokens = new Map<string, Promise<string>>();
+
+function purposeTokenKey(
+    studyId: string,
+    purpose: 'annotations' | 'agent',
+    authScope: string
+): string {
+    return `${normalizeWsiAuthScope(authScope)}::${purpose}::${studyId}`;
+}
+
+async function requestAnnotationToken(
+    studyId: string,
+    authScope: string
+): Promise<string> {
+    const url = new URL(
+        buildCBioPortalAPIUrl('api/wsi/access-token'),
+        typeof window === 'undefined'
+            ? 'http://localhost'
+            : window.location.origin
+    );
+    url.searchParams.set('studyId', studyId);
+    url.searchParams.set('purpose', 'annotations');
+    const response = await fetch(url.toString(), {
+        credentials: 'same-origin',
+        cache: 'no-store',
+    });
+    if (!response.ok) {
+        throw new Error(`WSI authorization failed (${response.status})`);
+    }
+    const payload = (await response.json()) as AnnotationTokenResponse;
+    if (!payload.access_token || !Number.isFinite(payload.expires_in)) {
+        throw new Error('Invalid WSI authorization response');
+    }
+    annotationTokens.set(purposeTokenKey(studyId, 'annotations', authScope), {
+        value: payload.access_token,
+        expiresAt: Date.now() + payload.expires_in * 1000,
+    });
+    return payload.access_token;
+}
+
+export function getAnnotationAccessToken(
+    studyId: string,
+    authScope = 'anonymousUser'
+): Promise<string> {
+    if (!studyId) {
+        return Promise.reject(new Error('WSI study scope is required'));
+    }
+    const key = purposeTokenKey(studyId, 'annotations', authScope);
+    const cached = annotationTokens.get(key);
+    if (cached && cached.expiresAt > Date.now() + 30_000) {
+        return Promise.resolve(cached.value);
+    }
+    let request = pendingAnnotationTokens.get(key);
+    if (!request) {
+        request = requestAnnotationToken(studyId, authScope).finally(() => {
+            pendingAnnotationTokens.delete(key);
+        });
+        pendingAnnotationTokens.set(key, request);
+    }
+    return request;
+}
+
+export function clearAnnotationAccessToken(studyId?: string): void {
+    if (studyId) {
+        for (const key of annotationTokens.keys()) {
+            if (key.endsWith(`::${studyId}`)) annotationTokens.delete(key);
+        }
+        for (const key of pendingAnnotationTokens.keys()) {
+            if (key.endsWith(`::${studyId}`))
+                pendingAnnotationTokens.delete(key);
+        }
+        return;
+    }
+    annotationTokens.clear();
+    pendingAnnotationTokens.clear();
+}

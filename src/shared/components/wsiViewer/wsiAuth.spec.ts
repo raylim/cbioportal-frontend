@@ -1,5 +1,7 @@
 import {
+    clearAnnotationAccessToken,
     clearWsiSlideAccess,
+    getAnnotationAccessToken,
     getWsiSlideAccess,
     isWsiAuthEnabled,
 } from './wsiAuth';
@@ -120,6 +122,36 @@ describe('WSI access capability', () => {
             getWsiSlideAccess('study-1', 'slide-1', false, 'user-b')
         ).resolves.toEqual(expect.objectContaining({ accessToken: 'token-b' }));
         expect(global.fetch).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not reuse annotation capabilities across authenticated subjects', async () => {
+        jest.spyOn(global, 'fetch')
+            .mockResolvedValueOnce({
+                ok: true,
+                json: async () => ({
+                    access_token: 'annotation-a',
+                    expires_in: 300,
+                }),
+            } as Response)
+            .mockResolvedValueOnce({
+                ok: true,
+                json: async () => ({
+                    access_token: 'annotation-b',
+                    expires_in: 300,
+                }),
+            } as Response);
+
+        await expect(
+            getAnnotationAccessToken('study-1', 'user-a')
+        ).resolves.toBe('annotation-a');
+        await expect(
+            getAnnotationAccessToken('study-1', 'user-b')
+        ).resolves.toBe('annotation-b');
+        expect(global.fetch).toHaveBeenCalledTimes(2);
+        expect((global.fetch as jest.Mock).mock.calls[0][0]).toContain(
+            'purpose=annotations'
+        );
+        clearAnnotationAccessToken();
     });
 
     it('always enables the source-bound WSI capability contract', () => {
