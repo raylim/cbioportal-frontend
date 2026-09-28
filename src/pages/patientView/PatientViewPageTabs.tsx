@@ -604,6 +604,9 @@ export function tabs(
                         'anonymousUser'
                     }
                     height={WindowStore.size.height - 220}
+                    clinicalEvents={
+                        pageComponent.patientViewPageStore.clinicalEvents.result
+                    }
                 />
             </MSKTab>
         );
