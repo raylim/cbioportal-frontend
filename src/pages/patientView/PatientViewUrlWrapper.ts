@@ -14,6 +14,10 @@ export type PatientViewUrlQuery = {
     caseId?: string;
     sampleId?: string;
     resourceUrl?: string;
+    /** Pathology Slides tab scope, set by pathology slide links. */
+    stainFilter?: string;
+    matchLevel?: string;
+    specimenKey?: string;
     genomicEvolutionSettings: {
         showTimeline?: string;
 
@@ -43,6 +47,9 @@ export default class PatientViewUrlWrapper extends URLWrapper<
             caseId: { isSessionProp: false, isHashedProp: true },
             sampleId: { isSessionProp: false, isHashedProp: true },
             resourceUrl: { isSessionProp: false },
+            stainFilter: { isSessionProp: false },
+            matchLevel: { isSessionProp: false },
+            specimenKey: { isSessionProp: false },
             genomicEvolutionSettings: {
                 isSessionProp: false,
                 nestedObjectProps: {

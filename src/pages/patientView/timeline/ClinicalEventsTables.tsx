@@ -5,6 +5,8 @@ import LazyMobXTable from 'shared/components/lazyMobXTable/LazyMobXTable';
 import _ from 'lodash';
 import { DownloadControlOption } from 'cbioportal-frontend-commons';
 import { getServerConfig } from 'config/config';
+import PathologySlidesTable from './PathologySlidesTable';
+import { PATHOLOGY_SLIDES_EVENT_TYPE } from './pathologySlidesTableUtils';
 
 class EventsTable extends LazyMobXTable<{}> {}
 
@@ -32,10 +34,28 @@ const ClinicalEventsTables: React.FunctionComponent<{
     clinicalEvents: ClinicalEvent[];
 }> = function({ clinicalEvents }) {
     const data = groupTimelineData(clinicalEvents);
+    const showCopyDownload =
+        getServerConfig().skin_hide_download_controls ===
+        DownloadControlOption.SHOW_ALL;
 
     return (
         <div>
             {_.map(data, (dataCategory: string[][], key: string) => {
+                if (key === PATHOLOGY_SLIDES_EVENT_TYPE) {
+                    return (
+                        <>
+                            <h3 className={'pull-left'}>Pathology slides</h3>
+                            <PathologySlidesTable
+                                events={clinicalEvents.filter(
+                                    event => event.eventType === key
+                                )}
+                                clinicalEvents={clinicalEvents}
+                                showCopyDownload={showCopyDownload}
+                            />
+                        </>
+                    );
+                }
+
                 // remove PATIENT_ID column since it is redundant
                 const hiddenColumnIndex = dataCategory[0].reduce(
                     (aggr: number[], item: string, i) => {
@@ -70,11 +90,7 @@ const ClinicalEventsTables: React.FunctionComponent<{
                             showPagination={false}
                             showColumnVisibility={false}
                             showFilter={true}
-                            showCopyDownload={
-                                getServerConfig()
-                                    .skin_hide_download_controls ===
-                                DownloadControlOption.SHOW_ALL
-                            }
+                            showCopyDownload={showCopyDownload}
                         />
                     </>
                 );
