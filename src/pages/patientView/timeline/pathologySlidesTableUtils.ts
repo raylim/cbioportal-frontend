@@ -51,7 +51,16 @@ export interface PathologySlideRow {
     openLabel: string;
 }
 
-function eventAttributes(event: ClinicalEvent): Record<string, string> {
+/**
+ * The fields read from a PATHOLOGY SLIDES event; satisfied by both a
+ * ClinicalEvent and a timeline item's event.
+ */
+export type PathologySlideEvent = Pick<
+    ClinicalEvent,
+    'startNumberOfDaysSinceDiagnosis'
+> & { attributes?: { key: string; value: string }[] };
+
+function eventAttributes(event: PathologySlideEvent): Record<string, string> {
     const attrs: Record<string, string> = {};
     (event.attributes || []).forEach(attr => {
         attrs[attr.key] = attr.value;
@@ -110,9 +119,14 @@ export function pathologySlidesOpenPath(
     return `${url.pathname}${url.search}`;
 }
 
+/**
+ * Procedure offset from sequencing, e.g. "42 d before (d+962)", or with a
+ * subject "42 d before sequencing (d+962)". Empty when either day is unknown.
+ */
 function sequencingRelation(
     procedureDays: number | undefined,
-    sequencingDays: number | undefined
+    sequencingDays: number | undefined,
+    subject?: string
 ): string {
     if (procedureDays == null || sequencingDays == null) {
         return '';
@@ -120,9 +134,14 @@ function sequencingRelation(
     const day = formatDaysSinceDiagnosis(sequencingDays);
     const delta = sequencingDays - procedureDays;
     if (delta === 0) {
-        return `same day (${day})`;
+        return subject
+            ? `same day as ${subject} (${day})`
+            : `same day (${day})`;
     }
-    return `${Math.abs(delta)} d ${delta > 0 ? 'before' : 'after'} (${day})`;
+    const direction = delta > 0 ? 'before' : 'after';
+    return `${Math.abs(delta)} d ${direction}${
+        subject ? ` ${subject}` : ''
+    } (${day})`;
 }
 
 function slidesTooltip(
@@ -146,8 +165,19 @@ function slidesTooltip(
     return parts.join(' ');
 }
 
+/** Sequenced sample of a BLOCK- or PART-matched event; unset when unmatched. */
+export function pathologySlideSampleId(
+    event: PathologySlideEvent
+): string | undefined {
+    const attrs = eventAttributes(event);
+    const matchLevel = (attrs.MATCH_LEVEL || '').toUpperCase();
+    return MATCH_LABELS[matchLevel] && attrs.SAMPLE_ID
+        ? attrs.SAMPLE_ID
+        : undefined;
+}
+
 export function buildPathologySlideRow(
-    event: ClinicalEvent,
+    event: PathologySlideEvent,
     sampleTimelines: WsiSampleTimelineMap
 ): PathologySlideRow {
     const attrs = eventAttributes(event);
@@ -158,7 +188,7 @@ export function buildPathologySlideRow(
             : undefined;
     const matchLevel = (attrs.MATCH_LEVEL || '').toUpperCase();
     const match = MATCH_LABELS[matchLevel];
-    const sampleId = match && attrs.SAMPLE_ID ? attrs.SAMPLE_ID : undefined;
+    const sampleId = pathologySlideSampleId(event);
     const sequencingDays = sampleId
         ? sampleTimelines.get(sampleId)?.sequencingDays
         : undefined;
@@ -228,4 +258,77 @@ export function buildPathologySlideRows(
                 a.sampleText.localeCompare(b.sampleText) ||
                 a.stain.localeCompare(b.stain)
         );
+}
+
+/** One labelled line of the timeline tooltip for a PATHOLOGY SLIDES event. */
+export interface PathologySlideTooltipLine {
+    label: string;
+    value: string;
+    /** Hover explanation for the value. */
+    tooltip?: string;
+}
+
+export interface PathologySlideTooltipContent {
+    title: string;
+    lines: PathologySlideTooltipLine[];
+    openPath?: string;
+    openLabel: string;
+}
+
+export const UNMATCHED_SAMPLE_TEXT =
+    'Unmatched (not linked to a sequenced sample)';
+
+/**
+ * Timeline tooltip content for one PATHOLOGY SLIDES event, e.g.
+ * "Pathology slides · H&E · Part-matched" followed by Sample, Procedure,
+ * Specimen and Slides lines.
+ */
+export function buildPathologySlideTooltipContent(
+    row: PathologySlideRow
+): PathologySlideTooltipContent {
+    const matched = row.matchText !== UNMATCHED_LABEL;
+    const title = [
+        'Pathology slides',
+        row.stain,
+        matched ? `${row.matchText}-matched` : UNMATCHED_LABEL,
+    ]
+        .filter(Boolean)
+        .join(' · ');
+
+    const lines: PathologySlideTooltipLine[] = [
+        {
+            label: 'Sample',
+            value: row.sampleId || UNMATCHED_SAMPLE_TEXT,
+            tooltip: row.matchTooltip,
+        },
+    ];
+    if (row.procedureText) {
+        const relation = sequencingRelation(
+            row.procedureDays,
+            row.sequencingDays,
+            'sequencing'
+        );
+        lines.push({
+            label: 'Procedure',
+            value: relation
+                ? `${row.procedureText} — ${relation}`
+                : row.procedureText,
+            tooltip: row.sequencingTooltip || row.procedureTooltip,
+        });
+    }
+    if (row.specimen) {
+        lines.push({ label: 'Specimen', value: row.specimen });
+    }
+    lines.push({
+        label: 'Slides',
+        value: row.slidesText,
+        tooltip: row.slidesTooltip,
+    });
+
+    return {
+        title,
+        lines,
+        openPath: row.openPath,
+        openLabel: row.openLabel,
+    };
 }

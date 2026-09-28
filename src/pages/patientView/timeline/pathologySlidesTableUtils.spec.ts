@@ -2,7 +2,9 @@ import { ClinicalEvent } from 'cbioportal-ts-api-client';
 import { buildWsiSampleTimelineMap } from 'shared/components/wsiViewer/wsiSampleTimeline';
 import {
     buildPathologySlideRows,
+    buildPathologySlideTooltipContent,
     formatSpecimen,
+    pathologySlideSampleId,
     parseImageIds,
     pathologySlidesOpenPath,
 } from './pathologySlidesTableUtils';
@@ -176,5 +178,84 @@ describe('pathology slide helpers', () => {
         ).toBe('/patient/wsiHESlides?caseId=P-1');
         expect(pathologySlidesOpenPath('/patient/wsiHESlides')).toBe(undefined);
         expect(pathologySlidesOpenPath('  ')).toBe(undefined);
+    });
+});
+
+describe('buildPathologySlideTooltipContent', () => {
+    function tooltip(attributes: Record<string, string>, days?: number) {
+        const [row] = rows([slideEvent(days, attributes)]);
+        return buildPathologySlideTooltipContent(row);
+    }
+
+    it('summarizes a matched event with its sequencing offset', () => {
+        const content = tooltip({}, 920);
+        expect(content.title).toBe('Pathology slides · H&E · Part-matched');
+        expect(content.lines.map(l => [l.label, l.value])).toEqual([
+            ['Sample', 'P-0000081-T02-IM6'],
+            ['Procedure', 'd+920 — 42 d before sequencing (d+962)'],
+            ['Specimen', 'Part 1'],
+            ['Slides', '1 of 1 viewable'],
+        ]);
+        expect(content.lines[1].tooltip).toContain(
+            '42 days before this sample was sequenced (d+962)'
+        );
+        expect(content.openPath).toBe(LINKOUT);
+    });
+
+    it('describes same-day and after-sequencing procedures', () => {
+        expect(tooltip({}, 962).lines[1].value).toBe(
+            'd+962 — same day as sequencing (d+962)'
+        );
+        expect(tooltip({ MATCH_LEVEL: 'BLOCK' }, 970).lines[1].value).toBe(
+            'd+970 — 8 d after sequencing (d+962)'
+        );
+        expect(tooltip({ MATCH_LEVEL: 'BLOCK' }, 970).title).toBe(
+            'Pathology slides · H&E · Block-matched'
+        );
+    });
+
+    it('shows only the procedure day when sequencing is unknown', () => {
+        const content = tooltip({ SAMPLE_ID: 'P-OTHER' }, 920);
+        expect(content.lines[1].value).toBe('d+920');
+    });
+
+    it('describes unmatched slides without a sequencing clause', () => {
+        const content = tooltip(
+            { MATCH_LEVEL: 'Unmatched', SUBTYPE: 'IHC', SPECIMEN: '' },
+            920
+        );
+        expect(content.title).toBe('Pathology slides · IHC · Unmatched');
+        expect(content.lines.map(l => [l.label, l.value])).toEqual([
+            ['Sample', 'Unmatched (not linked to a sequenced sample)'],
+            ['Procedure', 'd+920'],
+            ['Slides', '1 of 1 viewable'],
+        ]);
+    });
+
+    it('omits the procedure line and Open path when unavailable', () => {
+        const content = tooltip({ IMAGE_COUNT: '0' });
+        expect(content.lines.map(l => l.label)).toEqual([
+            'Sample',
+            'Specimen',
+            'Slides',
+        ]);
+        expect(content.openPath).toBeUndefined();
+    });
+});
+
+describe('pathologySlideSampleId', () => {
+    it('returns the sample of BLOCK- and PART-matched events only', () => {
+        expect(pathologySlideSampleId(slideEvent(1, {}))).toBe(
+            'P-0000081-T02-IM6'
+        );
+        expect(
+            pathologySlideSampleId(slideEvent(1, { MATCH_LEVEL: 'block' }))
+        ).toBe('P-0000081-T02-IM6');
+        expect(
+            pathologySlideSampleId(slideEvent(1, { MATCH_LEVEL: 'Unmatched' }))
+        ).toBeUndefined();
+        expect(
+            pathologySlideSampleId(slideEvent(1, { SAMPLE_ID: '' }))
+        ).toBeUndefined();
     });
 });

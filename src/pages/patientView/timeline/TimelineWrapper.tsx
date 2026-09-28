@@ -72,7 +72,8 @@ const TimelineWrapper: React.FunctionComponent<ITimelineProps> = observer(
 
             const baseConfig: ITimelineConfig = buildBaseConfig(
                 sampleManager,
-                caseMetaData
+                caseMetaData,
+                data
             );
 
             if (isGenieBpcStudy) {

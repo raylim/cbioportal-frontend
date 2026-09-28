@@ -22,6 +22,7 @@ import { ISampleMetaDeta } from 'pages/patientView/timeline/TimelineWrapper';
 import { ClinicalEvent } from 'cbioportal-ts-api-client';
 import { getColor } from 'cbioportal-frontend-commons';
 import ReactMarkdown from 'react-markdown';
+import { pathologySlidesTrackConfig } from './pathologySlidesTimeline';
 
 const OTHER = 'Other';
 
@@ -292,9 +293,14 @@ export function configureGenieTimeline(baseConfig: ITimelineConfig) {
     return baseConfig;
 }
 
+/**
+ * @param clinicalEvents all of the patient's timeline events; the PATHOLOGY
+ * SLIDES tooltip reads each sample's sequencing day from them.
+ */
 export function buildBaseConfig(
     sampleManager: SampleManager,
-    caseMetaData: ISampleMetaDeta
+    caseMetaData: ISampleMetaDeta,
+    clinicalEvents?: ClinicalEvent[]
 ) {
     let baseConfig: ITimelineConfig = {
         sortOrder: [
@@ -420,6 +426,7 @@ export function buildBaseConfig(
                     };
                 },
             },
+            pathologySlidesTrackConfig(caseMetaData, clinicalEvents),
             {
                 trackTypeMatch: /SPECIMEN|SAMPLE ACQUISITION|SEQUENCING/i,
                 configureTrack: (cat: TimelineTrackSpecification) => {
