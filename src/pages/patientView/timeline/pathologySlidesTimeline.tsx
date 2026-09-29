@@ -13,7 +13,7 @@ import { ClinicalEvent } from 'cbioportal-ts-api-client';
 import {
     buildWsiSampleTimelineMap,
     WsiSampleTimelineMap,
-} from 'shared/components/wsiViewer/wsiSampleTimeline';
+} from 'cbioportal-wsi-viewer';
 import { getTextWidth } from 'cbioportal-frontend-commons';
 import SampleMarker, { MultipleSampleMarker } from './SampleMarker';
 import {

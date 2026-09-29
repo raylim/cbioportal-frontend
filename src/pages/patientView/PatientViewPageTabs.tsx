@@ -604,11 +604,7 @@ export function tabs(
                     patientId={pageComponent.patientViewPageStore.patientId}
                     studyId={pageComponent.patientViewPageStore.studyId}
                     tileServerUrl={tileServerUrl}
-                    authScope={
-                        pageComponent.props.appStore.userName ||
-                        getServerConfig().user_display_name ||
-                        'anonymousUser'
-                    }
+                    userName={pageComponent.props.appStore.userName}
                     height={WindowStore.size.height - 220}
                     clinicalEvents={
                         pageComponent.patientViewPageStore.clinicalEvents.result

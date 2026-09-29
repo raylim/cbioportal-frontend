@@ -5,7 +5,7 @@ import { DefaultTooltip } from 'cbioportal-frontend-commons';
 import LazyMobXTable, {
     Column,
 } from 'shared/components/lazyMobXTable/LazyMobXTable';
-import { buildWsiSampleTimelineMap } from 'shared/components/wsiViewer/wsiSampleTimeline';
+import { buildWsiSampleTimelineMap } from 'cbioportal-wsi-viewer';
 import {
     buildPathologySlideRows,
     PathologySlideRow,

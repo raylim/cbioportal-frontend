@@ -1,5 +1,5 @@
 import { ClinicalEvent } from 'cbioportal-ts-api-client';
-import { buildWsiSampleTimelineMap } from 'shared/components/wsiViewer/wsiSampleTimeline';
+import { buildWsiSampleTimelineMap } from 'cbioportal-wsi-viewer';
 import {
     buildPathologySlideRows,
     buildPathologySlideTooltipContent,

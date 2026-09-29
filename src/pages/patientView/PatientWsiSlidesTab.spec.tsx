@@ -9,9 +9,8 @@ import PatientWsiSlidesTab, {
 
 const mockEntryPoint = jest.fn((_props: Record<string, unknown>) => null);
 
-jest.mock('shared/components/wsiViewer/WsiPatientViewEntryPoint', () => ({
-    __esModule: true,
-    default: (props: Record<string, unknown>) => mockEntryPoint(props),
+jest.mock('shared/components/wsiViewer/wsiAppConfig', () => ({
+    AppWsiViewer: (props: Record<string, unknown>) => mockEntryPoint(props),
 }));
 
 const LINK_QUERY = {

@@ -1,12 +1,13 @@
 import * as React from 'react';
-import WsiPatientViewEntryPoint, {
-    WsiPatientViewEntryPointProps,
-} from 'shared/components/wsiViewer/WsiPatientViewEntryPoint';
-import { readWsiHashState } from 'shared/components/wsiViewer/wsiViewStateUtils';
 import {
     PathologySlideFilter,
+    readWsiHashState,
     WsiStainFilter,
-} from 'shared/components/wsiViewer/wsiViewerTypes';
+} from 'cbioportal-wsi-viewer';
+import {
+    AppWsiViewer,
+    AppWsiViewerProps,
+} from 'shared/components/wsiViewer/wsiAppConfig';
 
 /** Patient view query params that scope the Pathology Slides tab. */
 export interface WsiSlidesTabQuery {
@@ -17,7 +18,7 @@ export interface WsiSlidesTabQuery {
 }
 
 export type WsiSlidesTabScope = Pick<
-    WsiPatientViewEntryPointProps,
+    AppWsiViewerProps,
     'preferredSampleId' | 'pathologyFilter' | 'initialStainFilter'
 >;
 
@@ -55,7 +56,7 @@ export function wsiSlidesTabScopeFromQuery(
     };
 }
 
-type Props = Omit<WsiPatientViewEntryPointProps, keyof WsiSlidesTabScope> & {
+type Props = Omit<AppWsiViewerProps, keyof WsiSlidesTabScope> & {
     query: WsiSlidesTabQuery;
 };
 
@@ -72,5 +73,5 @@ export default function PatientWsiSlidesTab({ query, ...viewerProps }: Props) {
             ),
         [sampleId, stainFilter, matchLevel, specimenKey]
     );
-    return <WsiPatientViewEntryPoint {...viewerProps} {...scope} />;
+    return <AppWsiViewer {...viewerProps} {...scope} />;
 }

@@ -1,11 +1,11 @@
 import { ClinicalEvent } from 'cbioportal-ts-api-client';
-import { formatDaysSinceDiagnosis } from 'shared/components/wsiViewer/wsiNavUtils';
 import {
+    blockName,
     DAY_ZERO_TOOLTIP,
+    formatDaysSinceDiagnosis,
     procedureTooltip,
     WsiSampleTimelineMap,
-} from 'shared/components/wsiViewer/wsiSampleTimeline';
-import { blockName } from 'shared/components/wsiViewer/wsiSpecimenUtils';
+} from 'cbioportal-wsi-viewer';
 
 export const PATHOLOGY_SLIDES_EVENT_TYPE = 'PATHOLOGY SLIDES';
 
