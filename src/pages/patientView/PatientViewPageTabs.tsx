@@ -40,6 +40,7 @@ import MutationTableWrapper from './mutation/MutationTableWrapper';
 import { PatientViewPageInner } from 'pages/patientView/PatientViewPage';
 import { Else, If } from 'react-if';
 import { PatientViewPlotsTabWrapper } from './PatientViewPlotsTabWrapper';
+import PatientWsiSlidesTab from 'pages/patientView/PatientWsiSlidesTab';
 
 export enum PatientViewPageTabs {
     Summary = 'summary',
@@ -49,6 +50,7 @@ export enum PatientViewPageTabs {
     PathologyReport = 'pathologyReport',
     TissueImage = 'tissueImage',
     MSKTissueImage = 'MSKTissueImage',
+    WSIHESlides = 'wsiHESlides',
     TrialMatchTab = 'trialMatchTab',
     MutationalSignatures = 'mutationalSignatures',
     PathwayMapper = 'pathways',
@@ -583,6 +585,39 @@ export function tabs(
         </MSKTab>
     );
 
+    const tileServerUrl = getServerConfig().msk_wsi_tile_server_url;
+    if (tileServerUrl) {
+        tabs.push(
+            <MSKTab
+                key={6}
+                id={PatientViewPageTabs.WSIHESlides}
+                linkText="Pathology Slides"
+                unmountOnHide={false}
+            >
+                <PatientWsiSlidesTab
+                    query={{
+                        sampleId: urlWrapper.query.sampleId,
+                        stainFilter: urlWrapper.query.stainFilter,
+                        matchLevel: urlWrapper.query.matchLevel,
+                        specimenKey: urlWrapper.query.specimenKey,
+                    }}
+                    patientId={pageComponent.patientViewPageStore.patientId}
+                    studyId={pageComponent.patientViewPageStore.studyId}
+                    tileServerUrl={tileServerUrl}
+                    authScope={
+                        pageComponent.props.appStore.userName ||
+                        getServerConfig().user_display_name ||
+                        'anonymousUser'
+                    }
+                    height={WindowStore.size.height - 220}
+                    clinicalEvents={
+                        pageComponent.patientViewPageStore.clinicalEvents.result
+                    }
+                />
+            </MSKTab>
+        );
+    }
+
     if (pageComponent.shouldShowResources)
         tabs.push(
             <MSKTab
@@ -642,24 +677,6 @@ export function tabs(
             </div>
         </MSKTab>
     );
-
-    pageComponent.showWholeSlideViewerTab &&
-        pageComponent.wholeSlideViewerUrl.result &&
-        tabs.push(
-            <MSKTab
-                key={6}
-                id={PatientViewPageTabs.MSKTissueImage}
-                linkText="Tissue Image"
-                unmountOnHide={false}
-            >
-                <div>
-                    <IFrameLoader
-                        height={WindowStore.size.height - 220}
-                        url={pageComponent.wholeSlideViewerUrl.result!}
-                    />
-                </div>
-            </MSKTab>
-        );
 
     pageComponent.shouldShowTrialMatch &&
         tabs.push(

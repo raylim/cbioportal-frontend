@@ -84,7 +84,8 @@ export default class VAFChartWrapper extends React.Component<
 
         const baseConfig: any = buildBaseConfig(
             props.sampleManager,
-            props.caseMetaData
+            props.caseMetaData,
+            props.data
         );
 
         if (isGenieBpcStudy) {

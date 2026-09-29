@@ -1,0 +1,90 @@
+import * as React from 'react';
+import { parse } from 'query-string';
+import { ClinicalEvent } from 'cbioportal-ts-api-client';
+import { getServerConfig } from 'config/config';
+import internalClient from 'shared/api/cbioportalInternalClientInstance';
+import WsiPatientViewEntryPoint from './WsiPatientViewEntryPoint';
+
+/**
+ * Loads the patient's clinical events for sample acquisition/sequencing
+ * days. The viewer renders without them, and a failed request leaves them
+ * unset so slides keep their patient-level timepoints.
+ */
+function usePatientClinicalEvents(
+    studyId: string,
+    patientId: string
+): ClinicalEvent[] | undefined {
+    const [events, setEvents] = React.useState<ClinicalEvent[] | undefined>();
+    React.useEffect(() => {
+        setEvents(undefined);
+        if (!studyId || !patientId) {
+            return;
+        }
+        let cancelled = false;
+        internalClient
+            .getAllClinicalEventsOfPatientInStudyUsingGET({
+                studyId,
+                patientId,
+                projection: 'DETAILED',
+            })
+            .then(
+                result => {
+                    if (!cancelled) {
+                        setEvents(result);
+                    }
+                },
+                () => undefined
+            );
+        return () => {
+            cancelled = true;
+        };
+    }, [studyId, patientId]);
+    return events;
+}
+
+interface Props {
+    match: { params: { patientId: string } };
+    location: { search?: string };
+}
+
+/** Minimal standalone route used by the foundation smoke flow. */
+export default function WsiPatientViewRoute({ match, location }: Props) {
+    const query = parse(location.search || '');
+    const studyId = typeof query.studyId === 'string' ? query.studyId : '';
+    // Viewer links name one slide: /wsi/patient/{patient}?studyId=..&imageId=..
+    // The router basename supplies any deployment context path.
+    const requestedImageId =
+        typeof query.imageId === 'string' && query.imageId
+            ? query.imageId
+            : undefined;
+    const tileServerUrl = getServerConfig().msk_wsi_tile_server_url;
+    const clinicalEvents = usePatientClinicalEvents(
+        tileServerUrl ? studyId : '',
+        match.params.patientId
+    );
+
+    if (!studyId || !tileServerUrl) {
+        return (
+            <div role="alert" data-testid="wsi-route-unavailable">
+                WSI viewer configuration is unavailable.
+            </div>
+        );
+    }
+
+    const height =
+        typeof window === 'undefined'
+            ? 720
+            : Math.max(480, window.innerHeight - 120);
+
+    return (
+        <WsiPatientViewEntryPoint
+            patientId={match.params.patientId}
+            studyId={studyId}
+            tileServerUrl={tileServerUrl}
+            authScope={getServerConfig().user_display_name || 'anonymousUser'}
+            height={height}
+            requestedImageId={requestedImageId}
+            clinicalEvents={clinicalEvents}
+        />
+    );
+}
