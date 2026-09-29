@@ -1,3 +1,4 @@
+import _ from 'lodash';
 import { ClinicalEvent } from 'cbioportal-ts-api-client';
 import {
     blockName,
@@ -245,19 +246,98 @@ function compareOptionalNumbers(a?: number, b?: number): number {
     return a - b;
 }
 
-/** Rows sorted by procedure day, then sample, then stain. */
+/**
+ * Open path for rows merged across specimens: the viewer keeps the shared
+ * sample, match level and stain, drops the specimen, and narrows to the
+ * procedure day instead.
+ */
+export function mergedPathologySlidesOpenPath(
+    openPath: string,
+    procedureDays: number | undefined
+): string {
+    const url = new URL(openPath, 'http://localhost');
+    url.searchParams.delete('specimenKey');
+    if (procedureDays != null) {
+        url.searchParams.set('timepointDays', String(procedureDays));
+    }
+    return `${url.pathname}${url.search}`;
+}
+
+function distinctJoined(values: string[]): string {
+    return Array.from(new Set(values.filter(Boolean))).join(', ');
+}
+
+/**
+ * Rows that share a procedure day, sample, match level and stain combined
+ * into one: specimens are listed once, and counts and image IDs are summed.
+ * Events from different specimens of the same procedure otherwise show as
+ * near-identical rows.
+ */
+export function mergePathologySlideRows(
+    rows: PathologySlideRow[]
+): PathologySlideRow[] {
+    const groups = new Map<string, PathologySlideRow[]>();
+    rows.forEach(row => {
+        const key = JSON.stringify([
+            row.procedureDays ?? null,
+            row.sampleText,
+            row.matchText,
+            row.stain,
+        ]);
+        const group = groups.get(key);
+        if (group) {
+            group.push(row);
+        } else {
+            groups.set(key, [row]);
+        }
+    });
+    return Array.from(groups.values()).map(group => {
+        if (group.length === 1) {
+            return group[0];
+        }
+        const first = group[0];
+        const viewableCount = _.sumBy(group, row => row.viewableCount);
+        const totalCount = _.sumBy(group, row => row.totalCount);
+        const imageIds = _.flatMap(group, row => row.imageIds);
+        const openPaths = group
+            .map(row => row.openPath)
+            .filter((path): path is string => !!path);
+        return {
+            ...first,
+            specimen: distinctJoined(group.map(row => row.specimen)),
+            viewableCount,
+            totalCount,
+            slidesText: `${viewableCount} of ${totalCount} viewable`,
+            slidesTooltip: slidesTooltip(imageIds, viewableCount, totalCount),
+            imageIds,
+            openPath:
+                openPaths.length > 1
+                    ? mergedPathologySlidesOpenPath(
+                          openPaths[0],
+                          first.procedureDays
+                      )
+                    : openPaths[0],
+        };
+    });
+}
+
+/**
+ * Rows sorted by procedure day, then sample, then stain, with rows of the
+ * same day, sample, match level and stain merged.
+ */
 export function buildPathologySlideRows(
     events: ClinicalEvent[],
     sampleTimelines: WsiSampleTimelineMap
 ): PathologySlideRow[] {
-    return events
-        .map(event => buildPathologySlideRow(event, sampleTimelines))
-        .sort(
-            (a, b) =>
-                compareOptionalNumbers(a.procedureDays, b.procedureDays) ||
-                a.sampleText.localeCompare(b.sampleText) ||
-                a.stain.localeCompare(b.stain)
-        );
+    return mergePathologySlideRows(
+        events.map(event => buildPathologySlideRow(event, sampleTimelines))
+    ).sort(
+        (a, b) =>
+            compareOptionalNumbers(a.procedureDays, b.procedureDays) ||
+            a.sampleText.localeCompare(b.sampleText) ||
+            a.stain.localeCompare(b.stain) ||
+            a.matchText.localeCompare(b.matchText)
+    );
 }
 
 /** One labelled line of the timeline tooltip for a PATHOLOGY SLIDES event. */

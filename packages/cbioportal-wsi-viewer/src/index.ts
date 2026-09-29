@@ -14,6 +14,10 @@ export {
 export { formatDaysSinceDiagnosis } from './wsiNavUtils';
 export { blockName } from './wsiSpecimenUtils';
 export {
+    countUndatedViewableSlides,
+    fetchUndatedViewableSlideCount,
+} from './wsiUndatedSlides';
+export {
     hashUrlState,
     readWsiHashState,
     WsiHashState,

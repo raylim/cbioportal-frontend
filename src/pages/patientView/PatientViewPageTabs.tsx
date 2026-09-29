@@ -41,6 +41,9 @@ import { PatientViewPageInner } from 'pages/patientView/PatientViewPage';
 import { Else, If } from 'react-if';
 import { PatientViewPlotsTabWrapper } from './PatientViewPlotsTabWrapper';
 import PatientWsiSlidesTab from 'pages/patientView/PatientWsiSlidesTab';
+import UndatedPathologySlidesNotice, {
+    WSI_PATIENT_SLIDE_COUNT_ATTRIBUTE,
+} from 'pages/patientView/timeline/UndatedPathologySlidesNotice';
 
 export enum PatientViewPageTabs {
     Summary = 'summary',
@@ -95,6 +98,31 @@ export function patientViewTabs(
     );
 }
 
+/**
+ * The undated pathology slides notice, for patients whose WSI slide count is
+ * positive on a portal that serves slides; null otherwise.
+ */
+function undatedPathologySlidesNotice(
+    pageComponent: PatientViewPageInner
+): JSX.Element | null {
+    const store = pageComponent.patientViewPageStore;
+    const hasSlides =
+        !!getServerConfig().msk_wsi_tile_server_url &&
+        store.clinicalDataPatient.isComplete &&
+        store.clinicalDataPatient.result.some(
+            d =>
+                d.clinicalAttributeId === WSI_PATIENT_SLIDE_COUNT_ATTRIBUTE &&
+                parseInt(d.value, 10) > 0
+        );
+    return hasSlides ? (
+        <UndatedPathologySlidesNotice
+            studyId={store.studyId}
+            patientId={store.patientId}
+            userName={pageComponent.props.appStore.userName}
+        />
+    ) : null;
+}
+
 export function tabs(
     pageComponent: PatientViewPageInner,
     sampleManager: SampleManager | null,
@@ -103,6 +131,7 @@ export function tabs(
     const tabs: JSX.Element[] = [];
     tabs.push(
         <MSKTab key={0} id={PatientViewPageTabs.Summary} linkText="Summary">
+            {undatedPathologySlidesNotice(pageComponent)}
             <LoadingIndicator
                 isLoading={
                     pageComponent.patientViewPageStore.clinicalEvents.isPending
@@ -575,6 +604,8 @@ export function tabs(
 
             <h2 className={'divider'}>Timeline Data</h2>
 
+            {undatedPathologySlidesNotice(pageComponent)}
+
             {pageComponent.patientViewPageStore.clinicalEvents.isComplete && (
                 <ClinicalEventsTables
                     clinicalEvents={
@@ -600,6 +631,7 @@ export function tabs(
                         stainFilter: urlWrapper.query.stainFilter,
                         matchLevel: urlWrapper.query.matchLevel,
                         specimenKey: urlWrapper.query.specimenKey,
+                        timepointDays: urlWrapper.query.timepointDays,
                     }}
                     patientId={pageComponent.patientViewPageStore.patientId}
                     studyId={pageComponent.patientViewPageStore.studyId}
@@ -757,8 +789,7 @@ export function tabs(
                 id={PatientViewPageTabs.MRNA}
                 linkText={
                     <span>
-                        mRNA{' '}
-                        <strong className={'beta-text'}>Beta!</strong>
+                        mRNA <strong className={'beta-text'}>Beta!</strong>
                     </span>
                 }
             >
@@ -774,8 +805,7 @@ export function tabs(
                 id={PatientViewPageTabs.Plots}
                 linkText={
                     <span>
-                        Plots{' '}
-                        <strong className={'beta-text'}>Beta!</strong>
+                        Plots <strong className={'beta-text'}>Beta!</strong>
                     </span>
                 }
             >
@@ -783,8 +813,8 @@ export function tabs(
                     .isComplete &&
                 pageComponent.patientViewPageStore.highlightedCancerTypes
                     .isComplete &&
-                pageComponent.patientViewPageStore.highlightedDetailedCancerTypes
-                    .isComplete ? (
+                pageComponent.patientViewPageStore
+                    .highlightedDetailedCancerTypes.isComplete ? (
                     <PatientViewPlotsTabWrapper
                         store={pageComponent.patientViewPageStore}
                         urlWrapper={urlWrapper}

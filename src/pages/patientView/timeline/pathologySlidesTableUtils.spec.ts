@@ -4,6 +4,7 @@ import {
     buildPathologySlideRows,
     buildPathologySlideTooltipContent,
     formatSpecimen,
+    mergedPathologySlidesOpenPath,
     pathologySlideSampleId,
     parseImageIds,
     pathologySlidesOpenPath,
@@ -257,5 +258,88 @@ describe('pathologySlideSampleId', () => {
         expect(
             pathologySlideSampleId(slideEvent(1, { SAMPLE_ID: '' }))
         ).toBeUndefined();
+    });
+});
+
+describe('merged pathology slide rows', () => {
+    const partLinkout = (key: string) =>
+        LINKOUT.replace('part%3A%3Apart%3A1', encodeURIComponent(key));
+
+    it('merges rows of the same day, sample, match level and stain', () => {
+        const merged = rows([
+            slideEvent(920, {
+                IMAGE_COUNT: '2',
+                TOTAL_IMAGE_COUNT: '2',
+                IMAGE_IDS: '["1","2"]',
+                LINKOUT: partLinkout('part::part:1'),
+            }),
+            slideEvent(920, {
+                IMAGE_IDS: '["3"]',
+                LINKOUT: partLinkout('part::part:2'),
+            }),
+            slideEvent(920, { SUBTYPE: 'IHC' }),
+        ]);
+        expect(merged.map(r => [r.stain, r.specimen, r.slidesText])).toEqual([
+            ['H&E', 'Part 1', '3 of 3 viewable'],
+            ['IHC', 'Part 1', '1 of 1 viewable'],
+        ]);
+        expect(merged[0].imageIds).toEqual(['1', '2', '3']);
+        // Several specimens: the link drops the specimen and keeps the day.
+        const url = new URL(merged[0].openPath!, 'http://localhost');
+        expect(url.searchParams.get('specimenKey')).toBeNull();
+        expect(url.searchParams.get('timepointDays')).toBe('920');
+        expect(url.searchParams.get('sampleId')).toBe('P-0000081-T02-IM6');
+        expect(url.searchParams.get('matchLevel')).toBe('PART');
+        expect(url.searchParams.get('stainFilter')).toBe('hne');
+    });
+
+    it('lists each specimen once and keeps the only viewable link', () => {
+        const merged = rows([
+            slideEvent(57, {
+                MATCH_LEVEL: 'Unmatched',
+                SPECIMEN: 'Part 2',
+                IMAGE_COUNT: '0',
+                TOTAL_IMAGE_COUNT: '6',
+                LINKOUT: '',
+            }),
+            slideEvent(57, {
+                MATCH_LEVEL: 'Unmatched',
+                SPECIMEN: 'Part 3',
+                LINKOUT: partLinkout('unmatched::part:3'),
+            }),
+            slideEvent(57, {
+                MATCH_LEVEL: 'Unmatched',
+                SPECIMEN: 'Part 3',
+                IMAGE_COUNT: '0',
+                TOTAL_IMAGE_COUNT: '1',
+                LINKOUT: '',
+            }),
+        ]);
+        expect(merged).toHaveLength(1);
+        expect(merged[0].specimen).toBe('Part 2, Part 3');
+        expect(merged[0].slidesText).toBe('1 of 8 viewable');
+        expect(merged[0].openPath).toContain(
+            encodeURIComponent('unmatched::part:3')
+        );
+    });
+
+    it('keeps rows of different days, samples or match levels apart', () => {
+        expect(
+            rows([
+                slideEvent(920, {}),
+                slideEvent(921, {}),
+                slideEvent(920, { MATCH_LEVEL: 'BLOCK' }),
+                slideEvent(920, { SAMPLE_ID: 'P-0000081-T01-IM3' }),
+            ])
+        ).toHaveLength(4);
+    });
+
+    it('builds a merged link without a day for undated rows', () => {
+        expect(
+            mergedPathologySlidesOpenPath(
+                '/patient/wsiHESlides?caseId=P-1&specimenKey=x&matchLevel=PART',
+                undefined
+            )
+        ).toBe('/patient/wsiHESlides?caseId=P-1&matchLevel=PART');
     });
 });

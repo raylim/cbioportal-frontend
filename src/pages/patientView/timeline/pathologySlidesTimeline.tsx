@@ -209,10 +209,34 @@ export const PathologySlideTooltip: React.FunctionComponent<{
     );
 };
 
+/** Stain rows first, in this order; any other stain follows alphabetically. */
+const STAIN_TRACK_ORDER = ['H&E', 'IHC'];
+
+function stainTrackRank(type: string): [number, string] {
+    const index = STAIN_TRACK_ORDER.indexOf(type);
+    if (index >= 0) {
+        return [index, ''];
+    }
+    // Unknown and the timeline's "Other" catch-all go last.
+    const isCatchAll = /^(unknown|other)$/i.test(type);
+    return [STAIN_TRACK_ORDER.length + (isCatchAll ? 1 : 0), type];
+}
+
+/** Orders the stain rows under the PATHOLOGY SLIDES track: H&E, IHC, others. */
+export function sortPathologyStainTracks(
+    tracks: TimelineTrackSpecification[]
+): TimelineTrackSpecification[] {
+    return _.sortBy(tracks, [
+        t => stainTrackRank(t.type)[0],
+        t => stainTrackRank(t.type)[1],
+    ]);
+}
+
 /**
- * PATHOLOGY SLIDES track: events are drawn with the SampleManager's numbered,
- * colored sample markers (see pathologySlideGroupMarker), with a count when
- * several share a day.
+ * PATHOLOGY SLIDES track, split into one row per stain (SUBTYPE) by the
+ * timeline's track structure. Events are drawn with the SampleManager's
+ * numbered, colored sample markers (see pathologySlideGroupMarker), with a
+ * count when several share a day.
  */
 export function pathologySlidesTrackConfig(
     caseMetaData: ISampleMetaDeta,
@@ -220,38 +244,53 @@ export function pathologySlidesTrackConfig(
 ): ITrackEventConfig {
     return {
         trackTypeMatch: new RegExp(`^${PATHOLOGY_SLIDES_EVENT_TYPE}$`, 'i'),
-        configureTrack: (cat: TimelineTrackSpecification) => {
+        configureTrack: (root: TimelineTrackSpecification) => {
             const sampleTimelines = buildWsiSampleTimelineMap(clinicalEvents);
             const markerSample = (e: TimelineEvent) =>
                 pathologySlideMarkerSample(e.event, caseMetaData);
 
-            cat.eventColorGetter = e =>
-                markerSample(e)?.color || UNMATCHED_MARKER_COLOR;
+            // Stain rows are child tracks whose type is the stain, so the
+            // renderers are set on every track of the subtree.
+            const configure = (cat: TimelineTrackSpecification) => {
+                cat.eventColorGetter = e =>
+                    markerSample(e)?.color || UNMATCHED_MARKER_COLOR;
 
-            cat.sortSimultaneousEvents = (events: TimelineEvent[]) =>
-                _.sortBy<TimelineEvent>(events, [
-                    (e: TimelineEvent) => {
-                        const label = parseInt(markerSample(e)?.label || '');
-                        return isNaN(label) ? Number.POSITIVE_INFINITY : label;
-                    },
-                    (e: TimelineEvent) => getAttributeValue('SUBTYPE', e) || '',
-                ]);
+                cat.sortSimultaneousEvents = (events: TimelineEvent[]) =>
+                    _.sortBy<TimelineEvent>(events, [
+                        (e: TimelineEvent) => {
+                            const label = parseInt(
+                                markerSample(e)?.label || ''
+                            );
+                            return isNaN(label)
+                                ? Number.POSITIVE_INFINITY
+                                : label;
+                        },
+                        (e: TimelineEvent) =>
+                            getAttributeValue('SUBTYPE', e) || '',
+                    ]);
 
-            cat.renderEvents = (events: TimelineEvent[], y: number) =>
-                renderPathologySlideGroupMarker(
-                    pathologySlideGroupMarker(
-                        events.map(e => e.event),
-                        caseMetaData
-                    ),
-                    y
+                cat.renderEvents = (events: TimelineEvent[], y: number) =>
+                    renderPathologySlideGroupMarker(
+                        pathologySlideGroupMarker(
+                            events.map(e => e.event),
+                            caseMetaData
+                        ),
+                        y
+                    );
+
+                cat.renderTooltip = (e: TimelineEvent) => (
+                    <PathologySlideTooltip
+                        event={e.event}
+                        sampleTimelines={sampleTimelines}
+                    />
                 );
 
-            cat.renderTooltip = (e: TimelineEvent) => (
-                <PathologySlideTooltip
-                    event={e.event}
-                    sampleTimelines={sampleTimelines}
-                />
-            );
+                if (cat.tracks && cat.tracks.length) {
+                    cat.tracks = sortPathologyStainTracks(cat.tracks);
+                    cat.tracks.forEach(configure);
+                }
+            };
+            configure(root);
         },
     };
 }

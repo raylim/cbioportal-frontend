@@ -4,6 +4,7 @@
 import * as React from 'react';
 import { render } from '@testing-library/react';
 import PatientWsiSlidesTab, {
+    parseTimepointDays,
     wsiSlidesTabScopeFromQuery,
 } from './PatientWsiSlidesTab';
 
@@ -65,6 +66,31 @@ describe('wsiSlidesTabScopeFromQuery', () => {
         expect(wsiSlidesTabScopeFromQuery(LINK_QUERY, 'slide-9')).toEqual({
             preferredSampleId: 'P-1-T01',
         });
+    });
+});
+
+describe('timepointDays link param', () => {
+    it('parses a procedure day or undated', () => {
+        expect(parseTimepointDays('920')).toBe(920);
+        expect(parseTimepointDays('-21')).toBe(-21);
+        expect(parseTimepointDays('undated')).toBe('undated');
+        expect(parseTimepointDays('UNDATED')).toBe('undated');
+        expect(parseTimepointDays('9.5')).toBeUndefined();
+        expect(parseTimepointDays('x')).toBeUndefined();
+        expect(parseTimepointDays(undefined)).toBeUndefined();
+    });
+
+    it('scopes the viewer to the day unless the hash names a slide', () => {
+        expect(
+            wsiSlidesTabScopeFromQuery({ timepointDays: 'undated' })
+                .initialTimepointDays
+        ).toBe('undated');
+        expect(
+            wsiSlidesTabScopeFromQuery(
+                { ...LINK_QUERY, timepointDays: '57' },
+                '3658364'
+            ).initialTimepointDays
+        ).toBeUndefined();
     });
 });
 

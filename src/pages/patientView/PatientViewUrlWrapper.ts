@@ -18,6 +18,8 @@ export type PatientViewUrlQuery = {
     stainFilter?: string;
     matchLevel?: string;
     specimenKey?: string;
+    /** A procedure day, or "undated". */
+    timepointDays?: string;
     genomicEvolutionSettings: {
         showTimeline?: string;
 
@@ -50,6 +52,7 @@ export default class PatientViewUrlWrapper extends URLWrapper<
             stainFilter: { isSessionProp: false },
             matchLevel: { isSessionProp: false },
             specimenKey: { isSessionProp: false },
+            timepointDays: { isSessionProp: false },
             genomicEvolutionSettings: {
                 isSessionProp: false,
                 nestedObjectProps: {

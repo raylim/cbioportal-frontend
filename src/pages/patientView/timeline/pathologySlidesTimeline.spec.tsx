@@ -70,12 +70,24 @@ const CASE_META: ISampleMetaDeta = {
 
 const SEQUENCING = event('Sequencing', 962, { SAMPLE_ID: SAMPLE });
 
-function pathologyTrack(slides: ClinicalEvent[]): TimelineTrackSpecification {
+function configuredTracks(slides: ClinicalEvent[]) {
     const data = [...slides, SEQUENCING];
     const config = buildBaseConfig({} as SampleManager, CASE_META, data);
     const tracks = sortTracks(config, data);
     configureTracks(tracks, config);
-    return tracks.find(t => t.type === 'PATHOLOGY SLIDES')!;
+    return tracks;
+}
+
+function pathologyRoot(slides: ClinicalEvent[]): TimelineTrackSpecification {
+    return configuredTracks(slides).find(t => t.type === 'PATHOLOGY SLIDES')!;
+}
+
+/** The stain row of the PATHOLOGY SLIDES track (H&E unless given). */
+function pathologyTrack(
+    slides: ClinicalEvent[],
+    stain = 'H&E'
+): TimelineTrackSpecification {
+    return pathologyRoot(slides).tracks!.find(t => t.type === stain)!;
 }
 
 function renderTooltip(track: TimelineTrackSpecification, item: TimelineEvent) {
@@ -199,7 +211,7 @@ describe('PATHOLOGY SLIDES timeline track', () => {
     it("draws a same-sample group as the sample's marker with a count", () => {
         const { texts, fills } = renderMarker([
             slide({}),
-            slide({ SUBTYPE: 'IHC' }),
+            slide({ SPECIMEN: 'Part 2' }),
             slide({ MATCH_LEVEL: 'BLOCK' }),
         ]);
         expect(texts).toEqual(['2', '3']);
@@ -209,7 +221,7 @@ describe('PATHOLOGY SLIDES timeline track', () => {
     it('lists each sample once in a mixed group', () => {
         const mixed = renderMarker([
             slide({}),
-            slide({ SUBTYPE: 'IHC' }),
+            slide({ SPECIMEN: 'Part 2' }),
             slide({ SAMPLE_ID: 'P-0000081-T01-IM3' }),
         ]);
         // The sample tracks' multi-sample marker writes consecutive
@@ -218,7 +230,7 @@ describe('PATHOLOGY SLIDES timeline track', () => {
 
         const withUnmatched = renderMarker([
             slide({}),
-            slide({ SUBTYPE: 'IHC' }),
+            slide({ SPECIMEN: 'Part 2' }),
             slide({ MATCH_LEVEL: 'Unmatched' }),
         ]);
         expect(withUnmatched.texts).toEqual(['2', '3']);
@@ -235,16 +247,15 @@ describe('PATHOLOGY SLIDES timeline track', () => {
 
         const stack = renderMarker([
             slide({ MATCH_LEVEL: 'Unmatched' }),
-            slide({ MATCH_LEVEL: 'Unmatched', SUBTYPE: 'IHC' }),
+            slide({ MATCH_LEVEL: 'Unmatched', SPECIMEN: 'Part 2' }),
         ]);
         expect(stack.texts).toEqual(['2']);
         expect(stack.fills).toContain(UNMATCHED_MARKER_COLOR);
         expect(stack.fills).not.toContain('#ff0000');
     });
 
-    it('orders simultaneous events by sample number, then stain', () => {
+    it('orders simultaneous events by sample number', () => {
         const track = pathologyTrack([
-            slide({ SUBTYPE: 'IHC' }),
             slide({ MATCH_LEVEL: 'Unmatched' }),
             slide({ SAMPLE_ID: 'P-0000081-T01-IM3' }),
             slide({}),
@@ -253,18 +264,47 @@ describe('PATHOLOGY SLIDES timeline track', () => {
         expect(
             sorted.map(e =>
                 e.event.attributes
-                    .filter(a =>
-                        ['SAMPLE_ID', 'SUBTYPE', 'MATCH_LEVEL'].includes(a.key)
-                    )
+                    .filter(a => ['SAMPLE_ID', 'MATCH_LEVEL'].includes(a.key))
                     .map(a => a.value)
                     .join(' ')
             )
         ).toEqual([
-            'P-0000081-T01-IM3 H&E PART',
-            `${SAMPLE} H&E PART`,
-            `${SAMPLE} IHC PART`,
-            `${SAMPLE} H&E Unmatched`,
+            'P-0000081-T01-IM3 PART',
+            `${SAMPLE} PART`,
+            `${SAMPLE} Unmatched`,
         ]);
+    });
+
+    it('splits the track into stain rows: H&E, IHC, then the rest', () => {
+        const root = pathologyRoot([
+            slide({ SUBTYPE: 'Unknown' }),
+            slide({ SUBTYPE: 'IHC' }),
+            slide({ SUBTYPE: 'Special stain' }),
+            slide({}),
+        ]);
+        expect(root.items).toEqual([]);
+        expect(root.tracks!.map(t => t.type)).toEqual([
+            'H&E',
+            'IHC',
+            'Special stain',
+            'Unknown',
+        ]);
+        root.tracks!.forEach(t => {
+            expect(t.renderEvents).toBeDefined();
+            expect(t.renderTooltip).toBeDefined();
+            expect(t.items).toHaveLength(1);
+        });
+    });
+
+    it('places the track right after sequencing', () => {
+        const types = configuredTracks([
+            slide({}),
+            event('Treatment', 10, { TREATMENT_TYPE: 'Medical Therapy' }),
+            event('Status', 5, { STATUS: 'Alive' }),
+        ]).map(t => t.type);
+        expect(types.indexOf('PATHOLOGY SLIDES')).toBe(
+            types.indexOf('SEQUENCING') + 1
+        );
     });
 
     it('renders a readable tooltip with an in-app Open slides link', () => {
