@@ -42,6 +42,7 @@ import { Else, If } from 'react-if';
 import { PatientViewPlotsTabWrapper } from './PatientViewPlotsTabWrapper';
 import PatientWsiSlidesTab from 'pages/patientView/PatientWsiSlidesTab';
 import { PatientViewPageTabs } from './PatientViewPageTabIds';
+import { withPathologySlideEvents } from 'pages/patientView/timeline/pathologySlidesTimelineLoader';
 
 export {
     PatientViewPageTabs,
@@ -72,6 +73,61 @@ export function patientViewTabs(
     );
 }
 
+/**
+ * The Summary tab timeline: the patient's clinical events plus, for a
+ * patient with slides, the PATHOLOGY SLIDES events. TimelineWrapper builds
+ * its tracks once, so it renders only after both have loaded; without the
+ * slide events when their loading fails.
+ */
+function summaryTimeline(
+    pageComponent: PatientViewPageInner,
+    sampleManager: SampleManager
+): JSX.Element | null {
+    const store = pageComponent.patientViewPageStore;
+    if (
+        !store.clinicalEvents.isComplete ||
+        store.pathologySlidesTimeline.isPending
+    ) {
+        return null;
+    }
+    const pathologySlides = store.pathologySlidesTimeline.isComplete
+        ? store.pathologySlidesTimeline.result
+        : undefined;
+    const data = withPathologySlideEvents(
+        store.clinicalEvents.result,
+        pathologySlides
+    );
+    if (data.length === 0) {
+        return null;
+    }
+    return (
+        <div>
+            <div
+                style={{
+                    marginTop: 20,
+                    marginBottom: 20,
+                }}
+            >
+                <TimelineWrapper
+                    dataStore={pageComponent.patientViewMutationDataStore}
+                    caseMetaData={{
+                        color: sampleManager.sampleColors,
+                        label: sampleManager.sampleLabels,
+                        index: sampleManager.sampleIndex,
+                    }}
+                    data={data}
+                    pathologySlidesTrackConfig={pathologySlides?.trackConfig}
+                    sampleManager={sampleManager}
+                    width={WindowStore.size.width}
+                    samples={store.samples.result}
+                    mutationProfileId={store.mutationMolecularProfileId.result!}
+                />
+            </div>
+            <hr />
+        </div>
+    );
+}
+
 export function tabs(
     pageComponent: PatientViewPageInner,
     sampleManager: SampleManager | null,
@@ -82,49 +138,14 @@ export function tabs(
         <MSKTab key={0} id={PatientViewPageTabs.Summary} linkText="Summary">
             <LoadingIndicator
                 isLoading={
-                    pageComponent.patientViewPageStore.clinicalEvents.isPending
+                    pageComponent.patientViewPageStore.clinicalEvents
+                        .isPending ||
+                    pageComponent.patientViewPageStore.pathologySlidesTimeline
+                        .isPending
                 }
             />
 
-            {!!sampleManager &&
-                pageComponent.patientViewPageStore.clinicalEvents.isComplete &&
-                pageComponent.patientViewPageStore.clinicalEvents.result
-                    .length > 0 && (
-                    <div>
-                        <div
-                            style={{
-                                marginTop: 20,
-                                marginBottom: 20,
-                            }}
-                        >
-                            <TimelineWrapper
-                                dataStore={
-                                    pageComponent.patientViewMutationDataStore
-                                }
-                                caseMetaData={{
-                                    color: sampleManager.sampleColors,
-                                    label: sampleManager.sampleLabels,
-                                    index: sampleManager.sampleIndex,
-                                }}
-                                data={
-                                    pageComponent.patientViewPageStore
-                                        .clinicalEvents.result
-                                }
-                                sampleManager={sampleManager}
-                                width={WindowStore.size.width}
-                                samples={
-                                    pageComponent.patientViewPageStore.samples
-                                        .result
-                                }
-                                mutationProfileId={
-                                    pageComponent.patientViewPageStore
-                                        .mutationMolecularProfileId.result!
-                                }
-                            />
-                        </div>
-                        <hr />
-                    </div>
-                )}
+            {!!sampleManager && summaryTimeline(pageComponent, sampleManager)}
 
             <LoadingIndicator
                 isLoading={
