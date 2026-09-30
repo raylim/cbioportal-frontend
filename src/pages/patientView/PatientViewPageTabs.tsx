@@ -40,38 +40,15 @@ import MutationTableWrapper from './mutation/MutationTableWrapper';
 import { PatientViewPageInner } from 'pages/patientView/PatientViewPage';
 import { Else, If } from 'react-if';
 import { PatientViewPlotsTabWrapper } from './PatientViewPlotsTabWrapper';
-import { AppWsiViewer } from 'shared/components/wsiViewer/wsiAppConfig';
+import PatientWsiSlidesTab from 'pages/patientView/PatientWsiSlidesTab';
+import { PatientViewPageTabs } from './PatientViewPageTabIds';
 
-export enum PatientViewPageTabs {
-    Summary = 'summary',
-    genomicEvolution = 'genomicEvolution',
-    ClinicalData = 'clinicalData',
-    FilesAndLinks = 'filesAndLinks',
-    PathologyReport = 'pathologyReport',
-    TissueImage = 'tissueImage',
-    MSKTissueImage = 'MSKTissueImage',
-    WSIHESlides = 'wsiHESlides',
-    TrialMatchTab = 'trialMatchTab',
-    MutationalSignatures = 'mutationalSignatures',
-    PathwayMapper = 'pathways',
-    MRNA = 'mrna',
-    Plots = 'plots',
-}
-
-export const PatientViewResourceTabPrefix = 'openResource_';
-
-export function getPatientViewResourceTabId(resourceId: string) {
-    return `${PatientViewResourceTabPrefix}${resourceId}`;
-}
-
-export function extractResourceIdFromTabId(tabId: string) {
-    const match = new RegExp(`${PatientViewResourceTabPrefix}(.*)`).exec(tabId);
-    if (match) {
-        return match[1];
-    } else {
-        return undefined;
-    }
-}
+export {
+    PatientViewPageTabs,
+    PatientViewResourceTabPrefix,
+    getPatientViewResourceTabId,
+    extractResourceIdFromTabId,
+} from './PatientViewPageTabIds';
 
 export function patientViewTabs(
     pageInstance: PatientViewPageInner,
@@ -594,7 +571,14 @@ export function tabs(
                 linkText="Pathology Slides"
                 unmountOnHide={false}
             >
-                <AppWsiViewer
+                <PatientWsiSlidesTab
+                    query={{
+                        sampleId: urlWrapper.query.sampleId,
+                        stainFilter: urlWrapper.query.stainFilter,
+                        matchLevel: urlWrapper.query.matchLevel,
+                        specimenKey: urlWrapper.query.specimenKey,
+                        timepointDays: urlWrapper.query.timepointDays,
+                    }}
                     patientId={pageComponent.patientViewPageStore.patientId}
                     studyId={pageComponent.patientViewPageStore.studyId}
                     tileServerUrl={tileServerUrl}
