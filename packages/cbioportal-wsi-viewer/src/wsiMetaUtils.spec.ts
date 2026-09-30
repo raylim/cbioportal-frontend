@@ -1,6 +1,8 @@
 import {
     buildPathRows,
     buildPathRowsReadOnly,
+    buildSeqRows,
+    buildSeqRowsReadOnly,
     buildWsiRows,
     buildWsiRowsReadOnly,
     getStainKind,
@@ -69,7 +71,11 @@ describe('getStainKind', () => {
             getStainKind({ slide_type: 'Other', is_hne: false, is_ihc: false })
         ).toBe('other');
         expect(
-            getStainKind({ slide_type: 'Unknown', is_hne: false, is_ihc: false })
+            getStainKind({
+                slide_type: 'Unknown',
+                is_hne: false,
+                is_ihc: false,
+            })
         ).toBe('unknown');
     });
 });
@@ -341,6 +347,41 @@ describe('buildPathRowsReadOnly sample timeline rows', () => {
 
         expect(before.map(row => row.label)).not.toContain('Sequenced');
         expect(after.map(row => row.label)).toContain('Sequenced');
+    });
+});
+
+describe('buildSeqRows', () => {
+    it('returns cloned rows for the same sample and url', () => {
+        const enrichedSample = {
+            ...sample,
+            tumor_purity: '65',
+            tmb_score: '7.1',
+        } as Sample;
+
+        const first = buildSeqRows(enrichedSample, '/patient?sampleId=S-1');
+        const second = buildSeqRows(enrichedSample, '/patient?sampleId=S-1');
+
+        expect(second).toEqual(first);
+        expect(second).not.toBe(first);
+    });
+
+    it('reuses the same read-only seq rows for the same sample and url', () => {
+        const enrichedSample = {
+            ...sample,
+            tumor_purity: '65',
+            tmb_score: '7.1',
+        } as Sample;
+
+        const first = buildSeqRowsReadOnly(
+            enrichedSample,
+            '/patient?sampleId=S-1'
+        );
+        const second = buildSeqRowsReadOnly(
+            enrichedSample,
+            '/patient?sampleId=S-1'
+        );
+
+        expect(second).toBe(first);
     });
 });
 

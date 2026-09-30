@@ -5,6 +5,7 @@ import * as React from 'react';
 import { act, render, screen } from '@testing-library/react';
 import {
     AppWsiViewer,
+    buildWsiMolecularServices,
     buildWsiViewerConfig,
     isPortalWsiAuthEnabled,
 } from './wsiAppConfig';
@@ -19,6 +20,12 @@ jest.mock('config/config', () => ({
 jest.mock('shared/api/urls', () => ({
     buildCBioPortalAPIUrl: (path: string) =>
         `https://portal.example/beta/${path}`,
+    getOncoKbApiUrl: () => 'https://portal.example/beta/proxy/oncokb',
+}));
+
+const mockOncoKbClient = {};
+jest.mock('shared/api/wsiOncoKbClientInstance', () => ({
+    getWsiOncoKbClient: () => mockOncoKbClient,
 }));
 
 jest.mock('cbioportal-wsi-viewer/viewer', () => ({
@@ -78,6 +85,53 @@ describe('buildWsiViewerConfig', () => {
         expect(isPortalWsiAuthEnabled()).toBe(false);
         mockServerConfig.msk_wsi_authentication_enabled = true;
         expect(isPortalWsiAuthEnabled()).toBe(true);
+    });
+});
+
+describe('buildWsiMolecularServices', () => {
+    beforeEach(() => {
+        Object.keys(mockServerConfig).forEach(
+            key => delete mockServerConfig[key]
+        );
+    });
+
+    it('follows the portal OncoKB and CIViC settings', () => {
+        expect(buildWsiMolecularServices()).toEqual(
+            expect.objectContaining({ showOncoKb: false, showCivic: false })
+        );
+
+        mockServerConfig.show_oncokb = true;
+        mockServerConfig.show_civic = true;
+        const services = buildWsiMolecularServices();
+
+        expect(services.showOncoKb).toBe(true);
+        expect(services.showCivic).toBe(true);
+        expect(services.getOncoKbApiUrl()).toBe(
+            'https://portal.example/beta/proxy/oncokb'
+        );
+        expect(services.getOncoKbClient()).toBe(mockOncoKbClient);
+        expect(buildWsiViewerConfig().molecular).toEqual(
+            expect.objectContaining({ showOncoKb: true, showCivic: true })
+        );
+    });
+
+    it('resolves CIViC copy number variants and mutation types', () => {
+        const amplification = { id: 1, name: 'AMPLIFICATION' } as any;
+        const services = buildWsiMolecularServices();
+
+        expect(
+            services.getCivicCnaVariants(2, 'ERBB2', {
+                ERBB2: { AMPLIFICATION: amplification },
+            })
+        ).toEqual({ ERBB2: amplification });
+        expect(
+            services.getCivicCnaVariants(-2, 'ERBB2', {
+                ERBB2: { AMPLIFICATION: amplification },
+            })
+        ).toEqual({});
+        expect(services.getSimplifiedMutationType('Frame_Shift_Del')).toBe(
+            'frameshift'
+        );
     });
 });
 

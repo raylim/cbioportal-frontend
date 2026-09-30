@@ -1,9 +1,17 @@
 import * as React from 'react';
 import { DownloadControlOption } from 'cbioportal-frontend-commons';
-import { WsiViewerConfig, WsiViewerProps } from 'cbioportal-wsi-viewer';
+import { DiscreteCopyNumberData } from 'cbioportal-ts-api-client';
+import {
+    WsiMolecularServices,
+    WsiViewerConfig,
+    WsiViewerProps,
+} from 'cbioportal-wsi-viewer';
 import { getServerConfig } from 'config/config';
-import { buildCBioPortalAPIUrl } from 'shared/api/urls';
+import { buildCBioPortalAPIUrl, getOncoKbApiUrl } from 'shared/api/urls';
+import { getWsiOncoKbClient } from 'shared/api/wsiOncoKbClientInstance';
 import LoadingIndicator from 'shared/components/loadingIndicator/LoadingIndicator';
+import { getCivicCNAVariants } from 'shared/lib/CivicUtils';
+import { getSimplifiedMutationType } from 'shared/lib/oql/AccessorsForOqlFilter';
 
 const WSI_OSD_PREFIX_URL = '/reactapp/osd-images/';
 
@@ -28,6 +36,24 @@ export function isPortalWsiAuthEnabled(): boolean {
     );
 }
 
+/** OncoKB and CIViC annotation services, as configured for the portal. */
+export function buildWsiMolecularServices(): WsiMolecularServices {
+    const serverConfig = getServerConfig();
+    return {
+        showOncoKb: !!serverConfig.show_oncokb,
+        showCivic: !!serverConfig.show_civic,
+        getOncoKbApiUrl,
+        getOncoKbClient: getWsiOncoKbClient,
+        getCivicCnaVariants: (alteration, geneSymbol, civicVariants) =>
+            getCivicCNAVariants(
+                [({ alteration } as unknown) as DiscreteCopyNumberData],
+                geneSymbol,
+                civicVariants
+            ),
+        getSimplifiedMutationType,
+    };
+}
+
 /**
  * Viewer services and settings from the portal configuration. The signed-in
  * user name scopes the viewer caches; without one, the configured display
@@ -45,6 +71,7 @@ export function buildWsiViewerConfig(userName?: string): WsiViewerConfig {
             DownloadControlOption.SHOW_ALL,
         osdPrefixUrl: WSI_OSD_PREFIX_URL,
         renderLoading: renderWsiLoading,
+        molecular: buildWsiMolecularServices(),
     };
 }
 

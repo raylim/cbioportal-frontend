@@ -12,6 +12,14 @@ const RESOURCE_DATA_IDS: Record<string, string> = {
     [SECOND_IMAGE_ID]: '102',
 };
 
+/** The resource identity the mocked hierarchy publishes for a slide. */
+export function resourceIdentity(imageId: string) {
+    return {
+        resourceId: RESOURCE_ID,
+        resourceDataId: RESOURCE_DATA_IDS[imageId],
+    };
+}
+
 export interface FoundationMockOptions {
     /** Adds a second servable slide with an ID that needs URL encoding. */
     includeSecondSlide?: boolean;
