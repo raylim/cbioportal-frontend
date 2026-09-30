@@ -61,6 +61,8 @@ type WsiTheme = {
 
 export interface WsiNavPanelProps {
     hierarchy: PatientHierarchy;
+    /** Bumped when enrichment updates the hierarchy's samples in place. */
+    dataVersion?: number;
     selectedSlide: Slide | null;
     stainFilter: WsiStainFilter;
     sampleIdFilter?: string;
@@ -239,6 +241,7 @@ function buildFilteredSampleEntry(
 
 function WsiNavPanelComponent({
     hierarchy,
+    dataVersion = 0,
     selectedSlide,
     stainFilter,
     sampleIdFilter,
@@ -831,6 +834,7 @@ function WsiNavPanelComponent({
                                 filteredSlideIds.has(selectedSlideId)
                             }
                             filteredSlides={filteredSlides}
+                            dataVersion={dataVersion}
                             sampleIndex={index}
                             selectedSlide={selectedSlide}
                             stainFilter={stainFilter}
@@ -887,6 +891,7 @@ function SampleNode({
     sample: Sample;
     containsSelectedSlide: boolean;
     filteredSlides: Array<{ slide: Slide; blockLabel: string | null }>;
+    dataVersion: number;
     sampleIndex: number;
     selectedSlide: Slide | null;
     stainFilter: WsiStainFilter;
@@ -1113,6 +1118,7 @@ const MemoSampleNode = React.memo(SampleNode, (prev, next) => {
     if (
         prev.sample !== next.sample ||
         prev.containsSelectedSlide !== next.containsSelectedSlide ||
+        prev.dataVersion !== next.dataVersion ||
         prev.sampleIndex !== next.sampleIndex ||
         prev.stainFilter !== next.stainFilter ||
         prev.matchFilter !== next.matchFilter ||
