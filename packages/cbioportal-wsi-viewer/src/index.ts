@@ -5,6 +5,8 @@ export {
     configureWsiViewerRuntime,
     WsiMolecularServices,
     WsiOncoKbClient,
+    WsiAgentConfig,
+    WsiAnnotationsConfig,
     WsiViewerConfig,
 } from './wsiViewerConfig';
 // Type-only: the component itself is in the viewer entry.

@@ -11,10 +11,6 @@ export const ServerConfigDefaults: Partial<IServerConfig> = {
     genomenexus_isoform_override_source: 'mskcc',
     g2s_url: 'https://g2s.genomenexus.org',
 
-    digital_slide_archive_iframe_url: 'https://cancer.digitalslidearchive.org/',
-    digital_slide_archive_meta_url:
-        'https://api.digitalslidearchive.org/api/v1/tcga/image?caseName=',
-
     mdacc_heatmap_patient_url:
         'https://bioinformatics.mdanderson.org/participant2maps?participant=',
     mdacc_heatmap_study_meta_url:
@@ -254,6 +250,8 @@ export const ServerConfigDefaults: Partial<IServerConfig> = {
 
     skin_hide_clinical_data_tab_study_view: false,
     msk_wsi_tile_server_url: '',
+    msk_wsi_annotation_api_url: '',
+    msk_wsi_agent_enabled: false,
 };
 
 export default ServerConfigDefaults;

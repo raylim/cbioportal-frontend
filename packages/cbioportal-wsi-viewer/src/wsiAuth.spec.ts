@@ -1,6 +1,10 @@
 import {
+    clearAnnotationAccessToken,
     clearWsiResourceAccessTargets,
     clearWsiSlideAccess,
+    getAgentAccessToken,
+    getAnnotationAccessToken,
+    getWsiSourceFingerprint,
     getWsiSlideAccess,
     registerWsiResourceAccess,
     registerWsiResourceAccessTarget,
@@ -117,6 +121,200 @@ describe('WSI access capability', () => {
             getWsiSlideAccess('study-1', 'slide-1', false, 'user-b')
         ).resolves.toEqual(expect.objectContaining({ accessToken: 'token-b' }));
         expect(global.fetch).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not reuse annotation capabilities across authenticated subjects', async () => {
+        jest.spyOn(global, 'fetch')
+            .mockResolvedValueOnce({
+                ok: true,
+                json: async () => ({
+                    access_token: 'annotation-a',
+                    expires_in: 300,
+                }),
+            } as Response)
+            .mockResolvedValueOnce({
+                ok: true,
+                json: async () => ({
+                    access_token: 'annotation-b',
+                    expires_in: 300,
+                }),
+            } as Response);
+
+        await expect(
+            getAnnotationAccessToken('study-1', 'user-a')
+        ).resolves.toBe('annotation-a');
+        await expect(
+            getAnnotationAccessToken('study-1', 'user-b')
+        ).resolves.toBe('annotation-b');
+        expect(global.fetch).toHaveBeenCalledTimes(2);
+        expect((global.fetch as jest.Mock).mock.calls[0][0]).toContain(
+            'purpose=annotations'
+        );
+        clearAnnotationAccessToken();
+    });
+
+    it('requests annotation tokens through the injected host services', async () => {
+        const fetchImpl = jest.fn().mockResolvedValue({
+            ok: true,
+            json: async () => ({ access_token: 'annotation', expires_in: 300 }),
+        } as Response);
+        configureRuntime({
+            buildApiUrl: (path: string) => `/portal/${path}`,
+            fetchImpl: fetchImpl as typeof fetch,
+        });
+
+        await expect(
+            getAnnotationAccessToken('study 1', 'user-a')
+        ).resolves.toBe('annotation');
+        await expect(
+            getAnnotationAccessToken('study 1', ' user-a ')
+        ).resolves.toBe('annotation');
+
+        expect(global.fetch).not.toHaveBeenCalled();
+        expect(fetchImpl).toHaveBeenCalledTimes(1);
+        const url = new URL(fetchImpl.mock.calls[0][0]);
+        expect(url.pathname).toBe('/portal/api/wsi/access-token');
+        expect(url.searchParams.get('studyId')).toBe('study 1');
+        expect(url.searchParams.get('purpose')).toBe('annotations');
+        expect(fetchImpl.mock.calls[0][1]).toMatchObject({
+            credentials: 'same-origin',
+            cache: 'no-store',
+        });
+    });
+
+    it('forgets annotation tokens with the slide access of their study', async () => {
+        const fetchImpl = jest.fn().mockResolvedValue({
+            ok: true,
+            json: async () => ({ access_token: 'annotation', expires_in: 300 }),
+        } as Response);
+        configureRuntime({ fetchImpl: fetchImpl as typeof fetch });
+
+        await getAnnotationAccessToken('study-1', 'user-a');
+        await getAnnotationAccessToken('study-2', 'user-a');
+        clearWsiSlideAccess('study-1');
+        await getAnnotationAccessToken('study-1', 'user-a');
+        await getAnnotationAccessToken('study-2', 'user-a');
+        expect(fetchImpl).toHaveBeenCalledTimes(3);
+
+        clearAnnotationAccessToken();
+        await getAnnotationAccessToken('study-2', 'user-a');
+        expect(fetchImpl).toHaveBeenCalledTimes(4);
+    });
+
+    it('does not cache an annotation token requested before a clear', async () => {
+        let resolveFirst!: (response: Response) => void;
+        const fetchImpl = jest
+            .fn()
+            .mockImplementationOnce(
+                () =>
+                    new Promise<Response>(resolve => {
+                        resolveFirst = resolve;
+                    })
+            )
+            .mockResolvedValue({
+                ok: true,
+                json: async () => ({ access_token: 'fresh', expires_in: 300 }),
+            } as Response);
+        configureRuntime({ fetchImpl: fetchImpl as typeof fetch });
+
+        const stale = getAnnotationAccessToken('study-1', 'user-a');
+        clearAnnotationAccessToken('study-1');
+        resolveFirst({
+            ok: true,
+            json: async () => ({ access_token: 'stale', expires_in: 300 }),
+        } as Response);
+        await expect(stale).resolves.toBe('stale');
+
+        await expect(
+            getAnnotationAccessToken('study-1', 'user-a')
+        ).resolves.toBe('fresh');
+        expect(fetchImpl).toHaveBeenCalledTimes(2);
+    });
+
+    it('rejects an annotation token response without a lifetime', async () => {
+        jest.spyOn(global, 'fetch').mockResolvedValue({
+            ok: true,
+            json: async () => ({ access_token: 'annotation', expires_in: 0 }),
+        } as Response);
+
+        await expect(getAnnotationAccessToken('study-1')).rejects.toThrow(
+            'Invalid WSI authorization response'
+        );
+        await expect(getAnnotationAccessToken('')).rejects.toThrow(
+            'WSI study scope is required'
+        );
+    });
+
+    it('does not reuse agent capabilities across authenticated subjects', async () => {
+        jest.spyOn(global, 'fetch')
+            .mockResolvedValueOnce({
+                ok: true,
+                json: async () => ({
+                    access_token: 'agent-a',
+                    expires_in: 300,
+                }),
+            } as Response)
+            .mockResolvedValueOnce({
+                ok: true,
+                json: async () => ({
+                    access_token: 'agent-b',
+                    expires_in: 300,
+                }),
+            } as Response);
+
+        await expect(getAgentAccessToken('study-1', 'user-a')).resolves.toBe(
+            'agent-a'
+        );
+        await expect(getAgentAccessToken('study-1', 'user-b')).resolves.toBe(
+            'agent-b'
+        );
+        expect((global.fetch as jest.Mock).mock.calls[0][0]).toContain(
+            'purpose=agent'
+        );
+        expect(global.fetch).toHaveBeenCalledTimes(2);
+    });
+
+    it('keeps annotation and agent tokens apart', async () => {
+        const fetchImpl = jest.fn(async (url: string) => {
+            const purpose = new URL(url).searchParams.get('purpose');
+            return {
+                ok: true,
+                json: async () => ({
+                    access_token: `${purpose}-token`,
+                    expires_in: 300,
+                }),
+            } as Response;
+        });
+        configureRuntime({ fetchImpl: (fetchImpl as unknown) as typeof fetch });
+
+        await expect(
+            getAnnotationAccessToken('study-1', 'user-a')
+        ).resolves.toBe('annotations-token');
+        await expect(getAgentAccessToken('study-1', 'user-a')).resolves.toBe(
+            'agent-token'
+        );
+        await expect(getAgentAccessToken('study-1', 'user-a')).resolves.toBe(
+            'agent-token'
+        );
+        expect(fetchImpl).toHaveBeenCalledTimes(2);
+    });
+
+    it('fingerprints the tile source from the capability claim', () => {
+        const digest = 'a'.repeat(64);
+        const claims = btoa(JSON.stringify({ tile_source_sha256: digest }))
+            .replace(/\+/g, '-')
+            .replace(/\//g, '_')
+            .replace(/=+$/, '');
+        const access = {
+            accessToken: `header.${claims}.signature`,
+            sourceUrl: 's3://bucket/slide-1.svs',
+            tileMetadata: { dimensions: { width: 100, height: 80 } },
+        } as any;
+
+        expect(getWsiSourceFingerprint(access)).toBe(`wsi-v2:${digest}:100x80`);
+        expect(
+            getWsiSourceFingerprint({ ...access, accessToken: 'opaque' })
+        ).toBe('wsi-v2:s3://bucket/slide-1.svs:100x80');
     });
 
     it('rejects a schema-v2 metadata object with a non-current decode policy', async () => {

@@ -165,6 +165,10 @@ function WsiMetaSidebarComponent({
     sample,
     mutationDataStatus,
     dataVersion,
+    annotationLayersPanel,
+    annotationPanel,
+    annotationPanelTitle,
+    agentPanel,
 }: {
     width: number;
     showImageProperties: boolean;
@@ -176,6 +180,10 @@ function WsiMetaSidebarComponent({
     mutationDataStatus: WsiMutationDataStatus;
     /** Invalidates the memoized sidebar when enrichment mutates a sample in place. */
     dataVersion?: number;
+    annotationLayersPanel?: React.ReactNode;
+    annotationPanel?: React.ReactNode;
+    annotationPanelTitle?: string;
+    agentPanel?: React.ReactNode;
 }) {
     // Keep the version in the component's props so React.memo observes
     // staged molecular/CNA/SV updates even when the sample object is mutated
@@ -228,6 +236,17 @@ function WsiMetaSidebarComponent({
                         <StructuralVariantTable sample={sample} />
                     ) : null}
                 </SbSection>
+            )}
+            {annotationLayersPanel && (
+                <SbSection title="Layers">{annotationLayersPanel}</SbSection>
+            )}
+            {annotationPanel && (
+                <SbSection title={annotationPanelTitle || 'Annotations'}>
+                    {annotationPanel}
+                </SbSection>
+            )}
+            {agentPanel && (
+                <SbSection title="Research assistant">{agentPanel}</SbSection>
             )}
         </div>
     );
