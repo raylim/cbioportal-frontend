@@ -33,6 +33,15 @@ export interface WsiViewerConfig {
      * authorized with study-scoped portal tokens. Off when unset.
      */
     annotations?: WsiAnnotationsConfig;
+    /**
+     * Research assistant panel. It talks to the annotation service, so it is
+     * shown only when `annotations` is configured too.
+     */
+    agent?: WsiAgentConfig;
+}
+
+export interface WsiAgentConfig {
+    enabled: boolean;
 }
 
 export interface WsiAnnotationsConfig {

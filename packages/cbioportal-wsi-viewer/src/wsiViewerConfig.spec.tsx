@@ -230,6 +230,7 @@ describe('WsiViewer', () => {
                 patientId: 'P 1',
                 studyId: 'study/1',
                 annotationApiUrl: undefined,
+                agentEnabled: false,
             })
         );
     });
@@ -250,6 +251,41 @@ describe('WsiViewer', () => {
         expect(mockWsiViewer).toHaveBeenCalledWith(
             expect.objectContaining({
                 annotationApiUrl: 'https://annotations.example',
+                agentEnabled: false,
+            })
+        );
+    });
+
+    it('enables the research assistant only with an annotation service', () => {
+        const { rerender } = render(
+            <WsiViewer
+                config={makeConfig({ agent: { enabled: true } })}
+                patientId="P1"
+                studyId="study1"
+                tileServerUrl="https://tiles.example"
+                height={600}
+            />
+        );
+        expect(mockWsiViewer).toHaveBeenLastCalledWith(
+            expect.objectContaining({ agentEnabled: false })
+        );
+
+        rerender(
+            <WsiViewer
+                config={makeConfig({
+                    annotations: { apiUrl: 'https://annotations.example' },
+                    agent: { enabled: true },
+                })}
+                patientId="P1"
+                studyId="study1"
+                tileServerUrl="https://tiles.example"
+                height={600}
+            />
+        );
+        expect(mockWsiViewer).toHaveBeenLastCalledWith(
+            expect.objectContaining({
+                annotationApiUrl: 'https://annotations.example',
+                agentEnabled: true,
             })
         );
     });

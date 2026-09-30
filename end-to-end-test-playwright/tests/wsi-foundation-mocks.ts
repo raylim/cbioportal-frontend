@@ -17,6 +17,10 @@ export interface FoundationMockOptions {
     includeSecondSlide?: boolean;
     /** Collects every resource access request URL. */
     accessRequests?: string[];
+    /** Configures the annotation service at the tile server origin. */
+    enableAnnotations?: boolean;
+    /** Enables the research assistant, which implies annotations. */
+    enableAgent?: boolean;
 }
 
 const tileMetadata = {
@@ -104,6 +108,8 @@ export async function installFoundationMocks(
 ): Promise<string[]> {
     const enrichmentRequests: string[] = [];
     const hierarchy = makeHierarchy(!!options.includeSecondSlide);
+    const annotationApiUrl =
+        options.enableAnnotations || options.enableAgent ? '/wsi' : '';
     await page.addInitScript(() => {
         window.localStorage.setItem(
             'frontendConfig',
@@ -129,6 +135,8 @@ export async function installFoundationMocks(
                 authenticationMethod: 'none',
                 msk_wsi_tile_server_url: '/wsi',
                 msk_wsi_authentication_enabled: false,
+                msk_wsi_annotation_api_url: annotationApiUrl,
+                msk_wsi_agent_enabled: Boolean(options.enableAgent),
             }),
         })
     );

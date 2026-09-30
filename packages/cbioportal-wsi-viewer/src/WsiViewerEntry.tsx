@@ -89,6 +89,9 @@ export default function WsiViewer({
             showDownload={config.showDownload}
             renderLoading={config.renderLoading}
             annotationApiUrl={config.annotations?.apiUrl}
+            agentEnabled={
+                !!config.agent?.enabled && !!config.annotations?.apiUrl
+            }
             height={height}
             initialStainFilter={initialStainFilter}
             initialMatchFilter={initialMatchFilter}

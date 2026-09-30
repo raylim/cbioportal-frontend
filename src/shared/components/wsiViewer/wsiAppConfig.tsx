@@ -28,6 +28,11 @@ export function isPortalWsiAuthEnabled(): boolean {
     );
 }
 
+/** A boolean frontend property, which may arrive as a string. */
+function isEnabled(value: unknown): boolean {
+    return value === true || value === 'true';
+}
+
 /**
  * Viewer services and settings from the portal configuration. The signed-in
  * user name scopes the viewer caches; without one, the configured display
@@ -48,6 +53,9 @@ export function buildWsiViewerConfig(userName?: string): WsiViewerConfig {
         renderLoading: renderWsiLoading,
         annotations: annotationApiUrl
             ? { apiUrl: annotationApiUrl.replace(/\/+$/, '') }
+            : undefined,
+        agent: isEnabled(serverConfig.msk_wsi_agent_enabled)
+            ? { enabled: true }
             : undefined,
     };
 }
