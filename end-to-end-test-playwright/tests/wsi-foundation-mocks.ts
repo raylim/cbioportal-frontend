@@ -159,6 +159,7 @@ export async function installFoundationMocks(
                 contentType: 'application/json',
                 body: JSON.stringify([]),
             })
+    );
     // The viewer reads the smoke patient's portal samples and sample
     // clinical data for its molecular tables; it has none.
     await page.route(`**/api/studies/${STUDY_ID}/samples**`, route =>
