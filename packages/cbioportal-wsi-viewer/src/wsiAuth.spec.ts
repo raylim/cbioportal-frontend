@@ -2,7 +2,9 @@ import {
     clearAnnotationAccessToken,
     clearWsiResourceAccessTargets,
     clearWsiSlideAccess,
+    getAgentAccessToken,
     getAnnotationAccessToken,
+    getWsiSourceFingerprint,
     getWsiSlideAccess,
     registerWsiResourceAccess,
     registerWsiResourceAccessTarget,
@@ -241,6 +243,78 @@ describe('WSI access capability', () => {
         await expect(getAnnotationAccessToken('')).rejects.toThrow(
             'WSI study scope is required'
         );
+    });
+
+    it('does not reuse agent capabilities across authenticated subjects', async () => {
+        jest.spyOn(global, 'fetch')
+            .mockResolvedValueOnce({
+                ok: true,
+                json: async () => ({
+                    access_token: 'agent-a',
+                    expires_in: 300,
+                }),
+            } as Response)
+            .mockResolvedValueOnce({
+                ok: true,
+                json: async () => ({
+                    access_token: 'agent-b',
+                    expires_in: 300,
+                }),
+            } as Response);
+
+        await expect(getAgentAccessToken('study-1', 'user-a')).resolves.toBe(
+            'agent-a'
+        );
+        await expect(getAgentAccessToken('study-1', 'user-b')).resolves.toBe(
+            'agent-b'
+        );
+        expect((global.fetch as jest.Mock).mock.calls[0][0]).toContain(
+            'purpose=agent'
+        );
+        expect(global.fetch).toHaveBeenCalledTimes(2);
+    });
+
+    it('keeps annotation and agent tokens apart', async () => {
+        const fetchImpl = jest.fn(async (url: string) => {
+            const purpose = new URL(url).searchParams.get('purpose');
+            return {
+                ok: true,
+                json: async () => ({
+                    access_token: `${purpose}-token`,
+                    expires_in: 300,
+                }),
+            } as Response;
+        });
+        configureRuntime({ fetchImpl: (fetchImpl as unknown) as typeof fetch });
+
+        await expect(
+            getAnnotationAccessToken('study-1', 'user-a')
+        ).resolves.toBe('annotations-token');
+        await expect(getAgentAccessToken('study-1', 'user-a')).resolves.toBe(
+            'agent-token'
+        );
+        await expect(getAgentAccessToken('study-1', 'user-a')).resolves.toBe(
+            'agent-token'
+        );
+        expect(fetchImpl).toHaveBeenCalledTimes(2);
+    });
+
+    it('fingerprints the tile source from the capability claim', () => {
+        const digest = 'a'.repeat(64);
+        const claims = btoa(JSON.stringify({ tile_source_sha256: digest }))
+            .replace(/\+/g, '-')
+            .replace(/\//g, '_')
+            .replace(/=+$/, '');
+        const access = {
+            accessToken: `header.${claims}.signature`,
+            sourceUrl: 's3://bucket/slide-1.svs',
+            tileMetadata: { dimensions: { width: 100, height: 80 } },
+        } as any;
+
+        expect(getWsiSourceFingerprint(access)).toBe(`wsi-v2:${digest}:100x80`);
+        expect(
+            getWsiSourceFingerprint({ ...access, accessToken: 'opaque' })
+        ).toBe('wsi-v2:s3://bucket/slide-1.svs:100x80');
     });
 
     it('rejects a schema-v2 metadata object with a non-current decode policy', async () => {

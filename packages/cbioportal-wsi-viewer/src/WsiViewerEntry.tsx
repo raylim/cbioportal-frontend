@@ -73,6 +73,10 @@ export default function WsiViewer({
             patientId={patientId}
             studyId={studyId}
             annotationApiUrl={getWsiViewerRuntime().annotations?.apiUrl}
+            agentEnabled={
+                !!getWsiViewerRuntime().agent?.enabled &&
+                !!getWsiViewerRuntime().annotations?.apiUrl
+            }
             sampleTimelines={sampleTimelines}
         />
     );

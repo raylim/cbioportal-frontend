@@ -307,6 +307,39 @@ export function clearWsiSlideAccess(studyId?: string): void {
     clearWsiPurposeAccessTokens();
 }
 
+/**
+ * Identifies the tile source of a slide access: the capability's
+ * `tile_source_sha256` claim when present, the source URL otherwise, and the
+ * slide dimensions.
+ */
+export function getWsiSourceFingerprint(access: WsiSlideAccess): string {
+    let sourceDigest = '';
+    try {
+        const encodedPayload = access.accessToken.split('.')[1];
+        if (encodedPayload) {
+            const normalized = encodedPayload
+                .replace(/-/g, '+')
+                .replace(/_/g, '/');
+            const decoded = atob(
+                normalized + '='.repeat((4 - (normalized.length % 4)) % 4)
+            );
+            const payload = JSON.parse(decoded) as {
+                tile_source_sha256?: unknown;
+            };
+            if (
+                typeof payload.tile_source_sha256 === 'string' &&
+                /^[0-9a-f]{64}$/.test(payload.tile_source_sha256)
+            ) {
+                sourceDigest = payload.tile_source_sha256;
+            }
+        }
+    } catch (_) {
+        // Use the source URL when the capability payload is unavailable.
+    }
+    const source = sourceDigest || access.sourceUrl;
+    return `wsi-v2:${source}:${access.tileMetadata.dimensions.width}x${access.tileMetadata.dimensions.height}`;
+}
+
 /** Services that accept a study-scoped portal access token. */
 export type WsiAccessTokenPurpose = 'annotations' | 'agent';
 
@@ -413,6 +446,13 @@ export function getAnnotationAccessToken(
     authScope = 'anonymousUser'
 ): Promise<string> {
     return getWsiPurposeAccessToken(studyId, 'annotations', authScope);
+}
+
+export function getAgentAccessToken(
+    studyId: string,
+    authScope = 'anonymousUser'
+): Promise<string> {
+    return getWsiPurposeAccessToken(studyId, 'agent', authScope);
 }
 
 /** Forgets purpose tokens for one study, or for every study. */
