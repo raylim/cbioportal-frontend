@@ -40,15 +40,26 @@ function importPathologySlidesTimeline(): Promise<
     return import('./pathologySlidesTimeline');
 }
 
+/** A patient count attribute; 0 when missing or not a number. */
+export function patientCountAttribute(
+    clinicalDataPatient: Pick<ClinicalData, 'clinicalAttributeId' | 'value'>[],
+    attributeId: string
+): number {
+    const datum = clinicalDataPatient.find(
+        d => d.clinicalAttributeId === attributeId
+    );
+    const count = datum ? parseInt(datum.value, 10) : 0;
+    return Number.isFinite(count) ? count : 0;
+}
+
 /** The patient's WSI_PATIENT_SLIDE_COUNT; 0 when missing or not a number. */
 export function patientWsiSlideCount(
     clinicalDataPatient: Pick<ClinicalData, 'clinicalAttributeId' | 'value'>[]
 ): number {
-    const datum = clinicalDataPatient.find(
-        d => d.clinicalAttributeId === WSI_PATIENT_SLIDE_COUNT_ATTRIBUTE
+    return patientCountAttribute(
+        clinicalDataPatient,
+        WSI_PATIENT_SLIDE_COUNT_ATTRIBUTE
     );
-    const count = datum ? parseInt(datum.value, 10) : 0;
-    return Number.isFinite(count) ? count : 0;
 }
 
 export interface PathologySlidesTimelineRequest {

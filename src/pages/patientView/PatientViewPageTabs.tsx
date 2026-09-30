@@ -43,6 +43,9 @@ import { PatientViewPlotsTabWrapper } from './PatientViewPlotsTabWrapper';
 import PatientWsiSlidesTab from 'pages/patientView/PatientWsiSlidesTab';
 import { PatientViewPageTabs } from './PatientViewPageTabIds';
 import { withPathologySlideEvents } from 'pages/patientView/timeline/pathologySlidesTimelineLoader';
+import UndatedPathologySlidesNotice, {
+    patientUndatedSlideCount,
+} from 'pages/patientView/timeline/UndatedPathologySlidesNotice';
 
 export {
     PatientViewPageTabs,
@@ -71,6 +74,30 @@ export function patientViewTabs(
             {tabs(pageInstance, sampleManager, urlWrapper)}
         </MSKTabs>
     );
+}
+
+/**
+ * The undated pathology slides notice, for patients with undated viewable
+ * slides on a portal that serves slides; null otherwise.
+ */
+function undatedPathologySlidesNotice(
+    pageComponent: PatientViewPageInner
+): JSX.Element | null {
+    const store = pageComponent.patientViewPageStore;
+    if (
+        !getServerConfig().msk_wsi_tile_server_url ||
+        !store.clinicalDataPatient.isComplete
+    ) {
+        return null;
+    }
+    const count = patientUndatedSlideCount(store.clinicalDataPatient.result);
+    return count > 0 ? (
+        <UndatedPathologySlidesNotice
+            studyId={store.studyId}
+            patientId={store.patientId}
+            count={count}
+        />
+    ) : null;
 }
 
 /**
@@ -136,6 +163,7 @@ export function tabs(
     const tabs: JSX.Element[] = [];
     tabs.push(
         <MSKTab key={0} id={PatientViewPageTabs.Summary} linkText="Summary">
+            {undatedPathologySlidesNotice(pageComponent)}
             <LoadingIndicator
                 isLoading={
                     pageComponent.patientViewPageStore.clinicalEvents
