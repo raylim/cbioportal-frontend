@@ -1,4 +1,4 @@
-import { buildPathRows, buildWsiRows } from './wsiMetaUtils';
+import { buildPathRows, buildSeqRows, buildWsiRows } from './wsiMetaUtils';
 import {
     Sample,
     Slide,
@@ -283,6 +283,26 @@ describe('buildPathRows sample timeline rows', () => {
 
         expect(before.map(row => row.label)).not.toContain('Sequenced');
         expect(after.map(row => row.label)).toContain('Sequenced');
+    });
+});
+
+describe('buildSeqRows', () => {
+    it('lists the sequencing properties of an enriched sample', () => {
+        const enrichedSample = {
+            ...sample,
+            tumor_purity: '65',
+            tmb_score: '7.1',
+            metastatic_site: 'Not Applicable',
+        } as Sample;
+
+        expect(buildSeqRows(enrichedSample, '/patient?sampleId=S-1')).toEqual([
+            expect.objectContaining({ label: 'Tumor purity', value: '65%' }),
+            expect.objectContaining({
+                label: 'TMB',
+                value: '7.1 mut/Mb',
+                href: '/patient?sampleId=S-1',
+            }),
+        ]);
     });
 });
 
