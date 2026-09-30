@@ -229,6 +229,27 @@ describe('WsiViewer', () => {
                 tileServerUrl: 'https://tiles.example',
                 patientId: 'P 1',
                 studyId: 'study/1',
+                annotationApiUrl: undefined,
+            })
+        );
+    });
+
+    it('passes the annotation service of the host', () => {
+        render(
+            <WsiViewer
+                config={makeConfig({
+                    annotations: { apiUrl: 'https://annotations.example' },
+                })}
+                patientId="P1"
+                studyId="study1"
+                tileServerUrl="https://tiles.example"
+                height={600}
+            />
+        );
+
+        expect(mockWsiViewer).toHaveBeenCalledWith(
+            expect.objectContaining({
+                annotationApiUrl: 'https://annotations.example',
             })
         );
     });

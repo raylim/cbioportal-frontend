@@ -35,6 +35,7 @@ export function isPortalWsiAuthEnabled(): boolean {
  */
 export function buildWsiViewerConfig(userName?: string): WsiViewerConfig {
     const serverConfig = getServerConfig();
+    const annotationApiUrl = serverConfig.msk_wsi_annotation_api_url?.trim();
     return {
         buildApiUrl: (path: string) => buildCBioPortalAPIUrl(path),
         authEnabled: isPortalWsiAuthEnabled(),
@@ -45,6 +46,9 @@ export function buildWsiViewerConfig(userName?: string): WsiViewerConfig {
             DownloadControlOption.SHOW_ALL,
         osdPrefixUrl: WSI_OSD_PREFIX_URL,
         renderLoading: renderWsiLoading,
+        annotations: annotationApiUrl
+            ? { apiUrl: annotationApiUrl.replace(/\/+$/, '') }
+            : undefined,
     };
 }
 

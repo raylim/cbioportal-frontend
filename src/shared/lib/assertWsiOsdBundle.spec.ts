@@ -96,4 +96,64 @@ describe('assertWsiOsdBundle', () => {
             fs.rmSync(root, { recursive: true, force: true });
         }
     });
+
+    it('fails when OpenSeadragon is bundled into more than one chunk', () => {
+        const { root, distDir } = makeTempDist();
+        try {
+            writeBundleFixture(distDir, {
+                'reactapp/common.bundle.js': 'window.__common__ = true;',
+                'reactapp/main.app.js': 'window.__main__ = true;',
+                'reactapp/wsi-openseadragon.123.js':
+                    'c.version={versionStr:"6.0.2",major:6};',
+                'reactapp/wsi-annotorious.456.js':
+                    'c.version={versionStr:"6.0.2",major:6};',
+            });
+
+            expect(() => assertWsiOsdBundle({ distDir })).toThrow(
+                /Expected one copy of OpenSeadragon/
+            );
+        } finally {
+            fs.rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it('accepts Annotorious in its own chunk sharing OpenSeadragon', () => {
+        const { root, distDir } = makeTempDist();
+        try {
+            writeBundleFixture(distDir, {
+                'reactapp/common.bundle.js': 'window.__common__ = true;',
+                'reactapp/main.app.js': 'window.__main__ = true;',
+                'reactapp/wsi-openseadragon.123.js':
+                    'c.version={versionStr:"6.0.2",major:6};',
+                'reactapp/wsi-annotorious.456.js':
+                    'e.className="a9s-annotationlayer";',
+            });
+
+            const result = assertWsiOsdBundle({ distDir });
+
+            expect(path.basename(result.osdBundlePath)).toBe(
+                'wsi-openseadragon.123.js'
+            );
+        } finally {
+            fs.rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it('fails when Annotorious is in an initial bundle', () => {
+        const { root, distDir } = makeTempDist();
+        try {
+            writeBundleFixture(distDir, {
+                'reactapp/common.bundle.js':
+                    'e.className="a9s-annotationlayer";',
+                'reactapp/main.app.js': 'window.__main__ = true;',
+                'reactapp/wsi-openseadragon.123.js': 'window.__osd__ = true;',
+            });
+
+            expect(() => assertWsiOsdBundle({ distDir })).toThrow(
+                /Expected Annotorious in an asynchronous chunk/
+            );
+        } finally {
+            fs.rmSync(root, { recursive: true, force: true });
+        }
+    });
 });

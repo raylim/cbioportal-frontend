@@ -28,6 +28,16 @@ export interface WsiViewerConfig {
      * global `fetch` when unset. OpenSeadragon loads tiles itself.
      */
     fetchImpl?: typeof fetch;
+    /**
+     * Annotation authoring against the annotation service at `apiUrl`,
+     * authorized with study-scoped portal tokens. Off when unset.
+     */
+    annotations?: WsiAnnotationsConfig;
+}
+
+export interface WsiAnnotationsConfig {
+    /** Annotation service base URL, without a trailing slash. */
+    apiUrl: string;
 }
 
 /** Services read by the viewer's module-level caches and controller. */
