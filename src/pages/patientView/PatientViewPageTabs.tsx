@@ -600,6 +600,9 @@ export function tabs(
                     tileServerUrl={tileServerUrl}
                     userName={pageComponent.props.appStore.userName}
                     height={WindowStore.size.height - 220}
+                    clinicalEvents={
+                        pageComponent.patientViewPageStore.clinicalEvents.result
+                    }
                 />
             </MSKTab>
         );
