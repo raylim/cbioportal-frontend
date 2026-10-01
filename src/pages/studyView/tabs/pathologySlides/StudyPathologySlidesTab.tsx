@@ -23,8 +23,14 @@ import {
     StudySlidePatient,
     StudySlidesRequestError,
     StudySlideStainGroup,
+    viewerMatchFilter,
     viewerStainFilter,
 } from './studySlidesApi';
+import {
+    StudySlidesFilterChips,
+    StudySlidesFilterSection,
+    StudySlidesSearch,
+} from './StudySlidesFilters';
 
 export interface StudyPathologySlidesTabProps {
     store: StudyPathologySlidesStore;
@@ -344,8 +350,7 @@ const PatientPanel: React.FunctionComponent<{
     const listRef = React.useRef<HTMLUListElement>(null);
     const page = store.page.result!;
     const selected = store.selected;
-    const filtering =
-        store.stainGroups.length > 0 || store.patientIdPrefix !== '';
+    const filtering = store.hasSlideFilters || store.clinicalFilters.length > 0;
 
     // Show the selected patient when it is on the page; otherwise start a
     // newly loaded page from its top.
@@ -430,83 +435,12 @@ const PatientPanel: React.FunctionComponent<{
                 >
                     {count(page.totalSlides, 'viewable slide')}
                 </div>
-                <div style={{ position: 'relative', marginTop: 7 }}>
-                    <i
-                        className="fa fa-search"
-                        aria-hidden="true"
-                        style={{
-                            position: 'absolute',
-                            left: 7,
-                            top: 7,
-                            fontSize: 11,
-                            color: C.muted,
-                        }}
-                    />
-                    <input
-                        type="text"
-                        className="form-control input-sm"
-                        placeholder="Find patient ID"
-                        aria-label="Find patient ID"
-                        data-testid="study-slides-search"
-                        value={store.searchText}
-                        onChange={e => store.setSearchText(e.target.value)}
-                        style={{
-                            height: 26,
-                            fontSize: 12,
-                            paddingLeft: 22,
-                            paddingRight: 22,
-                        }}
-                    />
-                    {store.searchText && (
-                        <button
-                            type="button"
-                            aria-label="Clear patient search"
-                            onClick={() => store.setSearchText('')}
-                            style={{
-                                ...iconButtonStyle,
-                                position: 'absolute',
-                                right: 2,
-                                top: 6,
-                            }}
-                        >
-                            <i className="fa fa-times" aria-hidden="true" />
-                        </button>
-                    )}
-                </div>
-                <div
-                    role="group"
-                    aria-label="Stain groups"
-                    className="btn-group btn-group-xs"
-                    style={{
-                        marginTop: 7,
-                        display: 'flex',
-                        flexWrap: 'wrap',
-                    }}
-                >
-                    {STAIN_GROUPS.map(group => {
-                        const active = store.stainGroups.includes(group);
-                        return (
-                            <button
-                                key={group}
-                                type="button"
-                                className={`btn btn-xs ${
-                                    active ? 'btn-primary' : 'btn-default'
-                                }`}
-                                aria-pressed={active}
-                                data-testid={`study-slides-stain-${group}`}
-                                onClick={() => store.toggleStainGroup(group)}
-                            >
-                                {!active && <StainDot group={group} />}
-                                {group}{' '}
-                                <span style={{ opacity: 0.7 }}>
-                                    {page.stainGroupTotals[
-                                        group
-                                    ].toLocaleString()}
-                                </span>
-                            </button>
-                        );
-                    })}
-                </div>
+                <StudySlidesSearch store={store} />
+                <StudySlidesFilterChips store={store} />
+                <StudySlidesFilterSection
+                    store={store}
+                    stainGroupTotals={page.stainGroupTotals}
+                />
             </div>
 
             {page.patients.length === 0 ? (
@@ -781,6 +715,9 @@ export const StudyPathologySlidesTab: React.FunctionComponent<StudyPathologySlid
                                 height={innerHeight - TOOLBAR_HEIGHT - 1}
                                 initialStainFilter={viewerStainFilter(
                                     store.stainGroups
+                                )}
+                                initialMatchFilter={viewerMatchFilter(
+                                    store.matchLevels
                                 )}
                             />
                         </>

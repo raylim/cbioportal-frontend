@@ -88,6 +88,7 @@ import { hashUrlState } from 'cbioportal-wsi-viewer';
 import WindowStore from 'shared/components/window/WindowStore';
 import { StudyPathologySlidesStore } from './tabs/pathologySlides/StudyPathologySlidesStore';
 import { StudyPathologySlidesTab } from './tabs/pathologySlides/StudyPathologySlidesTab';
+import { studySlidesClinicalAccess } from './tabs/pathologySlides/studySlidesClinicalAccess';
 
 export interface IStudyViewPageProps {
     routing: any;
@@ -171,6 +172,7 @@ export default class StudyViewPage extends React.Component<
         const { wsiStudyId, wsiPatientId } = this.urlWrapper.query;
         this.pathologySlidesStore = new StudyPathologySlidesStore({
             getFilters: () => this.store.filters,
+            clinical: studySlidesClinicalAccess(this.store),
             getStudyIds: () =>
                 getServerConfig().msk_wsi_tile_server_url
                     ? this.store.queriedPhysicalStudyIds.result

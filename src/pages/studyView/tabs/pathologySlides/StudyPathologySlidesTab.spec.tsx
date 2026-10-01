@@ -3,10 +3,12 @@
  */
 import * as React from 'react';
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
+import { observable, runInAction } from 'mobx';
 import { StudyViewFilter } from 'cbioportal-ts-api-client';
 import { StudyPathologySlidesStore } from './StudyPathologySlidesStore';
 import { StudyPathologySlidesTab } from './StudyPathologySlidesTab';
 import {
+    StudySlideFacets,
     StudySlidePatient,
     StudySlidesPage,
     StudySlidesRequest,
@@ -86,6 +88,30 @@ async function settle() {
     });
 }
 
+const FACETS: StudySlideFacets = {
+    attributes: [
+        {
+            attributeId: 'CANCER_TYPE',
+            values: [
+                { value: 'Colorectal Cancer', patientCount: 2 },
+                { value: 'Breast Cancer', patientCount: 1 },
+            ],
+            truncated: false,
+        },
+    ],
+    matchLevels: { PART: 2, BLOCK: 1, UNMATCHED: 1 },
+};
+
+/** The study view's clinical filters, as the tab sees them. */
+const clinicalFilters = observable.box<
+    { attributeId: string; values: string[] }[]
+>([]);
+const setFilterValues = jest.fn((attributeId: string, values: string[]) =>
+    runInAction(() =>
+        clinicalFilters.set(values.length ? [{ attributeId, values }] : [])
+    )
+);
+
 function renderTab(
     fetchPage: (request: StudySlidesRequest) => Promise<StudySlidesPage>,
     isActive = true,
@@ -95,6 +121,15 @@ function renderTab(
         getFilters: () => ({ studyIds: ['study'] } as StudyViewFilter),
         getStudyIds: () => ['study'],
         fetchPage,
+        fetchFacets: async () => FACETS,
+        clinical: {
+            getAttributes: () => [
+                { attributeId: 'CANCER_TYPE', displayName: 'Cancer Type' },
+                { attributeId: 'SEX', displayName: 'Sex' },
+            ],
+            getFilters: () => clinicalFilters.get(),
+            setFilterValues,
+        },
         pageSize,
     });
     const view = render(
@@ -129,7 +164,11 @@ function pagedFor(request: StudySlidesRequest): StudySlidesPage {
 describe('StudyPathologySlidesTab', () => {
     beforeEach(() => {
         mockViewer.mockClear();
+        setFilterValues.mockClear();
+        runInAction(() => clinicalFilters.set([]));
         window.localStorage.clear();
+        // Most cases use the filters, which start closed.
+        window.localStorage.setItem('wsi.study.filtersOpen', '1');
     });
 
     it('lists the cohort and shows the first patient in the viewer', async () => {
@@ -394,6 +433,107 @@ describe('StudyPathologySlidesTab', () => {
         fireEvent.click(screen.getByLabelText('First page of patients'));
         await settle();
         expect(listed('M-1')).toBeTruthy();
+        store.dispose();
+    });
+
+    it('suggests clinical values that add the shared study-view filter', async () => {
+        const { store } = renderTab(async r => pageFor(r));
+        await settle();
+
+        const search = screen.getByTestId('study-slides-search');
+        fireEvent.focus(search);
+        fireEvent.change(search, { target: { value: 'colo' } });
+        await settle();
+        const options = screen.getAllByTestId('study-slides-suggestion');
+        expect(options.map(o => o.textContent)).toEqual([
+            'Patient or sample ID contains “colo”',
+            'Colorectal CancerCancer Type2 patients',
+        ]);
+
+        fireEvent.keyDown(search, { key: 'ArrowDown' });
+        fireEvent.keyDown(search, { key: 'Enter' });
+        expect(setFilterValues).toHaveBeenCalledWith('CANCER_TYPE', [
+            'Colorectal Cancer',
+        ]);
+        expect(store.searchText).toBe('');
+        expect(screen.queryByTestId('study-slides-suggestions')).toBeNull();
+        expect(
+            screen.getByTestId('study-slides-chip-CANCER_TYPE').textContent
+        ).toBe('Cancer Type: Colorectal Cancer');
+
+        fireEvent.click(
+            within(
+                screen.getByTestId('study-slides-chip-CANCER_TYPE')
+            ).getByLabelText('Remove filter')
+        );
+        expect(setFilterValues).toHaveBeenLastCalledWith('CANCER_TYPE', []);
+        expect(
+            screen.queryByTestId('study-slides-chip-CANCER_TYPE')
+        ).toBeNull();
+        store.dispose();
+    });
+
+    it('filters by specimen match and passes one level to the viewer', async () => {
+        const requests: StudySlidesRequest[] = [];
+        const { store } = renderTab(async r => {
+            requests.push(r);
+            return pageFor(r);
+        });
+        await settle();
+
+        expect(
+            screen.getByTestId('study-slides-match-UNMATCHED').textContent
+        ).toBe('Unmatched 1');
+        fireEvent.click(screen.getByTestId('study-slides-match-UNMATCHED'));
+        await settle();
+
+        expect(requests[requests.length - 1].matchLevels).toEqual([
+            'UNMATCHED',
+        ]);
+        expect(mockViewer).toHaveBeenLastCalledWith(
+            expect.objectContaining({ initialMatchFilter: 'unmatched' })
+        );
+        expect(
+            screen.getByTestId('study-slides-chip-match-UNMATCHED')
+        ).toBeTruthy();
+
+        fireEvent.click(screen.getByTestId('study-slides-clear-filters'));
+        await settle();
+        expect(requests[requests.length - 1].matchLevels).toEqual([]);
+        store.dispose();
+    });
+
+    it('shows clinical filters with counts and adds more filters', async () => {
+        const { store } = renderTab(async r => pageFor(r));
+        await settle();
+
+        expect(
+            screen.getByTestId('study-slides-facet-CANCER_TYPE')
+        ).toBeTruthy();
+        fireEvent.change(screen.getByTestId('study-slides-add-filter'), {
+            target: { value: 'SEX' },
+        });
+        expect(store.pinnedAttributeIds).toEqual(['SEX']);
+        store.dispose();
+    });
+
+    it('starts with the filters closed and counts active filters', async () => {
+        window.localStorage.removeItem('wsi.study.filtersOpen');
+        runInAction(() =>
+            clinicalFilters.set([
+                { attributeId: 'CANCER_TYPE', values: ['Breast Cancer'] },
+            ])
+        );
+        const { store } = renderTab(async r => pageFor(r));
+        await settle();
+
+        expect(screen.queryByTestId('study-slides-filters')).toBeNull();
+        expect(
+            screen.getByTestId('study-slides-filters-toggle').textContent
+        ).toContain('1 active');
+        fireEvent.click(screen.getByTestId('study-slides-filters-toggle'));
+        expect(screen.getByTestId('study-slides-filters')).toBeTruthy();
+        expect(window.localStorage.getItem('wsi.study.filtersOpen')).toBe('1');
         store.dispose();
     });
 });
