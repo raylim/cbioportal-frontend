@@ -604,7 +604,7 @@ if (process.env.PW_SUITE === 'wsi') {
             await page.getByTestId('study-slides-search').fill('colo');
             const suggestion = page
                 .getByTestId('study-slides-suggestion')
-                .filter({ hasText: 'Cancer Type: Colorectal Cancer' });
+                .filter({ hasText: /Colorectal Cancer\s*Cancer Type/ });
             await expect(suggestion).toContainText('30 patients');
             await suggestion.click();
 
