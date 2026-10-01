@@ -6,21 +6,11 @@ import {
     StructuralVariantTable,
 } from './wsiMolecularTables';
 
-const SIDEBAR_COLORS = {
-    blue: '#2986e2',
-    border: '#ddd',
-    muted: '#737373',
-    text: '#333',
-    sidebarBg: '#f5f5f5',
-} as const;
+import { WSI_SECTION_TITLE_STYLE, WSI_THEME } from './wsiTheme';
+import { WsiPanelHideButton } from './wsiPanelChrome';
 
-const sectionTitleStyle: React.CSSProperties = {
-    fontSize: 10,
-    fontWeight: 700,
-    color: SIDEBAR_COLORS.muted,
-    textTransform: 'uppercase',
-    letterSpacing: '.8px',
-};
+const SIDEBAR_COLORS = WSI_THEME;
+const sectionTitleStyle = WSI_SECTION_TITLE_STYLE;
 
 const emptyStateStyle: React.CSSProperties = {
     color: '#bbb',
@@ -42,9 +32,11 @@ export interface MetaRow {
 
 function SbSection({
     title,
+    action,
     children,
 }: {
     title: string;
+    action?: React.ReactNode;
     children: React.ReactNode;
 }) {
     return (
@@ -54,7 +46,20 @@ function SbSection({
                 borderBottom: `1px solid ${SIDEBAR_COLORS.border}`,
             }}
         >
-            <div style={sectionTitleStyle}>{title}</div>
+            {action ? (
+                <div
+                    style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                    }}
+                >
+                    <div style={sectionTitleStyle}>{title}</div>
+                    {action}
+                </div>
+            ) : (
+                <div style={sectionTitleStyle}>{title}</div>
+            )}
             {children}
         </div>
     );
@@ -169,6 +174,7 @@ function WsiMetaSidebarComponent({
     annotationPanel,
     annotationPanelTitle,
     agentPanel,
+    onHide,
 }: {
     width: number;
     showImageProperties: boolean;
@@ -184,6 +190,8 @@ function WsiMetaSidebarComponent({
     annotationPanel?: React.ReactNode;
     annotationPanelTitle?: string;
     agentPanel?: React.ReactNode;
+    /** Shows a header button that hides the sidebar. */
+    onHide?: () => void;
 }) {
     // Keep the version in the component's props so React.memo observes
     // staged molecular/CNA/SV updates even when the sample object is mutated
@@ -208,7 +216,19 @@ function WsiMetaSidebarComponent({
                 flexShrink: 0,
             }}
         >
-            <SbSection title="Image Properties">
+            <SbSection
+                title="Image Properties"
+                action={
+                    onHide && (
+                        <WsiPanelHideButton
+                            side="right"
+                            label="Hide image details"
+                            onClick={onHide}
+                            testId="wsi-metadata-hide"
+                        />
+                    )
+                }
+            >
                 {showImageProperties ? (
                     <MetaTable rows={wsiRows} />
                 ) : (
