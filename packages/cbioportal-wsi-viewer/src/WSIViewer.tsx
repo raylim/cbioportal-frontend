@@ -139,8 +139,6 @@ interface Props {
     height: number;
     /** cBioPortal study ID — used to build sample links in the sidebar */
     studyId?: string;
-    /** Long-form cBioPortal study name shown in the metadata sidebar */
-    studyName?: string;
     initialStainFilter?: WsiStainFilter;
     initialMatchFilter?: PathologySlideMatchFilter;
     initialTimepointDays?: WsiTimepointSelection;
@@ -1636,7 +1634,6 @@ export default class WSIViewer extends React.Component<Props, {}> {
                       this.hierarchy.slide_associations
                   ).get(this.selectedSlide.image_id)
                 : undefined,
-            this.props.studyName,
             this.props.sampleTimelines?.get(this.selectedSample.sample_id)
         );
     }
