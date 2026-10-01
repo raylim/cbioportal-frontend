@@ -23,8 +23,14 @@ import {
 
 const C = WSI_THEME;
 const STAIN_GROUPS = STUDY_SLIDE_STAIN_GROUPS as StudySlideStainGroup[];
-/** Browser-stored collapsed state of the filters section. */
-export const FILTERS_COLLAPSED_KEY = 'wsi.study.filtersCollapsed';
+/** Browser-stored open state of the filters section, which starts closed. */
+export const FILTERS_OPEN_KEY = 'wsi.study.filtersOpen';
+
+const MATCH_BUTTON_LABELS = {
+    PART: 'Part',
+    BLOCK: 'Block',
+    UNMATCHED: 'Unmatched',
+};
 
 type SearchOption = { kind: 'id' } | StudySlidesSuggestion;
 
@@ -466,9 +472,13 @@ const ClinicalFacet: React.FunctionComponent<{
             </div>
             <CheckedSelect
                 name={`study-slides-facet-${facet.attributeId}`}
-                placeholder={`Any ${(
-                    attribute?.displayName || facet.attributeId
-                ).toLowerCase()}`}
+                placeholder={
+                    selected.length > 0
+                        ? selected.join(', ')
+                        : `Any ${(
+                              attribute?.displayName || facet.attributeId
+                          ).toLowerCase()}`
+                }
                 options={options}
                 value={selected.map(value => ({ value }))}
                 onChange={values =>
@@ -488,13 +498,18 @@ export const StudySlidesFilterSection: React.FunctionComponent<{
     store: StudyPathologySlidesStore;
     stainGroupTotals: Record<StudySlideStainGroup, number>;
 }> = observer(({ store, stainGroupTotals }) => {
-    const [collapsed, setCollapsed] = React.useState(() =>
-        readWsiPanelFlag(FILTERS_COLLAPSED_KEY)
+    const [open, setOpen] = React.useState(() =>
+        readWsiPanelFlag(FILTERS_OPEN_KEY)
     );
+    const collapsed = !open;
     const toggle = () => {
-        writeWsiPanelFlag(FILTERS_COLLAPSED_KEY, !collapsed);
-        setCollapsed(!collapsed);
+        writeWsiPanelFlag(FILTERS_OPEN_KEY, !open);
+        setOpen(!open);
     };
+    const activeCount =
+        store.clinicalFilters.length +
+        store.matchLevels.length +
+        store.stainGroups.length;
     // Without facet counts the match buttons still filter.
     const matchCounts = store.facets.result?.matchLevels;
     const shown = new Set(store.facetAttributeIds);
@@ -522,9 +537,23 @@ export const StudySlidesFilterSection: React.FunctionComponent<{
                     style={{ width: 9 }}
                 />{' '}
                 Filters
+                {collapsed && activeCount > 0 && (
+                    <span style={{ fontWeight: 400, letterSpacing: 0 }}>
+                        {' '}
+                        · {activeCount} active
+                    </span>
+                )}
             </button>
             {!collapsed && (
-                <div data-testid="study-slides-filters">
+                <div
+                    data-testid="study-slides-filters"
+                    aria-busy={store.facets.isPending}
+                    style={{
+                        // Counts dim while they reload for a new selection.
+                        opacity: store.facets.isPending ? 0.6 : 1,
+                        transition: 'opacity 120ms',
+                    }}
+                >
                     {store.visibleFacets.map(facet => (
                         <ClinicalFacet
                             key={facet.attributeId}
@@ -559,7 +588,7 @@ export const StudySlidesFilterSection: React.FunctionComponent<{
                                             store.toggleMatchLevel(level)
                                         }
                                     >
-                                        {STUDY_SLIDE_MATCH_LABELS[level]}
+                                        {MATCH_BUTTON_LABELS[level]}
                                         {typeof matchCounts?.[level] ===
                                             'number' && (
                                             <span style={{ opacity: 0.7 }}>

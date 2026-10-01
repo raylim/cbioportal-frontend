@@ -167,6 +167,8 @@ describe('StudyPathologySlidesTab', () => {
         setFilterValues.mockClear();
         runInAction(() => clinicalFilters.set([]));
         window.localStorage.clear();
+        // Most cases use the filters, which start closed.
+        window.localStorage.setItem('wsi.study.filtersOpen', '1');
     });
 
     it('lists the cohort and shows the first patient in the viewer', async () => {
@@ -512,6 +514,26 @@ describe('StudyPathologySlidesTab', () => {
             target: { value: 'SEX' },
         });
         expect(store.pinnedAttributeIds).toEqual(['SEX']);
+        store.dispose();
+    });
+
+    it('starts with the filters closed and counts active filters', async () => {
+        window.localStorage.removeItem('wsi.study.filtersOpen');
+        runInAction(() =>
+            clinicalFilters.set([
+                { attributeId: 'CANCER_TYPE', values: ['Breast Cancer'] },
+            ])
+        );
+        const { store } = renderTab(async r => pageFor(r));
+        await settle();
+
+        expect(screen.queryByTestId('study-slides-filters')).toBeNull();
+        expect(
+            screen.getByTestId('study-slides-filters-toggle').textContent
+        ).toContain('1 active');
+        fireEvent.click(screen.getByTestId('study-slides-filters-toggle'));
+        expect(screen.getByTestId('study-slides-filters')).toBeTruthy();
+        expect(window.localStorage.getItem('wsi.study.filtersOpen')).toBe('1');
         store.dispose();
     });
 });

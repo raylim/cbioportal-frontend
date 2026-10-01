@@ -494,6 +494,7 @@ if (process.env.PW_SUITE === 'wsi') {
                 page.getByTestId('study-slides-patient')
             ).toHaveCount(PAGE_SIZE, { timeout: 30000 });
 
+            await page.getByTestId('study-slides-filters-toggle').click();
             await page.getByTestId('study-slides-stain-IHC').click();
             await expect(page.getByTestId('study-slides-patient')).toHaveCount(
                 11
@@ -632,6 +633,7 @@ if (process.env.PW_SUITE === 'wsi') {
                 page.getByTestId('study-slides-patient-count')
             ).toHaveText(String(PATIENT_COUNT));
 
+            await page.getByTestId('study-slides-filters-toggle').click();
             await page.getByTestId('study-slides-match-UNMATCHED').click();
             await expect(
                 page.getByTestId('study-slides-patient-count')
