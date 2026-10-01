@@ -9,6 +9,7 @@ import {
     Sample,
     PatientHierarchy,
     TileMetadata,
+    WsiClinicalRow,
     WsiStainFilter,
     WsiTimepointSelection,
 } from './wsiViewerTypes';
@@ -119,6 +120,11 @@ interface Props {
     requestedImageId?: string;
     /** Sample acquisition/sequencing days from the patient timeline. */
     sampleTimelines?: WsiSampleTimelineMap;
+    /**
+     * Clinical rows for the sidebar, in display order. Rows with a `sampleId`
+     * show only for that sample's slides; unset hides the section.
+     */
+    clinicalRows?: ReadonlyArray<WsiClinicalRow>;
     /** Shows the "download view" control. */
     showDownload?: boolean;
     /** Indicator shown while the hierarchy loads. */
@@ -1404,6 +1410,14 @@ export default class WSIViewer extends React.Component<Props, {}> {
         this.requestedSlideNoticeDismissed = true;
     }
 
+    /** Patient rows plus the selected sample's rows. */
+    @computed get selectedClinicalRows(): WsiClinicalRow[] | undefined {
+        const rows = this.props.clinicalRows;
+        if (!rows) return undefined;
+        const sampleId = this.selectedSample?.sample_id;
+        return rows.filter(row => !row.sampleId || row.sampleId === sampleId);
+    }
+
     @computed get tileServerBase(): string {
         return this.props.tileServerUrl.replace(/\/$/, '');
     }
@@ -1894,6 +1908,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
                                     />
                                 ) : null
                             }
+                            clinicalRows={this.selectedClinicalRows}
                             onHide={this.hideMetadata}
                         />
                     </>

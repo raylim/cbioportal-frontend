@@ -4,6 +4,7 @@ import { WsiViewerConfig, WsiViewerProps } from 'cbioportal-wsi-viewer';
 import { getServerConfig } from 'config/config';
 import { buildCBioPortalAPIUrl } from 'shared/api/urls';
 import LoadingIndicator from 'shared/components/loadingIndicator/LoadingIndicator';
+import { useWsiClinicalRows } from './wsiClinicalRows';
 
 const WSI_OSD_PREFIX_URL = '/reactapp/osd-images/';
 
@@ -67,7 +68,7 @@ export const LazyWsiViewer = React.lazy(() => {
 
 export type AppWsiViewerProps = Omit<
     WsiViewerProps,
-    'authScope' | 'showDownload' | 'renderLoading'
+    'authScope' | 'showDownload' | 'renderLoading' | 'clinicalRows'
 > & {
     /** Signed-in user name, when the page knows it. */
     userName?: string;
@@ -75,6 +76,10 @@ export type AppWsiViewerProps = Omit<
 
 /** The package viewer configured for this portal, loaded lazily. */
 export function AppWsiViewer({ userName, ...viewerProps }: AppWsiViewerProps) {
+    const clinicalRows = useWsiClinicalRows(
+        viewerProps.studyId,
+        viewerProps.patientId
+    );
     return (
         <React.Suspense
             fallback={
@@ -91,6 +96,7 @@ export function AppWsiViewer({ userName, ...viewerProps }: AppWsiViewerProps) {
                     DownloadControlOption.SHOW_ALL
                 }
                 renderLoading={renderWsiLoading}
+                clinicalRows={clinicalRows}
             />
         </React.Suspense>
     );
