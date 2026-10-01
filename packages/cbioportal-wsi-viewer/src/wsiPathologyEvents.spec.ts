@@ -9,11 +9,9 @@ import {
     buildPathologySlideTooltipContent,
     countUndatedViewableSlides,
     fetchPathologySlideTimelineData,
-    formatSpecimen,
-    PathologySlideEvent,
+    PathologySlideClinicalEvent,
+    PathologySlideEventDetails,
     pathologySlideSampleId,
-    parseImageIds,
-    pathologySlidesOpenPath,
 } from './wsiPathologyEvents';
 import { clearPatientHierarchyCache } from './wsiHierarchyFetchCache';
 import {
@@ -42,22 +40,23 @@ function event(
 
 function slideEvent(
     days: number | undefined,
-    attributes: Record<string, string>
-): ClinicalEvent {
-    return event('PATHOLOGY SLIDES', days, {
-        SAMPLE_ID: 'P-0000081-T02-IM6',
-        SUBTYPE: 'H&E',
-        MATCH_LEVEL: 'PART',
-        SPECIMEN: 'Part 1',
-        IMAGE_COUNT: '1',
-        NON_SERVABLE_IMAGE_COUNT: '0',
-        TOTAL_IMAGE_COUNT: '1',
-        TIMEPOINT_SOURCE:
-            'Recorded procedure date relative to first tumor sequencing',
-        IMAGE_IDS: '["496610"]',
-        LINKOUT,
-        ...attributes,
-    });
+    details: Partial<PathologySlideEventDetails>
+): PathologySlideClinicalEvent {
+    return {
+        ...event('PATHOLOGY SLIDES', days, { SUBTYPE: 'H&E' }),
+        pathologySlide: {
+            sampleId: 'P-0000081-T02-IM6',
+            matchLevel: 'PART',
+            stain: 'H&E',
+            specimen: 'Part 1',
+            viewableImageIds: ['496610'],
+            totalCount: 1,
+            timepointSource:
+                'Recorded procedure date relative to first tumor sequencing',
+            openPath: LINKOUT,
+            ...details,
+        },
+    };
 }
 
 const SEQUENCING = event('Sequencing', 962, {
@@ -96,7 +95,7 @@ describe('buildPathologySlideRow', () => {
     it('describes same-day and after-sequencing procedures', () => {
         const [same, after] = rows([
             slideEvent(962, {}),
-            slideEvent(970, { SUBTYPE: 'IHC' }),
+            slideEvent(970, { stain: 'IHC' }),
         ]);
         expect(same.sequencingText).toBe('same day (d+962)');
         expect(after.sequencingText).toBe('8 d after (d+962)');
@@ -104,7 +103,7 @@ describe('buildPathologySlideRow', () => {
 
     it('labels unmatched slides without a sequencing relation', () => {
         const [row] = rows([
-            slideEvent(920, { MATCH_LEVEL: 'Unmatched', SAMPLE_ID: '' }),
+            slideEvent(920, { matchLevel: 'UNMATCHED', sampleId: undefined }),
         ]);
         expect(row.sampleId).toBeUndefined();
         expect(row.sampleText).toBe('Unmatched');
@@ -116,66 +115,37 @@ describe('buildPathologySlideRow', () => {
     });
 
     it('leaves the sequencing relation blank when the sample was not sequenced', () => {
-        const [row] = rows([slideEvent(920, { SAMPLE_ID: 'P-OTHER' })]);
+        const [row] = rows([slideEvent(920, { sampleId: 'P-OTHER' })]);
         expect(row.sequencingText).toBe('');
     });
 
-    it('tolerates malformed IMAGE_IDS and reports non-viewable slides', () => {
+    it('reports non-viewable slides', () => {
         const [row] = rows([
-            slideEvent(920, {
-                IMAGE_IDS: '["1", ',
-                IMAGE_COUNT: '2',
-                TOTAL_IMAGE_COUNT: '3',
-            }),
+            slideEvent(920, { viewableImageIds: ['1', '2'], totalCount: 3 }),
         ]);
-        expect(row.imageIds).toEqual([]);
+        expect(row.imageIds).toEqual(['1', '2']);
         expect(row.slidesText).toBe('2 of 3 viewable');
         expect(row.slidesTooltip).toBe(
-            'No image IDs recorded. 1 slide is not viewable: no scanned image is available.'
+            'Image IDs: 1, 2. 1 slide is not viewable: no scanned image is available.'
         );
     });
 
-    it('has no link when LINKOUT is empty or nothing is viewable', () => {
-        const [empty, none] = rows([
-            slideEvent(920, { LINKOUT: '' }),
-            slideEvent(921, { IMAGE_COUNT: '0' }),
-        ]);
-        expect(empty.openPath).toBeUndefined();
+    it('has no link when nothing is viewable', () => {
+        const [none] = rows([slideEvent(921, { viewableImageIds: [] })]);
         expect(none.openPath).toBeUndefined();
         expect(none.slidesText).toBe('0 of 1 viewable');
-    });
-});
-
-describe('pathology slide helpers', () => {
-    it('parses IMAGE_IDS arrays only', () => {
-        expect(parseImageIds('["1", 2]')).toEqual(['1', '2']);
-        expect(parseImageIds('{"a": 1}')).toEqual([]);
-        expect(parseImageIds('not json')).toEqual([]);
-        expect(parseImageIds(undefined)).toEqual([]);
-    });
-
-    it('removes a repeated "Block" from specimen labels', () => {
-        expect(formatSpecimen('Part 6 / Block Block 1')).toBe(
-            'Part 6 / Block 1'
+        expect(none.slidesTooltip).toBe(
+            'No image IDs recorded. 1 slide is not viewable: no scanned image is available.'
         );
-        expect(formatSpecimen('Part 6 / Block 1')).toBe('Part 6 / Block 1');
-        expect(formatSpecimen('Part 1')).toBe('Part 1');
-    });
-
-    it('keeps only the path and query of a LINKOUT', () => {
-        expect(
-            pathologySlidesOpenPath(
-                'https://portal.example/patient/wsiHESlides?caseId=P-1'
-            )
-        ).toBe('/patient/wsiHESlides?caseId=P-1');
-        expect(pathologySlidesOpenPath('/patient/wsiHESlides')).toBe(undefined);
-        expect(pathologySlidesOpenPath('  ')).toBe(undefined);
     });
 });
 
 describe('buildPathologySlideTooltipContent', () => {
-    function tooltip(attributes: Record<string, string>, days?: number) {
-        const [row] = rows([slideEvent(days, attributes)]);
+    function tooltip(
+        details: Partial<PathologySlideEventDetails>,
+        days?: number
+    ) {
+        const [row] = rows([slideEvent(days, details)]);
         return buildPathologySlideTooltipContent(row);
     }
 
@@ -198,22 +168,27 @@ describe('buildPathologySlideTooltipContent', () => {
         expect(tooltip({}, 962).lines[1].value).toBe(
             'd+962 — same day as sequencing (d+962)'
         );
-        expect(tooltip({ MATCH_LEVEL: 'BLOCK' }, 970).lines[1].value).toBe(
+        expect(tooltip({ matchLevel: 'BLOCK' }, 970).lines[1].value).toBe(
             'd+970 — 8 d after sequencing (d+962)'
         );
-        expect(tooltip({ MATCH_LEVEL: 'BLOCK' }, 970).title).toBe(
+        expect(tooltip({ matchLevel: 'BLOCK' }, 970).title).toBe(
             'Pathology slides · H&E · Block-matched'
         );
     });
 
     it('shows only the procedure day when sequencing is unknown', () => {
-        const content = tooltip({ SAMPLE_ID: 'P-OTHER' }, 920);
+        const content = tooltip({ sampleId: 'P-OTHER' }, 920);
         expect(content.lines[1].value).toBe('d+920');
     });
 
     it('describes unmatched slides without a sequencing clause', () => {
         const content = tooltip(
-            { MATCH_LEVEL: 'Unmatched', SUBTYPE: 'IHC', SPECIMEN: '' },
+            {
+                matchLevel: 'UNMATCHED',
+                sampleId: undefined,
+                stain: 'IHC',
+                specimen: '',
+            },
             920
         );
         expect(content.title).toBe('Pathology slides · IHC · Unmatched');
@@ -225,7 +200,7 @@ describe('buildPathologySlideTooltipContent', () => {
     });
 
     it('omits the procedure line and Open path when unavailable', () => {
-        const content = tooltip({ IMAGE_COUNT: '0' });
+        const content = tooltip({ viewableImageIds: [] });
         expect(content.lines.map(l => l.label)).toEqual([
             'Sample',
             'Specimen',
@@ -236,18 +211,17 @@ describe('buildPathologySlideTooltipContent', () => {
 });
 
 describe('pathologySlideSampleId', () => {
-    it('returns the sample of BLOCK- and PART-matched events only', () => {
+    it("returns a built event's matched sample", () => {
         expect(pathologySlideSampleId(slideEvent(1, {}))).toBe(
             'P-0000081-T02-IM6'
         );
         expect(
-            pathologySlideSampleId(slideEvent(1, { MATCH_LEVEL: 'block' }))
-        ).toBe('P-0000081-T02-IM6');
-        expect(
-            pathologySlideSampleId(slideEvent(1, { MATCH_LEVEL: 'Unmatched' }))
+            pathologySlideSampleId(
+                slideEvent(1, { matchLevel: 'UNMATCHED', sampleId: undefined })
+            )
         ).toBeUndefined();
         expect(
-            pathologySlideSampleId(slideEvent(1, { SAMPLE_ID: '' }))
+            pathologySlideSampleId(event('PATHOLOGY SLIDES', 1, {}))
         ).toBeUndefined();
     });
 });
@@ -317,14 +291,17 @@ function hierarchy(
     };
 }
 
-function attrs(event: PathologySlideEvent): Record<string, string> {
-    const result: Record<string, string> = {};
-    (event.attributes || []).forEach(a => (result[a.key] = a.value));
-    return result;
+function details(event: PathologySlideClinicalEvent) {
+    expect(event.attributes).toEqual([
+        { key: 'SUBTYPE', value: event.pathologySlide.stain },
+    ]);
+    return event.pathologySlide;
 }
 
-function linkoutQuery(event: PathologySlideEvent): Record<string, string> {
-    const url = new URL(attrs(event).LINKOUT, 'http://localhost');
+function linkoutQuery(
+    event: PathologySlideClinicalEvent
+): Record<string, string> {
+    const url = new URL(event.pathologySlide.openPath, 'http://localhost');
     expect(url.pathname).toBe('/patient/wsiHESlides');
     return Object.fromEntries(url.searchParams.entries());
 }
@@ -382,17 +359,16 @@ describe('buildPathologySlideEvents', () => {
         expect(event.startNumberOfDaysSinceDiagnosis).toBe(-136);
         expect(event.studyId).toBe('mskimpact');
         expect(event.patientId).toBe('P-0000024');
-        expect(attrs(event)).toEqual({
-            SAMPLE_ID: SAMPLE_24,
-            SUBTYPE: 'H&E',
-            MATCH_LEVEL: 'PART',
-            SPECIMEN: 'Part 1',
-            IMAGE_COUNT: '2',
-            TOTAL_IMAGE_COUNT: '3',
-            IMAGE_IDS: '["1729893","1729914"]',
-            TIMEPOINT_SOURCE:
+        expect(details(event)).toEqual({
+            sampleId: SAMPLE_24,
+            stain: 'H&E',
+            matchLevel: 'PART',
+            specimen: 'Part 1',
+            totalCount: 3,
+            viewableImageIds: ['1729893', '1729914'],
+            timepointSource:
                 'Recorded procedure date relative to first tumor sequencing',
-            LINKOUT: expect.any(String),
+            openPath: expect.any(String),
         });
         // Several specimen keys: the link narrows by day instead.
         expect(linkoutQuery(event)).toEqual({
@@ -458,15 +434,15 @@ describe('buildPathologySlideEvents', () => {
         expect(
             events.map(e => [
                 e.startNumberOfDaysSinceDiagnosis,
-                attrs(e).SUBTYPE,
-                attrs(e).SPECIMEN,
-                attrs(e).IMAGE_IDS,
+                details(e).stain,
+                details(e).specimen,
+                details(e).viewableImageIds,
             ])
         ).toEqual([
-            [-136, 'H&E', 'Part 2 / Block 1', '["a"]'],
-            [-136, 'H&E', 'Part 2 / Block 2', '["d"]'],
-            [-136, 'IHC', 'Part 2 / Block 1', '["b"]'],
-            [10, 'H&E', 'Part 2 / Block 1', '["c"]'],
+            [-136, 'H&E', 'Part 2 / Block 1', ['a']],
+            [-136, 'H&E', 'Part 2 / Block 2', ['d']],
+            [-136, 'IHC', 'Part 2 / Block 1', ['b']],
+            [10, 'H&E', 'Part 2 / Block 1', ['c']],
         ]);
         // One specimen key: the link names it.
         expect(linkoutQuery(events[0])).toEqual({
@@ -512,14 +488,14 @@ describe('buildPathologySlideEvents', () => {
             SCOPE
         );
 
-        expect(events.map(e => attrs(e).SPECIMEN)).toEqual([
+        expect(events.map(e => details(e).specimen)).toEqual([
             'Part 2',
             'Part 3',
         ]);
-        const part3 = attrs(events[1]);
-        expect(part3.SAMPLE_ID).toBeUndefined();
-        expect(part3.MATCH_LEVEL).toBe('UNMATCHED');
-        expect(part3.IMAGE_COUNT).toBe('2');
+        const part3 = details(events[1]);
+        expect(part3.sampleId).toBeUndefined();
+        expect(part3.matchLevel).toBe('UNMATCHED');
+        expect(part3.viewableImageIds).toHaveLength(2);
         expect(pathologySlideSampleId(events[1])).toBeUndefined();
         expect(linkoutQuery(events[1])).toEqual({
             studyId: 'mskimpact',
@@ -556,8 +532,8 @@ describe('buildPathologySlideEvents', () => {
             ]),
             SCOPE
         );
-        expect(attrs(event).MATCH_LEVEL).toBe('UNMATCHED');
-        expect(attrs(event).SAMPLE_ID).toBeUndefined();
+        expect(details(event).matchLevel).toBe('UNMATCHED');
+        expect(details(event).sampleId).toBeUndefined();
     });
 
     it('builds no event for slides without a procedure day', () => {
@@ -591,8 +567,8 @@ describe('buildPathologySlideEvents', () => {
             SCOPE
         );
         expect(events).toHaveLength(1);
-        expect(attrs(events[0]).IMAGE_IDS).toBe('["dated"]');
-        expect(attrs(events[0]).TOTAL_IMAGE_COUNT).toBe('1');
+        expect(details(events[0]).viewableImageIds).toEqual(['dated']);
+        expect(details(events[0]).totalCount).toBe(1);
     });
 
     it('labels other and unknown stains', () => {
@@ -629,7 +605,7 @@ describe('buildPathologySlideEvents', () => {
             SCOPE
         );
         expect(
-            events.map(e => [attrs(e).SUBTYPE, linkoutQuery(e).stainFilter])
+            events.map(e => [details(e).stain, linkoutQuery(e).stainFilter])
         ).toEqual([
             ['Other', 'other'],
             ['Unknown', 'unknown'],
@@ -675,7 +651,7 @@ describe('buildPathologySlideEvents', () => {
             ['Specimen', 'Part 1'],
             ['Slides', '1 of 1 viewable'],
         ]);
-        expect(content.openPath).toBe(attrs(slideEvent).LINKOUT);
+        expect(content.openPath).toBe(details(slideEvent).openPath);
     });
 });
 
@@ -799,7 +775,7 @@ describe('fetchPathologySlideTimelineData', () => {
             'https://portal.example/api/wsi/v2/hierarchy/mskimpact/P-0000024'
         );
         expect(first.events).toHaveLength(1);
-        expect(attrs(first.events[0]).IMAGE_IDS).toBe('["1729893"]');
+        expect(details(first.events[0]).viewableImageIds).toEqual(['1729893']);
         expect(first.undatedViewableSlideCount).toBe(0);
         expect(second).toEqual(first);
     });
