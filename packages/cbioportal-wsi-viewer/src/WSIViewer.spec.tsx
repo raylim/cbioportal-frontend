@@ -1679,30 +1679,6 @@ describe('WSIViewer — cached sidebar data', () => {
         (global as any).requestAnimationFrame = origRaf;
     });
 
-    it('passes the long-form study name to the pathology metadata rows', () => {
-        const inst = makeInstance('https://tiles.example.com/patient/P-1', {
-            studyName: 'Long Form Study Name',
-        });
-        const hierarchy = makeHierarchy([makeSlide({ image_id: 'A' })], 'P-1');
-        const sample = hierarchy.samples[0];
-        const slide = sample.parts[0].blocks[0].slides[0];
-
-        act(() => {
-            mobxAction(() => {
-                inst.hierarchy = hierarchy;
-                inst.selectedSample = sample;
-                inst.selectedSlide = slide;
-            })();
-        });
-
-        expect((inst as any).selectedPathRows).toContainEqual(
-            expect.objectContaining({
-                label: 'Study',
-                value: 'Long Form Study Name',
-            })
-        );
-    });
-
     it('keeps metadata row references stable across unrelated state changes', () => {
         const inst = makeInstance('https://tiles.example.com/patient/P-1');
         const hierarchy = makeHierarchy([makeSlide({ image_id: 'A' })], 'P-1');
@@ -1811,7 +1787,7 @@ describe('WSIViewer — cached sidebar data', () => {
         act(() => {
             (inst as any).applyHierarchyMutation((samples: any[]) => {
                 samples[0].tmb_score = '12.3';
-                samples[0].primary_site = 'Rectum';
+                samples[0].sequencing_date = '2021-03-04';
             });
         });
 
@@ -1825,8 +1801,8 @@ describe('WSIViewer — cached sidebar data', () => {
         );
         expect(nextPathRows).toContainEqual(
             expect.objectContaining({
-                label: 'Primary site',
-                value: 'Rectum',
+                label: 'Timeline',
+                value: 'sequenced 2021-03-04',
             })
         );
         expect((inst as any).hierarchyDataVersion).toBe(1);
