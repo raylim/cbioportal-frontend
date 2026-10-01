@@ -6,16 +6,3 @@ export {
     WsiViewerProps,
 } from './WsiViewerEntry';
 export { WsiViewerConfig } from './wsiViewerConfig';
-// PATHOLOGY SLIDES timeline events built from the patient slide hierarchy.
-export {
-    buildPathologySlideRow,
-    buildPathologySlideTooltipContent,
-    fetchPathologySlideTimelineData,
-    PATHOLOGY_SLIDES_EVENT_TYPE,
-    PathologySlideClinicalEvent,
-    PathologySlideEvent,
-    PathologySlideEventDetails,
-    PathologySlideEventScope,
-    PathologySlideTimelineData,
-    pathologySlideSampleId,
-} from './wsiPathologyEvents';

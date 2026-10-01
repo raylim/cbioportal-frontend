@@ -17,7 +17,7 @@ import { configureWsiViewerRuntime } from 'cbioportal-wsi-viewer';
 import {
     PathologySlideClinicalEvent,
     PathologySlideEventDetails,
-} from 'cbioportal-wsi-viewer/viewer';
+} from 'cbioportal-wsi-viewer/events';
 import {
     loadPathologySlideTimelineData,
     pathologySlideGroupMarker,
