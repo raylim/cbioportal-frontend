@@ -447,7 +447,7 @@ describe('StudyPathologySlidesTab', () => {
         const options = screen.getAllByTestId('study-slides-suggestion');
         expect(options.map(o => o.textContent)).toEqual([
             'Patient or sample ID contains “colo”',
-            'Cancer Type: Colorectal Cancer2 patients',
+            'Colorectal CancerCancer Type2 patients',
         ]);
 
         fireEvent.keyDown(search, { key: 'ArrowDown' });

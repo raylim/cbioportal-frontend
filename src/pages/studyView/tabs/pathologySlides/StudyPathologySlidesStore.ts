@@ -85,6 +85,11 @@ function writePinnedAttributeIds(ids: string[]) {
     }
 }
 
+/** Patient and sample IDs carry digits or dashes; clinical words rarely do. */
+export function looksLikeId(text: string): boolean {
+    return /[0-9-]/.test(text);
+}
+
 /** Values that are nearly all different, such as IDs, make poor suggestions. */
 function isIdLike(facet: StudySlideAttributeFacet): boolean {
     return (
@@ -542,16 +547,24 @@ export class StudyPathologySlidesStore {
         }
     }
 
+    /**
+     * Updates the typed search. Text that looks like an ID (or no text)
+     * narrows the list after a pause; other text, such as a cancer type, is
+     * left for the suggestions until the ID search is chosen explicitly.
+     */
     @action.bound
     setSearchText(text: string) {
         this.searchText = text;
         if (this.searchTimer !== undefined) {
             clearTimeout(this.searchTimer);
+            this.searchTimer = undefined;
         }
-        this.searchTimer = setTimeout(
-            () => this.applySearch(),
-            STUDY_SLIDES_SEARCH_DEBOUNCE_MS
-        );
+        if (looksLikeId(text) || text.trim() === '') {
+            this.searchTimer = setTimeout(
+                () => this.applySearch(),
+                STUDY_SLIDES_SEARCH_DEBOUNCE_MS
+            );
+        }
     }
 
     @action.bound

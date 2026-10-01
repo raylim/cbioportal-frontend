@@ -190,7 +190,8 @@ export const StudySlidesSearch: React.FunctionComponent<{
                         zIndex: 20,
                         top: 28,
                         left: 0,
-                        right: 0,
+                        // Wider than the panel, over the viewer, so values fit.
+                        width: 420,
                         margin: 0,
                         padding: '3px 0',
                         listStyle: 'none',
@@ -198,7 +199,7 @@ export const StudySlidesSearch: React.FunctionComponent<{
                         border: `1px solid ${C.border}`,
                         borderRadius: 3,
                         boxShadow: '0 4px 12px rgba(0,0,0,.12)',
-                        maxHeight: 280,
+                        maxHeight: 340,
                         overflowY: 'auto',
                         fontSize: 12,
                     }}
@@ -238,24 +239,32 @@ export const StudySlidesSearch: React.FunctionComponent<{
                                 </span>
                             ) : (
                                 <>
-                                    <span
-                                        style={{
-                                            overflow: 'hidden',
-                                            textOverflow: 'ellipsis',
-                                            whiteSpace: 'nowrap',
-                                        }}
-                                    >
-                                        <span style={{ color: C.muted }}>
+                                    <span style={{ minWidth: 0 }}>
+                                        <span
+                                            style={{
+                                                display: 'block',
+                                                overflow: 'hidden',
+                                                textOverflow: 'ellipsis',
+                                                whiteSpace: 'nowrap',
+                                            }}
+                                        >
+                                            {option.kind === 'clinical'
+                                                ? option.value
+                                                : STUDY_SLIDE_MATCH_LABELS[
+                                                      option.level
+                                                  ]}
+                                        </span>
+                                        <span
+                                            style={{
+                                                display: 'block',
+                                                fontSize: 10,
+                                                color: C.muted,
+                                            }}
+                                        >
                                             {option.kind === 'clinical'
                                                 ? option.displayName
                                                 : 'Specimen match'}
-                                            :{' '}
                                         </span>
-                                        {option.kind === 'clinical'
-                                            ? option.value
-                                            : STUDY_SLIDE_MATCH_LABELS[
-                                                  option.level
-                                              ]}
                                     </span>
                                     <span
                                         style={{

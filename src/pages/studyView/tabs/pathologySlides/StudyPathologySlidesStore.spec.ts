@@ -271,6 +271,21 @@ describe('StudyPathologySlidesStore', () => {
         }
     });
 
+    it('waits for an explicit ID search when the text is not ID-like', () => {
+        jest.useFakeTimers();
+        try {
+            makeStore();
+            store.setSearchText('colorectal');
+            jest.advanceTimersByTime(STUDY_SLIDES_SEARCH_DEBOUNCE_MS * 2);
+            expect(store.search).toBe('');
+
+            store.applySearch();
+            expect(store.search).toBe('colorectal');
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
     it('reports whether the studies have slides', async () => {
         makeStore();
         const stop = autorun(() => void store.studyHasSlides.result);

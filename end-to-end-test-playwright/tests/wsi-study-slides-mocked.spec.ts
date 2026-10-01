@@ -510,6 +510,8 @@ if (process.env.PW_SUITE === 'wsi') {
                 6
             );
             await page.getByTestId('study-slides-search').fill('none');
+            // Text that is not ID-like waits for Enter (or the ID option).
+            await page.getByTestId('study-slides-search').press('Enter');
             await expect(page.getByTestId('study-slides-empty')).toHaveText(
                 'No patients match these filters.'
             );
