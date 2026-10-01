@@ -180,12 +180,15 @@ const pixel = Buffer.from(
 interface StudySlidesMocks {
     studySlidesRequests: StudySlidesRequestBody[];
     hierarchyPatients: string[];
+    /** Delay for list pages after the first, to observe the pending state. */
+    pageDelayMs: number;
 }
 
 async function installStudySlidesMocks(page: Page): Promise<StudySlidesMocks> {
     const mocks: StudySlidesMocks = {
         studySlidesRequests: [],
         hierarchyPatients: [],
+        pageDelayMs: 0,
     };
     const serverConfig = {
         authenticationMethod: 'none',
@@ -250,15 +253,25 @@ async function installStudySlidesMocks(page: Page): Promise<StudySlidesMocks> {
             body: JSON.stringify([]),
         });
     });
-    await page.route('**/api/wsi/v2/study-slides/patients/fetch', route => {
-        const body = route.request().postDataJSON() as StudySlidesRequestBody;
-        mocks.studySlidesRequests.push(body);
-        return route.fulfill({
-            status: 200,
-            contentType: 'application/json',
-            body: JSON.stringify(studySlidesPage(body)),
-        });
-    });
+    await page.route(
+        '**/api/wsi/v2/study-slides/patients/fetch',
+        async route => {
+            const body = route
+                .request()
+                .postDataJSON() as StudySlidesRequestBody;
+            mocks.studySlidesRequests.push(body);
+            if (body.pageNumber && mocks.pageDelayMs) {
+                await new Promise(resolve =>
+                    setTimeout(resolve, mocks.pageDelayMs)
+                );
+            }
+            return route.fulfill({
+                status: 200,
+                contentType: 'application/json',
+                body: JSON.stringify(studySlidesPage(body)),
+            });
+        }
+    );
     await page.route(`**/api/wsi/v2/hierarchy/${STUDY_ID}/*`, route => {
         const patientId = decodeURIComponent(
             new URL(route.request().url()).pathname.split('/').pop() || ''
@@ -319,10 +332,7 @@ if (process.env.PW_SUITE === 'wsi') {
 
             await expect(
                 page.getByTestId('study-slides-summary')
-            ).toHaveText(
-                `${PATIENT_COUNT} patients · 66 slides (66 viewable)`,
-                { timeout: 30000 }
-            );
+            ).toHaveText('66 slides · 66 viewable', { timeout: 30000 });
             await expect(page.getByTestId('study-slides-patient')).toHaveCount(
                 PAGE_SIZE
             );
@@ -419,6 +429,81 @@ if (process.env.PW_SUITE === 'wsi') {
             await expect(page.getByTestId('study-slides-empty')).toHaveText(
                 'No patients match these filters.'
             );
+        });
+
+        test('pages the patient list with immediate feedback', async ({
+            page,
+        }) => {
+            const mocks = await installStudySlidesMocks(page);
+            mocks.pageDelayMs = 1500;
+            await page.goto(`/study/pathologySlides?id=${STUDY_ID}`);
+            const range = page.getByTestId('study-slides-range');
+            await expect(range).toHaveText(`1–50 of ${PATIENT_COUNT}`, {
+                timeout: 30000,
+            });
+
+            await page.getByLabel('Next page of patients').click();
+            // The range and the busy list answer before the page arrives.
+            await expect(range).toContainText(`51–55 of ${PATIENT_COUNT}`, {
+                timeout: 1000,
+            });
+            await expect(page.getByLabel('Loading patients')).toBeVisible();
+            await expect(
+                page.getByTestId('study-slides-patients')
+            ).toHaveAttribute('aria-busy', 'true');
+            await expect(
+                page.getByTestId('study-slides-patient').first()
+            ).toContainText(patientIds[PAGE_SIZE], { timeout: 10000 });
+            await expect(page.getByLabel('Loading patients')).toHaveCount(0);
+
+            await page.getByTestId('study-slides-go-selected').click();
+            await expect(
+                page.getByTestId('study-slides-patient').first()
+            ).toContainText(patientIds[0], { timeout: 10000 });
+        });
+
+        test('hides the patient list and the viewer panels, and remembers it', async ({
+            page,
+        }) => {
+            await installStudySlidesMocks(page);
+            await page.goto(`/study/pathologySlides?id=${STUDY_ID}`);
+            await expect(
+                page.getByTestId(
+                    `wsi-slide-item-${slideImageId(patientIds[0])}`
+                )
+            ).toBeVisible({ timeout: 30000 });
+
+            await page.getByTestId('study-slides-hide').click();
+            await page.getByTestId('wsi-nav-hide').click();
+            await page.getByTestId('wsi-metadata-hide').click();
+            await expect(page.getByTestId('study-slides-rail')).toBeVisible();
+            await expect(page.getByTestId('wsi-nav-rail')).toBeVisible();
+            await expect(page.getByTestId('wsi-metadata-rail')).toBeVisible();
+
+            // Stepping still works from the rail.
+            await page.getByTestId('study-slides-rail-next').click();
+            await expect(patientPosition(page)).toHaveText(
+                `${patientIds[1]} · 2 of ${PATIENT_COUNT}`
+            );
+
+            await page.reload();
+            await expect(page.getByTestId('study-slides-rail')).toBeVisible({
+                timeout: 30000,
+            });
+            await expect(page.getByTestId('wsi-nav-rail')).toBeVisible({
+                timeout: 30000,
+            });
+            await expect(page.getByTestId('wsi-metadata-rail')).toBeVisible();
+
+            await page.getByTestId('study-slides-rail-expand').click();
+            await page.getByTestId('wsi-nav-rail-expand').click();
+            await page.getByTestId('wsi-metadata-rail-expand').click();
+            await expect(
+                page.getByTestId('study-slides-patient-panel')
+            ).toBeVisible();
+            await expect(
+                page.getByTestId('wsi-metadata-sidebar')
+            ).toBeVisible();
         });
     });
 }

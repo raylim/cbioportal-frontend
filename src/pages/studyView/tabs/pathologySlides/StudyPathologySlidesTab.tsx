@@ -1,5 +1,16 @@
 import * as React from 'react';
 import { observer } from 'mobx-react';
+import {
+    readWsiPanelFlag,
+    WSI_FONT_FAMILY,
+    WSI_SECTION_TITLE_STYLE,
+    WSI_STAIN_COLORS,
+    WSI_THEME,
+    WsiCollapsedRail,
+    WsiPanelHideButton,
+    wsiListItemStyle,
+    writeWsiPanelFlag,
+} from 'cbioportal-wsi-viewer';
 import { getPatientViewUrlWithPathname } from 'shared/api/urls';
 import LoadingIndicator from 'shared/components/loadingIndicator/LoadingIndicator';
 import { AppWsiViewer } from 'shared/components/wsiViewer/wsiAppConfig';
@@ -24,7 +35,26 @@ export interface StudyPathologySlidesTabProps {
     userName?: string;
 }
 
-const LIST_WIDTH = 260;
+/** Browser-stored hidden state of the patient list. */
+export const PATIENT_LIST_COLLAPSED_KEY = 'wsi.study.patientListCollapsed';
+
+const C = WSI_THEME;
+const PANEL_WIDTH = 280;
+const TOOLBAR_HEIGHT = 34;
+const STAIN_GROUPS = STUDY_SLIDE_STAIN_GROUPS as StudySlideStainGroup[];
+
+const iconButtonStyle: React.CSSProperties = {
+    border: 'none',
+    background: 'transparent',
+    padding: '2px 6px',
+    color: C.muted,
+    cursor: 'pointer',
+    lineHeight: 1,
+};
+
+function count(n: number, noun: string): string {
+    return `${n.toLocaleString()} ${noun}${n === 1 ? '' : 's'}`;
+}
 
 function isTypingTarget(target: EventTarget | null): boolean {
     const element = target as HTMLElement | null;
@@ -44,24 +74,608 @@ function patientOptionId(patient: { studyId: string; patientId: string }) {
     return `study-slides-patient-${patient.studyId}-${patient.patientId}`;
 }
 
-function count(n: number, noun: string): string {
-    return `${n.toLocaleString()} ${noun}${n === 1 ? '' : 's'}`;
+function StainDot({ group }: { group: StudySlideStainGroup }) {
+    return (
+        <i
+            className="fa fa-circle"
+            aria-hidden="true"
+            style={{
+                fontSize: 7,
+                marginRight: 3,
+                color: WSI_STAIN_COLORS[group],
+                verticalAlign: 'middle',
+            }}
+        />
+    );
 }
 
-function stainSummary(patient: StudySlidePatient): string {
-    return (STUDY_SLIDE_STAIN_GROUPS as StudySlideStainGroup[])
-        .filter(group => patient.stainGroupCounts[group] > 0)
-        .map(group => `${group} ${patient.stainGroupCounts[group]}`)
-        .join(' · ');
+function IconButton({
+    icon,
+    label,
+    onClick,
+    disabled,
+    testId,
+}: {
+    icon: string;
+    label: string;
+    onClick: () => void;
+    disabled?: boolean;
+    testId?: string;
+}) {
+    return (
+        <button
+            type="button"
+            title={label}
+            aria-label={label}
+            disabled={disabled}
+            data-testid={testId}
+            onClick={onClick}
+            style={{
+                ...iconButtonStyle,
+                opacity: disabled ? 0.35 : 1,
+                cursor: disabled ? 'default' : 'pointer',
+            }}
+        >
+            <i className={`fa ${icon}`} aria-hidden="true" />
+        </button>
+    );
 }
+
+function Key({ children }: { children: React.ReactNode }) {
+    return (
+        <kbd
+            style={{
+                background: '#fff',
+                color: C.muted,
+                border: `1px solid ${C.border}`,
+                borderRadius: 3,
+                boxShadow: 'none',
+                padding: '0 4px',
+                fontSize: 10,
+            }}
+        >
+            {children}
+        </kbd>
+    );
+}
+
+/** Remembers a panel's hidden state per browser. */
+function useStoredFlag(key: string): [boolean, (value: boolean) => void] {
+    const [value, setValue] = React.useState(() => readWsiPanelFlag(key));
+    const update = React.useCallback(
+        (next: boolean) => {
+            setValue(next);
+            writeWsiPanelFlag(key, next);
+        },
+        [key]
+    );
+    return [value, update];
+}
+
+const PatientRow: React.FunctionComponent<{
+    patient: StudySlidePatient;
+    selected: boolean;
+    onSelect: () => void;
+}> = ({ patient, selected, onSelect }) => {
+    const [hovered, setHovered] = React.useState(false);
+    const noneViewable = patient.viewableSlideCount === 0;
+    return (
+        <li
+            id={patientOptionId(patient)}
+            role="option"
+            aria-selected={selected}
+            data-testid="study-slides-patient"
+            onClick={onSelect}
+            onMouseEnter={() => setHovered(true)}
+            onMouseLeave={() => setHovered(false)}
+            style={wsiListItemStyle(selected, hovered)}
+        >
+            <div
+                style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 6,
+                }}
+            >
+                <span
+                    style={{
+                        fontSize: 12,
+                        fontWeight: 600,
+                        color: selected ? C.blueDark : C.text,
+                    }}
+                >
+                    {patient.patientId}
+                </span>
+                <span style={{ fontSize: 10, whiteSpace: 'nowrap' }}>
+                    {STAIN_GROUPS.filter(
+                        group => patient.stainGroupCounts[group] > 0
+                    ).map(group => (
+                        <span
+                            key={group}
+                            title={`${group}: ${patient.stainGroupCounts[group]}`}
+                            style={{ marginLeft: 6, color: C.muted }}
+                        >
+                            <StainDot group={group} />
+                            {patient.stainGroupCounts[group]}
+                        </span>
+                    ))}
+                </span>
+            </div>
+            <div style={{ fontSize: 10, color: C.muted, marginTop: 1 }}>
+                {count(patient.slideCount, 'slide')}
+                {noneViewable ? (
+                    <span
+                        style={{
+                            marginLeft: 6,
+                            padding: '0 4px',
+                            borderRadius: 3,
+                            background: '#fdf3e1',
+                            color: '#a86b00',
+                        }}
+                    >
+                        none viewable
+                    </span>
+                ) : (
+                    ` · ${patient.viewableSlideCount.toLocaleString()} viewable`
+                )}
+            </div>
+        </li>
+    );
+};
+
+const PatientPager: React.FunctionComponent<{
+    store: StudyPathologySlidesStore;
+}> = observer(({ store }) => {
+    const [pageInput, setPageInput] = React.useState('');
+    const lastPage = store.pageCount - 1;
+    const { first, last } = store.displayedRange;
+    const selectedElsewhere =
+        store.selectedPageNumber !== undefined &&
+        store.selectedPageNumber !== store.pageNumber;
+    const submitPage = () => {
+        const requested = parseInt(pageInput, 10);
+        if (Number.isFinite(requested)) {
+            store.setPageNumber(requested - 1);
+        }
+        setPageInput('');
+    };
+    return (
+        <div
+            data-testid="study-slides-pages"
+            style={{
+                flexShrink: 0,
+                borderTop: `1px solid ${C.border}`,
+                padding: '5px 6px',
+                fontSize: 11,
+                color: C.muted,
+            }}
+        >
+            <div
+                style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                }}
+            >
+                <span>
+                    <IconButton
+                        icon="fa-angle-double-left"
+                        label="First page of patients"
+                        disabled={store.pageNumber === 0}
+                        onClick={() => store.setPageNumber(0)}
+                    />
+                    <IconButton
+                        icon="fa-chevron-left"
+                        label="Previous page of patients"
+                        disabled={store.pageNumber === 0}
+                        onClick={() =>
+                            store.setPageNumber(store.pageNumber - 1)
+                        }
+                    />
+                </span>
+                <span data-testid="study-slides-range" aria-live="polite">
+                    {first.toLocaleString()}–{last.toLocaleString()} of{' '}
+                    {store.totalPatients.toLocaleString()}
+                    {store.isPageLoading && (
+                        <i
+                            className="fa fa-spinner fa-spin"
+                            aria-label="Loading patients"
+                            style={{ marginLeft: 5 }}
+                        />
+                    )}
+                </span>
+                <span>
+                    <IconButton
+                        icon="fa-chevron-right"
+                        label="Next page of patients"
+                        disabled={store.pageNumber >= lastPage}
+                        onClick={() =>
+                            store.setPageNumber(store.pageNumber + 1)
+                        }
+                    />
+                    <IconButton
+                        icon="fa-angle-double-right"
+                        label="Last page of patients"
+                        disabled={store.pageNumber >= lastPage}
+                        onClick={() => store.setPageNumber(lastPage)}
+                    />
+                </span>
+            </div>
+            <div
+                style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    marginTop: 3,
+                }}
+            >
+                <form
+                    onSubmit={event => {
+                        event.preventDefault();
+                        submitPage();
+                    }}
+                >
+                    Page{' '}
+                    <input
+                        type="number"
+                        min={1}
+                        max={store.pageCount}
+                        aria-label="Page number"
+                        data-testid="study-slides-page-input"
+                        placeholder={String(store.pageNumber + 1)}
+                        value={pageInput}
+                        onChange={event => setPageInput(event.target.value)}
+                        onBlur={() => pageInput && submitPage()}
+                        style={{
+                            width: 56,
+                            fontSize: 11,
+                            padding: '0 3px',
+                            border: `1px solid ${C.border}`,
+                            borderRadius: 3,
+                        }}
+                    />{' '}
+                    of {store.pageCount.toLocaleString()}
+                </form>
+                {selectedElsewhere && (
+                    <button
+                        type="button"
+                        className="btn btn-link btn-xs"
+                        data-testid="study-slides-go-selected"
+                        onClick={store.goToSelectedPage}
+                        style={{ padding: 0, fontSize: 11 }}
+                    >
+                        Go to selected
+                    </button>
+                )}
+            </div>
+        </div>
+    );
+});
+
+const PatientPanel: React.FunctionComponent<{
+    store: StudyPathologySlidesStore;
+    onHide: () => void;
+}> = observer(({ store, onHide }) => {
+    const listRef = React.useRef<HTMLUListElement>(null);
+    const page = store.page.result!;
+    const selected = store.selected;
+    const filtering =
+        store.stainGroups.length > 0 || store.patientIdPrefix !== '';
+
+    // Show the selected patient when it is on the page; otherwise start a
+    // newly loaded page from its top.
+    React.useEffect(() => {
+        const list = listRef.current;
+        if (!list) {
+            return;
+        }
+        const option =
+            selected &&
+            (list.querySelector(
+                `[id="${patientOptionId(selected)}"]`
+            ) as HTMLElement | null);
+        if (option) {
+            option.scrollIntoView?.({ block: 'nearest' });
+        } else {
+            list.scrollTop = 0;
+        }
+    }, [selected, page]);
+
+    return (
+        <div
+            data-testid="study-slides-patient-panel"
+            style={{
+                width: PANEL_WIDTH,
+                minWidth: PANEL_WIDTH,
+                display: 'flex',
+                flexDirection: 'column',
+                background: C.navBg,
+                borderRight: `1px solid ${C.border}`,
+                position: 'relative',
+            }}
+        >
+            {store.isPageLoading && (
+                <div
+                    aria-hidden="true"
+                    style={{
+                        position: 'absolute',
+                        top: 0,
+                        left: 0,
+                        right: 0,
+                        height: 2,
+                        background: C.blue,
+                        opacity: 0.7,
+                        zIndex: 1,
+                    }}
+                />
+            )}
+            <div
+                style={{
+                    padding: '9px 12px 8px',
+                    borderBottom: `1px solid ${C.border}`,
+                    flexShrink: 0,
+                }}
+            >
+                <div
+                    style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                    }}
+                >
+                    <div style={WSI_SECTION_TITLE_STYLE}>
+                        Patients{' '}
+                        <span
+                            data-testid="study-slides-patient-count"
+                            style={{ fontWeight: 400, letterSpacing: 0 }}
+                        >
+                            {page.totalPatients.toLocaleString()}
+                        </span>
+                    </div>
+                    <WsiPanelHideButton
+                        side="left"
+                        label="Hide patient list (\)"
+                        onClick={onHide}
+                        testId="study-slides-hide"
+                    />
+                </div>
+                <div
+                    data-testid="study-slides-summary"
+                    style={{ fontSize: 11, color: C.muted, marginTop: 2 }}
+                >
+                    {count(page.totalSlides, 'slide')} ·{' '}
+                    {page.totalViewableSlides.toLocaleString()} viewable
+                </div>
+                <div style={{ position: 'relative', marginTop: 7 }}>
+                    <i
+                        className="fa fa-search"
+                        aria-hidden="true"
+                        style={{
+                            position: 'absolute',
+                            left: 7,
+                            top: 7,
+                            fontSize: 11,
+                            color: C.muted,
+                        }}
+                    />
+                    <input
+                        type="text"
+                        className="form-control input-sm"
+                        placeholder="Find patient ID"
+                        aria-label="Find patient ID"
+                        data-testid="study-slides-search"
+                        value={store.searchText}
+                        onChange={e => store.setSearchText(e.target.value)}
+                        style={{
+                            height: 26,
+                            fontSize: 12,
+                            paddingLeft: 22,
+                            paddingRight: 22,
+                        }}
+                    />
+                    {store.searchText && (
+                        <button
+                            type="button"
+                            aria-label="Clear patient search"
+                            onClick={() => store.setSearchText('')}
+                            style={{
+                                ...iconButtonStyle,
+                                position: 'absolute',
+                                right: 2,
+                                top: 6,
+                            }}
+                        >
+                            <i className="fa fa-times" aria-hidden="true" />
+                        </button>
+                    )}
+                </div>
+                <div
+                    role="group"
+                    aria-label="Stain groups"
+                    className="btn-group btn-group-xs"
+                    style={{
+                        marginTop: 7,
+                        display: 'flex',
+                        flexWrap: 'wrap',
+                    }}
+                >
+                    {STAIN_GROUPS.map(group => {
+                        const active = store.stainGroups.includes(group);
+                        return (
+                            <button
+                                key={group}
+                                type="button"
+                                className={`btn btn-xs ${
+                                    active ? 'btn-primary' : 'btn-default'
+                                }`}
+                                aria-pressed={active}
+                                data-testid={`study-slides-stain-${group}`}
+                                onClick={() => store.toggleStainGroup(group)}
+                            >
+                                {!active && <StainDot group={group} />}
+                                {group}{' '}
+                                <span style={{ opacity: 0.7 }}>
+                                    {page.stainGroupTotals[
+                                        group
+                                    ].toLocaleString()}
+                                </span>
+                            </button>
+                        );
+                    })}
+                </div>
+            </div>
+
+            {page.patients.length === 0 ? (
+                <div
+                    data-testid="study-slides-empty"
+                    style={{ color: '#bbb', fontSize: 11, padding: 12 }}
+                >
+                    {filtering
+                        ? 'No patients match these filters.'
+                        : 'No pathology slides in the current selection.'}
+                </div>
+            ) : (
+                <ul
+                    ref={listRef}
+                    role="listbox"
+                    tabIndex={0}
+                    aria-label="Patients with pathology slides"
+                    aria-busy={store.isPageLoading}
+                    aria-activedescendant={
+                        selected &&
+                        page.patients.some(p => isSamePatient(p, selected))
+                            ? patientOptionId(selected)
+                            : undefined
+                    }
+                    data-testid="study-slides-patients"
+                    onKeyDown={event => {
+                        if (event.key === 'ArrowDown') {
+                            event.preventDefault();
+                            store.selectNext();
+                        } else if (event.key === 'ArrowUp') {
+                            event.preventDefault();
+                            store.selectPrevious();
+                        }
+                    }}
+                    style={{
+                        listStyle: 'none',
+                        margin: 0,
+                        padding: '4px 0',
+                        overflowY: 'auto',
+                        flex: 1,
+                        outline: 'none',
+                        opacity: store.isPageLoading ? 0.5 : 1,
+                        transition: 'opacity 120ms',
+                    }}
+                >
+                    {page.patients.map(patient => (
+                        <PatientRow
+                            key={patientOptionId(patient)}
+                            patient={patient}
+                            selected={isSamePatient(patient, selected)}
+                            onSelect={() => store.selectPatient(patient)}
+                        />
+                    ))}
+                </ul>
+            )}
+            {page.totalPatients > page.pageSize && (
+                <PatientPager store={store} />
+            )}
+        </div>
+    );
+});
+
+const ViewerToolbar: React.FunctionComponent<{
+    store: StudyPathologySlidesStore;
+}> = observer(({ store }) => {
+    const selected = store.selected!;
+    const page = store.page.result!;
+    const listed = page.patients.find(p => isSamePatient(p, selected));
+    const navPatients = page.patients.map(p => ({
+        studyId: p.studyId,
+        patientId: p.patientId,
+    }));
+    return (
+        <div
+            data-testid="study-slides-nav"
+            style={{
+                height: TOOLBAR_HEIGHT,
+                flexShrink: 0,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                padding: '0 8px',
+                background: C.sidebarBg,
+                borderBottom: `1px solid ${C.border}`,
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+            }}
+        >
+            <IconButton
+                icon="fa-chevron-left"
+                label="Previous patient ([)"
+                disabled={!store.hasPrevious}
+                onClick={store.selectPrevious}
+                testId="study-slides-previous"
+            />
+            <span data-testid="study-slides-position">
+                <strong style={{ color: C.text }}>{selected.patientId}</strong>
+                {store.selectedIndex !== undefined && (
+                    <span style={{ color: C.muted }}>
+                        {` · ${(
+                            store.selectedIndex + 1
+                        ).toLocaleString()} of ${page.totalPatients.toLocaleString()}`}
+                    </span>
+                )}
+            </span>
+            <IconButton
+                icon="fa-chevron-right"
+                label="Next patient (])"
+                disabled={!store.hasNext}
+                onClick={store.selectNext}
+                testId="study-slides-next"
+            />
+            {listed && (
+                <span style={{ color: C.muted, fontSize: 11 }}>
+                    {count(listed.slideCount, 'slide')} ·{' '}
+                    {listed.viewableSlideCount.toLocaleString()} viewable
+                </span>
+            )}
+            <span
+                className="hidden-xs hidden-sm"
+                style={{ color: '#aaa', fontSize: 11, marginLeft: 6 }}
+            >
+                <Key>[</Key> <Key>]</Key> patients · <Key>\</Key> list
+            </span>
+            <a
+                style={{ marginLeft: 'auto', fontSize: 12 }}
+                href={getPatientViewUrlWithPathname(
+                    selected.studyId,
+                    selected.patientId,
+                    'patient/wsiHESlides',
+                    listed ? navPatients : undefined
+                )}
+                target="_blank"
+                rel="noopener noreferrer"
+                data-testid="study-slides-open-patient"
+            >
+                Open in patient view{' '}
+                <i className="fa fa-external-link" aria-hidden="true" />
+            </a>
+        </div>
+    );
+});
 
 /**
- * Study-view Pathology Slides tab: the cohort's patients with slides on the
- * left, and the selected patient's slides in the viewer on the right.
+ * Study-view Pathology Slides tab: the cohort's patients with slides in a
+ * hideable panel, and the selected patient's slides in the viewer.
  */
 export const StudyPathologySlidesTab: React.FunctionComponent<StudyPathologySlidesTabProps> = observer(
     ({ store, tileServerUrl, isActive, height, userName }) => {
-        const listRef = React.useRef<HTMLUListElement>(null);
+        const [listCollapsed, setListCollapsed] = useStoredFlag(
+            PATIENT_LIST_COLLAPSED_KEY
+        );
 
         React.useEffect(() => {
             if (!isActive) {
@@ -80,26 +694,13 @@ export const StudyPathologySlidesTab: React.FunctionComponent<StudyPathologySlid
                     store.selectNext();
                 } else if (event.key === '[') {
                     store.selectPrevious();
+                } else if (event.key === '\\') {
+                    setListCollapsed(!listCollapsed);
                 }
             };
             document.addEventListener('keydown', onKeyDown);
             return () => document.removeEventListener('keydown', onKeyDown);
-        }, [isActive, store]);
-
-        const selected = store.selected;
-        React.useEffect(() => {
-            if (!selected || !listRef.current) {
-                return;
-            }
-            const option = listRef.current.querySelector(
-                `[id="${patientOptionId(selected)}"]`
-            ) as HTMLElement | null;
-            option?.scrollIntoView?.({ block: 'nearest' });
-        }, [selected, store.page.result]);
-
-        const page = store.page.result;
-        const filtering =
-            store.stainGroups.length > 0 || store.patientIdPrefix !== '';
+        }, [isActive, store, listCollapsed, setListCollapsed]);
 
         if (store.page.isError) {
             const status =
@@ -125,300 +726,98 @@ export const StudyPathologySlidesTab: React.FunctionComponent<StudyPathologySlid
             );
         }
 
+        const page = store.page.result;
         if (!page) {
             return <LoadingIndicator isLoading={true} center={true} />;
         }
 
-        const pageStart = page.pageNumber * page.pageSize;
-        const navPatients = page.patients.map(p => ({
-            studyId: p.studyId,
-            patientId: p.patientId,
-        }));
+        const selected = store.selected;
+        const innerHeight = height - 2;
 
         return (
-            <div data-testid="study-slides-tab">
+            <div
+                data-testid="study-slides-tab"
+                style={{
+                    display: 'flex',
+                    height,
+                    border: `1px solid ${C.border}`,
+                    borderRadius: 3,
+                    overflow: 'hidden',
+                    fontFamily: WSI_FONT_FAMILY,
+                    fontSize: 13,
+                    color: C.text,
+                    background: '#fff',
+                }}
+            >
+                {listCollapsed ? (
+                    <WsiCollapsedRail
+                        side="left"
+                        title="Patients"
+                        showLabel="Show patient list (\)"
+                        onExpand={() => setListCollapsed(false)}
+                        background={C.navBg}
+                        testId="study-slides-rail"
+                    >
+                        <IconButton
+                            icon="fa-chevron-up"
+                            label="Previous patient ([)"
+                            disabled={!store.hasPrevious}
+                            onClick={store.selectPrevious}
+                            testId="study-slides-rail-previous"
+                        />
+                        <IconButton
+                            icon="fa-chevron-down"
+                            label="Next patient (])"
+                            disabled={!store.hasNext}
+                            onClick={store.selectNext}
+                            testId="study-slides-rail-next"
+                        />
+                    </WsiCollapsedRail>
+                ) : (
+                    <PatientPanel
+                        store={store}
+                        onHide={() => setListCollapsed(true)}
+                    />
+                )}
+
                 <div
                     style={{
+                        flex: 1,
+                        minWidth: 0,
                         display: 'flex',
-                        flexWrap: 'wrap',
-                        alignItems: 'center',
-                        gap: 8,
-                        marginBottom: 8,
+                        flexDirection: 'column',
                     }}
                 >
-                    <strong data-testid="study-slides-summary">
-                        {count(page.totalPatients, 'patient')} ·{' '}
-                        {count(page.totalSlides, 'slide')} (
-                        {page.totalViewableSlides.toLocaleString()} viewable)
-                    </strong>
-                    <span style={{ color: '#666' }}>
-                        in the current selection
-                    </span>
-                    <span
-                        role="group"
-                        aria-label="Stain groups"
-                        style={{ display: 'inline-flex', gap: 4 }}
-                    >
-                        {(STUDY_SLIDE_STAIN_GROUPS as StudySlideStainGroup[]).map(
-                            group => {
-                                const active = store.stainGroups.includes(
-                                    group
-                                );
-                                return (
-                                    <button
-                                        key={group}
-                                        className={`btn btn-xs ${
-                                            active
-                                                ? 'btn-primary'
-                                                : 'btn-default'
-                                        }`}
-                                        aria-pressed={active}
-                                        data-testid={`study-slides-stain-${group}`}
-                                        onClick={() =>
-                                            store.toggleStainGroup(group)
-                                        }
-                                    >
-                                        {group} (
-                                        {page.stainGroupTotals[
-                                            group
-                                        ].toLocaleString()}
-                                        )
-                                    </button>
-                                );
-                            }
-                        )}
-                    </span>
-                </div>
-
-                <div style={{ display: 'flex', gap: 12 }}>
-                    <div
-                        style={{
-                            width: LIST_WIDTH,
-                            flex: `0 0 ${LIST_WIDTH}px`,
-                            display: 'flex',
-                            flexDirection: 'column',
-                            height,
-                        }}
-                    >
-                        <input
-                            type="search"
-                            className="form-control input-sm"
-                            placeholder="Find patient ID"
-                            aria-label="Find patient ID"
-                            data-testid="study-slides-search"
-                            value={store.searchText}
-                            onChange={e => store.setSearchText(e.target.value)}
-                            style={{ marginBottom: 6 }}
-                        />
-                        {page.patients.length === 0 ? (
-                            <div
-                                style={{ color: '#666', padding: 8 }}
-                                data-testid="study-slides-empty"
-                            >
-                                {filtering
-                                    ? 'No patients match these filters.'
-                                    : 'No pathology slides in the current selection.'}
-                            </div>
-                        ) : (
-                            <ul
-                                ref={listRef}
-                                role="listbox"
-                                tabIndex={0}
-                                aria-label="Patients with pathology slides"
-                                aria-activedescendant={
-                                    selected
-                                        ? patientOptionId(selected)
-                                        : undefined
-                                }
-                                data-testid="study-slides-patients"
-                                onKeyDown={event => {
-                                    if (event.key === 'ArrowDown') {
-                                        event.preventDefault();
-                                        store.selectNext();
-                                    } else if (event.key === 'ArrowUp') {
-                                        event.preventDefault();
-                                        store.selectPrevious();
-                                    }
-                                }}
-                                style={{
-                                    listStyle: 'none',
-                                    margin: 0,
-                                    padding: 0,
-                                    overflowY: 'auto',
-                                    flex: 1,
-                                    border: '1px solid #ddd',
-                                    borderRadius: 3,
-                                }}
-                            >
-                                {page.patients.map(patient => {
-                                    const isSelected = isSamePatient(
-                                        patient,
-                                        selected
-                                    );
-                                    return (
-                                        <li
-                                            key={patientOptionId(patient)}
-                                            id={patientOptionId(patient)}
-                                            role="option"
-                                            aria-selected={isSelected}
-                                            data-testid="study-slides-patient"
-                                            onClick={() =>
-                                                store.selectPatient(patient)
-                                            }
-                                            style={{
-                                                cursor: 'pointer',
-                                                padding: '4px 8px',
-                                                borderBottom: '1px solid #eee',
-                                                background: isSelected
-                                                    ? '#e6f0fa'
-                                                    : undefined,
-                                                fontWeight: isSelected
-                                                    ? 600
-                                                    : undefined,
-                                            }}
-                                        >
-                                            <div>{patient.patientId}</div>
-                                            <div
-                                                style={{
-                                                    fontSize: 11,
-                                                    color: '#666',
-                                                    fontWeight: 'normal',
-                                                }}
-                                            >
-                                                {count(
-                                                    patient.slideCount,
-                                                    'slide'
-                                                )}
-                                                {patient.viewableSlideCount <
-                                                patient.slideCount
-                                                    ? ` (${patient.viewableSlideCount} viewable)`
-                                                    : ''}
-                                                {' · '}
-                                                {stainSummary(patient)}
-                                            </div>
-                                        </li>
-                                    );
-                                })}
-                            </ul>
-                        )}
-                        {page.totalPatients > page.pageSize && (
-                            <div
-                                style={{
-                                    display: 'flex',
-                                    justifyContent: 'space-between',
-                                    alignItems: 'center',
-                                    marginTop: 6,
-                                }}
-                                data-testid="study-slides-pages"
-                            >
-                                <button
-                                    className="btn btn-default btn-xs"
-                                    aria-label="Previous page of patients"
-                                    disabled={store.pageNumber === 0}
-                                    onClick={() =>
-                                        store.setPageNumber(
-                                            store.pageNumber - 1
-                                        )
-                                    }
-                                >
-                                    ‹
-                                </button>
-                                <span style={{ fontSize: 12 }}>
-                                    {pageStart + 1}–
-                                    {pageStart + page.patients.length} of{' '}
-                                    {page.totalPatients.toLocaleString()}
-                                </span>
-                                <button
-                                    className="btn btn-default btn-xs"
-                                    aria-label="Next page of patients"
-                                    disabled={
-                                        store.pageNumber >= store.pageCount - 1
-                                    }
-                                    onClick={() =>
-                                        store.setPageNumber(
-                                            store.pageNumber + 1
-                                        )
-                                    }
-                                >
-                                    ›
-                                </button>
-                            </div>
-                        )}
-                    </div>
-
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                        {selected ? (
-                            <>
-                                <div
-                                    style={{
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        gap: 8,
-                                        marginBottom: 6,
-                                    }}
-                                    data-testid="study-slides-nav"
-                                >
-                                    <button
-                                        className="btn btn-default btn-xs"
-                                        disabled={!store.hasPrevious}
-                                        onClick={store.selectPrevious}
-                                        title="Previous patient ([)"
-                                        data-testid="study-slides-previous"
-                                    >
-                                        ◀ Previous
-                                    </button>
-                                    <span data-testid="study-slides-position">
-                                        <strong>{selected.patientId}</strong>
-                                        {store.selectedIndex !== undefined &&
-                                            ` · ${(
-                                                store.selectedIndex + 1
-                                            ).toLocaleString()} of ${page.totalPatients.toLocaleString()}`}
-                                    </span>
-                                    <button
-                                        className="btn btn-default btn-xs"
-                                        disabled={!store.hasNext}
-                                        onClick={store.selectNext}
-                                        title="Next patient (])"
-                                        data-testid="study-slides-next"
-                                    >
-                                        Next ▶
-                                    </button>
-                                    <a
-                                        style={{ marginLeft: 'auto' }}
-                                        href={getPatientViewUrlWithPathname(
-                                            selected.studyId,
-                                            selected.patientId,
-                                            'patient/wsiHESlides',
-                                            navPatients.some(p =>
-                                                isSamePatient(p, selected)
-                                            )
-                                                ? navPatients
-                                                : undefined
-                                        )}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        data-testid="study-slides-open-patient"
-                                    >
-                                        Open in patient view ↗
-                                    </a>
-                                </div>
-                                <AppWsiViewer
-                                    studyId={selected.studyId}
-                                    patientId={selected.patientId}
-                                    tileServerUrl={tileServerUrl}
-                                    userName={userName}
-                                    height={height - 32}
-                                    initialStainFilter={viewerStainFilter(
-                                        store.stainGroups
-                                    )}
-                                />
-                            </>
-                        ) : (
-                            <div style={{ color: '#666', padding: 8 }}>
-                                Select a patient to view their slides.
-                            </div>
-                        )}
-                    </div>
+                    {selected ? (
+                        <>
+                            <ViewerToolbar store={store} />
+                            <AppWsiViewer
+                                studyId={selected.studyId}
+                                patientId={selected.patientId}
+                                tileServerUrl={tileServerUrl}
+                                userName={userName}
+                                height={innerHeight - TOOLBAR_HEIGHT - 1}
+                                initialStainFilter={viewerStainFilter(
+                                    store.stainGroups
+                                )}
+                            />
+                        </>
+                    ) : (
+                        <div
+                            style={{
+                                flex: 1,
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                color: C.muted,
+                                background: '#e8e8e8',
+                            }}
+                        >
+                            {page.totalPatients === 0
+                                ? 'No pathology slides in the current selection.'
+                                : 'Select a patient to view their slides.'}
+                        </div>
+                    )}
                 </div>
             </div>
         );

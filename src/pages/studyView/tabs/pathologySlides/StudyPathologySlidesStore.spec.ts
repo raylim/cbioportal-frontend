@@ -286,4 +286,21 @@ describe('StudyPathologySlidesStore', () => {
         stopEmpty();
         empty.dispose();
     });
+
+    it('reports the requested page range and loading state before the page arrives', async () => {
+        makeStore();
+        await settle();
+        expect(store.displayedRange).toEqual({ first: 1, last: 2 });
+        expect(store.isPageLoading).toBe(false);
+
+        store.setPageNumber(2);
+        expect(store.displayedRange).toEqual({ first: 5, last: 5 });
+        expect(store.isPageLoading).toBe(true);
+        expect(store.selectedPageNumber).toBe(0);
+
+        await settle();
+        expect(store.isPageLoading).toBe(false);
+        store.goToSelectedPage();
+        expect(store.pageNumber).toBe(0);
+    });
 });
