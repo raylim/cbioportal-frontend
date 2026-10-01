@@ -158,7 +158,6 @@ const PatientRow: React.FunctionComponent<{
     onSelect: () => void;
 }> = ({ patient, selected, onSelect }) => {
     const [hovered, setHovered] = React.useState(false);
-    const noneViewable = patient.viewableSlideCount === 0;
     return (
         <li
             id={patientOptionId(patient)}
@@ -204,21 +203,6 @@ const PatientRow: React.FunctionComponent<{
             </div>
             <div style={{ fontSize: 10, color: C.muted, marginTop: 1 }}>
                 {count(patient.slideCount, 'slide')}
-                {noneViewable ? (
-                    <span
-                        style={{
-                            marginLeft: 6,
-                            padding: '0 4px',
-                            borderRadius: 3,
-                            background: '#fdf3e1',
-                            color: '#a86b00',
-                        }}
-                    >
-                        none viewable
-                    </span>
-                ) : (
-                    ` · ${patient.viewableSlideCount.toLocaleString()} viewable`
-                )}
             </div>
         </li>
     );
@@ -444,8 +428,7 @@ const PatientPanel: React.FunctionComponent<{
                     data-testid="study-slides-summary"
                     style={{ fontSize: 11, color: C.muted, marginTop: 2 }}
                 >
-                    {count(page.totalSlides, 'slide')} ·{' '}
-                    {page.totalViewableSlides.toLocaleString()} viewable
+                    {count(page.totalSlides, 'viewable slide')}
                 </div>
                 <div style={{ position: 'relative', marginTop: 7 }}>
                     <i
@@ -638,8 +621,7 @@ const ViewerToolbar: React.FunctionComponent<{
             />
             {listed && (
                 <span style={{ color: C.muted, fontSize: 11 }}>
-                    {count(listed.slideCount, 'slide')} ·{' '}
-                    {listed.viewableSlideCount.toLocaleString()} viewable
+                    {count(listed.slideCount, 'slide')}
                 </span>
             )}
             <span

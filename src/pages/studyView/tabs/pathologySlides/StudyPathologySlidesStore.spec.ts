@@ -125,6 +125,7 @@ describe('StudyPathologySlidesStore', () => {
         expect(server.requests[0]).toEqual(
             expect.objectContaining({
                 studyViewFilter: { studyIds: [STUDY] },
+                viewableOnly: true,
                 pageNumber: 0,
                 pageSize: 2,
             })

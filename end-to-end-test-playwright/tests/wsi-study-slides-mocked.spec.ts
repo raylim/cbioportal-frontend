@@ -332,7 +332,7 @@ if (process.env.PW_SUITE === 'wsi') {
 
             await expect(
                 page.getByTestId('study-slides-summary')
-            ).toHaveText('66 slides · 66 viewable', { timeout: 30000 });
+            ).toHaveText('66 viewable slides', { timeout: 30000 });
             await expect(page.getByTestId('study-slides-patient')).toHaveCount(
                 PAGE_SIZE
             );

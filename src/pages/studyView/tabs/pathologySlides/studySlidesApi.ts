@@ -32,6 +32,8 @@ export interface StudySlidesPage {
 
 export interface StudySlidesRequest {
     studyViewFilter: StudyViewFilter;
+    /** Counts and lists only slides the tile server can serve. */
+    viewableOnly?: boolean;
     stainGroups?: StudySlideStainGroup[];
     patientIdPrefix?: string;
     locateStudyId?: string;
