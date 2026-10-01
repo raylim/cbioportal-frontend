@@ -153,6 +153,37 @@ export class StudyPathologySlidesStore {
         return Math.max(1, Math.ceil(this.totalPatients / this.pageSize));
     }
 
+    /** A requested list page is still loading; the previous page stays shown. */
+    @computed get isPageLoading(): boolean {
+        return this.page.isPending;
+    }
+
+    /**
+     * The requested page's patient range, known as soon as a page is
+     * requested so the pager answers a click before the list arrives.
+     */
+    @computed get displayedRange(): { first: number; last: number } {
+        const first = this.pageNumber * this.pageSize;
+        return {
+            first: Math.min(first + 1, this.totalPatients),
+            last: Math.min(first + this.pageSize, this.totalPatients),
+        };
+    }
+
+    /** The list page of the selected patient, when it is listed. */
+    @computed get selectedPageNumber(): number | undefined {
+        return this.selectedIndex === undefined
+            ? undefined
+            : Math.floor(this.selectedIndex / this.pageSize);
+    }
+
+    @action.bound
+    goToSelectedPage() {
+        if (this.selectedPageNumber !== undefined) {
+            this.pageNumber = this.selectedPageNumber;
+        }
+    }
+
     @computed get hasPrevious(): boolean {
         return this.selectedIndex !== undefined && this.selectedIndex > 0;
     }
