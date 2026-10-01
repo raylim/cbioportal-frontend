@@ -36,8 +36,9 @@ export interface PathologySlidesTimelineModule {
     pathologySlidesTrackConfig: PathologySlidesTimeline['trackConfig'];
 }
 
-// The track module and the viewer entry it imports are one async chunk, so
-// patients without slides load neither.
+// The track module and the package's events entry it imports load as async
+// chunks, so patients without slides load neither, and the timeline never
+// loads the viewer itself.
 function importPathologySlidesTimeline(): Promise<
     PathologySlidesTimelineModule
 > {

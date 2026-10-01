@@ -15,6 +15,10 @@ import SampleManager from 'pages/patientView/SampleManager';
 import { buildBaseConfig, sortTracks } from './timeline_helpers';
 import { configureWsiViewerRuntime } from 'cbioportal-wsi-viewer';
 import {
+    PathologySlideClinicalEvent,
+    PathologySlideEventDetails,
+} from 'cbioportal-wsi-viewer/events';
+import {
     loadPathologySlideTimelineData,
     pathologySlideGroupMarker,
     pathologySlideMarkerSample,
@@ -50,19 +54,31 @@ const SAMPLE = 'P-0000081-T02-IM6';
 const LINKOUT =
     '/patient/wsiHESlides?studyId=mskimpact&caseId=P-0000081&stainFilter=hne&matchLevel=PART&sampleId=P-0000081-T02-IM6';
 
-function slide(attributes: Record<string, string>, days = 920) {
-    return event('PATHOLOGY SLIDES', days, {
-        SAMPLE_ID: SAMPLE,
-        SUBTYPE: 'H&E',
-        MATCH_LEVEL: 'PART',
-        SPECIMEN: 'Part 1',
-        IMAGE_COUNT: '1',
-        NON_SERVABLE_IMAGE_COUNT: '0',
-        TOTAL_IMAGE_COUNT: '1',
-        IMAGE_IDS: '["496610"]',
-        LINKOUT,
-        ...attributes,
-    });
+const UNMATCHED: Partial<PathologySlideEventDetails> = {
+    matchLevel: 'UNMATCHED',
+    sampleId: undefined,
+};
+
+function slide(
+    details: Partial<PathologySlideEventDetails>,
+    days = 920
+): PathologySlideClinicalEvent {
+    const pathologySlide: PathologySlideEventDetails = {
+        sampleId: SAMPLE,
+        matchLevel: 'PART',
+        stain: 'H&E',
+        specimen: 'Part 1',
+        viewableImageIds: ['496610'],
+        totalCount: 1,
+        openPath: LINKOUT,
+        ...details,
+    };
+    return {
+        ...event('PATHOLOGY SLIDES', days, {
+            SUBTYPE: pathologySlide.stain,
+        }),
+        pathologySlide,
+    };
 }
 
 const CASE_META: ISampleMetaDeta = {
@@ -125,14 +141,11 @@ describe('pathologySlideMarkerSample', () => {
 
     it('returns null for unmatched events and samples outside the patient', () => {
         expect(
-            pathologySlideMarkerSample(
-                slide({ MATCH_LEVEL: 'Unmatched' }),
-                CASE_META
-            )
+            pathologySlideMarkerSample(slide(UNMATCHED), CASE_META)
         ).toBeNull();
         expect(
             pathologySlideMarkerSample(
-                slide({ SAMPLE_ID: 'P-OTHER' }),
+                slide({ sampleId: 'P-OTHER' }),
                 CASE_META
             )
         ).toBeNull();
@@ -150,7 +163,7 @@ describe('pathologySlideGroupMarker', () => {
     it('uses one sample marker when every event has the same sample', () => {
         expect(
             pathologySlideGroupMarker(
-                [slide({}), slide({ SUBTYPE: 'IHC' })],
+                [slide({}), slide({ stain: 'IHC' })],
                 CASE_META
             )
         ).toEqual({ kind: 'sample', sample: sample2, count: 2 });
@@ -161,28 +174,22 @@ describe('pathologySlideGroupMarker', () => {
             pathologySlideGroupMarker(
                 [
                     slide({}),
-                    slide({ SUBTYPE: 'IHC' }),
-                    slide({ SAMPLE_ID: 'P-0000081-T01-IM3' }),
-                    slide({ MATCH_LEVEL: 'Unmatched' }),
+                    slide({ stain: 'IHC' }),
+                    slide({ sampleId: 'P-0000081-T01-IM3' }),
+                    slide(UNMATCHED),
                 ],
                 CASE_META
             )
         ).toEqual({ kind: 'samples', samples: [sample2, sample1], count: 4 });
         expect(
-            pathologySlideGroupMarker(
-                [slide({}), slide({ MATCH_LEVEL: 'Unmatched' })],
-                CASE_META
-            )
+            pathologySlideGroupMarker([slide({}), slide(UNMATCHED)], CASE_META)
         ).toEqual({ kind: 'samples', samples: [sample2], count: 2 });
     });
 
     it('marks groups without a patient sample as unmatched', () => {
         expect(
             pathologySlideGroupMarker(
-                [
-                    slide({ MATCH_LEVEL: 'Unmatched' }),
-                    slide({ SAMPLE_ID: 'P-OTHER' }),
-                ],
+                [slide(UNMATCHED), slide({ sampleId: 'P-OTHER' })],
                 CASE_META
             )
         ).toEqual({ kind: 'unmatched', count: 2 });
@@ -216,8 +223,8 @@ describe('PATHOLOGY SLIDES timeline track', () => {
     it("draws a same-sample group as the sample's marker with a count", () => {
         const { texts, fills } = renderMarker([
             slide({}),
-            slide({ SPECIMEN: 'Part 2' }),
-            slide({ MATCH_LEVEL: 'BLOCK' }),
+            slide({ specimen: 'Part 2' }),
+            slide({ matchLevel: 'BLOCK' }),
         ]);
         expect(texts).toEqual(['2', '3']);
         expect(fills).toEqual(['#ff0000']);
@@ -226,8 +233,8 @@ describe('PATHOLOGY SLIDES timeline track', () => {
     it('lists each sample once in a mixed group', () => {
         const mixed = renderMarker([
             slide({}),
-            slide({ SPECIMEN: 'Part 2' }),
-            slide({ SAMPLE_ID: 'P-0000081-T01-IM3' }),
+            slide({ specimen: 'Part 2' }),
+            slide({ sampleId: 'P-0000081-T01-IM3' }),
         ]);
         // The sample tracks' multi-sample marker writes consecutive
         // numbers as a range.
@@ -235,15 +242,15 @@ describe('PATHOLOGY SLIDES timeline track', () => {
 
         const withUnmatched = renderMarker([
             slide({}),
-            slide({ SPECIMEN: 'Part 2' }),
-            slide({ MATCH_LEVEL: 'Unmatched' }),
+            slide({ specimen: 'Part 2' }),
+            slide(UNMATCHED),
         ]);
         expect(withUnmatched.texts).toEqual(['2', '3']);
         expect(withUnmatched.fills).not.toContain(UNMATCHED_MARKER_COLOR);
     });
 
     it('draws unmatched events as grey markers', () => {
-        const single = renderMarker([slide({ MATCH_LEVEL: 'Unmatched' })]);
+        const single = renderMarker([slide(UNMATCHED)]);
         expect(single.texts).toEqual([]);
         expect(single.fills).toEqual([UNMATCHED_MARKER_COLOR]);
         expect(single.track.eventColorGetter!(single.track.items[0])).toBe(
@@ -251,8 +258,8 @@ describe('PATHOLOGY SLIDES timeline track', () => {
         );
 
         const stack = renderMarker([
-            slide({ MATCH_LEVEL: 'Unmatched' }),
-            slide({ MATCH_LEVEL: 'Unmatched', SPECIMEN: 'Part 2' }),
+            slide(UNMATCHED),
+            slide({ ...UNMATCHED, specimen: 'Part 2' }),
         ]);
         expect(stack.texts).toEqual(['2']);
         expect(stack.fills).toContain(UNMATCHED_MARKER_COLOR);
@@ -261,30 +268,25 @@ describe('PATHOLOGY SLIDES timeline track', () => {
 
     it('orders simultaneous events by sample number', () => {
         const track = pathologyTrack([
-            slide({ MATCH_LEVEL: 'Unmatched' }),
-            slide({ SAMPLE_ID: 'P-0000081-T01-IM3' }),
+            slide(UNMATCHED),
+            slide({ sampleId: 'P-0000081-T01-IM3' }),
             slide({}),
         ]);
         const sorted = track.sortSimultaneousEvents!(track.items);
         expect(
-            sorted.map(e =>
-                e.event.attributes
-                    .filter(a => ['SAMPLE_ID', 'MATCH_LEVEL'].includes(a.key))
-                    .map(a => a.value)
-                    .join(' ')
-            )
-        ).toEqual([
-            'P-0000081-T01-IM3 PART',
-            `${SAMPLE} PART`,
-            `${SAMPLE} Unmatched`,
-        ]);
+            sorted.map(e => {
+                const details = (e.event as PathologySlideClinicalEvent)
+                    .pathologySlide;
+                return `${details.sampleId ?? '-'} ${details.matchLevel}`;
+            })
+        ).toEqual(['P-0000081-T01-IM3 PART', `${SAMPLE} PART`, '- UNMATCHED']);
     });
 
     it('splits the track into stain rows: H&E, IHC, then the rest', () => {
         const root = pathologyRoot([
-            slide({ SUBTYPE: 'Unknown' }),
-            slide({ SUBTYPE: 'IHC' }),
-            slide({ SUBTYPE: 'Special stain' }),
+            slide({ stain: 'Unknown' }),
+            slide({ stain: 'IHC' }),
+            slide({ stain: 'Special stain' }),
             slide({}),
         ]);
         expect(root.items).toEqual([]);
@@ -335,19 +337,15 @@ describe('PATHOLOGY SLIDES timeline track', () => {
         );
     });
 
-    it('omits Open slides when nothing is viewable or LINKOUT is empty', () => {
-        const track = pathologyTrack([
-            slide({ IMAGE_COUNT: '0' }),
-            slide({ LINKOUT: '' }, 921),
-        ]);
+    it('omits Open slides when nothing is viewable', () => {
+        const track = pathologyTrack([slide({ viewableImageIds: [] })]);
         renderTooltip(track, track.items[0]);
-        renderTooltip(track, track.items[1]);
         expect(screen.getByText('0 of 1 viewable')).toBeTruthy();
         expect(screen.queryByRole('link')).toBeNull();
     });
 
     it('describes unmatched slides in the tooltip', () => {
-        const track = pathologyTrack([slide({ MATCH_LEVEL: 'Unmatched' })]);
+        const track = pathologyTrack([slide(UNMATCHED)]);
         renderTooltip(track, track.items[0]);
         expect(
             screen.getByText('Unmatched (not linked to a sequenced sample)')

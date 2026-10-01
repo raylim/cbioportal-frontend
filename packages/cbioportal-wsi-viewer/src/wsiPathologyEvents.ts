@@ -8,14 +8,14 @@ import {
     WsiSampleTimelineMap,
 } from './wsiSampleTimeline';
 import { isServableDiagnosticSlide, wsiStainKind } from './wsiSlideUtils';
-import { blockName, formatSpecimenLabel } from './wsiSpecimenUtils';
+import { formatSpecimenLabel } from './wsiSpecimenUtils';
 import { buildWsiHierarchyApiUrl } from './wsiUrls';
 import { getWsiViewerRuntime } from './wsiViewerConfig';
 import { MatchLevel, PatientHierarchy, WsiStainFilter } from './wsiViewerTypes';
 
 export const PATHOLOGY_SLIDES_EVENT_TYPE = 'PATHOLOGY SLIDES';
 
-export const UNMATCHED_LABEL = 'Unmatched';
+const UNMATCHED_LABEL = 'Unmatched';
 
 const MATCH_LABELS: Record<string, { text: string; tooltip: string }> = {
     BLOCK: {
@@ -57,72 +57,43 @@ export interface PathologySlideRow {
     openLabel: string;
 }
 
+/** What the timeline tooltip and markers show for one PATHOLOGY SLIDES event. */
+export interface PathologySlideEventDetails {
+    /** Sequenced sample of a BLOCK- or PART-matched event; unset when unmatched. */
+    sampleId?: string;
+    matchLevel: MatchLevel;
+    /** Stain row label: H&E, IHC, Other or Unknown. */
+    stain: string;
+    specimen: string;
+    viewableImageIds: string[];
+    totalCount: number;
+    timepointSource?: string;
+    /** In-app path to the Pathology Slides tab, scoped to this event. */
+    openPath: string;
+}
+
 /**
- * The fields read from a PATHOLOGY SLIDES event; satisfied by both a
- * ClinicalEvent and a timeline item's event.
+ * A PATHOLOGY SLIDES event built by `buildPathologySlideEvents`. Its only
+ * attribute is SUBTYPE, which splits the timeline track into stain rows;
+ * the tooltip and markers read `pathologySlide`.
+ */
+export type PathologySlideClinicalEvent = ClinicalEvent & {
+    pathologySlide: PathologySlideEventDetails;
+};
+
+/**
+ * The fields read from a PATHOLOGY SLIDES event; satisfied by both a built
+ * event and a timeline item's event.
  */
 export type PathologySlideEvent = Pick<
     ClinicalEvent,
     'startNumberOfDaysSinceDiagnosis'
-> & { attributes?: { key: string; value: string }[] };
+>;
 
-function eventAttributes(event: PathologySlideEvent): Record<string, string> {
-    const attrs: Record<string, string> = {};
-    (event.attributes || []).forEach(attr => {
-        attrs[attr.key] = attr.value;
-    });
-    return attrs;
-}
-
-function parseCount(value: string | undefined): number {
-    const count = parseInt(value || '', 10);
-    return Number.isFinite(count) && count > 0 ? count : 0;
-}
-
-/** Image IDs from the IMAGE_IDS JSON array; malformed values yield none. */
-export function parseImageIds(value: string | undefined): string[] {
-    if (!value) {
-        return [];
-    }
-    try {
-        const parsed = JSON.parse(value);
-        return Array.isArray(parsed)
-            ? parsed.filter(id => id != null && id !== '').map(id => String(id))
-            : [];
-    } catch (_) {
-        return [];
-    }
-}
-
-/** "Part 6 / Block Block 1" -> "Part 6 / Block 1". */
-export function formatSpecimen(specimen: string | undefined): string {
-    return (specimen || '').replace(
-        /(\bBlock\s+)(.*)$/i,
-        (_match, prefix: string, rest: string) => prefix + blockName(rest)
-    );
-}
-
-/**
- * Pathology Slides tab path carrying the LINKOUT query, or undefined when
- * the LINKOUT is empty or has no query. Only the path and query are kept so
- * the router adds any deployment base path.
- */
-export function pathologySlidesOpenPath(
-    linkout: string | undefined
-): string | undefined {
-    if (!linkout || !linkout.trim()) {
-        return undefined;
-    }
-    let url: URL;
-    try {
-        url = new URL(linkout.trim(), 'http://localhost');
-    } catch (_) {
-        return undefined;
-    }
-    if (!url.search) {
-        return undefined;
-    }
-    return `${url.pathname}${url.search}`;
+function eventDetails(
+    event: PathologySlideEvent
+): PathologySlideEventDetails | undefined {
+    return (event as Partial<PathologySlideClinicalEvent>).pathologySlide;
 }
 
 /**
@@ -174,37 +145,29 @@ function slidesTooltip(
 export function pathologySlideSampleId(
     event: PathologySlideEvent
 ): string | undefined {
-    const attrs = eventAttributes(event);
-    const matchLevel = (attrs.MATCH_LEVEL || '').toUpperCase();
-    return MATCH_LABELS[matchLevel] && attrs.SAMPLE_ID
-        ? attrs.SAMPLE_ID
-        : undefined;
+    return eventDetails(event)?.sampleId;
 }
 
 export function buildPathologySlideRow(
     event: PathologySlideEvent,
     sampleTimelines: WsiSampleTimelineMap
 ): PathologySlideRow {
-    const attrs = eventAttributes(event);
+    const details = eventDetails(event);
     const rawDays = event.startNumberOfDaysSinceDiagnosis;
     const procedureDays =
         typeof rawDays === 'number' && Number.isFinite(rawDays)
             ? rawDays
             : undefined;
-    const matchLevel = (attrs.MATCH_LEVEL || '').toUpperCase();
-    const match = MATCH_LABELS[matchLevel];
-    const sampleId = pathologySlideSampleId(event);
+    const match = details ? MATCH_LABELS[details.matchLevel] : undefined;
+    const sampleId = details?.sampleId;
     const sequencingDays = sampleId
         ? sampleTimelines.get(sampleId)?.sequencingDays
         : undefined;
     const sequencingText = sequencingRelation(procedureDays, sequencingDays);
-    const stain = attrs.SUBTYPE || '';
-    const viewableCount = parseCount(attrs.IMAGE_COUNT);
-    const totalCount = Math.max(
-        parseCount(attrs.TOTAL_IMAGE_COUNT),
-        viewableCount
-    );
-    const imageIds = parseImageIds(attrs.IMAGE_IDS);
+    const stain = details?.stain || '';
+    const imageIds = details?.viewableImageIds || [];
+    const viewableCount = imageIds.length;
+    const totalCount = Math.max(details?.totalCount || 0, viewableCount);
     const sampleText = sampleId || UNMATCHED_LABEL;
 
     return {
@@ -215,7 +178,7 @@ export function buildPathologySlideRow(
                 : '',
         procedureTooltip:
             procedureDays != null
-                ? [attrs.TIMEPOINT_SOURCE, DAY_ZERO_TOOLTIP]
+                ? [details?.timepointSource, DAY_ZERO_TOOLTIP]
                       .filter(Boolean)
                       .join('. ')
                 : undefined,
@@ -229,16 +192,13 @@ export function buildPathologySlideRow(
         stain,
         matchText: match ? match.text : UNMATCHED_LABEL,
         matchTooltip: match ? match.tooltip : UNMATCHED_TOOLTIP,
-        specimen: formatSpecimen(attrs.SPECIMEN),
+        specimen: details?.specimen || '',
         viewableCount,
         totalCount,
         slidesText: `${viewableCount} of ${totalCount} viewable`,
         slidesTooltip: slidesTooltip(imageIds, viewableCount, totalCount),
         imageIds,
-        openPath:
-            viewableCount > 0
-                ? pathologySlidesOpenPath(attrs.LINKOUT)
-                : undefined,
+        openPath: viewableCount > 0 ? details?.openPath : undefined,
         openLabel: `Open ${stain || 'pathology'} slides for ${sampleText}`,
     };
 }
@@ -258,8 +218,7 @@ export interface PathologySlideTooltipContent {
     openLabel: string;
 }
 
-export const UNMATCHED_SAMPLE_TEXT =
-    'Unmatched (not linked to a sequenced sample)';
+const UNMATCHED_SAMPLE_TEXT = 'Unmatched (not linked to a sequenced sample)';
 
 /**
  * Timeline tooltip content for one PATHOLOGY SLIDES event, e.g.
@@ -329,8 +288,8 @@ export interface PathologySlideEventScope {
     patientId: string;
     /**
      * Host path of the patient Pathology Slides tab, e.g.
-     * `/patient/wsiHESlides`; each event's LINKOUT is this path with the
-     * event's scope as its query.
+     * `/patient/wsiHESlides`; each event opens this path with the event's
+     * scope as its query.
      */
     slidesTabPath: string;
 }
@@ -348,10 +307,10 @@ interface PathologySlideEventGroup {
 }
 
 /**
- * Pathology Slides tab link for one event: its sample, match level, stain
+ * Pathology Slides tab path for one event: its sample, match level, stain
  * and procedure day, plus the specimen key when all of its slides share one.
  */
-function pathologySlideEventLinkout(
+function pathologySlideEventOpenPath(
     group: PathologySlideEventGroup,
     scope: PathologySlideEventScope
 ): string {
@@ -381,7 +340,7 @@ function pathologySlideEventLinkout(
 export function buildPathologySlideEvents(
     hierarchy: PatientHierarchy,
     scope: PathologySlideEventScope
-): ClinicalEvent[] {
+): PathologySlideClinicalEvent[] {
     const groups = new Map<string, PathologySlideEventGroup>();
     hierarchy.samples.forEach(sample =>
         sample.parts.forEach(part =>
@@ -465,30 +424,30 @@ export function buildPathologySlideEvents(
                     numeric: true,
                 })
         )
-        .map(group => {
-            const attributes: Record<string, string> = {
-                SAMPLE_ID: group.sampleId || '',
-                SUBTYPE: STAIN_LABELS[group.stain],
-                MATCH_LEVEL: group.matchLevel,
-                SPECIMEN: group.specimen,
-                IMAGE_COUNT: String(group.viewableImageIds.length),
-                TOTAL_IMAGE_COUNT: String(group.slideKeys.size),
-                IMAGE_IDS: JSON.stringify(group.viewableImageIds),
-                TIMEPOINT_SOURCE: group.timepointSource || '',
-                LINKOUT: pathologySlideEventLinkout(group, scope),
-            };
-            return {
-                eventType: PATHOLOGY_SLIDES_EVENT_TYPE,
-                studyId: scope.studyId,
-                patientId: scope.patientId,
-                uniquePatientKey: '',
-                // A point event, as the timeline draws events without an end day.
-                startNumberOfDaysSinceDiagnosis: group.days,
-                attributes: Object.keys(attributes)
-                    .filter(key => attributes[key] !== '')
-                    .map(key => ({ key, value: attributes[key] })),
-            } as ClinicalEvent;
-        });
+        .map(
+            group =>
+                ({
+                    eventType: PATHOLOGY_SLIDES_EVENT_TYPE,
+                    studyId: scope.studyId,
+                    patientId: scope.patientId,
+                    uniquePatientKey: '',
+                    // A point event, as the timeline draws events without an end day.
+                    startNumberOfDaysSinceDiagnosis: group.days,
+                    attributes: [
+                        { key: 'SUBTYPE', value: STAIN_LABELS[group.stain] },
+                    ],
+                    pathologySlide: {
+                        sampleId: group.sampleId,
+                        matchLevel: group.matchLevel,
+                        stain: STAIN_LABELS[group.stain],
+                        specimen: group.specimen,
+                        viewableImageIds: group.viewableImageIds,
+                        totalCount: group.slideKeys.size,
+                        timepointSource: group.timepointSource,
+                        openPath: pathologySlideEventOpenPath(group, scope),
+                    },
+                } as PathologySlideClinicalEvent)
+        );
 }
 
 /**
@@ -518,7 +477,7 @@ export function countUndatedViewableSlides(
 
 /** What the patient timeline shows for the patient's slides. */
 export interface PathologySlideTimelineData {
-    events: ClinicalEvent[];
+    events: PathologySlideClinicalEvent[];
     /** Viewable slides left off the timeline for lack of a procedure day. */
     undatedViewableSlideCount: number;
 }

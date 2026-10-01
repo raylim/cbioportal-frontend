@@ -22,7 +22,7 @@ import {
     PathologySlideEvent,
     pathologySlideSampleId,
     PathologySlideTimelineData,
-} from 'cbioportal-wsi-viewer/viewer';
+} from 'cbioportal-wsi-viewer/events';
 import { getTextWidth } from 'cbioportal-frontend-commons';
 import SampleMarker, { MultipleSampleMarker } from './SampleMarker';
 import {
