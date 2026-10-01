@@ -11,13 +11,9 @@ export {
 export { WsiViewerProps } from './WsiViewerEntry';
 export {
     buildWsiSampleTimelineMap,
-    DAY_ZERO_TOOLTIP,
-    procedureTooltip,
     WsiSampleTimeline,
     WsiSampleTimelineMap,
 } from './wsiSampleTimeline';
-export { formatDaysSinceDiagnosis } from './wsiNavUtils';
-export { blockName } from './wsiSpecimenUtils';
 export {
     hashUrlState,
     readWsiHashState,
