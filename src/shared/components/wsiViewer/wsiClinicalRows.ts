@@ -22,10 +22,47 @@ import {
 export const WSI_CLINICAL_MIN_FREQUENCY = 0.5;
 
 /**
+ * Attributes left out of the Clinical section although the study shows them
+ * by default: sequencing QC and administrative fields that say nothing about
+ * the patient or the tissue on the slide, and the molecular summary the
+ * MSK-IMPACT section already shows.
+ */
+export const WSI_CLINICAL_EXCLUDED_ATTRIBUTE_IDS: ReadonlySet<string> = new Set(
+    [
+        'GENE_PANEL',
+        'INSTITUTE',
+        'OTHER_PATIENT_ID',
+        'SAMPLE_COVERAGE',
+        'SOMATIC_STATUS',
+        // Shown in the sidebar's MSK-IMPACT section.
+        'CVR_TMB_SCORE',
+        'CVR_TUMOR_PURITY',
+        'METASTATIC_SITE',
+        'MSI_SCORE',
+        'MSI_STATUS',
+        'MSI_TYPE',
+        'TMB_NONSYNONYMOUS',
+        'TMB_SCORE',
+        'TUMOR_PURITY',
+    ]
+);
+
+/** Consent flags, e.g. PARTA_CONSENTED_12_245. */
+const CONSENT_ATTRIBUTE = /CONSENTED/i;
+
+function isExcludedClinicalAttribute(attributeId: string): boolean {
+    return (
+        WSI_CLINICAL_EXCLUDED_ATTRIBUTE_IDS.has(attributeId) ||
+        CONSENT_ATTRIBUTE.test(attributeId)
+    );
+}
+
+/**
  * The study's default clinical attributes, as the study view picks its
  * default charts and Clinical Data columns: priority above 0 (with the
  * frontend priority overrides), highest priority first, at most
- * `studyview_clinical_attribute_chart_count`. When attribute counts are
+ * `studyview_clinical_attribute_chart_count`, without the
+ * WSI_CLINICAL_EXCLUDED_ATTRIBUTE_IDS and consent flags. When counts are
  * known, attributes populated for fewer than WSI_CLINICAL_MIN_FREQUENCY of
  * the study's samples are left out.
  */
@@ -44,6 +81,10 @@ export function selectWsiClinicalAttributes(
             priority: getPriorityByClinicalAttribute(attribute).toString(),
         }))
         .filter(attribute => (parseInt(attribute.priority) || 0) > 0)
+        .filter(
+            attribute =>
+                !isExcludedClinicalAttribute(attribute.clinicalAttributeId)
+        )
         .filter(
             attribute =>
                 !countById ||
