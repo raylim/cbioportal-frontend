@@ -41,9 +41,7 @@ import { PatientViewPlotsTabWrapper } from './PatientViewPlotsTabWrapper';
 import PatientWsiSlidesTab from 'pages/patientView/PatientWsiSlidesTab';
 import { PatientViewPageTabs } from './PatientViewPageTabIds';
 import { withPathologySlideEvents } from 'pages/patientView/timeline/pathologySlidesTimelineLoader';
-import UndatedPathologySlidesNotice, {
-    patientUndatedSlideCount,
-} from 'pages/patientView/timeline/UndatedPathologySlidesNotice';
+import UndatedPathologySlidesNotice from 'pages/patientView/timeline/UndatedPathologySlidesNotice';
 
 export {
     PatientViewPageTabs,
@@ -84,11 +82,13 @@ function undatedPathologySlidesNotice(
     const store = pageComponent.patientViewPageStore;
     if (
         !getServerConfig().msk_wsi_tile_server_url ||
-        !store.clinicalDataPatient.isComplete
+        !store.pathologySlidesTimeline.isComplete
     ) {
         return null;
     }
-    const count = patientUndatedSlideCount(store.clinicalDataPatient.result);
+    // Counted from the slide hierarchy loaded for the timeline track.
+    const count =
+        store.pathologySlidesTimeline.result?.undatedViewableSlideCount ?? 0;
     return count > 0 ? (
         <UndatedPathologySlidesNotice
             studyId={store.studyId}

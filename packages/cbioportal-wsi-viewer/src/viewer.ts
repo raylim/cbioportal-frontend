@@ -10,9 +10,10 @@ export { WsiViewerConfig } from './wsiViewerConfig';
 export {
     buildPathologySlideRow,
     buildPathologySlideTooltipContent,
-    fetchPathologySlideEvents,
+    fetchPathologySlideTimelineData,
     PATHOLOGY_SLIDES_EVENT_TYPE,
     PathologySlideEvent,
     PathologySlideEventScope,
+    PathologySlideTimelineData,
     pathologySlideSampleId,
 } from './wsiPathologyEvents';

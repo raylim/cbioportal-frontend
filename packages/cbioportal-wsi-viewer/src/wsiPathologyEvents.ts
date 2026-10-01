@@ -492,15 +492,48 @@ export function buildPathologySlideEvents(
 }
 
 /**
- * The patient's PATHOLOGY SLIDES timeline events, from the slide hierarchy
- * loaded through the viewer's shared hierarchy cache, so a Pathology Slides
- * tab opened afterwards with the same `authScope` reuses the response.
+ * Viewable slides without a procedure day. They get no PATHOLOGY SLIDES
+ * event, so the timeline cannot show them.
  */
-export async function fetchPathologySlideEvents(
+export function countUndatedViewableSlides(
+    hierarchy: PatientHierarchy
+): number {
+    const imageIds = new Set<string>();
+    hierarchy.samples.forEach(sample =>
+        sample.parts.forEach(part =>
+            part.blocks.forEach(block =>
+                block.slides.forEach(slide => {
+                    if (
+                        isServableDiagnosticSlide(slide) &&
+                        getSlideTimepointDays(slide) == null
+                    ) {
+                        imageIds.add(slide.image_id);
+                    }
+                })
+            )
+        )
+    );
+    return imageIds.size;
+}
+
+/** What the patient timeline shows for the patient's slides. */
+export interface PathologySlideTimelineData {
+    events: ClinicalEvent[];
+    /** Viewable slides left off the timeline for lack of a procedure day. */
+    undatedViewableSlideCount: number;
+}
+
+/**
+ * The patient's PATHOLOGY SLIDES timeline events and undated slide count,
+ * from the slide hierarchy loaded through the viewer's shared hierarchy
+ * cache, so a Pathology Slides tab opened afterwards with the same
+ * `authScope` reuses the response.
+ */
+export async function fetchPathologySlideTimelineData(
     scope: PathologySlideEventScope,
     authScope?: string,
     signal?: AbortSignal
-): Promise<ClinicalEvent[]> {
+): Promise<PathologySlideTimelineData> {
     const hierarchy = await fetchPatientHierarchyReadOnly(
         buildWsiHierarchyApiUrl(
             getWsiViewerRuntime().buildApiUrl,
@@ -512,5 +545,8 @@ export async function fetchPathologySlideEvents(
         scope.studyId,
         scope.patientId
     );
-    return buildPathologySlideEvents(hierarchy, scope);
+    return {
+        events: buildPathologySlideEvents(hierarchy, scope),
+        undatedViewableSlideCount: countUndatedViewableSlides(hierarchy),
+    };
 }

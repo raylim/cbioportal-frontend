@@ -5,7 +5,6 @@ import * as React from 'react';
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import UndatedPathologySlidesNotice, {
-    patientUndatedSlideCount,
     undatedPathologySlidesMessage,
     undatedPathologySlidesPath,
 } from './UndatedPathologySlidesNotice';
@@ -55,27 +54,6 @@ describe('undated pathology slides helpers', () => {
         expect(undatedPathologySlidesMessage(3)).toMatch(
             /^3 viewable pathology slides have no procedure date, so they are/
         );
-    });
-
-    it('reads the undated slide count from patient clinical data', () => {
-        expect(
-            patientUndatedSlideCount([
-                { clinicalAttributeId: 'WSI_PATIENT_SLIDE_COUNT', value: '9' },
-                {
-                    clinicalAttributeId: 'WSI_PATIENT_UNDATED_SLIDE_COUNT',
-                    value: '3',
-                },
-            ])
-        ).toBe(3);
-        expect(patientUndatedSlideCount([])).toBe(0);
-        expect(
-            patientUndatedSlideCount([
-                {
-                    clinicalAttributeId: 'WSI_PATIENT_UNDATED_SLIDE_COUNT',
-                    value: 'NA',
-                },
-            ])
-        ).toBe(0);
     });
 
     it('encodes the tab path', () => {

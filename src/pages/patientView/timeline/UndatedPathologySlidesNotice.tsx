@@ -1,12 +1,6 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
-import { ClinicalData } from 'cbioportal-ts-api-client';
-import { patientCountAttribute } from './pathologySlidesTimelineLoader';
 import { PatientViewPageTabs } from 'pages/patientView/PatientViewPageTabIds';
-
-/** Patient attribute with the patient's viewable slides without a procedure date. */
-export const WSI_PATIENT_UNDATED_SLIDE_COUNT_ATTRIBUTE =
-    'WSI_PATIENT_UNDATED_SLIDE_COUNT';
 
 /** Pathology Slides tab showing only the patient's undated slides. */
 export function undatedPathologySlidesPath(
@@ -19,19 +13,6 @@ export function undatedPathologySlidesPath(
         timepointDays: 'undated',
     });
     return `/patient/${PatientViewPageTabs.WSIHESlides}?${query.toString()}`;
-}
-
-/**
- * The patient's WSI_PATIENT_UNDATED_SLIDE_COUNT; 0 when missing or not a
- * number.
- */
-export function patientUndatedSlideCount(
-    clinicalDataPatient: Pick<ClinicalData, 'clinicalAttributeId' | 'value'>[]
-): number {
-    return patientCountAttribute(
-        clinicalDataPatient,
-        WSI_PATIENT_UNDATED_SLIDE_COUNT_ATTRIBUTE
-    );
 }
 
 export function undatedPathologySlidesMessage(count: number): string {

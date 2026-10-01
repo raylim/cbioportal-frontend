@@ -15,7 +15,7 @@ import SampleManager from 'pages/patientView/SampleManager';
 import { buildBaseConfig, sortTracks } from './timeline_helpers';
 import { configureWsiViewerRuntime } from 'cbioportal-wsi-viewer';
 import {
-    loadPathologySlideEvents,
+    loadPathologySlideTimelineData,
     pathologySlideGroupMarker,
     pathologySlideMarkerSample,
     pathologySlidesTrackConfig,
@@ -356,7 +356,7 @@ describe('PATHOLOGY SLIDES timeline track', () => {
     });
 });
 
-describe('loadPathologySlideEvents', () => {
+describe('loadPathologySlideTimelineData', () => {
     const hierarchy = {
         referenceSampleId: SAMPLE,
         sampleGroups: [
@@ -419,11 +419,15 @@ describe('loadPathologySlideEvents', () => {
             fetchImpl,
         });
 
-        const slides = await loadPathologySlideEvents(
+        const {
+            events: slides,
+            undatedViewableSlideCount,
+        } = await loadPathologySlideTimelineData(
             'mskimpact',
             'P-0000081',
             'user-1'
         );
+        expect(undatedViewableSlideCount).toBe(0);
 
         expect(fetchImpl.mock.calls[0][0]).toBe(
             'https://portal.example/api/wsi/v2/hierarchy/mskimpact/P-0000081'

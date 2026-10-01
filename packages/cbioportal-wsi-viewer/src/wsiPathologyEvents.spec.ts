@@ -7,7 +7,8 @@ import {
     buildPathologySlideEvents,
     buildPathologySlideRow,
     buildPathologySlideTooltipContent,
-    fetchPathologySlideEvents,
+    countUndatedViewableSlides,
+    fetchPathologySlideTimelineData,
     formatSpecimen,
     PathologySlideEvent,
     pathologySlideSampleId,
@@ -678,7 +679,51 @@ describe('buildPathologySlideEvents', () => {
     });
 });
 
-describe('fetchPathologySlideEvents', () => {
+describe('countUndatedViewableSlides', () => {
+    it('counts each viewable slide without a procedure day once', () => {
+        const undated = { slide_timepoint_days: undefined };
+        expect(
+            countUndatedViewableSlides(
+                hierarchy([
+                    {
+                        sampleId: SAMPLE_24,
+                        parts: [
+                            {
+                                part: '1',
+                                blocks: [
+                                    {
+                                        block: '1',
+                                        slides: [
+                                            hierarchySlide('dated'),
+                                            hierarchySlide(
+                                                'undated-a',
+                                                undated
+                                            ),
+                                            hierarchySlide(
+                                                'undated-a',
+                                                undated
+                                            ),
+                                            hierarchySlide(
+                                                'undated-b',
+                                                undated
+                                            ),
+                                            hierarchySlide('undated-hidden', {
+                                                ...undated,
+                                                can_serve_tiles: false,
+                                            }),
+                                        ],
+                                    },
+                                ],
+                            },
+                        ],
+                    },
+                ])
+            )
+        ).toBe(2);
+    });
+});
+
+describe('fetchPathologySlideTimelineData', () => {
     const payload = {
         referenceSampleId: SAMPLE_24,
         sampleGroups: [
@@ -746,15 +791,16 @@ describe('fetchPathologySlideEvents', () => {
             fetchImpl,
         });
 
-        const first = await fetchPathologySlideEvents(SCOPE, 'user-1');
-        const second = await fetchPathologySlideEvents(SCOPE, 'user-1');
+        const first = await fetchPathologySlideTimelineData(SCOPE, 'user-1');
+        const second = await fetchPathologySlideTimelineData(SCOPE, 'user-1');
 
         expect(fetchImpl).toHaveBeenCalledTimes(1);
         expect(fetchImpl.mock.calls[0][0]).toBe(
             'https://portal.example/api/wsi/v2/hierarchy/mskimpact/P-0000024'
         );
-        expect(first).toHaveLength(1);
-        expect(attrs(first[0]).IMAGE_IDS).toBe('["1729893"]');
+        expect(first.events).toHaveLength(1);
+        expect(attrs(first.events[0]).IMAGE_IDS).toBe('["1729893"]');
+        expect(first.undatedViewableSlideCount).toBe(0);
         expect(second).toEqual(first);
     });
 
@@ -765,7 +811,7 @@ describe('fetchPathologySlideEvents', () => {
             fetchImpl: jest.fn().mockResolvedValue({ ok: false, status: 503 }),
         });
 
-        await expect(fetchPathologySlideEvents(SCOPE)).rejects.toThrow(
+        await expect(fetchPathologySlideTimelineData(SCOPE)).rejects.toThrow(
             'Server returned 503'
         );
     });

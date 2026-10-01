@@ -34,10 +34,10 @@ function request(
 }
 
 function mockModule(
-    loadPathologySlideEvents: PathologySlidesTimelineModule['loadPathologySlideEvents']
+    loadPathologySlideTimelineData: PathologySlidesTimelineModule['loadPathologySlideTimelineData']
 ) {
     const module: PathologySlidesTimelineModule = {
-        loadPathologySlideEvents: jest.fn(loadPathologySlideEvents),
+        loadPathologySlideTimelineData: jest.fn(loadPathologySlideTimelineData),
         pathologySlidesTrackConfig: jest.fn(),
     };
     const importModule = jest.fn(() => Promise.resolve(module));
@@ -58,7 +58,10 @@ describe('patientWsiSlideCount', () => {
 describe('loadPathologySlidesTimeline', () => {
     it('loads the slide events and track for a patient with slides', async () => {
         const { module, importModule } = mockModule(() =>
-            Promise.resolve([SLIDE_EVENT])
+            Promise.resolve({
+                events: [SLIDE_EVENT],
+                undatedViewableSlideCount: 2,
+            })
         );
 
         const timeline = await loadPathologySlidesTimeline(
@@ -67,13 +70,14 @@ describe('loadPathologySlidesTimeline', () => {
         );
 
         expect(importModule).toHaveBeenCalledTimes(1);
-        expect(module.loadPathologySlideEvents).toHaveBeenCalledWith(
+        expect(module.loadPathologySlideTimelineData).toHaveBeenCalledWith(
             'mskimpact',
             'P-0000024',
             'user-1'
         );
         expect(timeline).toEqual({
             events: [SLIDE_EVENT],
+            undatedViewableSlideCount: 2,
             trackConfig: module.pathologySlidesTrackConfig,
         });
     });
@@ -87,14 +91,17 @@ describe('loadPathologySlidesTimeline', () => {
         ['no tile server is configured', request({ tileServerUrl: null })],
     ])('loads nothing when %s', async (_reason, noSlides) => {
         const { module, importModule } = mockModule(() =>
-            Promise.resolve([SLIDE_EVENT])
+            Promise.resolve({
+                events: [SLIDE_EVENT],
+                undatedViewableSlideCount: 2,
+            })
         );
 
         expect(
             await loadPathologySlidesTimeline(noSlides, importModule)
         ).toBeUndefined();
         expect(importModule).not.toHaveBeenCalled();
-        expect(module.loadPathologySlideEvents).not.toHaveBeenCalled();
+        expect(module.loadPathologySlideTimelineData).not.toHaveBeenCalled();
     });
 
     it('resolves undefined when the hierarchy fails to load', async () => {
@@ -125,6 +132,7 @@ describe('withPathologySlideEvents', () => {
         expect(
             withPathologySlideEvents(clinicalEvents, {
                 events: [SLIDE_EVENT],
+                undatedViewableSlideCount: 0,
                 trackConfig: jest.fn(),
             })
         ).toEqual([...clinicalEvents, SLIDE_EVENT]);
@@ -137,6 +145,7 @@ describe('withPathologySlideEvents', () => {
         expect(
             withPathologySlideEvents(clinicalEvents, {
                 events: [],
+                undatedViewableSlideCount: 0,
                 trackConfig: jest.fn(),
             })
         ).toBe(clinicalEvents);
