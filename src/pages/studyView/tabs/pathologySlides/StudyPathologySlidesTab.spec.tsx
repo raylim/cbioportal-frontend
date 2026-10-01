@@ -140,13 +140,13 @@ describe('StudyPathologySlidesTab', () => {
             screen.getByTestId('study-slides-patient-count').textContent
         ).toBe('3');
         expect(screen.getByTestId('study-slides-summary').textContent).toBe(
-            '6 slides · 5 viewable'
+            '6 viewable slides'
         );
         const rows = screen.getAllByTestId('study-slides-patient');
         expect(rows).toHaveLength(3);
         expect(within(rows[1]).getByTitle('H&E: 1')).toBeTruthy();
         expect(within(rows[1]).getByTitle('IHC: 1')).toBeTruthy();
-        expect(within(rows[1]).getByText('2 slides · 1 viewable')).toBeTruthy();
+        expect(within(rows[1]).getByText('2 slides')).toBeTruthy();
         expect(screen.getByTestId('study-slides-position').textContent).toBe(
             'P-1 · 1 of 3'
         );
