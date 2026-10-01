@@ -43,9 +43,7 @@ import { PatientViewPlotsTabWrapper } from './PatientViewPlotsTabWrapper';
 import PatientWsiSlidesTab from 'pages/patientView/PatientWsiSlidesTab';
 import { PatientViewPageTabs } from './PatientViewPageTabIds';
 import { withPathologySlideEvents } from 'pages/patientView/timeline/pathologySlidesTimelineLoader';
-import UndatedPathologySlidesNotice, {
-    patientUndatedSlideCount,
-} from 'pages/patientView/timeline/UndatedPathologySlidesNotice';
+import UndatedPathologySlidesNotice from 'pages/patientView/timeline/UndatedPathologySlidesNotice';
 
 export {
     PatientViewPageTabs,
@@ -86,11 +84,13 @@ function undatedPathologySlidesNotice(
     const store = pageComponent.patientViewPageStore;
     if (
         !getServerConfig().msk_wsi_tile_server_url ||
-        !store.clinicalDataPatient.isComplete
+        !store.pathologySlidesTimeline.isComplete
     ) {
         return null;
     }
-    const count = patientUndatedSlideCount(store.clinicalDataPatient.result);
+    // Counted from the slide hierarchy loaded for the timeline track.
+    const count =
+        store.pathologySlidesTimeline.result?.undatedViewableSlideCount ?? 0;
     return count > 0 ? (
         <UndatedPathologySlidesNotice
             studyId={store.studyId}
@@ -784,8 +784,7 @@ export function tabs(
                 id={PatientViewPageTabs.MRNA}
                 linkText={
                     <span>
-                        mRNA{' '}
-                        <strong className={'beta-text'}>Beta!</strong>
+                        mRNA <strong className={'beta-text'}>Beta!</strong>
                     </span>
                 }
             >
@@ -801,8 +800,7 @@ export function tabs(
                 id={PatientViewPageTabs.Plots}
                 linkText={
                     <span>
-                        Plots{' '}
-                        <strong className={'beta-text'}>Beta!</strong>
+                        Plots <strong className={'beta-text'}>Beta!</strong>
                     </span>
                 }
             >
@@ -810,8 +808,8 @@ export function tabs(
                     .isComplete &&
                 pageComponent.patientViewPageStore.highlightedCancerTypes
                     .isComplete &&
-                pageComponent.patientViewPageStore.highlightedDetailedCancerTypes
-                    .isComplete ? (
+                pageComponent.patientViewPageStore
+                    .highlightedDetailedCancerTypes.isComplete ? (
                     <PatientViewPlotsTabWrapper
                         store={pageComponent.patientViewPageStore}
                         urlWrapper={urlWrapper}

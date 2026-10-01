@@ -17,10 +17,11 @@ import {
 import {
     buildPathologySlideRow,
     buildPathologySlideTooltipContent,
-    fetchPathologySlideEvents,
+    fetchPathologySlideTimelineData,
     PATHOLOGY_SLIDES_EVENT_TYPE,
     PathologySlideEvent,
     pathologySlideSampleId,
+    PathologySlideTimelineData,
 } from 'cbioportal-wsi-viewer/viewer';
 import { getTextWidth } from 'cbioportal-frontend-commons';
 import SampleMarker, { MultipleSampleMarker } from './SampleMarker';
@@ -35,15 +36,15 @@ import { PatientViewPageTabs } from 'pages/patientView/PatientViewPageTabIds';
 // slides; see pathologySlidesTimelineLoader.
 
 /**
- * The patient's PATHOLOGY SLIDES events, built from the slide hierarchy.
- * Each event links to the Pathology Slides tab scoped to its slides.
+ * The patient's PATHOLOGY SLIDES events, linking to the Pathology Slides tab,
+ * and the count of viewable slides without a procedure day.
  */
-export function loadPathologySlideEvents(
+export function loadPathologySlideTimelineData(
     studyId: string,
     patientId: string,
     authScope: string
-): Promise<ClinicalEvent[]> {
-    return fetchPathologySlideEvents(
+): Promise<PathologySlideTimelineData> {
+    return fetchPathologySlideTimelineData(
         {
             studyId,
             patientId,

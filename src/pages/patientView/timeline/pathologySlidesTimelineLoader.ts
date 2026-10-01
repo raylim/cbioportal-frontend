@@ -10,6 +10,11 @@ export interface PathologySlidesTimeline {
     /** Synthetic PATHOLOGY SLIDES events built from the slide hierarchy. */
     events: ClinicalEvent[];
     /**
+     * Viewable slides without a procedure day, which get no event; counted
+     * from the same hierarchy.
+     */
+    undatedViewableSlideCount: number;
+    /**
      * The track's renderer; `clinicalEvents` gives each sample's sequencing
      * day for the tooltip.
      */
@@ -21,11 +26,13 @@ export interface PathologySlidesTimeline {
 
 /** What the loader reads from the lazily loaded timeline module. */
 export interface PathologySlidesTimelineModule {
-    loadPathologySlideEvents: (
+    loadPathologySlideTimelineData: (
         studyId: string,
         patientId: string,
         authScope: string
-    ) => Promise<ClinicalEvent[]>;
+    ) => Promise<
+        Pick<PathologySlidesTimeline, 'events' | 'undatedViewableSlideCount'>
+    >;
     pathologySlidesTrackConfig: PathologySlidesTimeline['trackConfig'];
 }
 
@@ -92,12 +99,16 @@ export async function loadPathologySlidesTimeline(
     }
     try {
         const module = await importModule();
-        const events = await module.loadPathologySlideEvents(
+        const data = await module.loadPathologySlideTimelineData(
             request.studyId,
             request.patientId,
             request.authScope
         );
-        return { events, trackConfig: module.pathologySlidesTrackConfig };
+        return {
+            events: data.events,
+            undatedViewableSlideCount: data.undatedViewableSlideCount,
+            trackConfig: module.pathologySlidesTrackConfig,
+        };
     } catch (_) {
         return undefined;
     }
