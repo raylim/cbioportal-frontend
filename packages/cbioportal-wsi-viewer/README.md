@@ -10,6 +10,7 @@ The package holds the viewer only. It never imports cBioPortal app code: the hos
 | --- | --- | --- |
 | `cbioportal-wsi-viewer` | Types, `configureWsiViewerRuntime`, sample-timeline helpers, `#wsi:` URL-state helpers, the theme (`WSI_THEME`, widths, section-title and list styles) and the panel chrome (`WsiPanelHideButton`, `WsiCollapsedRail`, stored panel flags) | Static, and small |
 | `cbioportal-wsi-viewer/viewer` | The React viewer (default export, also `WsiViewer`) | Lazily, e.g. with `React.lazy` |
+| `cbioportal-wsi-viewer/events` | PATHOLOGY SLIDES timeline events built from the hierarchy (`fetchPathologySlideTimelineData`, row and tooltip builders), for the patient timeline, without the viewer | Lazily, in the timeline's own chunk |
 
 OpenSeadragon is not in either entry. The viewer loads it on the first slide open as its own async chunk (`wsi-openseadragon`), so pages without slides never download it. In the app, `scripts/assert_wsi_osd_bundle.js` checks this after a production build.
 
