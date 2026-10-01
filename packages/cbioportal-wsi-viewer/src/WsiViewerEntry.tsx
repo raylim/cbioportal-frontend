@@ -8,6 +8,7 @@ import {
     PathologySlideFilter,
     PathologySlideMatchFilter,
     WsiStainFilter,
+    WsiClinicalRow,
     WsiTimepointSelection,
 } from './wsiViewerTypes';
 
@@ -39,6 +40,12 @@ export interface WsiViewerProps {
      * read from them to relate each slide's procedure to its sample.
      */
     clinicalEvents?: ClinicalEvent[];
+    /**
+     * Rows for the sidebar's Clinical section, in display order. Rows with a
+     * `sampleId` show only for that sample's slides. Unset hides the section;
+     * an empty list shows it with no values.
+     */
+    clinicalRows?: ReadonlyArray<WsiClinicalRow>;
     /** Hides the slide list; unset keeps the user's stored choice. */
     navCollapsed?: boolean;
     onNavCollapsedChange?: (collapsed: boolean) => void;
