@@ -7,7 +7,11 @@ import {
 } from './wsiMolecularTables';
 
 import { WSI_SECTION_TITLE_STYLE, WSI_THEME } from './wsiTheme';
-import { WsiPanelHideButton } from './wsiPanelChrome';
+import {
+    readWsiPanelFlag,
+    WsiPanelHideButton,
+    writeWsiPanelFlag,
+} from './wsiPanelChrome';
 
 const SIDEBAR_COLORS = WSI_THEME;
 const sectionTitleStyle = WSI_SECTION_TITLE_STYLE;
@@ -30,37 +34,85 @@ export interface MetaRow {
     valueTip?: string;
 }
 
+/** Browser-stored collapsed state of a sidebar section. */
+export function wsiSidebarSectionCollapsedKey(sectionId: string): string {
+    return `wsi.viewer.sidebarSection.${sectionId}.collapsed`;
+}
+
+const sectionToggleStyle: React.CSSProperties = {
+    ...sectionTitleStyle,
+    display: 'flex',
+    alignItems: 'center',
+    gap: 5,
+    flex: 1,
+    minWidth: 0,
+    border: 'none',
+    background: 'transparent',
+    padding: 0,
+    cursor: 'pointer',
+    textAlign: 'left',
+};
+
+/** A sidebar section whose header collapses and expands its content. */
 function SbSection({
+    id,
     title,
     action,
     children,
 }: {
+    id: string;
     title: string;
     action?: React.ReactNode;
     children: React.ReactNode;
 }) {
+    const storageKey = wsiSidebarSectionCollapsedKey(id);
+    const [collapsed, setCollapsed] = React.useState(() =>
+        readWsiPanelFlag(storageKey)
+    );
+    const toggle = React.useCallback(() => {
+        setCollapsed(current => {
+            writeWsiPanelFlag(storageKey, !current);
+            return !current;
+        });
+    }, [storageKey]);
+    const contentId = `wsi-sidebar-section-${id}`;
+
     return (
         <div
+            data-testid={`wsi-sidebar-section-${id}`}
             style={{
                 padding: '10px 12px',
                 borderBottom: `1px solid ${SIDEBAR_COLORS.border}`,
             }}
         >
-            {action ? (
-                <div
-                    style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                    }}
+            <div
+                style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                }}
+            >
+                <button
+                    type="button"
+                    aria-expanded={!collapsed}
+                    aria-controls={contentId}
+                    title={collapsed ? `Show ${title}` : `Hide ${title}`}
+                    data-testid={`wsi-sidebar-section-${id}-toggle`}
+                    onClick={toggle}
+                    style={sectionToggleStyle}
                 >
-                    <div style={sectionTitleStyle}>{title}</div>
-                    {action}
-                </div>
-            ) : (
-                <div style={sectionTitleStyle}>{title}</div>
-            )}
-            {children}
+                    <i
+                        className={`fa fa-caret-${
+                            collapsed ? 'right' : 'down'
+                        }`}
+                        aria-hidden="true"
+                        style={{ width: 8 }}
+                    />
+                    {title}
+                </button>
+                {action}
+            </div>
+            {!collapsed && <div id={contentId}>{children}</div>}
         </div>
     );
 }
@@ -112,7 +164,7 @@ function hasMskImpactContent(
     );
 }
 
-function MetaTable({ rows }: { rows: MetaRow[] }) {
+function MetaTable({ rows }: { rows: ReadonlyArray<MetaRow> }) {
     return (
         <table
             style={{ width: '100%', borderCollapse: 'collapse', marginTop: 6 }}
@@ -170,6 +222,7 @@ function WsiMetaSidebarComponent({
     sample,
     mutationDataStatus,
     dataVersion,
+    clinicalRows,
     onHide,
 }: {
     width: number;
@@ -182,6 +235,8 @@ function WsiMetaSidebarComponent({
     mutationDataStatus: WsiMutationDataStatus;
     /** Invalidates the memoized sidebar when enrichment mutates a sample in place. */
     dataVersion?: number;
+    /** Patient clinical rows; unset (e.g. still loading) hides the section. */
+    clinicalRows?: ReadonlyArray<MetaRow>;
     /** Shows a header button that hides the sidebar. */
     onHide?: () => void;
 }) {
@@ -209,6 +264,7 @@ function WsiMetaSidebarComponent({
             }}
         >
             <SbSection
+                id="imageProperties"
                 title="Image Properties"
                 action={
                     onHide && (
@@ -228,12 +284,22 @@ function WsiMetaSidebarComponent({
                 )}
             </SbSection>
 
-            <SbSection title="Pathology">
+            <SbSection id="pathology" title="Pathology">
                 {showPathology ? <MetaTable rows={pathRows} /> : <EmptyState />}
             </SbSection>
 
+            {clinicalRows && (
+                <SbSection id="clinical" title="Clinical">
+                    {clinicalRows.length > 0 ? (
+                        <MetaTable rows={clinicalRows} />
+                    ) : (
+                        <EmptyState />
+                    )}
+                </SbSection>
+            )}
+
             {showMskImpact && (
-                <SbSection title="MSK-IMPACT">
+                <SbSection id="mskImpact" title="MSK-IMPACT">
                     {seqRows.length > 0 && <MetaTable rows={seqRows} />}
                     {sample && (
                         <MutationTable

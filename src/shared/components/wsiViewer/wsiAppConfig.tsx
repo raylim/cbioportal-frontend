@@ -12,6 +12,7 @@ import { getWsiOncoKbClient } from 'shared/api/wsiOncoKbClientInstance';
 import LoadingIndicator from 'shared/components/loadingIndicator/LoadingIndicator';
 import { getCivicCNAVariants } from 'shared/lib/CivicUtils';
 import { getSimplifiedMutationType } from 'shared/lib/oql/AccessorsForOqlFilter';
+import { useWsiClinicalRows } from './wsiClinicalRows';
 
 const WSI_OSD_PREFIX_URL = '/reactapp/osd-images/';
 
@@ -81,7 +82,7 @@ export const LazyWsiViewer = React.lazy(() => {
 
 export type AppWsiViewerProps = Omit<
     WsiViewerProps,
-    'authScope' | 'showDownload' | 'renderLoading'
+    'authScope' | 'showDownload' | 'renderLoading' | 'clinicalRows'
 > & {
     /** Signed-in user name, when the page knows it. */
     userName?: string;
@@ -89,6 +90,10 @@ export type AppWsiViewerProps = Omit<
 
 /** The package viewer configured for this portal, loaded lazily. */
 export function AppWsiViewer({ userName, ...viewerProps }: AppWsiViewerProps) {
+    const clinicalRows = useWsiClinicalRows(
+        viewerProps.studyId,
+        viewerProps.patientId
+    );
     return (
         <React.Suspense
             fallback={
@@ -105,6 +110,7 @@ export function AppWsiViewer({ userName, ...viewerProps }: AppWsiViewerProps) {
                     DownloadControlOption.SHOW_ALL
                 }
                 renderLoading={renderWsiLoading}
+                clinicalRows={clinicalRows}
             />
         </React.Suspense>
     );
