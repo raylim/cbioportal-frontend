@@ -5,6 +5,13 @@ import { ISampleMetaDeta } from './TimelineWrapper';
 /** Patient attribute with the patient's WSI slide count. */
 export const WSI_PATIENT_SLIDE_COUNT_ATTRIBUTE = 'WSI_PATIENT_SLIDE_COUNT';
 
+/**
+ * Patient attribute with the patient's viewable slides without a procedure
+ * day, written by the Core WSI converter.
+ */
+export const WSI_PATIENT_UNDATED_SLIDE_COUNT_ATTRIBUTE =
+    'WSI_PATIENT_UNDATED_SLIDE_COUNT';
+
 /** The PATHOLOGY SLIDES timeline track of a patient with slides. */
 export interface PathologySlidesTimeline {
     /** Synthetic PATHOLOGY SLIDES events built from the slide hierarchy. */
@@ -68,6 +75,27 @@ export function patientWsiSlideCount(
         clinicalDataPatient,
         WSI_PATIENT_SLIDE_COUNT_ATTRIBUTE
     );
+}
+
+/**
+ * The patient's undated viewable slides: the precomputed
+ * WSI_PATIENT_UNDATED_SLIDE_COUNT when the study has it, so the notice need
+ * not wait for the slide hierarchy; otherwise the count from the timeline's
+ * hierarchy, or undefined until that has loaded.
+ */
+export function undatedPathologySlideCount(
+    clinicalDataPatient: Pick<ClinicalData, 'clinicalAttributeId' | 'value'>[],
+    timeline:
+        | Pick<PathologySlidesTimeline, 'undatedViewableSlideCount'>
+        | undefined
+): number | undefined {
+    const datum = clinicalDataPatient.find(
+        d => d.clinicalAttributeId === WSI_PATIENT_UNDATED_SLIDE_COUNT_ATTRIBUTE
+    );
+    const precomputed = datum ? parseInt(datum.value, 10) : NaN;
+    return Number.isFinite(precomputed)
+        ? precomputed
+        : timeline?.undatedViewableSlideCount;
 }
 
 export interface PathologySlidesTimelineRequest {

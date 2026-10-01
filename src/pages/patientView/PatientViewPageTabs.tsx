@@ -42,7 +42,10 @@ import { Else, If } from 'react-if';
 import { PatientViewPlotsTabWrapper } from './PatientViewPlotsTabWrapper';
 import PatientWsiSlidesTab from 'pages/patientView/PatientWsiSlidesTab';
 import { PatientViewPageTabs } from './PatientViewPageTabIds';
-import { withPathologySlideEvents } from 'pages/patientView/timeline/pathologySlidesTimelineLoader';
+import {
+    undatedPathologySlideCount,
+    withPathologySlideEvents,
+} from 'pages/patientView/timeline/pathologySlidesTimelineLoader';
 import UndatedPathologySlidesNotice from 'pages/patientView/timeline/UndatedPathologySlidesNotice';
 
 export {
@@ -84,13 +87,17 @@ function undatedPathologySlidesNotice(
     const store = pageComponent.patientViewPageStore;
     if (
         !getServerConfig().msk_wsi_tile_server_url ||
-        !store.pathologySlidesTimeline.isComplete
+        !store.clinicalDataPatient.isComplete
     ) {
         return null;
     }
-    // Counted from the slide hierarchy loaded for the timeline track.
     const count =
-        store.pathologySlidesTimeline.result?.undatedViewableSlideCount ?? 0;
+        undatedPathologySlideCount(
+            store.clinicalDataPatient.result,
+            store.pathologySlidesTimeline.isComplete
+                ? store.pathologySlidesTimeline.result
+                : undefined
+        ) ?? 0;
     return count > 0 ? (
         <UndatedPathologySlidesNotice
             studyId={store.studyId}
