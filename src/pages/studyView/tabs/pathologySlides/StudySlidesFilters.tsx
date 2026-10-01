@@ -125,7 +125,10 @@ export const StudySlidesSearch: React.FunctionComponent<{
                     store.requestSuggestions();
                     setOpen(true);
                 }}
-                onBlur={finish}
+                onBlur={() => {
+                    finish();
+                    store.releaseSuggestions();
+                }}
                 onChange={e => {
                     store.setSearchText(e.target.value);
                     setOpen(true);

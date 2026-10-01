@@ -145,7 +145,7 @@ export class StudyPathologySlidesStore {
     /** The applied (debounced) patient/sample ID search. */
     @observable search = '';
     @observable.ref pinnedAttributeIds: string[] = readPinnedAttributeIds();
-    /** Set when the search is first used, to load suggestion values. */
+    /** Set while the search has focus, to load suggestion values. */
     @observable private suggestionsWanted = false;
     @observable pageNumber = 0;
     @observable.ref selected: StudySlidePatientRef | undefined;
@@ -380,9 +380,19 @@ export class StudyPathologySlidesStore {
             .slice(0, MAX_SUGGESTIONS);
     }
 
+    /** The search has focus: load suggestion values for it. */
     @action.bound
     requestSuggestions() {
         this.suggestionsWanted = true;
+    }
+
+    /**
+     * The search lost focus: stop reloading suggestion values on every
+     * filter change, which would compete with the list and filter counts.
+     */
+    @action.bound
+    releaseSuggestions() {
+        this.suggestionsWanted = false;
     }
 
     /** Selected values of an attribute's study-view filter. */
