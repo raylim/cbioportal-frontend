@@ -25,3 +25,11 @@ export {
     WsiHashViewport,
     WsiUrlStateAdapter,
 } from './wsiViewStateUtils';
+export * from './wsiTheme';
+export {
+    readWsiPanelFlag,
+    WsiCollapsedRail,
+    WsiPanelHideButton,
+    WsiPanelSide,
+    writeWsiPanelFlag,
+} from './wsiPanelChrome';
