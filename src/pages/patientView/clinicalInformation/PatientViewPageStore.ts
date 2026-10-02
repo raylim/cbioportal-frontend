@@ -211,7 +211,6 @@ import {
     loadPathologySlidesTimeline,
     PathologySlidesTimeline,
 } from 'pages/patientView/timeline/pathologySlidesTimelineLoader';
-import { wsiAuthScope } from 'shared/components/wsiViewer/wsiAppConfig';
 import { StructuralVariantFilter } from 'cbioportal-ts-api-client';
 import { IGenePanelDataByProfileIdAndSample } from 'shared/lib/isSampleProfiled';
 import { NamespaceColumnConfig } from 'shared/components/namespaceColumns/NamespaceColumnConfig';
