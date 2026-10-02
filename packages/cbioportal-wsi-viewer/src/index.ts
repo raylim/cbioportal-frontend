@@ -21,6 +21,7 @@ export {
     WsiHashViewport,
     WsiUrlStateAdapter,
 } from './wsiViewStateUtils';
+export { fetchWsiPatientHierarchy } from './wsiHierarchyFetchCache';
 export * from './wsiTheme';
 export {
     readWsiPanelFlag,
