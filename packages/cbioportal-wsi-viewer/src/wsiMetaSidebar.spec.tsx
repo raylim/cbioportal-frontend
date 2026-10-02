@@ -17,6 +17,9 @@ function renderSidebarJson(clinicalRows?: WsiClinicalRow[]): string {
             wsiRows={[]}
             showPathology={false}
             pathRows={[]}
+            seqRows={[]}
+            sample={null}
+            mutationDataStatus="idle"
             clinicalRows={clinicalRows}
         />
     );
@@ -57,6 +60,9 @@ describe('WsiMetaSidebar collapsible sections', () => {
                 wsiRows={[{ label: 'Dimensions', value: '100 x 100' }]}
                 showPathology={true}
                 pathRows={[{ label: 'Stain', value: 'H&E' }]}
+                seqRows={[{ label: 'TMB', value: '3 mut/Mb' }]}
+                sample={null}
+                mutationDataStatus="idle"
                 clinicalRows={[{ label: 'Sex', value: 'Female' }]}
             />
         );
@@ -73,7 +79,7 @@ describe('WsiMetaSidebar collapsible sections', () => {
         });
     }
 
-    it.each(['imageProperties', 'pathology', 'clinical'])(
+    it.each(['imageProperties', 'pathology', 'clinical', 'mskImpact'])(
         'collapses and expands the %s section',
         id => {
             const renderer = renderSidebar();

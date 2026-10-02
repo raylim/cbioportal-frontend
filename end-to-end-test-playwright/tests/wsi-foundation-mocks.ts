@@ -144,6 +144,22 @@ export async function installFoundationMocks(
                 body: JSON.stringify(hierarchy),
             })
     );
+    // The viewer reads the smoke patient's portal samples and sample
+    // clinical data for its molecular tables; it has none.
+    await page.route(`**/api/studies/${STUDY_ID}/samples**`, route =>
+        route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify([]),
+        })
+    );
+    await page.route('**/api/clinical-data/fetch**', route =>
+        route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify([]),
+        })
+    );
     await page.route(`**/api/studies/${STUDY_ID}/molecular-profiles**`, route =>
         route.fulfill({
             status: 200,
