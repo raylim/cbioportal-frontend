@@ -42,6 +42,8 @@ import PatientWsiSlidesTab from 'pages/patientView/PatientWsiSlidesTab';
 import { PatientViewPageTabs } from './PatientViewPageTabIds';
 import { withPathologySlideEvents } from 'pages/patientView/timeline/pathologySlidesTimelineLoader';
 import UndatedPathologySlidesNotice from 'pages/patientView/timeline/UndatedPathologySlidesNotice';
+import { WsiPatientClinicalData } from 'shared/components/wsiViewer/wsiClinicalRows';
+import { PatientViewPageStore } from './clinicalInformation/PatientViewPageStore';
 
 export {
     PatientViewPageTabs,
@@ -49,6 +51,53 @@ export {
     getPatientViewResourceTabId,
     extractResourceIdFromTabId,
 } from './PatientViewPageTabIds';
+
+/**
+ * The page's clinical data for the slide viewer sidebar: `null` while it
+ * loads, unset when the page does not hold every sample of the patient
+ * (sample view), its attributes span other studies or a request failed, so
+ * the viewer fetches it.
+ */
+export function wsiPatientClinicalData(
+    store: PatientViewPageStore
+): WsiPatientClinicalData | null | undefined {
+    const {
+        cohortStudyIds,
+        clinicalAttributes,
+        clinicalDataPatient,
+        clinicalDataForSamples,
+    } = store;
+    if (!cohortStudyIds.isComplete) {
+        return cohortStudyIds.isError ? undefined : null;
+    }
+    // The page's attributes are merged across the cohort's studies, keeping
+    // the first study's definition of each; only a cohort of the patient's
+    // own study is guaranteed to hold that study's priorities and names.
+    const ownStudyOnly = cohortStudyIds.result.every(
+        studyId => studyId === store.studyId
+    );
+    if (
+        store.pageMode !== 'patient' ||
+        !ownStudyOnly ||
+        clinicalAttributes.isError ||
+        clinicalDataPatient.isError ||
+        clinicalDataForSamples.isError
+    ) {
+        return undefined;
+    }
+    if (
+        !clinicalAttributes.isComplete ||
+        !clinicalDataPatient.isComplete ||
+        !clinicalDataForSamples.isComplete
+    ) {
+        return null;
+    }
+    return {
+        attributes: clinicalAttributes.result,
+        patientData: clinicalDataPatient.result,
+        sampleData: clinicalDataForSamples.result,
+    };
+}
 
 export function patientViewTabs(
     pageInstance: PatientViewPageInner,
@@ -634,6 +683,13 @@ export function tabs(
                     clinicalEvents={
                         pageComponent.patientViewPageStore.clinicalEvents.result
                     }
+                    hidden={
+                        urlWrapper.activeTabId !==
+                        PatientViewPageTabs.WSIHESlides
+                    }
+                    clinicalData={wsiPatientClinicalData(
+                        pageComponent.patientViewPageStore
+                    )}
                 />
             </MSKTab>
         );

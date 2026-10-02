@@ -12,7 +12,7 @@ import { getWsiOncoKbClient } from 'shared/api/wsiOncoKbClientInstance';
 import LoadingIndicator from 'shared/components/loadingIndicator/LoadingIndicator';
 import { getCivicCNAVariants } from 'shared/lib/CivicUtils';
 import { getSimplifiedMutationType } from 'shared/lib/oql/AccessorsForOqlFilter';
-import { useWsiClinicalRows } from './wsiClinicalRows';
+import { useWsiClinicalRows, WsiPatientClinicalData } from './wsiClinicalRows';
 
 const WSI_OSD_PREFIX_URL = '/reactapp/osd-images/';
 
@@ -99,13 +99,23 @@ export type AppWsiViewerProps = Omit<
 > & {
     /** Signed-in user name, when the page knows it. */
     userName?: string;
+    /**
+     * The patient's clinical data for the sidebar, when the page has loaded
+     * it (`null` while loading); fetched by the viewer when unset.
+     */
+    clinicalData?: WsiPatientClinicalData | null;
 };
 
 /** The package viewer configured for this portal, loaded lazily. */
-export function AppWsiViewer({ userName, ...viewerProps }: AppWsiViewerProps) {
+export function AppWsiViewer({
+    userName,
+    clinicalData,
+    ...viewerProps
+}: AppWsiViewerProps) {
     const clinicalRows = useWsiClinicalRows(
         viewerProps.studyId,
-        viewerProps.patientId
+        viewerProps.patientId,
+        clinicalData
     );
     return (
         <React.Suspense

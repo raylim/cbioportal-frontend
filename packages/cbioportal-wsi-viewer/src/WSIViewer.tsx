@@ -183,6 +183,11 @@ interface Props {
      */
     metadataCollapsed?: boolean;
     onMetadataCollapsedChange?: (collapsed: boolean) => void;
+    /**
+     * The host hides the viewer without unmounting it (e.g. an inactive
+     * tab). Background work such as token refresh pauses meanwhile.
+     */
+    hidden?: boolean;
 }
 
 function DefaultLoadingIndicator() {
@@ -620,8 +625,22 @@ export default class WSIViewer extends React.Component<Props, {}> {
         this.unsubscribeUrlState = getWsiViewerRuntime().urlState.subscribe(
             this.handleHashChange
         );
+        if (typeof document !== 'undefined') {
+            document.addEventListener(
+                'visibilitychange',
+                this.updateControllerVisibility
+            );
+        }
+        this.updateControllerVisibility();
         void this.controller.loadHierarchy();
     }
+
+    private readonly updateControllerVisibility = () => {
+        const pageHidden =
+            typeof document !== 'undefined' &&
+            document.visibilityState === 'hidden';
+        this.controller.setVisible(!this.props.hidden && !pageHidden);
+    };
 
     private async selectSlideFromHash(): Promise<void> {
         const hashState = getWsiViewerRuntime().urlState.read();
@@ -679,6 +698,10 @@ export default class WSIViewer extends React.Component<Props, {}> {
         const timepointFilterChanged =
             prev.initialTimepointDays !== this.props.initialTimepointDays;
 
+        if (prev.hidden !== this.props.hidden) {
+            this.updateControllerVisibility();
+        }
+
         if (timepointFilterChanged) {
             this.timepointDays = this.props.initialTimepointDays;
         }
@@ -728,6 +751,12 @@ export default class WSIViewer extends React.Component<Props, {}> {
     componentWillUnmount() {
         this.unsubscribeUrlState?.();
         this.unsubscribeUrlState = null;
+        if (typeof document !== 'undefined') {
+            document.removeEventListener(
+                'visibilitychange',
+                this.updateControllerVisibility
+            );
+        }
         this.cancelPendingSlideSelection();
         action(() => {
             this.hierarchy = null; // stops the prefetchSlideMetadata loop
