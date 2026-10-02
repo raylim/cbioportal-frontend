@@ -10,6 +10,8 @@ const {
 const OSD_LIBRARY = `console.error(${JSON.stringify(
     `${OPENSEADRAGON_MARKER} options is required`
 )});`;
+// OpenSeadragon's version object, which the one-copy check counts.
+const OSD_VERSION = 'c.version={versionStr:"6.0.2",major:6};';
 // The webpack runtime names async chunks in the initial bundle.
 const RUNTIME_CHUNK_NAMES = 'n.u=e=>({546:"wsi-openseadragon"})[e]+".js";';
 
@@ -139,10 +141,8 @@ describe('assertWsiOsdBundle', () => {
             writeBundleFixture(distDir, {
                 'reactapp/common.bundle.js': 'window.__common__ = true;',
                 'reactapp/main.app.js': 'window.__main__ = true;',
-                'reactapp/wsi-openseadragon.123.js':
-                    'c.version={versionStr:"6.0.2",major:6};',
-                'reactapp/wsi-annotorious.456.js':
-                    'c.version={versionStr:"6.0.2",major:6};',
+                'reactapp/wsi-openseadragon.123.js': OSD_LIBRARY + OSD_VERSION,
+                'reactapp/wsi-annotorious.456.js': OSD_VERSION,
             });
 
             expect(() => assertWsiOsdBundle({ distDir })).toThrow(
@@ -159,8 +159,7 @@ describe('assertWsiOsdBundle', () => {
             writeBundleFixture(distDir, {
                 'reactapp/common.bundle.js': 'window.__common__ = true;',
                 'reactapp/main.app.js': 'window.__main__ = true;',
-                'reactapp/wsi-openseadragon.123.js':
-                    'c.version={versionStr:"6.0.2",major:6};',
+                'reactapp/wsi-openseadragon.123.js': OSD_LIBRARY + OSD_VERSION,
                 'reactapp/wsi-annotorious.456.js':
                     'e.className="a9s-annotationlayer";',
             });
@@ -182,7 +181,7 @@ describe('assertWsiOsdBundle', () => {
                 'reactapp/common.bundle.js':
                     'e.className="a9s-annotationlayer";',
                 'reactapp/main.app.js': 'window.__main__ = true;',
-                'reactapp/wsi-openseadragon.123.js': 'window.__osd__ = true;',
+                'reactapp/wsi-openseadragon.123.js': OSD_LIBRARY,
             });
 
             expect(() => assertWsiOsdBundle({ distDir })).toThrow(
