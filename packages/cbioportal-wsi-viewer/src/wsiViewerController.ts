@@ -19,8 +19,10 @@ import {
     offsetNavigatorElement,
     OSD_SPINNER_FALLBACK_MS,
     OSD_TILE_RETRY_MAX,
+    isOsdViewerIdle,
+    isStaleOsdTileEvent,
     promoteOsdImageLoaderLimit,
-    registerOsdLifecycleHandlers,
+    reopenOsdViewer,
     restoreOrHomeViewport,
     scheduleOsdSpinnerFallback,
     scheduleOsdSpinnerHide,
@@ -123,10 +125,18 @@ export interface WsiViewerControllerHost {
 
 export class WsiViewerController {
     private static readonly METADATA_PREFETCH_CONCURRENCY = 3;
-    private static readonly METADATA_PREFETCH_LIMIT = 12;
+    private static readonly METADATA_PREFETCH_LIMIT = 3;
     private static readonly METADATA_PREFETCH_BATCH_DELAY_MS = 150;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     private osdViewer: any = null;
+    /** Whether `osdViewer` shows, or is opening, the current mount's slide. */
+    private osdSlideMounted = false;
+    /** Handlers bound to `osdViewer` for the current slide only. */
+    private osdSlideHandlers: Array<{
+        eventName: string;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        handler: (event: any) => void;
+    }> = [];
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     private osdMouseTracker: any = null;
     private thumbnailPreviewAbortController: AbortController | null = null;
@@ -140,6 +150,14 @@ export class WsiViewerController {
     private osdOpenTimer: ReturnType<typeof setTimeout> | null = null;
     private selectionTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
     private wsiTokenRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+    /** The next access-token refresh, kept while the viewer is hidden. */
+    private wsiTokenRefresh: {
+        studyId: string;
+        imageId: string;
+        seq: number;
+        refreshAt: number;
+    } | null = null;
+    private viewerVisible = true;
     private activeWsiSourceUrl: string | null = null;
     private tileFailureCount = 0;
     private terminalTileFailures = new Set<string>();
@@ -190,6 +208,12 @@ export class WsiViewerController {
 
     forceResize() {
         this.osdViewer?.forceResize?.();
+    }
+
+    /** The viewer, while it holds the current mount's slide. */
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    private get mountedViewer(): any {
+        return this.osdSlideMounted ? this.osdViewer : null;
     }
 
     dispose() {
@@ -456,12 +480,72 @@ export class WsiViewerController {
         this.writeHashTimer = scheduleHashStateWrite({
             timer: this.writeHashTimer,
             selectedSlideId: this.host.getSelectedSlide()?.image_id,
-            osdViewer: this.osdViewer,
+            osdViewer: this.mountedViewer,
             urlState: getWsiViewerRuntime().urlState,
         });
     }
 
+    /**
+     * Binds a handler to the viewer for the current slide; it is removed when
+     * the slide is unmounted, so the reused viewer does not collect handlers.
+     */
+    private addSlideHandler(
+        eventName: string,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        handler: (event: any) => void,
+        once = false
+    ): void {
+        const viewer = this.osdViewer;
+        if (!viewer) return;
+        const tileEvent = eventName.startsWith('tile-');
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const registered = (event: any) => {
+            // Ignore tiles of an image this viewer no longer shows; a
+            // one-time handler stays bound for the current slide's tile.
+            if (tileEvent && isStaleOsdTileEvent(viewer, event)) return;
+            if (once) this.removeSlideHandler(eventName, registered);
+            handler(event);
+        };
+        if (viewer.addHandler(eventName, registered) === false) return;
+        this.osdSlideHandlers.push({ eventName, handler: registered });
+    }
+
+    private removeSlideHandler(
+        eventName: string,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        handler: (event: any) => void
+    ): void {
+        this.osdViewer?.removeHandler?.(eventName, handler);
+        this.osdSlideHandlers = this.osdSlideHandlers.filter(
+            entry => entry.handler !== handler
+        );
+    }
+
+    /**
+     * Unmounts the current slide but keeps the viewer for the next one: its
+     * per-slide handlers are removed and its image closed, so the next
+     * slide's thumbnail preview shows through until its tiles draw.
+     */
+    private closeViewerSlide() {
+        const viewer = this.osdViewer;
+        this.osdSlideHandlers.forEach(({ eventName, handler }) =>
+            viewer?.removeHandler?.(eventName, handler)
+        );
+        this.osdSlideHandlers = [];
+        this.osdSlideMounted = false;
+        if (viewer) {
+            try {
+                viewer.close?.();
+            } catch (_) {
+                // ignore
+            }
+        }
+        this.host.clearCursorPos();
+    }
+
     private destroyViewer() {
+        this.osdSlideHandlers = [];
+        this.osdSlideMounted = false;
         this.host.onViewerDestroyed?.();
         destroyOsdHandles({
             osdMouseTracker: this.osdMouseTracker,
@@ -585,14 +669,19 @@ export class WsiViewerController {
         }
         this.cancelWsiTokenRefresh();
         this.activeWsiSourceUrl = null;
-        this.destroyViewer();
+        this.closeViewerSlide();
     }
 
-    private cancelWsiTokenRefresh(): void {
+    private clearWsiTokenRefreshTimer(): void {
         if (this.wsiTokenRefreshTimer !== null) {
             clearTimeout(this.wsiTokenRefreshTimer);
             this.wsiTokenRefreshTimer = null;
         }
+    }
+
+    private cancelWsiTokenRefresh(): void {
+        this.clearWsiTokenRefreshTimer();
+        this.wsiTokenRefresh = null;
     }
 
     private scheduleWsiTokenRefresh(
@@ -601,12 +690,59 @@ export class WsiViewerController {
         seq: number,
         expiresAt: number
     ): void {
+        this.setWsiTokenRefresh(studyId, imageId, seq, expiresAt - 30_000);
+    }
+
+    private setWsiTokenRefresh(
+        studyId: string,
+        imageId: string,
+        seq: number,
+        refreshAt: number
+    ): void {
         this.cancelWsiTokenRefresh();
-        const delay = Math.max(1000, expiresAt - Date.now() - 30_000);
+        this.wsiTokenRefresh = { studyId, imageId, seq, refreshAt };
+        this.startWsiTokenRefreshTimer();
+    }
+
+    // Hidden viewers load no tiles, so their token is refreshed when shown.
+    private startWsiTokenRefreshTimer(): void {
+        const refresh = this.wsiTokenRefresh;
+        if (!refresh || !this.viewerVisible) return;
+        this.clearWsiTokenRefreshTimer();
+        const delay = Math.max(1000, refresh.refreshAt - Date.now());
         this.wsiTokenRefreshTimer = setTimeout(() => {
             this.wsiTokenRefreshTimer = null;
-            void this.refreshWsiToken(studyId, imageId, seq);
+            this.wsiTokenRefresh = null;
+            void this.refreshWsiToken(
+                refresh.studyId,
+                refresh.imageId,
+                refresh.seq
+            );
         }, delay);
+    }
+
+    /**
+     * Whether the viewer is on screen. Token refresh pauses while it is
+     * hidden and, once shown, runs at once if the refresh is due.
+     */
+    setVisible(visible: boolean): void {
+        if (visible === this.viewerVisible) return;
+        this.viewerVisible = visible;
+        if (!visible) {
+            this.clearWsiTokenRefreshTimer();
+            return;
+        }
+        const refresh = this.wsiTokenRefresh;
+        if (refresh && refresh.refreshAt <= Date.now()) {
+            this.wsiTokenRefresh = null;
+            void this.refreshWsiToken(
+                refresh.studyId,
+                refresh.imageId,
+                refresh.seq
+            );
+            return;
+        }
+        this.startWsiTokenRefreshTimer();
     }
 
     private async refreshWsiToken(
@@ -637,10 +773,7 @@ export class WsiViewerController {
             );
         } catch (_) {
             if (seq !== this.mountSeq) return;
-            this.wsiTokenRefreshTimer = setTimeout(() => {
-                this.wsiTokenRefreshTimer = null;
-                void this.refreshWsiToken(studyId, imageId, seq);
-            }, 10_000);
+            this.setWsiTokenRefresh(studyId, imageId, seq, Date.now() + 10_000);
         }
     }
 
@@ -969,7 +1102,7 @@ export class WsiViewerController {
             this.host.getSelectedSlide()?.image_id === slide.image_id &&
             this.host.getSelectedSample()?.sample_id === sample.sample_id &&
             this.host.getSelectedMeta() != null &&
-            this.osdViewer != null
+            this.mountedViewer != null
         ) {
             return;
         }
@@ -1020,10 +1153,10 @@ export class WsiViewerController {
 
     restoreCurrentViewportFromHash(): void {
         const slide = this.host.getSelectedSlide();
-        if (!slide || !this.osdViewer || !this.openSeadragon) return;
+        if (!slide || !this.mountedViewer || !this.openSeadragon) return;
 
         restoreOrHomeViewport({
-            osdViewer: this.osdViewer,
+            osdViewer: this.mountedViewer,
             hashState: getWsiViewerRuntime().urlState.read(),
             selectedSlideId: slide.image_id,
             openSeadragon: this.openSeadragon,
@@ -1060,7 +1193,7 @@ export class WsiViewerController {
     }
 
     goToCoordinates() {
-        if (!this.osdViewer) {
+        if (!this.mountedViewer) {
             return;
         }
         const coords = this.host.getCoordInputs();
@@ -1085,7 +1218,9 @@ export class WsiViewerController {
 
     downloadView() {
         const canvas: HTMLCanvasElement | null =
-            this.osdViewer?.drawer?.canvas ?? this.osdViewer?.canvas ?? null;
+            this.mountedViewer?.drawer?.canvas ??
+            this.mountedViewer?.canvas ??
+            null;
         if (!canvas) return;
 
         try {
@@ -1109,7 +1244,7 @@ export class WsiViewerController {
         const { urlState } = getWsiViewerRuntime();
         const state = buildWsiViewState({
             selectedSlideId: this.host.getSelectedSlide()?.image_id,
-            osdViewer: this.osdViewer,
+            osdViewer: this.mountedViewer,
         });
         const url = state ? urlState.write(state) : urlState.currentUrl();
         await copyCurrentUrlToClipboard(url);
@@ -1239,21 +1374,21 @@ export class WsiViewerController {
         } catch (_) {
             // viewport not ready
         }
-        this.osdViewer.addHandler('animation-finish', () => {
+        this.addSlideHandler('animation-finish', () => {
             this.writeHashState();
         });
         this.tileFailureCount = 0;
         this.terminalTileFailures.clear();
         const scheduleNavigatorAfterFullLoad = (event: any) => {
             if (event?.fullyLoaded) {
-                this.osdViewer?.removeHandler?.(
+                this.removeSlideHandler(
                     'fully-loaded-change',
                     scheduleNavigatorAfterFullLoad
                 );
                 this.scheduleNavigatorIfReady(seq);
             }
         };
-        this.osdViewer.addHandler(
+        this.addSlideHandler(
             'fully-loaded-change',
             scheduleNavigatorAfterFullLoad
         );
@@ -1323,10 +1458,7 @@ export class WsiViewerController {
         const drawerType = this.osdViewer.drawer?.getType?.();
         if (drawerType !== 'webgl') {
             try {
-                this.osdViewer.addOnceHandler(
-                    'tile-drawn',
-                    markNativeTileDrawn
-                );
+                this.addSlideHandler('tile-drawn', markNativeTileDrawn, true);
             } catch (_) {
                 // WebGL renderers rely on the tile-loaded handler below.
             }
@@ -1334,7 +1466,7 @@ export class WsiViewerController {
         // A successful load is the reliable readiness signal across canvas
         // and WebGL renderers. Keep the thumbnail until tile-drawn when that
         // event is available, so the transition never flashes an empty view.
-        this.osdViewer.addOnceHandler('tile-loaded', markNativeTileReady);
+        this.addSlideHandler('tile-loaded', markNativeTileReady, true);
         this.host.onViewerOpened?.(this.osdViewer, this.openSeadragon, slide);
     }
 
@@ -1475,7 +1607,12 @@ export class WsiViewerController {
         const containerEl = this.host.getViewerContainerElement();
         if (!containerEl) return;
 
-        this.destroyViewer();
+        // A viewer built in this container opens later slides itself; one
+        // left in a container that has since been replaced is rebuilt.
+        if (this.osdViewer && this.osdViewer.element !== containerEl) {
+            this.destroyViewer();
+        }
+        let reopenSlide: (() => void) | null = null;
         try {
             const openSeadragon = await openSeadragonPromise;
             if (!studyId || !accessPromise) {
@@ -1484,23 +1621,46 @@ export class WsiViewerController {
             const access = await accessPromise;
             if (seq !== this.mountSeq) return;
             this.activeWsiSourceUrl = access.sourceUrl;
-            this.osdViewer = openSeadragon(
-                buildOsdOptions({
-                    element: containerEl,
-                    navId: this.navId,
-                    meta,
-                    baseUrl: this.host.getTileServerBase(),
-                    accessToken: access.accessToken,
-                    sourceUrl: access.sourceUrl,
-                    prefixUrl: getWsiViewerRuntime().osdPrefixUrl,
-                })
-            );
-            // OpenSeadragon replaces the custom home button title with its
-            // generic "Go home" label. Keep the viewer's public keyboard and
-            // screen-reader wording stable after OSD has wired the button.
-            const homeButton = document.getElementById(`${this.navId}-home`);
-            homeButton?.setAttribute('title', 'Fit to view');
-            homeButton?.setAttribute('aria-label', 'Fit to view');
+            // Reuse needs an idle viewer: tile requests of the previous slide
+            // still in flight would hold loader slots ahead of this slide's
+            // cold open. A busy viewer is rebuilt, as before.
+            const reusableViewer =
+                this.osdViewer?.element === containerEl &&
+                isOsdViewerIdle(this.osdViewer)
+                    ? this.osdViewer
+                    : null;
+            if (reusableViewer) {
+                reopenSlide = () =>
+                    reopenOsdViewer({
+                        osdViewer: reusableViewer,
+                        meta,
+                        baseUrl: this.host.getTileServerBase(),
+                        accessToken: access.accessToken,
+                        sourceUrl: access.sourceUrl,
+                    });
+            } else {
+                this.destroyViewer();
+                this.osdViewer = openSeadragon(
+                    buildOsdOptions({
+                        element: containerEl,
+                        navId: this.navId,
+                        meta,
+                        baseUrl: this.host.getTileServerBase(),
+                        accessToken: access.accessToken,
+                        sourceUrl: access.sourceUrl,
+                        prefixUrl: getWsiViewerRuntime().osdPrefixUrl,
+                    })
+                );
+                // OpenSeadragon replaces the custom home button title with its
+                // generic "Go home" label. Keep the viewer's public keyboard and
+                // screen-reader wording stable after OSD has wired the button.
+                const homeButton = document.getElementById(
+                    `${this.navId}-home`
+                );
+                homeButton?.setAttribute('title', 'Fit to view');
+                homeButton?.setAttribute('aria-label', 'Fit to view');
+            }
+            this.osdSlideMounted = true;
             this.scheduleWsiTokenRefresh(
                 studyId,
                 slide.image_id,
@@ -1553,11 +1713,25 @@ export class WsiViewerController {
         }, WSI_OSD_OPEN_TIMEOUT_MS);
 
         offsetNavigatorElement(this.osdViewer);
-        registerOsdLifecycleHandlers({
-            osdViewer: this.osdViewer,
-            onOpen: () => this.handleOsdOpen(seq, slide, restoreHashViewport),
-            onOpenFailed: e => this.handleOsdOpenFailed(seq, e),
-            onTileLoadFailed: e => this.handleOsdTileLoadFailed(seq, e),
-        });
+        this.addSlideHandler(
+            'open',
+            () => this.handleOsdOpen(seq, slide, restoreHashViewport),
+            true
+        );
+        this.addSlideHandler(
+            'open-failed',
+            e => this.handleOsdOpenFailed(seq, e),
+            true
+        );
+        this.addSlideHandler('tile-load-failed', e =>
+            this.handleOsdTileLoadFailed(seq, e)
+        );
+        if (reopenSlide) {
+            try {
+                reopenSlide();
+            } catch (err) {
+                this.handleOsdOpenFailed(seq, err);
+            }
+        }
     }
 }
