@@ -27,15 +27,24 @@ export function isPortalWsiAuthEnabled(): boolean {
     );
 }
 
+/** A boolean frontend property, which may arrive as a string. */
+function isEnabled(value: unknown): boolean {
+    return value === true || value === 'true';
+}
+
 /** Viewer services from the portal configuration, installed at startup. */
 export function buildWsiViewerConfig(): WsiViewerConfig {
-    const annotationApiUrl = getServerConfig().msk_wsi_annotation_api_url?.trim();
+    const serverConfig = getServerConfig();
+    const annotationApiUrl = serverConfig.msk_wsi_annotation_api_url?.trim();
     return {
         buildApiUrl: (path: string) => buildCBioPortalAPIUrl(path),
         authEnabled: isPortalWsiAuthEnabled(),
         osdPrefixUrl: WSI_OSD_PREFIX_URL,
         annotations: annotationApiUrl
             ? { apiUrl: annotationApiUrl.replace(/\/+$/, '') }
+            : undefined,
+        agent: isEnabled(serverConfig.msk_wsi_agent_enabled)
+            ? { enabled: true }
             : undefined,
     };
 }

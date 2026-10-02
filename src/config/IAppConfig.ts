@@ -162,6 +162,7 @@ export interface IServerConfig {
     /** Authenticates WSI users on portals without SAML. */
     msk_wsi_authentication_enabled?: boolean;
     msk_wsi_annotation_api_url: string | null;
+    msk_wsi_agent_enabled: boolean;
     query_product_limit: number;
     clinical_attribute_product_limit: number;
     dat_method: string;
