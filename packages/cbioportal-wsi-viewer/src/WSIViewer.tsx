@@ -628,6 +628,22 @@ export default class WSIViewer extends React.Component<Props, {}> {
             clearWsiThumbnailFetchCache();
         }
 
+        if (
+            authScopeChanged ||
+            prev.studyId !== this.props.studyId ||
+            prev.annotationApiUrl !== this.props.annotationApiUrl
+        ) {
+            // A hierarchy reload begins the slide again, so only drop the
+            // previous context's annotations here.
+            if (requiresHierarchyReload) {
+                this.annotationController.invalidatePendingRequests();
+            }
+            this.annotationController.setContext(
+                this.props.annotationApiUrl,
+                this.props.studyId
+            );
+        }
+
         if (pathologyFilterChanged) {
             this.linkoutScopeActive = !!this.props.pathologyFilter;
             this.matchFilter =

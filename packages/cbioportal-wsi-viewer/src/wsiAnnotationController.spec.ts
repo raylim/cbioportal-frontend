@@ -505,4 +505,234 @@ describe('WsiAnnotationController', () => {
         ).toEqual(['default-1']);
         expect(controller.visibleAnnotationCount).toBe(1);
     });
+
+    function attachDrawingController() {
+        const annotator = {
+            on: jest.fn(),
+            setVisible: jest.fn(),
+            setAnnotations: jest.fn(),
+            setStyle: jest.fn(),
+            setDrawingEnabled: jest.fn(),
+            cancelDrawing: jest.fn(),
+        };
+        (createOSDAnnotator as jest.Mock).mockReturnValue(annotator);
+        const controller = new WsiAnnotationController(
+            'https://tiles.example',
+            'study1',
+            token
+        );
+        (controller as any).slideId = 'slide1';
+        const viewerElement = document.createElement('div');
+        controller.attachViewer({ element: viewerElement }, {}, 'slide1');
+        jest.spyOn(
+            controller as any,
+            'imagePoint'
+        ).mockImplementation((x: number, y: number) => ({ x, y }));
+        const pointer = (type: string, x: number, y: number) =>
+            viewerElement.dispatchEvent(
+                new MouseEvent(type, {
+                    bubbles: true,
+                    button: 0,
+                    clientX: x,
+                    clientY: y,
+                })
+            );
+        return { controller, pointer };
+    }
+
+    it('keeps a pending save when a conflicting update reloads the slide', async () => {
+        let resolveCreate: (response: Response) => void = () => undefined;
+        let createSignal: AbortSignal | undefined;
+        jest.spyOn(global, 'fetch').mockImplementation(
+            (_url: RequestInfo | URL, init?: RequestInit) => {
+                if (init?.method === 'POST') {
+                    createSignal = init.signal || undefined;
+                    return new Promise<Response>(resolve => {
+                        resolveCreate = resolve;
+                    });
+                }
+                if (init?.method === 'PUT') {
+                    return Promise.resolve({
+                        ok: false,
+                        status: 409,
+                    } as Response);
+                }
+                return Promise.resolve({
+                    ok: true,
+                    json: async () => [apiAnnotation('a1', 2)],
+                } as Response);
+            }
+        );
+        const controller = new WsiAnnotationController(
+            'https://tiles.example',
+            'study1',
+            token
+        );
+        controller.beginSlide('slide1');
+        await new Promise(resolve => setTimeout(resolve, 0));
+
+        const create = (controller as any).createAnnotation({
+            id: 'client-1',
+            body: [],
+            target: {
+                source: 'slide1',
+                selector: {
+                    type: 'FragmentSelector',
+                    value: 'xywh=pixel:1,2,3,4',
+                },
+            },
+        });
+        await new Promise(resolve => setTimeout(resolve, 0));
+        await controller.renameAnnotation('a1', 'renamed');
+        expect(createSignal?.aborted).toBe(false);
+
+        resolveCreate({
+            ok: true,
+            json: async () => apiAnnotation('saved'),
+        } as Response);
+        await create;
+
+        expect(controller.annotations.map(item => item.id)).toEqual([
+            'a1',
+            'saved',
+        ]);
+        expect(controller.error).toBe(
+            'Annotation changed elsewhere; reloaded latest data.'
+        );
+    });
+
+    it('reloads the current slide for a new study and drops the old one', async () => {
+        jest.spyOn(global, 'fetch').mockImplementation(
+            (url: RequestInfo | URL) =>
+                Promise.resolve({
+                    ok: true,
+                    json: async () =>
+                        String(url).includes('study_id=study2')
+                            ? [apiAnnotation('b1')]
+                            : [apiAnnotation('a1')],
+                } as Response)
+        );
+        const controller = new WsiAnnotationController(
+            'https://tiles.example',
+            'study1',
+            token
+        );
+        controller.beginSlide('slide1');
+        await new Promise(resolve => setTimeout(resolve, 0));
+        expect(controller.annotations.map(item => item.id)).toEqual(['a1']);
+
+        controller.setContext('https://tiles.example', 'study2');
+        expect(controller.annotations).toEqual([]);
+        expect(controller.loading).toBe(true);
+        await new Promise(resolve => setTimeout(resolve, 0));
+
+        expect(controller.annotations.map(item => item.id)).toEqual(['b1']);
+        expect(
+            (global.fetch as jest.Mock).mock.calls[1][0] as string
+        ).toContain('study_id=study2');
+    });
+
+    it('clears the previous annotations when pending requests are invalidated', async () => {
+        jest.spyOn(global, 'fetch').mockResolvedValue({
+            ok: true,
+            json: async () => [apiAnnotation('a1')],
+        } as Response);
+        const controller = new WsiAnnotationController(
+            'https://tiles.example',
+            'study1',
+            token
+        );
+        controller.beginSlide('slide1');
+        await new Promise(resolve => setTimeout(resolve, 0));
+
+        controller.invalidatePendingRequests();
+
+        expect(controller.annotations).toEqual([]);
+        expect(controller.loading).toBe(false);
+    });
+
+    it('releases the drawing tool before the save completes', () => {
+        jest.spyOn(global, 'fetch').mockReturnValue(
+            new Promise<Response>(() => undefined)
+        );
+        const { controller, pointer } = attachDrawingController();
+
+        controller.setTool('rectangle');
+        pointer('pointerdown', 10, 20);
+        pointer('pointerup', 60, 80);
+
+        expect(controller.activeTool).toBeNull();
+    });
+
+    it('closes a polygon by double-click without duplicating the last vertex', async () => {
+        jest.spyOn(global, 'fetch').mockResolvedValue({
+            ok: true,
+            json: async () => apiAnnotation('saved'),
+        } as Response);
+        const { controller, pointer } = attachDrawingController();
+
+        controller.setTool('polygon');
+        for (const [x, y] of [
+            [100, 100],
+            [160, 100],
+            [160, 160],
+            [160, 160],
+        ]) {
+            pointer('pointerdown', x, y);
+            pointer('pointerup', x, y);
+        }
+        pointer('dblclick', 160, 160);
+        await new Promise(resolve => setTimeout(resolve, 0));
+
+        const request = JSON.parse(
+            (global.fetch as jest.Mock).mock.calls[0][1].body
+        );
+        expect(request.target.selector.value).toContain(
+            'points="100,100 160,100 160,160"'
+        );
+    });
+
+    it('keeps the polygon preview when a click turns into a drag', () => {
+        const { controller, pointer } = attachDrawingController();
+
+        controller.setTool('polygon');
+        pointer('pointerdown', 100, 100);
+        pointer('pointerup', 100, 100);
+        pointer('pointerdown', 160, 100);
+        pointer('pointerup', 200, 160);
+
+        expect(controller.customDrawPreview).toMatchObject({
+            tool: 'polygon',
+            points: [{ x: 100, y: 100 }],
+        });
+    });
+
+    it('only offers removal for unused user-added colors', () => {
+        const controller = new WsiAnnotationController(
+            'https://tiles.example',
+            'study1',
+            token
+        );
+        controller.addNamedColor('Tumor', '#ef4444');
+        controller.addNamedColor('Stroma', '#22c55e');
+        (controller as any).annotations = [
+            (controller as any).fromApi(
+                apiAnnotation('a1', 1, 'a1', 'Default', 'Stroma|#22c55e'),
+                'slide1'
+            ),
+            (controller as any).fromApi(
+                apiAnnotation('a2', 1, 'a2', 'Default', 'Necrosis|#f97316'),
+                'slide1'
+            ),
+        ];
+
+        expect(controller.canRemoveNamedColor('Default', '#3b82f6')).toBe(
+            false
+        );
+        expect(controller.canRemoveNamedColor('Tumor', '#ef4444')).toBe(true);
+        expect(controller.canRemoveNamedColor('Stroma', '#22c55e')).toBe(false);
+        expect(controller.canRemoveNamedColor('Necrosis', '#f97316')).toBe(
+            false
+        );
+    });
 });
