@@ -6,6 +6,7 @@ import { assert } from 'chai';
 import { autorun, action as mobxAction } from 'mobx';
 import TestRenderer, { act } from 'react-test-renderer';
 import WSIViewer from './WSIViewer';
+import { WsiViewerController } from './wsiViewerController';
 import { readWsiHashState } from './wsiViewStateUtils';
 import * as wsiMetaUtils from './wsiMetaUtils';
 import * as wsiSlideUtils from './wsiSlideUtils';
@@ -59,6 +60,25 @@ function configureTestRuntime(overrides: Partial<WsiViewerConfig> = {}) {
 
 configureTestRuntime();
 beforeEach(() => configureTestRuntime());
+
+// Controllers that started a hierarchy load, a mount or sample enrichment are
+// disposed after each test, so their background requests and retries cannot
+// reach the fetch mocks of later tests.
+const activeControllers = new Set<WsiViewerController>();
+(['loadHierarchy', 'mountOSD', 'scheduleSampleEnrichment'] as const).forEach(
+    method => {
+        const proto = WsiViewerController.prototype as any;
+        const original = proto[method];
+        proto[method] = function(this: WsiViewerController, ...args: any[]) {
+            activeControllers.add(this);
+            return original.apply(this, args);
+        };
+    }
+);
+afterEach(() => {
+    activeControllers.forEach(controller => controller.dispose());
+    activeControllers.clear();
+});
 
 const mockLoadOpenSeadragon = jest.fn();
 const mockFetchPatientHierarchy = jest.fn();
@@ -1632,6 +1652,7 @@ describe('WSIViewer — pathology filter updates', () => {
             tile_size: 256,
         };
         (controller as any).osdViewer = { destroy: jest.fn() };
+        (controller as any).osdSlideMounted = true;
 
         const beginSpy = jest.spyOn(inst as any, 'beginSlideSelection');
         const mountSpy = jest
@@ -2333,7 +2354,7 @@ describe('WSIViewer — loadHierarchy', () => {
         expect((global as any).fetch).toHaveBeenNthCalledWith(
             1,
             'https://tiles.example.com/patient/P-XYZ?studyId=study',
-            { cache: 'no-store', credentials: 'include' }
+            { credentials: 'include' }
         );
         expect((global as any).fetch).toHaveBeenNthCalledWith(
             2,
@@ -2726,11 +2747,9 @@ describe('WSIViewer — prefetchSlideMetadata cancellation', () => {
         await Promise.resolve();
         expect(order).toEqual(['AAA', 'BBB', 'CCC']);
 
-        await new Promise(resolve => setTimeout(resolve, 180));
-        expect(order).toEqual(['AAA', 'BBB', 'CCC', 'DDD']);
-
-        deferred.get('DDD')!.resolve();
+        // The prefetch limit is three slides, so DDD is never fetched.
         await prefetchPromise;
+        expect(order).toEqual(['AAA', 'BBB', 'CCC']);
     });
 
     it('prefetches only the selected sample, active stain first', async () => {
@@ -2863,11 +2882,9 @@ describe('WSIViewer — prefetchSlideMetadata cancellation', () => {
         await Promise.resolve();
         await Promise.resolve();
 
-        await new Promise(resolve => setTimeout(resolve, 180));
-        expect(order).toEqual(['AAA', 'BBB', 'CCC', 'DDD']);
-
-        deferred.get('DDD')!.resolve();
+        // The prefetch limit is three slides, so DDD is never fetched.
         await prefetchPromise;
+        expect(order).toEqual(['AAA', 'BBB', 'CCC']);
     });
 });
 
@@ -3384,6 +3401,7 @@ describe('WSIViewer — goToCoordinates', () => {
             panTo: jest.fn(),
         };
         controllerOf(inst).osdViewer = { viewport: mockViewport };
+        controllerOf(inst).osdSlideMounted = true;
         controllerOf(inst).openSeadragon = OSD;
 
         (inst as any).goToCoordinates();
@@ -3407,6 +3425,7 @@ describe('WSIViewer — goToCoordinates', () => {
             panTo: jest.fn(),
         };
         controllerOf(inst).osdViewer = { viewport: mockViewport };
+        controllerOf(inst).osdSlideMounted = true;
 
         (inst as any).goToCoordinates();
 
@@ -3423,6 +3442,7 @@ describe('WSIViewer — goToCoordinates', () => {
             panTo: jest.fn(),
         };
         controllerOf(inst).osdViewer = { viewport: mockViewport };
+        controllerOf(inst).osdSlideMounted = true;
 
         (inst as any).goToCoordinates();
 
@@ -3480,6 +3500,7 @@ describe('WSIViewer — URL hash state', () => {
             clipboard: { writeText },
         });
 
+        controllerOf(inst).osdSlideMounted = true;
         controllerOf(inst).osdViewer = {
             viewport: {
                 getCenter: jest.fn().mockReturnValue({ x: 100, y: 200 }),
@@ -3583,19 +3604,21 @@ describe('WSIViewer — open handler (mountOSD integration)', () => {
             goHome: jest.fn(),
         };
 
-        // Fresh viewer mock that captures the 'open' once-handler for each test
+        // Fresh viewer mock that captures the slide's handlers for each test.
+        // The controller binds one-time handlers through addHandler and
+        // removes them itself, so the viewer can be reused across slides.
         mockViewer = {
             destroy: jest.fn(),
             viewport: mockViewport,
-            addOnceHandler: jest.fn((event: string, cb: () => void) => {
+            addOnceHandler: jest.fn(),
+            addHandler: jest.fn(),
+            removeHandler: jest.fn(),
+        };
+        mockViewer.addHandler.mockImplementation(
+            (event: string, cb: (event?: any) => void) => {
                 if (event === 'open') capturedOpenCb = cb;
                 if (event === 'tile-loaded') capturedTileLoadedCb = cb;
                 if (event === 'tile-drawn') capturedTileDrawnCb = cb;
-            }),
-            addHandler: jest.fn(),
-        };
-        mockViewer.addHandler.mockImplementation(
-            (event: string, cb: (event: { fullyLoaded: boolean }) => void) => {
                 if (event === 'fully-loaded-change') {
                     capturedFullyLoadedCb = cb;
                 }
