@@ -988,8 +988,6 @@ export class WsiViewerController {
                 ensureNavigator({
                     osdViewer: this.osdViewer,
                     openSeadragon: this.openSeadragon,
-                    meta,
-                    baseUrl: this.host.getTileServerBase(),
                     accessToken: access.accessToken,
                     sourceUrl: access.sourceUrl,
                 });
