@@ -4,6 +4,7 @@ import {
     PathologySlidesTimelineModule,
     PathologySlidesTimelineRequest,
     patientWsiSlideCount,
+    undatedPathologySlideCount,
     withPathologySlideEvents,
 } from './pathologySlidesTimelineLoader';
 
@@ -52,6 +53,37 @@ describe('patientWsiSlideCount', () => {
     it('is 0 when the attribute is missing or not a number', () => {
         expect(patientWsiSlideCount([])).toBe(0);
         expect(patientWsiSlideCount(slideCount('NA'))).toBe(0);
+    });
+});
+
+describe('undatedPathologySlideCount', () => {
+    const timeline = (undatedViewableSlideCount: number) =>
+        ({ events: [], undatedViewableSlideCount } as any);
+    const precomputed = (value: string) => [
+        ...slideCount('10'),
+        { clinicalAttributeId: 'WSI_PATIENT_UNDATED_SLIDE_COUNT', value },
+    ];
+
+    it('uses the precomputed attribute without waiting for the timeline', () => {
+        expect(undatedPathologySlideCount(precomputed('3'), undefined)).toBe(3);
+        expect(undatedPathologySlideCount(precomputed('0'), timeline(5))).toBe(
+            0
+        );
+    });
+
+    it('falls back to the hierarchy count when the attribute is missing', () => {
+        expect(undatedPathologySlideCount(slideCount('10'), timeline(2))).toBe(
+            2
+        );
+        expect(undatedPathologySlideCount(precomputed('NA'), timeline(2))).toBe(
+            2
+        );
+    });
+
+    it('is undefined until the fallback timeline has loaded', () => {
+        expect(
+            undatedPathologySlideCount(slideCount('10'), undefined)
+        ).toBeUndefined();
     });
 });
 
