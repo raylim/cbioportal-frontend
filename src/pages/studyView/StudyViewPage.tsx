@@ -81,8 +81,14 @@ import {
     buildCustomTabs,
     prepareCustomTabConfigurations,
 } from 'shared/lib/customTabs/customTabHelpers';
+import { shouldHideLegacyHeResourceTab } from 'shared/lib/ResourcePolicy';
 import { VirtualStudyModal } from 'pages/studyView/virtualStudy/VirtualStudyModal';
 import { PlotsTabWrapper } from 'pages/studyView/StudyViewPlotsTabWrapper';
+import { hashUrlState } from 'cbioportal-wsi-viewer';
+import WindowStore from 'shared/components/window/WindowStore';
+import { StudyPathologySlidesStore } from './tabs/pathologySlides/StudyPathologySlidesStore';
+import { StudyPathologySlidesTab } from './tabs/pathologySlides/StudyPathologySlidesTab';
+import { studySlidesClinicalAccess } from './tabs/pathologySlides/studySlidesClinicalAccess';
 
 export interface IStudyViewPageProps {
     routing: any;
@@ -122,6 +128,7 @@ export default class StudyViewPage extends React.Component<
     {}
 > {
     private urlWrapper: StudyViewURLWrapper;
+    private pathologySlidesStore: StudyPathologySlidesStore;
     private store: StudyViewPageStore;
     private enableCustomSelectionInTabs = [
         StudyViewPageTabKeyEnum.SUMMARY,
@@ -130,6 +137,7 @@ export default class StudyViewPage extends React.Component<
         StudyViewPageTabKeyEnum.FILES_AND_LINKS,
         StudyViewPageTabKeyEnum.PLOTS,
         StudyViewPageTabKeyEnum.EMBEDDINGS,
+        StudyViewPageTabKeyEnum.PATHOLOGY_SLIDES,
     ];
     private enableAddChartInTabs = [
         StudyViewPageTabKeyEnum.SUMMARY,
@@ -160,6 +168,25 @@ export default class StudyViewPage extends React.Component<
 
         // Expose store to window for use in custom tabs.
         setWindowVariable('studyViewPageStore', this.store);
+
+        const { wsiStudyId, wsiPatientId } = this.urlWrapper.query;
+        this.pathologySlidesStore = new StudyPathologySlidesStore({
+            getFilters: () => this.store.filters,
+            clinical: studySlidesClinicalAccess(this.store),
+            getStudyIds: () =>
+                getServerConfig().msk_wsi_tile_server_url
+                    ? this.store.queriedPhysicalStudyIds.result
+                    : [],
+            initialSelection:
+                wsiStudyId && wsiPatientId
+                    ? { studyId: wsiStudyId, patientId: wsiPatientId }
+                    : undefined,
+            onSelectionChange: patient => {
+                // The viewer's #wsi: hash names the previous patient's slide.
+                hashUrlState.clear();
+                this.urlWrapper.setWsiPatient(patient);
+            },
+        });
 
         const openResourceId =
             this.urlWrapper.tabId &&
@@ -430,15 +457,32 @@ export default class StudyViewPage extends React.Component<
         }
     }
 
+    @computed get visibleResourceDefinitions() {
+        return (this.store.resourceDefinitions.result || []).filter(
+            d => !shouldHideLegacyHeResourceTab(d.resourceId)
+        );
+    }
+
     @computed get shouldShowResources() {
         if (
             this.store.resourceDefinitions.isComplete &&
             this.store.resourceIdToResourceData.isComplete
         ) {
-            return this.store.resourceDefinitions.result.length > 0;
+            return this.visibleResourceDefinitions.length > 0;
         } else {
             return false;
         }
+    }
+
+    @computed get shouldShowPathologySlides() {
+        if (!getServerConfig().msk_wsi_tile_server_url) {
+            return false;
+        }
+        return (
+            (this.store.currentTab as string) ===
+                StudyViewPageTabKeyEnum.PATHOLOGY_SLIDES ||
+            this.pathologySlidesStore.studyHasSlides.result
+        );
     }
 
     @computed get hasEmbeddingSupport() {
@@ -607,7 +651,9 @@ export default class StudyViewPage extends React.Component<
         ],
         render: () => {
             const openDefinitions = this.store.resourceDefinitions.result!.filter(
-                d => this.store.isResourceTabOpen(d.resourceId)
+                d =>
+                    this.store.isResourceTabOpen(d.resourceId) &&
+                    !shouldHideLegacyHeResourceTab(d.resourceId)
             );
             const sorted = _.sortBy(openDefinitions, d => d.priority);
             const resourceDataById = this.store.resourceIdToResourceData
@@ -820,10 +866,11 @@ export default class StudyViewPage extends React.Component<
                                             StudyViewPageTabKeyEnum.FILES_AND_LINKS
                                         }
                                         linkText={
-                                            this.store.resourceDefinitions
-                                                .result?.length === 1
-                                                ? this.store.resourceDefinitions
-                                                      .result[0].displayName
+                                            this.visibleResourceDefinitions
+                                                .length === 1
+                                                ? this
+                                                      .visibleResourceDefinitions[0]
+                                                      .displayName
                                                 : RESOURCES_TAB_NAME
                                         }
                                         hide={!this.shouldShowResources}
@@ -863,6 +910,46 @@ export default class StudyViewPage extends React.Component<
                                         hide={!this.hasEmbeddingSupport}
                                     >
                                         <EmbeddingsTab store={this.store} />
+                                    </MSKTab>
+                                    <MSKTab
+                                        key={7}
+                                        id={
+                                            StudyViewPageTabKeyEnum.PATHOLOGY_SLIDES
+                                        }
+                                        linkText={
+                                            StudyViewPageTabDescriptions.PATHOLOGY_SLIDES
+                                        }
+                                        hide={!this.shouldShowPathologySlides}
+                                    >
+                                        {this.store.filters ? (
+                                            <StudyPathologySlidesTab
+                                                store={
+                                                    this.pathologySlidesStore
+                                                }
+                                                tileServerUrl={
+                                                    getServerConfig()
+                                                        .msk_wsi_tile_server_url!
+                                                }
+                                                isActive={
+                                                    (this.store
+                                                        .currentTab as string) ===
+                                                    StudyViewPageTabKeyEnum.PATHOLOGY_SLIDES
+                                                }
+                                                height={Math.max(
+                                                    480,
+                                                    WindowStore.size.height -
+                                                        300
+                                                )}
+                                                userName={
+                                                    this.props.appStore.userName
+                                                }
+                                            />
+                                        ) : (
+                                            <LoadingIndicator
+                                                isLoading={true}
+                                                center={true}
+                                            />
+                                        )}
                                     </MSKTab>
 
                                     {this.resourceTabs.component}
@@ -1248,6 +1335,7 @@ export default class StudyViewPage extends React.Component<
 
     componentWillUnmount(): void {
         this.store.destroy();
+        this.pathologySlidesStore.dispose();
         clearInterval(this.toolbarLeftUpdater);
     }
 

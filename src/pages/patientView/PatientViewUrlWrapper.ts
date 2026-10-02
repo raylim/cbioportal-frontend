@@ -2,7 +2,7 @@ import URLWrapper from 'shared/lib/URLWrapper';
 import ExtendedRouterStore from 'shared/lib/ExtendedRouterStore';
 import { PagePath } from 'shared/enums/PagePaths';
 import { computed, makeObservable } from 'mobx';
-import { PatientViewPageTabs } from './PatientViewPageTabs';
+import { PatientViewPageTabs } from './PatientViewPageTabIds';
 import {
     PlotsColoringParam,
     PlotsSelectionParam,
@@ -14,6 +14,12 @@ export type PatientViewUrlQuery = {
     caseId?: string;
     sampleId?: string;
     resourceUrl?: string;
+    /** Pathology Slides tab scope, set by pathology slide links. */
+    stainFilter?: string;
+    matchLevel?: string;
+    specimenKey?: string;
+    /** A procedure day, or "undated". */
+    timepointDays?: string;
     genomicEvolutionSettings: {
         showTimeline?: string;
 
@@ -43,6 +49,10 @@ export default class PatientViewUrlWrapper extends URLWrapper<
             caseId: { isSessionProp: false, isHashedProp: true },
             sampleId: { isSessionProp: false, isHashedProp: true },
             resourceUrl: { isSessionProp: false },
+            stainFilter: { isSessionProp: false },
+            matchLevel: { isSessionProp: false },
+            specimenKey: { isSessionProp: false },
+            timepointDays: { isSessionProp: false },
             genomicEvolutionSettings: {
                 isSessionProp: false,
                 nestedObjectProps: {

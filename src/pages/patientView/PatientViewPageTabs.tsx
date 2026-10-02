@@ -16,8 +16,6 @@ import ResourcesTab, {
     RESOURCES_TAB_NAME,
 } from 'pages/patientView/resources/ResourcesTab';
 import PathologyReport from 'pages/patientView/pathologyReport/PathologyReport';
-import IFrameLoader from 'shared/components/iframeLoader/IFrameLoader';
-import { getDigitalSlideArchiveIFrameUrl } from 'shared/api/urls';
 import TrialMatchTable from 'pages/patientView/trialMatch/TrialMatchTable';
 import _ from 'lodash';
 import MutationalSignaturesContainer from 'pages/patientView/mutationalSignatures/MutationalSignaturesContainer';
@@ -40,40 +38,19 @@ import MutationTableWrapper from './mutation/MutationTableWrapper';
 import { PatientViewPageInner } from 'pages/patientView/PatientViewPage';
 import { Else, If } from 'react-if';
 import { PatientViewPlotsTabWrapper } from './PatientViewPlotsTabWrapper';
-import { AppWsiViewer } from 'shared/components/wsiViewer/wsiAppConfig';
+import PatientWsiSlidesTab from 'pages/patientView/PatientWsiSlidesTab';
+import { PatientViewPageTabs } from './PatientViewPageTabIds';
+import { withPathologySlideEvents } from 'pages/patientView/timeline/pathologySlidesTimelineLoader';
+import UndatedPathologySlidesNotice from 'pages/patientView/timeline/UndatedPathologySlidesNotice';
 import { WsiPatientClinicalData } from 'shared/components/wsiViewer/wsiClinicalRows';
 import { PatientViewPageStore } from './clinicalInformation/PatientViewPageStore';
 
-export enum PatientViewPageTabs {
-    Summary = 'summary',
-    genomicEvolution = 'genomicEvolution',
-    ClinicalData = 'clinicalData',
-    FilesAndLinks = 'filesAndLinks',
-    PathologyReport = 'pathologyReport',
-    TissueImage = 'tissueImage',
-    MSKTissueImage = 'MSKTissueImage',
-    WSIHESlides = 'wsiHESlides',
-    TrialMatchTab = 'trialMatchTab',
-    MutationalSignatures = 'mutationalSignatures',
-    PathwayMapper = 'pathways',
-    MRNA = 'mrna',
-    Plots = 'plots',
-}
-
-export const PatientViewResourceTabPrefix = 'openResource_';
-
-export function getPatientViewResourceTabId(resourceId: string) {
-    return `${PatientViewResourceTabPrefix}${resourceId}`;
-}
-
-export function extractResourceIdFromTabId(tabId: string) {
-    const match = new RegExp(`${PatientViewResourceTabPrefix}(.*)`).exec(tabId);
-    if (match) {
-        return match[1];
-    } else {
-        return undefined;
-    }
-}
+export {
+    PatientViewPageTabs,
+    PatientViewResourceTabPrefix,
+    getPatientViewResourceTabId,
+    extractResourceIdFromTabId,
+} from './PatientViewPageTabIds';
 
 /**
  * The page's clinical data for the slide viewer sidebar: `null` while it
@@ -144,6 +121,87 @@ export function patientViewTabs(
     );
 }
 
+/**
+ * The undated pathology slides notice, for patients with undated viewable
+ * slides on a portal that serves slides; null otherwise.
+ */
+function undatedPathologySlidesNotice(
+    pageComponent: PatientViewPageInner
+): JSX.Element | null {
+    const store = pageComponent.patientViewPageStore;
+    if (
+        !getServerConfig().msk_wsi_tile_server_url ||
+        !store.pathologySlidesTimeline.isComplete
+    ) {
+        return null;
+    }
+    // Counted from the slide hierarchy loaded for the timeline track.
+    const count =
+        store.pathologySlidesTimeline.result?.undatedViewableSlideCount ?? 0;
+    return count > 0 ? (
+        <UndatedPathologySlidesNotice
+            studyId={store.studyId}
+            patientId={store.patientId}
+            count={count}
+        />
+    ) : null;
+}
+
+/**
+ * The Summary tab timeline: the patient's clinical events plus, for a
+ * patient with slides, the PATHOLOGY SLIDES events. TimelineWrapper builds
+ * its tracks once, so it renders only after both have loaded; without the
+ * slide events when their loading fails.
+ */
+function summaryTimeline(
+    pageComponent: PatientViewPageInner,
+    sampleManager: SampleManager
+): JSX.Element | null {
+    const store = pageComponent.patientViewPageStore;
+    if (
+        !store.clinicalEvents.isComplete ||
+        store.pathologySlidesTimeline.isPending
+    ) {
+        return null;
+    }
+    const pathologySlides = store.pathologySlidesTimeline.isComplete
+        ? store.pathologySlidesTimeline.result
+        : undefined;
+    const data = withPathologySlideEvents(
+        store.clinicalEvents.result,
+        pathologySlides
+    );
+    if (data.length === 0) {
+        return null;
+    }
+    return (
+        <div>
+            <div
+                style={{
+                    marginTop: 20,
+                    marginBottom: 20,
+                }}
+            >
+                <TimelineWrapper
+                    dataStore={pageComponent.patientViewMutationDataStore}
+                    caseMetaData={{
+                        color: sampleManager.sampleColors,
+                        label: sampleManager.sampleLabels,
+                        index: sampleManager.sampleIndex,
+                    }}
+                    data={data}
+                    pathologySlidesTrackConfig={pathologySlides?.trackConfig}
+                    sampleManager={sampleManager}
+                    width={WindowStore.size.width}
+                    samples={store.samples.result}
+                    mutationProfileId={store.mutationMolecularProfileId.result!}
+                />
+            </div>
+            <hr />
+        </div>
+    );
+}
+
 export function tabs(
     pageComponent: PatientViewPageInner,
     sampleManager: SampleManager | null,
@@ -152,51 +210,17 @@ export function tabs(
     const tabs: JSX.Element[] = [];
     tabs.push(
         <MSKTab key={0} id={PatientViewPageTabs.Summary} linkText="Summary">
+            {undatedPathologySlidesNotice(pageComponent)}
             <LoadingIndicator
                 isLoading={
-                    pageComponent.patientViewPageStore.clinicalEvents.isPending
+                    pageComponent.patientViewPageStore.clinicalEvents
+                        .isPending ||
+                    pageComponent.patientViewPageStore.pathologySlidesTimeline
+                        .isPending
                 }
             />
 
-            {!!sampleManager &&
-                pageComponent.patientViewPageStore.clinicalEvents.isComplete &&
-                pageComponent.patientViewPageStore.clinicalEvents.result
-                    .length > 0 && (
-                    <div>
-                        <div
-                            style={{
-                                marginTop: 20,
-                                marginBottom: 20,
-                            }}
-                        >
-                            <TimelineWrapper
-                                dataStore={
-                                    pageComponent.patientViewMutationDataStore
-                                }
-                                caseMetaData={{
-                                    color: sampleManager.sampleColors,
-                                    label: sampleManager.sampleLabels,
-                                    index: sampleManager.sampleIndex,
-                                }}
-                                data={
-                                    pageComponent.patientViewPageStore
-                                        .clinicalEvents.result
-                                }
-                                sampleManager={sampleManager}
-                                width={WindowStore.size.width}
-                                samples={
-                                    pageComponent.patientViewPageStore.samples
-                                        .result
-                                }
-                                mutationProfileId={
-                                    pageComponent.patientViewPageStore
-                                        .mutationMolecularProfileId.result!
-                                }
-                            />
-                        </div>
-                        <hr />
-                    </div>
-                )}
+            {!!sampleManager && summaryTimeline(pageComponent, sampleManager)}
 
             <LoadingIndicator
                 isLoading={
@@ -643,12 +667,22 @@ export function tabs(
                 linkText="Pathology Slides"
                 unmountOnHide={false}
             >
-                <AppWsiViewer
+                <PatientWsiSlidesTab
+                    query={{
+                        sampleId: urlWrapper.query.sampleId,
+                        stainFilter: urlWrapper.query.stainFilter,
+                        matchLevel: urlWrapper.query.matchLevel,
+                        specimenKey: urlWrapper.query.specimenKey,
+                        timepointDays: urlWrapper.query.timepointDays,
+                    }}
                     patientId={pageComponent.patientViewPageStore.patientId}
                     studyId={pageComponent.patientViewPageStore.studyId}
                     tileServerUrl={tileServerUrl}
                     userName={pageComponent.props.appStore.userName}
                     height={WindowStore.size.height - 220}
+                    clinicalEvents={
+                        pageComponent.patientViewPageStore.clinicalEvents.result
+                    }
                     hidden={
                         urlWrapper.activeTabId !==
                         PatientViewPageTabs.WSIHESlides
@@ -699,24 +733,6 @@ export function tabs(
                         }
                     />
                 )}
-            </div>
-        </MSKTab>
-    );
-
-    tabs.push(
-        <MSKTab
-            key={5}
-            id={PatientViewPageTabs.TissueImage}
-            linkText="Tissue Image"
-            hide={pageComponent.hideTissueImageTab}
-        >
-            <div>
-                <IFrameLoader
-                    height={WindowStore.size.height - 220}
-                    url={getDigitalSlideArchiveIFrameUrl(
-                        pageComponent.patientViewPageStore.patientId
-                    )}
-                />
             </div>
         </MSKTab>
     );

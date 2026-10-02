@@ -17,6 +17,9 @@ function renderSidebarJson(clinicalRows?: WsiClinicalRow[]): string {
             wsiRows={[]}
             showPathology={false}
             pathRows={[]}
+            seqRows={[]}
+            sample={null}
+            mutationDataStatus="idle"
             clinicalRows={clinicalRows}
         />
     );
@@ -57,7 +60,13 @@ describe('WsiMetaSidebar collapsible sections', () => {
                 wsiRows={[{ label: 'Dimensions', value: '100 x 100' }]}
                 showPathology={true}
                 pathRows={[{ label: 'Stain', value: 'H&E' }]}
+                seqRows={[{ label: 'TMB', value: '3 mut/Mb' }]}
+                sample={null}
+                mutationDataStatus="idle"
                 clinicalRows={[{ label: 'Sex', value: 'Female' }]}
+                annotationLayersPanel={<span>layer list</span>}
+                annotationPanel={<span>annotation list</span>}
+                agentPanel={<span>assistant</span>}
             />
         );
     }
@@ -73,26 +82,31 @@ describe('WsiMetaSidebar collapsible sections', () => {
         });
     }
 
-    it.each(['imageProperties', 'pathology', 'clinical'])(
-        'collapses and expands the %s section',
-        id => {
-            const renderer = renderSidebar();
-            expect(toggle(renderer, id).props['aria-expanded']).toBe(true);
+    it.each([
+        'imageProperties',
+        'pathology',
+        'clinical',
+        'mskImpact',
+        'annotationLayers',
+        'annotations',
+        'researchAssistant',
+    ])('collapses and expands the %s section', id => {
+        const renderer = renderSidebar();
+        expect(toggle(renderer, id).props['aria-expanded']).toBe(true);
 
-            act(() => toggle(renderer, id).props.onClick());
-            expect(toggle(renderer, id).props['aria-expanded']).toBe(false);
-            expect(isHidden(renderer, id)).toBe(true);
-            expect(
-                window.localStorage.getItem(wsiSidebarSectionCollapsedKey(id))
-            ).toBe('1');
+        act(() => toggle(renderer, id).props.onClick());
+        expect(toggle(renderer, id).props['aria-expanded']).toBe(false);
+        expect(isHidden(renderer, id)).toBe(true);
+        expect(
+            window.localStorage.getItem(wsiSidebarSectionCollapsedKey(id))
+        ).toBe('1');
 
-            act(() => toggle(renderer, id).props.onClick());
-            expect(toggle(renderer, id).props['aria-expanded']).toBe(true);
-            expect(
-                window.localStorage.getItem(wsiSidebarSectionCollapsedKey(id))
-            ).toBeNull();
-        }
-    );
+        act(() => toggle(renderer, id).props.onClick());
+        expect(toggle(renderer, id).props['aria-expanded']).toBe(true);
+        expect(
+            window.localStorage.getItem(wsiSidebarSectionCollapsedKey(id))
+        ).toBeNull();
+    });
 
     it('collapses one section without touching the others', () => {
         const renderer = renderSidebar();

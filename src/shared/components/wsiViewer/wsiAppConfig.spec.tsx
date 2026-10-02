@@ -5,6 +5,7 @@ import * as React from 'react';
 import { act, render, screen } from '@testing-library/react';
 import {
     AppWsiViewer,
+    buildWsiMolecularServices,
     buildWsiViewerConfig,
     isPortalWsiAuthEnabled,
     wsiAuthScope,
@@ -20,6 +21,12 @@ jest.mock('config/config', () => ({
 jest.mock('shared/api/urls', () => ({
     buildCBioPortalAPIUrl: (path: string) =>
         `https://portal.example/beta/${path}`,
+    getOncoKbApiUrl: () => 'https://portal.example/beta/proxy/oncokb',
+}));
+
+const mockOncoKbClient = {};
+jest.mock('shared/api/wsiOncoKbClientInstance', () => ({
+    getWsiOncoKbClient: () => mockOncoKbClient,
 }));
 
 jest.mock('./wsiClinicalRows', () => ({
@@ -62,6 +69,27 @@ describe('buildWsiViewerConfig', () => {
         expect(wsiAuthScope()).toBe('anonymousUser');
     });
 
+    it('enables annotations only when an annotation service is configured', () => {
+        expect(buildWsiViewerConfig().annotations).toBeUndefined();
+        mockServerConfig.msk_wsi_annotation_api_url = '  ';
+        expect(buildWsiViewerConfig().annotations).toBeUndefined();
+        mockServerConfig.msk_wsi_annotation_api_url =
+            'https://annotations.example/wsi/';
+        expect(buildWsiViewerConfig().annotations).toEqual({
+            apiUrl: 'https://annotations.example/wsi',
+        });
+    });
+
+    it('enables the research assistant from the frontend property', () => {
+        expect(buildWsiViewerConfig().agent).toBeUndefined();
+        mockServerConfig.msk_wsi_agent_enabled = false;
+        expect(buildWsiViewerConfig().agent).toBeUndefined();
+        mockServerConfig.msk_wsi_agent_enabled = true;
+        expect(buildWsiViewerConfig().agent).toEqual({ enabled: true });
+        mockServerConfig.msk_wsi_agent_enabled = 'true';
+        expect(buildWsiViewerConfig().agent).toEqual({ enabled: true });
+    });
+
     it('enables WSI auth for SAML portals and the explicit opt-in', () => {
         mockServerConfig.authenticationMethod = 'SAML';
         expect(isPortalWsiAuthEnabled()).toBe(true);
@@ -76,6 +104,53 @@ describe('buildWsiViewerConfig', () => {
         expect(isPortalWsiAuthEnabled()).toBe(false);
         mockServerConfig.msk_wsi_authentication_enabled = true;
         expect(isPortalWsiAuthEnabled()).toBe(true);
+    });
+});
+
+describe('buildWsiMolecularServices', () => {
+    beforeEach(() => {
+        Object.keys(mockServerConfig).forEach(
+            key => delete mockServerConfig[key]
+        );
+    });
+
+    it('follows the portal OncoKB and CIViC settings', () => {
+        expect(buildWsiMolecularServices()).toEqual(
+            expect.objectContaining({ showOncoKb: false, showCivic: false })
+        );
+
+        mockServerConfig.show_oncokb = true;
+        mockServerConfig.show_civic = true;
+        const services = buildWsiMolecularServices();
+
+        expect(services.showOncoKb).toBe(true);
+        expect(services.showCivic).toBe(true);
+        expect(services.getOncoKbApiUrl()).toBe(
+            'https://portal.example/beta/proxy/oncokb'
+        );
+        expect(services.getOncoKbClient()).toBe(mockOncoKbClient);
+        expect(buildWsiViewerConfig().molecular).toEqual(
+            expect.objectContaining({ showOncoKb: true, showCivic: true })
+        );
+    });
+
+    it('resolves CIViC copy number variants and mutation types', () => {
+        const amplification = { id: 1, name: 'AMPLIFICATION' } as any;
+        const services = buildWsiMolecularServices();
+
+        expect(
+            services.getCivicCnaVariants(2, 'ERBB2', {
+                ERBB2: { AMPLIFICATION: amplification },
+            })
+        ).toEqual({ ERBB2: amplification });
+        expect(
+            services.getCivicCnaVariants(-2, 'ERBB2', {
+                ERBB2: { AMPLIFICATION: amplification },
+            })
+        ).toEqual({});
+        expect(services.getSimplifiedMutationType('Frame_Shift_Del')).toBe(
+            'frameshift'
+        );
     });
 });
 

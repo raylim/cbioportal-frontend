@@ -44,7 +44,6 @@ import request from 'superagent';
 import DiscreteCNACache from 'shared/cache/DiscreteCNACache';
 import {
     getDarwinUrl,
-    getDigitalSlideArchiveMetaUrl,
     getGenomeNexusHgvsgUrl,
 } from '../../../shared/api/urls';
 import PubMedCache from 'shared/cache/PubMedCache';
@@ -207,6 +206,10 @@ import {
     retrieveMutationalSignatureVersionFromData,
 } from 'shared/lib/GenericAssayUtils/MutationalSignaturesUtils';
 import { getServerConfig } from 'config/config';
+import {
+    loadPathologySlidesTimeline,
+    PathologySlidesTimeline,
+} from 'pages/patientView/timeline/pathologySlidesTimelineLoader';
 import { StructuralVariantFilter } from 'cbioportal-ts-api-client';
 import { IGenePanelDataByProfileIdAndSample } from 'shared/lib/isSampleProfiled';
 import { NamespaceColumnConfig } from 'shared/components/namespaceColumns/NamespaceColumnConfig';
@@ -263,17 +266,6 @@ export function getUniqueStudyIds(cohortIds: string[]) {
             return id.split(':')[0];
         })
     );
-}
-
-export async function checkForTissueImage(patientId: string): Promise<boolean> {
-    if (/TCGA/.test(patientId) === false) {
-        return false;
-    } else {
-        let resp = await request.get(getDigitalSlideArchiveMetaUrl(patientId));
-
-        // if the count is greater than 0, there is a slide for this patient
-        return resp.body && resp.body.total_count && resp.body.total_count > 0;
-    }
 }
 
 export type PathologyReportPDF = {
@@ -2350,6 +2342,24 @@ export class PatientViewPageStore {
         []
     );
 
+    /**
+     * The PATHOLOGY SLIDES timeline track, loaded for the Summary tab only
+     * when the patient has slides; undefined otherwise.
+     */
+    readonly pathologySlidesTimeline = remoteData<
+        PathologySlidesTimeline | undefined
+    >({
+        await: () => [this.clinicalDataPatient],
+        invoke: () =>
+            loadPathologySlidesTimeline({
+                tileServerUrl: getServerConfig().msk_wsi_tile_server_url,
+                clinicalDataPatient: this.clinicalDataPatient.result,
+                studyId: this.studyId,
+                patientId: this.patientId,
+                authScope: wsiAuthScope(this.appStore.userName),
+            }),
+    });
+
     readonly molecularProfileIdDiscrete = remoteData({
         await: () => [this.molecularProfilesInStudy],
         invoke: async () => {
@@ -2395,19 +2405,6 @@ export class PatientViewPageStore {
             // fail silently
         },
     });
-
-    readonly hasTissueImageIFrameUrl = remoteData(
-        {
-            await: () => [this.derivedPatientId],
-            invoke: async () => {
-                return checkForTissueImage(this.patientId);
-            },
-            onError: () => {
-                // fail silently
-            },
-        },
-        false
-    );
 
     readonly uncalledMutationData = remoteData(
         {
