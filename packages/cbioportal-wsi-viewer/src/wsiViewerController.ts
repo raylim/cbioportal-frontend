@@ -269,6 +269,9 @@ export class WsiViewerController {
             this.selectionTimeoutTimer = null;
         }
         this.cancelWsiTokenRefresh();
+        // Retire the current load, so enrichment already in flight (and its
+        // retries) stops once its shouldContinue check runs.
+        this.hierarchyLoadSeq++;
         this.hierarchyAbortController?.abort();
         this.hierarchyAbortController = null;
         this.cancelBackgroundWorkSchedule();
