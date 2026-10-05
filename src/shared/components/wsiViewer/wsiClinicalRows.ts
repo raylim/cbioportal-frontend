@@ -25,7 +25,8 @@ export interface WsiPatientClinicalData {
 /**
  * Attributes left out of the Clinical section although the study shows them
  * by default: sequencing QC and administrative fields that say nothing about
- * the patient or the tissue on the slide.
+ * the patient or the tissue on the slide, and the molecular summary the
+ * MSK-IMPACT section already shows.
  */
 export const WSI_CLINICAL_EXCLUDED_ATTRIBUTE_IDS: ReadonlySet<string> = new Set(
     [
@@ -34,6 +35,16 @@ export const WSI_CLINICAL_EXCLUDED_ATTRIBUTE_IDS: ReadonlySet<string> = new Set(
         'OTHER_PATIENT_ID',
         'SAMPLE_COVERAGE',
         'SOMATIC_STATUS',
+        // Shown in the sidebar's MSK-IMPACT section.
+        'CVR_TMB_SCORE',
+        'CVR_TUMOR_PURITY',
+        'METASTATIC_SITE',
+        'MSI_SCORE',
+        'MSI_STATUS',
+        'MSI_TYPE',
+        'TMB_NONSYNONYMOUS',
+        'TMB_SCORE',
+        'TUMOR_PURITY',
     ]
 );
 
