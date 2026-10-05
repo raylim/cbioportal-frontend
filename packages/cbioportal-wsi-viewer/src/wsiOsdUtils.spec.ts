@@ -68,7 +68,6 @@ describe('buildOsdOptions', () => {
                 tile_size: 256,
             },
             baseUrl: 'https://tiles.example.com',
-            sourceUrl: 's3://bucket/slide-42.svs',
         });
 
         expect(options.showNavigator).toBe(false);
@@ -82,10 +81,9 @@ describe('buildOsdOptions', () => {
             'https://tiles.example.com/tiles/zxy/3/4/5'
         );
         expect(options.tileSources.minLevel).toBe(0);
-        expect(options.loadTilesWithAjax).toBe(true);
-        expect(options.ajaxHeaders).toEqual({
-            'X-WSI-Source': 's3://bucket/slide-42.svs',
-        });
+        // Without an access token there is nothing to send.
+        expect(options.loadTilesWithAjax).toBe(false);
+        expect(options.ajaxHeaders).toEqual({});
     });
 
     it('promotes the image loader after the first tile is ready', () => {
@@ -109,7 +107,6 @@ describe('buildOsdOptions', () => {
                 tile_size: 256,
             },
             baseUrl: 'https://tiles.example.com',
-            sourceUrl: 's3://bucket/slide-42.svs',
         });
 
         expect(options.tileSources.minLevel).toBe(3);
@@ -128,13 +125,11 @@ describe('buildOsdOptions', () => {
             },
             baseUrl: 'https://tiles.example.com',
             accessToken: 'token',
-            sourceUrl: 's3://bucket/slide-42.svs',
         });
 
         expect(options.loadTilesWithAjax).toBe(true);
         expect(options.ajaxHeaders).toEqual({
             Authorization: 'Bearer token',
-            'X-WSI-Source': 's3://bucket/slide-42.svs',
         });
         expect(options.tileSources.getTileUrl(3, 4, 5)).toBe(
             'https://tiles.example.com/tiles/zxy/3/4/5'

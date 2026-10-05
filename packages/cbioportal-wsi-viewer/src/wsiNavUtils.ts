@@ -12,6 +12,22 @@ export function formatDaysSinceDiagnosis(days: number): string {
     return days > 0 ? `d+${days}` : `d${days}`;
 }
 
+/** Explains the day notation wherever a slide or sample day is shown. */
+export const DAY_ZERO_TOOLTIP =
+    "Days are counted from the patient's first tumor sequencing (d0): " +
+    'd-242 is 242 days before it, d+7 is 7 days after.';
+
+/** Tooltip for a slide's procedure timepoint. */
+export function procedureTooltip(
+    procedureDays: number | null | undefined
+): string | undefined {
+    return procedureDays == null
+        ? undefined
+        : `Procedure on ${formatDaysSinceDiagnosis(
+              procedureDays
+          )}. ${DAY_ZERO_TOOLTIP}`;
+}
+
 function timepointSourceAbbreviation(source: string): string {
     const normalizedSource = source.toLowerCase();
     return normalizedSource.includes('procedure')
@@ -73,7 +89,7 @@ function computeEarliestServableSlideTimepoint(
             for (const slide of block.slides) {
                 if (
                     !slide.can_serve_tiles ||
-                    !slide.image_id ||
+                    !slide.slide_key ||
                     (!slide.is_hne && !slide.is_ihc)
                 ) {
                     continue;
@@ -145,20 +161,6 @@ export function normalizeBlockLabel(
     number?: string | number | null
 ): string {
     return (label || '').trim() || (number != null ? String(number) : '');
-}
-
-export function barcodeSection(
-    barcode: string | null | undefined
-): string | null {
-    const m = barcode?.match(/-T\d+-[^-]+-(\d+)-(\d+)$/i);
-    return m ? `${m[1]}.${m[2]}` : null;
-}
-
-export function barcodeAccession(
-    barcode: string | null | undefined
-): string | null {
-    const m = barcode?.match(/^(S-\d+)/i);
-    return m ? m[1] : null;
 }
 
 export function abbreviatePartDesc(
