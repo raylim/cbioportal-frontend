@@ -154,11 +154,9 @@ function hierarchyFor(patientId: string) {
                 parts: [
                     {
                         partNumber: '1',
-                        partDesignator: '1',
                         partType: '',
                         partDescription: 'Contract specimen',
                         subspecialty: '',
-                        pathDxTitle: '',
                         blocks: [
                             {
                                 blockNumber: 'A1',
