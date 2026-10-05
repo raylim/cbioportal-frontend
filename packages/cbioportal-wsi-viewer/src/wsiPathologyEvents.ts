@@ -1,12 +1,13 @@
 import { ClinicalEvent } from 'cbioportal-ts-api-client';
 import { fetchPatientHierarchyReadOnly } from './wsiHierarchyFetchCache';
-import { formatDaysSinceDiagnosis, getSlideTimepointDays } from './wsiNavUtils';
 import {
     DAY_ZERO_TOOLTIP,
+    formatDaysSinceDiagnosis,
+    getSlideTimepointDays,
     procedureSequencingOffset,
     procedureTooltip,
-    WsiSampleTimelineMap,
-} from './wsiSampleTimeline';
+} from './wsiNavUtils';
+import { WsiSampleTimelineMap } from './wsiSampleTimeline';
 import { isServableDiagnosticSlide, wsiStainKind } from './wsiSlideUtils';
 import { formatSpecimenLabel } from './wsiSpecimenUtils';
 import { buildWsiHierarchyApiUrl } from './wsiUrls';
