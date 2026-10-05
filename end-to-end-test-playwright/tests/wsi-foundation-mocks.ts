@@ -74,11 +74,9 @@ function makeHierarchy(includeSecondSlide: boolean) {
                 parts: [
                     {
                         partNumber: '1',
-                        partDesignator: '1',
                         partType: '',
                         partDescription: 'Foundation specimen',
                         subspecialty: '',
-                        pathDxTitle: '',
                         blocks: [
                             {
                                 blockNumber: 'A1',
