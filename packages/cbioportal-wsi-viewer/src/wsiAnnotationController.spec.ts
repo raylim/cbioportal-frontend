@@ -32,6 +32,8 @@ function apiAnnotation(
     };
 }
 
+const SLIDE_KEY = '0123456789abcdef0123456789abcdef';
+
 describe('WsiAnnotationController', () => {
     const token = jest.fn().mockResolvedValue('annotation-token');
 
@@ -56,7 +58,7 @@ describe('WsiAnnotationController', () => {
             token
         );
 
-        controller.beginSlide('slide1');
+        controller.beginSlide(SLIDE_KEY);
         await new Promise(resolve => setTimeout(resolve, 0));
 
         expect(token).toHaveBeenCalledTimes(1);
@@ -66,6 +68,45 @@ describe('WsiAnnotationController', () => {
             'Bearer annotation-token'
         );
         expect(controller.annotations[0].id).toBe('a1');
+    });
+
+    it('keys annotation loads and writes by the opaque slide key', async () => {
+        jest.spyOn(global, 'fetch').mockImplementation(async (_url, init) => {
+            if (init?.method === 'POST') {
+                return {
+                    ok: true,
+                    json: async () => apiAnnotation('saved'),
+                } as Response;
+            }
+            return { ok: true, json: async () => [] } as Response;
+        });
+        const controller = new WsiAnnotationController(
+            'https://annotations.example',
+            'study1',
+            token
+        );
+
+        controller.beginSlide(SLIDE_KEY);
+        await new Promise(resolve => setTimeout(resolve, 0));
+        await (controller as any).createAnnotation({
+            id: 'client-a',
+            body: [],
+            target: {
+                source: SLIDE_KEY,
+                selector: {
+                    type: 'FragmentSelector',
+                    value: 'xywh=pixel:1,2,3,4',
+                },
+            },
+        });
+
+        const [load, create] = (global.fetch as jest.Mock).mock.calls;
+        const loadUrl = new URL(load[0]);
+        expect(loadUrl.searchParams.get('slide_key')).toBe(SLIDE_KEY);
+        expect(loadUrl.search).not.toMatch(/slide_id|image_?id/i);
+        const payload = JSON.parse(create[1].body);
+        expect(payload.slide_key).toBe(SLIDE_KEY);
+        expect(JSON.stringify(payload)).not.toMatch(/slide_id|image_?id/i);
     });
 
     it('ignores an out-of-order response from a previous slide', async () => {
@@ -229,7 +270,7 @@ describe('WsiAnnotationController', () => {
         (controller as any).annotations = [
             (controller as any).fromApi(apiAnnotation('a1', 1), 'slide1'),
         ];
-        (controller as any).slideId = 'slide1';
+        (controller as any).slideKey = 'slide1';
 
         await (controller as any).updateAnnotation(
             (controller as any).annotations[0]
@@ -264,7 +305,7 @@ describe('WsiAnnotationController', () => {
             'study1',
             token
         );
-        (controller as any).slideId = 'slide1';
+        (controller as any).slideKey = 'slide1';
         controller.addLayer('Tumor');
         controller.setActiveNamedColor('Tumor', '#ef4444');
         const viewerElement = document.createElement('div');
@@ -333,7 +374,7 @@ describe('WsiAnnotationController', () => {
             'study1',
             token
         );
-        (controller as any).slideId = 'slide1';
+        (controller as any).slideKey = 'slide1';
         const viewerElement = document.createElement('div');
         const annotationCanvas = document.createElement('canvas');
         annotationCanvas.className = 'a9s-gl-canvas';
@@ -414,7 +455,7 @@ describe('WsiAnnotationController', () => {
             'study1',
             token
         );
-        (controller as any).slideId = 'slide1';
+        (controller as any).slideKey = 'slide1';
         (controller as any).annotations = [
             (controller as any).fromApi(apiAnnotation('default-1'), 'slide1'),
             (controller as any).fromApi(
@@ -521,7 +562,7 @@ describe('WsiAnnotationController', () => {
             'study1',
             token
         );
-        (controller as any).slideId = 'slide1';
+        (controller as any).slideKey = 'slide1';
         const viewerElement = document.createElement('div');
         controller.attachViewer({ element: viewerElement }, {}, 'slide1');
         jest.spyOn(

@@ -955,7 +955,6 @@ export class WsiViewerController {
         }
 
         const slide = this.host.getSelectedSlide()!;
-        const meta = this.host.getSelectedMeta()!;
         const expectedMountSeq = this.mountSeq;
         const runNavigatorSetup = async () => {
             this.navigatorIdleHandle = null;

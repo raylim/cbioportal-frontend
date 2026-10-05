@@ -32,16 +32,15 @@ describe('ensureNavigator', () => {
             ensureNavigator({
                 osdViewer,
                 openSeadragon: { Navigator },
-                sourceUrl: 's3://bucket/slide-42.svs',
+                accessToken: 'slide-token',
             })
         ).toBe(navigator);
 
         expect(Navigator).toHaveBeenCalledWith(
             expect.objectContaining({
                 viewer: osdViewer,
-                ajaxHeaders: {
-                    'X-WSI-Source': 's3://bucket/slide-42.svs',
-                },
+                ajaxHeaders: { Authorization: 'Bearer slide-token' },
+                loadTilesWithAjax: true,
             })
         );
         expect(navigatorOptions).not.toHaveProperty('tileSources');

@@ -475,12 +475,12 @@ export default class WSIViewer extends React.Component<Props, {}> {
             updateCursorPos: (x, y) => this.handleCursorMove(x, y),
             clearCursorPos: () => this.clearCursorPos(),
             onSlideSelectionStarted: slide =>
-                this.annotationController.beginSlide(slide.image_id),
+                this.annotationController.beginSlide(slide.slide_key),
             onViewerOpened: (viewer, openSeadragon, slide) =>
                 this.annotationController.attachViewer(
                     viewer,
                     openSeadragon,
-                    slide.image_id
+                    slide.slide_key
                 ),
             onViewerDestroyed: () => this.annotationController.detachViewer(),
             reportInitialSlideLoadPerformance: metric =>
