@@ -69,6 +69,25 @@ export interface WsiViewerConfig {
      * through `buildApiUrl` and `fetchImpl` either way.
      */
     molecular?: WsiMolecularServices;
+    /**
+     * Annotation authoring against the annotation service at `apiUrl`,
+     * authorized with study-scoped portal tokens. Off when unset.
+     */
+    annotations?: WsiAnnotationsConfig;
+    /**
+     * Research assistant panel. It talks to the annotation service, so it is
+     * shown only when `annotations` is configured too.
+     */
+    agent?: WsiAgentConfig;
+}
+
+export interface WsiAgentConfig {
+    enabled: boolean;
+}
+
+export interface WsiAnnotationsConfig {
+    /** Annotation service base URL, without a trailing slash. */
+    apiUrl: string;
 }
 
 /** Services read by the viewer's module-level caches and controller. */
@@ -79,6 +98,8 @@ export interface WsiViewerRuntime {
     osdPrefixUrl?: string;
     urlState: WsiUrlStateAdapter;
     molecular?: WsiMolecularServices;
+    annotations?: WsiAnnotationsConfig;
+    agent?: WsiAgentConfig;
 }
 
 // Resolves the global at call time so a replaced `window.fetch` is used.
@@ -107,6 +128,8 @@ export function configureWsiViewerRuntime(config: WsiViewerConfig): void {
         osdPrefixUrl: config.osdPrefixUrl,
         urlState: config.urlState ?? hashUrlState,
         molecular: config.molecular,
+        annotations: config.annotations,
+        agent: config.agent,
     };
 }
 

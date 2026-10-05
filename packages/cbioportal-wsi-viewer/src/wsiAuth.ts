@@ -310,9 +310,156 @@ export function clearWsiSlideAccess(studyId?: string): void {
             if (key.includes(`::${studyId}::`)) pendingSlideAccess.delete(key);
         }
         clearWsiResourceAccessTargets(studyId);
+        clearWsiPurposeAccessTokens(studyId);
         return;
     }
     slideAccess.clear();
     pendingSlideAccess.clear();
     clearWsiResourceAccessTargets();
+    clearWsiPurposeAccessTokens();
+}
+
+/**
+ * Identifies the pixels a slide access serves, so that an agent proposal made
+ * against one capture is not applied to another: the opaque slide key and the
+ * tile pyramid's shape. The capability's source is encrypted and the browser
+ * never sees it, so it is not part of the fingerprint.
+ */
+export function getWsiSourceFingerprint(access: WsiSlideAccess): string {
+    const meta = access.tileMetadata;
+    return `wsi-v3:${access.slideKey}:${meta.dimensions.width}x${meta.dimensions.height}:${meta.levels}:${meta.tile_size}`;
+}
+
+/** Services that accept a study-scoped portal access token. */
+export type WsiAccessTokenPurpose = 'annotations' | 'agent';
+
+type WsiAccessTokenResponse = {
+    access_token: string;
+    expires_in: number;
+};
+
+type WsiPurposeAccessToken = {
+    value: string;
+    expiresAt: number;
+};
+
+const purposeTokens = new Map<string, WsiPurposeAccessToken>();
+const pendingPurposeTokens = new Map<string, Promise<string>>();
+
+function purposeTokenKey(
+    studyId: string,
+    purpose: WsiAccessTokenPurpose,
+    authScope: string
+): string {
+    return `${normalizeWsiAuthScope(authScope)}::${purpose}::${studyId}`;
+}
+
+async function requestPurposeAccessToken(
+    studyId: string,
+    purpose: WsiAccessTokenPurpose
+): Promise<WsiPurposeAccessToken> {
+    const { buildApiUrl, fetchImpl } = getWsiViewerRuntime();
+    const url = new URL(
+        buildApiUrl('api/wsi/access-token'),
+        typeof window === 'undefined'
+            ? 'http://localhost'
+            : window.location.origin
+    );
+    url.searchParams.set('studyId', studyId);
+    url.searchParams.set('purpose', purpose);
+    const response = await fetchImpl(url.toString(), {
+        credentials: 'same-origin',
+        cache: 'no-store',
+    });
+    if (!response.ok) {
+        throw new Error(`WSI authorization failed (${response.status})`);
+    }
+    const payload = (await response.json()) as WsiAccessTokenResponse;
+    if (
+        !payload.access_token ||
+        !Number.isFinite(payload.expires_in) ||
+        payload.expires_in <= 0
+    ) {
+        throw new Error('Invalid WSI authorization response');
+    }
+    return {
+        value: payload.access_token,
+        expiresAt: Date.now() + payload.expires_in * 1000,
+    };
+}
+
+/**
+ * Study-scoped portal token for a WSI companion service, cached per subject,
+ * purpose and study until 30 seconds before it expires.
+ */
+export function getWsiPurposeAccessToken(
+    studyId: string,
+    purpose: WsiAccessTokenPurpose,
+    authScope = 'anonymousUser'
+): Promise<string> {
+    if (!studyId) {
+        return Promise.reject(new Error('WSI study scope is required'));
+    }
+    const key = purposeTokenKey(studyId, purpose, authScope);
+    const cached = purposeTokens.get(key);
+    if (cached && cached.expiresAt > Date.now() + 30_000) {
+        return Promise.resolve(cached.value);
+    }
+    purposeTokens.delete(key);
+    let request = pendingPurposeTokens.get(key);
+    if (!request) {
+        const pending: Promise<string> = requestPurposeAccessToken(
+            studyId,
+            purpose
+        )
+            .then(token => {
+                // A clear while the request was in flight discards its result.
+                if (pendingPurposeTokens.get(key) === pending) {
+                    deleteExpiredEntries(purposeTokens);
+                    purposeTokens.set(key, token);
+                }
+                return token.value;
+            })
+            .finally(() => {
+                if (pendingPurposeTokens.get(key) === pending) {
+                    pendingPurposeTokens.delete(key);
+                }
+            });
+        request = pending;
+        pendingPurposeTokens.set(key, request);
+    }
+    return request;
+}
+
+export function getAnnotationAccessToken(
+    studyId: string,
+    authScope = 'anonymousUser'
+): Promise<string> {
+    return getWsiPurposeAccessToken(studyId, 'annotations', authScope);
+}
+
+export function getAgentAccessToken(
+    studyId: string,
+    authScope = 'anonymousUser'
+): Promise<string> {
+    return getWsiPurposeAccessToken(studyId, 'agent', authScope);
+}
+
+/** Forgets purpose tokens for one study, or for every study. */
+export function clearWsiPurposeAccessTokens(studyId?: string): void {
+    for (const tokens of [purposeTokens, pendingPurposeTokens] as Array<
+        Map<string, unknown>
+    >) {
+        if (studyId === undefined) {
+            tokens.clear();
+            continue;
+        }
+        for (const key of tokens.keys()) {
+            if (key.endsWith(`::${studyId}`)) tokens.delete(key);
+        }
+    }
+}
+
+export function clearAnnotationAccessToken(studyId?: string): void {
+    clearWsiPurposeAccessTokens(studyId);
 }

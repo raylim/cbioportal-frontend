@@ -1,5 +1,10 @@
+/**
+ * @jest-environment jsdom
+ */
+
 import {
     buildOsdOptions,
+    ensureNavigator,
     OSD_INITIAL_IMAGE_LOADER_LIMIT,
     OSD_STEADY_IMAGE_LOADER_LIMIT,
     OSD_TILE_RETRY_DELAY_MS,
@@ -8,6 +13,43 @@ import {
     promoteOsdImageLoaderLimit,
     restoreOrHomeViewport,
 } from './wsiOsdUtils';
+
+describe('ensureNavigator', () => {
+    it('mirrors the already-open main image instead of opening a second source', () => {
+        const originalTiledImage = { source: { getTileUrl: jest.fn() } };
+        const addTiledImage = jest.fn();
+        const navigator = { addTiledImage };
+        let navigatorOptions: Record<string, unknown> | undefined;
+        const Navigator = jest.fn((options: Record<string, unknown>) => {
+            navigatorOptions = options;
+            return navigator;
+        });
+        const osdViewer = {
+            world: { getItemAt: jest.fn(() => originalTiledImage) },
+        };
+
+        expect(
+            ensureNavigator({
+                osdViewer,
+                openSeadragon: { Navigator },
+                accessToken: 'slide-token',
+            })
+        ).toBe(navigator);
+
+        expect(Navigator).toHaveBeenCalledWith(
+            expect.objectContaining({
+                viewer: osdViewer,
+                ajaxHeaders: { Authorization: 'Bearer slide-token' },
+                loadTilesWithAjax: true,
+            })
+        );
+        expect(navigatorOptions).not.toHaveProperty('tileSources');
+        expect(addTiledImage).toHaveBeenCalledWith({
+            tileSource: originalTiledImage.source,
+            originalTiledImage,
+        });
+    });
+});
 
 describe('buildOsdOptions', () => {
     it('defers navigator creation until the main tile is drawn', () => {
