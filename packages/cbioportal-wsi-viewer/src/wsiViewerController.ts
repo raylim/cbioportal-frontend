@@ -161,12 +161,11 @@ export class WsiViewerController {
     /** The next access-token refresh, kept while the viewer is hidden. */
     private wsiTokenRefresh: {
         studyId: string;
-        imageId: string;
+        slideKey: string;
         seq: number;
         refreshAt: number;
     } | null = null;
     private viewerVisible = true;
-    private activeWsiSourceUrl: string | null = null;
     private tileFailureCount = 0;
     private terminalTileFailures = new Set<string>();
     private writeHashTimer: ReturnType<typeof setTimeout> | null = null;
@@ -184,7 +183,7 @@ export class WsiViewerController {
     private navigatorIdleHandle: number | null = null;
     private navigatorTimer: ReturnType<typeof setTimeout> | null = null;
     private restoreHashViewportForNextSelection = false;
-    private initialSlideImageId: string | undefined = undefined;
+    private initialSlideKey: string | undefined = undefined;
     private initialSlideLoadTrace: {
         loadSeq: number;
         startedAt: number;
@@ -511,7 +510,7 @@ export class WsiViewerController {
     private writeHashState() {
         this.writeHashTimer = scheduleHashStateWrite({
             timer: this.writeHashTimer,
-            selectedSlideId: this.host.getSelectedSlide()?.image_id,
+            selectedSlideId: this.host.getSelectedSlide()?.slide_key,
             osdViewer: this.mountedViewer,
             urlState: getWsiViewerRuntime().urlState,
         });
@@ -607,7 +606,7 @@ export class WsiViewerController {
     }
 
     private startThumbnailPreview(
-        imageId: string,
+        slideKey: string,
         seq: number,
         accessPromise: Promise<WsiSlideAccess>
     ): void {
@@ -623,7 +622,7 @@ export class WsiViewerController {
                 const blob = await fetchWsiThumbnailBlob(
                     this.host.getTileServerBase(),
                     this.host.getProps().studyId || '',
-                    imageId,
+                    slideKey,
                     access,
                     requestController.signal,
                     'default',
@@ -653,9 +652,9 @@ export class WsiViewerController {
                     this.hierarchyLoadSeq,
                     'previewReadyAt',
                     'preview-ready',
-                    imageId
+                    slideKey
                 );
-                if (this.initialSlideLoadTrace?.slideId === imageId) {
+                if (this.initialSlideLoadTrace?.slideId === slideKey) {
                     this.initialSlideLoadTrace.previewShown = true;
                 }
             })
@@ -700,7 +699,6 @@ export class WsiViewerController {
             this.selectionTimeoutTimer = null;
         }
         this.cancelWsiTokenRefresh();
-        this.activeWsiSourceUrl = null;
         this.closeViewerSlide();
     }
 
@@ -718,21 +716,21 @@ export class WsiViewerController {
 
     private scheduleWsiTokenRefresh(
         studyId: string,
-        imageId: string,
+        slideKey: string,
         seq: number,
         expiresAt: number
     ): void {
-        this.setWsiTokenRefresh(studyId, imageId, seq, expiresAt - 30_000);
+        this.setWsiTokenRefresh(studyId, slideKey, seq, expiresAt - 30_000);
     }
 
     private setWsiTokenRefresh(
         studyId: string,
-        imageId: string,
+        slideKey: string,
         seq: number,
         refreshAt: number
     ): void {
         this.cancelWsiTokenRefresh();
-        this.wsiTokenRefresh = { studyId, imageId, seq, refreshAt };
+        this.wsiTokenRefresh = { studyId, slideKey, seq, refreshAt };
         this.startWsiTokenRefreshTimer();
     }
 
@@ -747,7 +745,7 @@ export class WsiViewerController {
             this.wsiTokenRefresh = null;
             void this.refreshWsiToken(
                 refresh.studyId,
-                refresh.imageId,
+                refresh.slideKey,
                 refresh.seq
             );
         }, delay);
@@ -769,7 +767,7 @@ export class WsiViewerController {
             this.wsiTokenRefresh = null;
             void this.refreshWsiToken(
                 refresh.studyId,
-                refresh.imageId,
+                refresh.slideKey,
                 refresh.seq
             );
             return;
@@ -779,33 +777,35 @@ export class WsiViewerController {
 
     private async refreshWsiToken(
         studyId: string,
-        imageId: string,
+        slideKey: string,
         seq: number
     ): Promise<void> {
         if (seq !== this.mountSeq || !this.osdViewer) return;
         try {
             const access = await getWsiSlideAccess(
                 studyId,
-                imageId,
+                slideKey,
                 true,
                 this.host.getProps().authScope
             );
             if (seq !== this.mountSeq || !this.osdViewer) return;
-            const headers = buildWsiRequestHeaders(
-                this.activeWsiSourceUrl || undefined,
-                access.accessToken
-            );
+            const headers = buildWsiRequestHeaders(access.accessToken);
             this.osdViewer.setAjaxHeaders?.(headers, true);
             this.osdViewer.navigator?.setAjaxHeaders?.(headers, true);
             this.scheduleWsiTokenRefresh(
                 studyId,
-                imageId,
+                slideKey,
                 seq,
                 access.expiresAt || Date.now() + access.expiresIn * 1000
             );
         } catch (_) {
             if (seq !== this.mountSeq) return;
-            this.setWsiTokenRefresh(studyId, imageId, seq, Date.now() + 10_000);
+            this.setWsiTokenRefresh(
+                studyId,
+                slideKey,
+                seq,
+                Date.now() + 10_000
+            );
         }
     }
 
@@ -822,7 +822,7 @@ export class WsiViewerController {
         this.backgroundWorkScheduled = false;
         this.sampleEnrichmentStarted = false;
         this.sampleEnrichmentScheduled = false;
-        this.initialSlideImageId = undefined;
+        this.initialSlideKey = undefined;
         this.cancelBackgroundWorkSchedule();
         this.cancelSampleEnrichmentSchedule();
         this.cancelNavigatorSchedule();
@@ -882,9 +882,9 @@ export class WsiViewerController {
             const first = this.host.chooseInitialServableSlide(allSlides);
             if (first) {
                 this.restoreHashViewportForNextSelection = restoreHashViewport;
-                this.initialSlideImageId = first.slide.image_id;
-                this.setInitialSlideTraceSlide(loadSeq, first.slide.image_id);
-                await this.fetchSlideMetadata(first.slide.image_id).catch(
+                this.initialSlideKey = first.slide.slide_key;
+                this.setInitialSlideTraceSlide(loadSeq, first.slide.slide_key);
+                await this.fetchSlideMetadata(first.slide.slide_key).catch(
                     () => {
                         // Best-effort warmup; selectSlide will surface real errors.
                     }
@@ -973,7 +973,7 @@ export class WsiViewerController {
             seq !== this.mountSeq ||
             this.backgroundWorkStarted ||
             this.backgroundWorkScheduled ||
-            !this.initialSlideImageId
+            !this.initialSlideKey
         ) {
             return;
         }
@@ -987,13 +987,13 @@ export class WsiViewerController {
                 seq !== this.mountSeq ||
                 this.backgroundWorkStarted ||
                 !this.shouldContinueBackgroundWork(expectedLoadSeq) ||
-                !this.initialSlideImageId
+                !this.initialSlideKey
             ) {
                 return;
             }
             this.backgroundWorkStarted = true;
             void this.prefetchSlideMetadata(
-                this.initialSlideImageId,
+                this.initialSlideKey,
                 expectedLoadSeq
             );
         };
@@ -1046,7 +1046,7 @@ export class WsiViewerController {
             try {
                 const access = await getWsiSlideAccess(
                     studyId,
-                    slide.image_id,
+                    slide.slide_key,
                     false,
                     this.host.getProps().authScope
                 );
@@ -1063,7 +1063,6 @@ export class WsiViewerController {
                     meta,
                     baseUrl: this.host.getTileServerBase(),
                     accessToken: access.accessToken,
-                    sourceUrl: access.sourceUrl,
                 });
             } catch (_) {
                 if (expectedMountSeq !== this.mountSeq) return;
@@ -1089,20 +1088,20 @@ export class WsiViewerController {
         this.navigatorTimer = setTimeout(runNavigatorSetup, 150);
     }
 
-    private fetchSlideMetadata(imageId: string): Promise<TileMetadata> {
+    private fetchSlideMetadata(slideKey: string): Promise<TileMetadata> {
         const tileServerBase = this.host.getTileServerBase();
         const { studyId, authScope } = this.host.getProps();
         if (
-            imageId === this.initialSlideImageId &&
+            slideKey === this.initialSlideKey &&
             this.initialSlideLoadTrace &&
-            hasCachedSlideMetadata(tileServerBase, imageId, studyId, authScope)
+            hasCachedSlideMetadata(tileServerBase, slideKey, studyId, authScope)
         ) {
             this.initialSlideLoadTrace.metadataCacheHit = true;
             this.initialSlideLoadTrace.metadataSource = 'shared-cache';
         }
         return fetchSlideMetadataCachedReadOnly(
             tileServerBase,
-            imageId,
+            slideKey,
             undefined,
             studyId,
             authScope
@@ -1110,7 +1109,7 @@ export class WsiViewerController {
     }
 
     private async prefetchSlideMetadata(
-        skipImageId?: string,
+        skipSlideKey?: string,
         expectedLoadSeq = this.hierarchyLoadSeq
     ) {
         const prioritizedSlides = selectMetadataPrefetchSlides(
@@ -1119,11 +1118,11 @@ export class WsiViewerController {
                 selectedSampleId: this.host.getSelectedSample()?.sample_id,
                 stainFilter: this.host.getStainFilter(),
                 limit: WsiViewerController.METADATA_PREFETCH_LIMIT,
-                skipImageId,
-                isCached: imageId =>
+                skipSlideKey,
+                isCached: slideKey =>
                     hasCachedSlideMetadata(
                         this.host.getTileServerBase(),
-                        imageId,
+                        slideKey,
                         this.host.getProps().studyId,
                         this.host.getProps().authScope
                     ),
@@ -1149,7 +1148,7 @@ export class WsiViewerController {
             ) {
                 batchRequests.push(
                     this.fetchSlideMetadata(
-                        prioritizedSlides[batchIndex].image_id
+                        prioritizedSlides[batchIndex].slide_key
                     )
                 );
             }
@@ -1212,7 +1211,7 @@ export class WsiViewerController {
         restoreHashViewport = this.restoreHashViewportForNextSelection
     ): Promise<void> {
         if (
-            this.host.getSelectedSlide()?.image_id === slide.image_id &&
+            this.host.getSelectedSlide()?.slide_key === slide.slide_key &&
             this.host.getSelectedSample()?.sample_id === sample.sample_id &&
             this.host.getSelectedMeta() != null &&
             this.mountedViewer != null
@@ -1222,7 +1221,10 @@ export class WsiViewerController {
         this.cancelActiveMount();
         this.restoreHashViewportForNextSelection = false;
         this.host.beginSlideSelection(slide, sample);
-        writeSelectedSlideState(getWsiViewerRuntime().urlState, slide.image_id);
+        writeSelectedSlideState(
+            getWsiViewerRuntime().urlState,
+            slide.slide_key
+        );
         this.host.onSlideSelectionStarted?.(slide);
         this.loadingStart = Date.now();
         if (this.spinnerTimer !== null) {
@@ -1244,13 +1246,16 @@ export class WsiViewerController {
 
         evictSlideMetadataCache(
             this.host.getTileServerBase(),
-            slide.image_id,
+            slide.slide_key,
             this.host.getProps().studyId,
             this.host.getProps().authScope
         );
         this.cancelActiveMount();
         this.host.beginSlideSelection(slide, sample);
-        writeSelectedSlideState(getWsiViewerRuntime().urlState, slide.image_id);
+        writeSelectedSlideState(
+            getWsiViewerRuntime().urlState,
+            slide.slide_key
+        );
         this.loadingStart = Date.now();
         const seq = this.mountSeq;
         this.scheduleSelectionTimeout(
@@ -1271,7 +1276,7 @@ export class WsiViewerController {
         restoreOrHomeViewport({
             osdViewer: this.mountedViewer,
             hashState: getWsiViewerRuntime().urlState.read(),
-            selectedSlideId: slide.image_id,
+            selectedSlideId: slide.slide_key,
             openSeadragon: this.openSeadragon,
             meta: this.host.getSelectedMeta(),
         });
@@ -1343,7 +1348,7 @@ export class WsiViewerController {
             );
             const filename = buildWsiDownloadFilename({
                 patientId: this.host.getPatientId(),
-                slideId: this.host.getSelectedSlide()?.image_id,
+                slideId: this.host.getSelectedSlide()?.slide_key,
                 x: Math.round(center.x),
                 y: Math.round(center.y),
             });
@@ -1356,7 +1361,7 @@ export class WsiViewerController {
     async copyViewLink() {
         const { urlState } = getWsiViewerRuntime();
         const state = buildWsiViewState({
-            selectedSlideId: this.host.getSelectedSlide()?.image_id,
+            selectedSlideId: this.host.getSelectedSlide()?.slide_key,
             osdViewer: this.mountedViewer,
         });
         const url = state ? urlState.write(state) : urlState.currentUrl();
@@ -1402,10 +1407,10 @@ export class WsiViewerController {
             this.osdOpenTimer = null;
         }
         this.ensureMouseTrackerForReadyViewer(seq);
-        const selectedSlideId = this.host.getSelectedSlide()?.image_id;
+        const selectedSlideId = this.host.getSelectedSlide()?.slide_key;
         if (
             selectedSlideId &&
-            selectedSlideId === this.initialSlideImageId &&
+            selectedSlideId === this.initialSlideKey &&
             this.initialSlideLoadTrace
         ) {
             this.recordInitialSlideStage(
@@ -1462,14 +1467,14 @@ export class WsiViewerController {
         }
         this.host.setViewerReady(true);
         if (
-            slide.image_id === this.initialSlideImageId &&
+            slide.slide_key === this.initialSlideKey &&
             this.initialSlideLoadTrace
         ) {
             this.recordInitialSlideStage(
                 this.initialSlideLoadTrace.loadSeq,
                 'osdOpenAt',
                 'osd-open',
-                slide.image_id
+                slide.slide_key
             );
         }
         const hashState = restoreHashViewport
@@ -1479,7 +1484,7 @@ export class WsiViewerController {
             restoreOrHomeViewport({
                 osdViewer: this.osdViewer,
                 hashState,
-                selectedSlideId: slide.image_id,
+                selectedSlideId: slide.slide_key,
                 openSeadragon: this.openSeadragon,
                 meta: this.host.getSelectedMeta(),
             });
@@ -1662,7 +1667,7 @@ export class WsiViewerController {
         const accessPromise = studyId
             ? getWsiSlideAccess(
                   studyId,
-                  slide.image_id,
+                  slide.slide_key,
                   false,
                   this.host.getProps().authScope
               )
@@ -1671,11 +1676,11 @@ export class WsiViewerController {
             // The access request is shared with metadata loading. Starting
             // the published-thumbnail fetch here lets it run while OSD and
             // slide metadata initialize.
-            this.startThumbnailPreview(slide.image_id, seq, accessPromise);
+            this.startThumbnailPreview(slide.slide_key, seq, accessPromise);
         }
         let meta: TileMetadata;
         try {
-            meta = await this.fetchSlideMetadata(slide.image_id);
+            meta = await this.fetchSlideMetadata(slide.slide_key);
         } catch (err) {
             if (seq !== this.mountSeq) return;
             // eslint-disable-next-line no-console
@@ -1701,14 +1706,14 @@ export class WsiViewerController {
         if (seq !== this.mountSeq) return;
         this.host.setSelectedMeta(meta);
         if (
-            slide.image_id === this.initialSlideImageId &&
+            slide.slide_key === this.initialSlideKey &&
             this.initialSlideLoadTrace
         ) {
             this.recordInitialSlideStage(
                 this.initialSlideLoadTrace.loadSeq,
                 'metadataLoadedAt',
                 'metadata-loaded',
-                slide.image_id
+                slide.slide_key
             );
         }
 
@@ -1733,7 +1738,6 @@ export class WsiViewerController {
             }
             const access = await accessPromise;
             if (seq !== this.mountSeq) return;
-            this.activeWsiSourceUrl = access.sourceUrl;
             // Reuse needs an idle viewer: tile requests of the previous slide
             // still in flight would hold loader slots ahead of this slide's
             // cold open. A busy viewer is rebuilt, as before.
@@ -1749,7 +1753,6 @@ export class WsiViewerController {
                         meta,
                         baseUrl: this.host.getTileServerBase(),
                         accessToken: access.accessToken,
-                        sourceUrl: access.sourceUrl,
                     });
             } else {
                 this.destroyViewer();
@@ -1760,7 +1763,6 @@ export class WsiViewerController {
                         meta,
                         baseUrl: this.host.getTileServerBase(),
                         accessToken: access.accessToken,
-                        sourceUrl: access.sourceUrl,
                         prefixUrl: getWsiViewerRuntime().osdPrefixUrl,
                     })
                 );
@@ -1776,7 +1778,7 @@ export class WsiViewerController {
             this.osdSlideMounted = true;
             this.scheduleWsiTokenRefresh(
                 studyId,
-                slide.image_id,
+                slide.slide_key,
                 seq,
                 access.expiresAt || Date.now() + access.expiresIn * 1000
             );
