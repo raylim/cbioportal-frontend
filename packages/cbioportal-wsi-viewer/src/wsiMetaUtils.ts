@@ -16,6 +16,10 @@ import {
 } from './wsiNavUtils';
 import { blockName, formatSpecimenLabel } from './wsiSpecimenUtils';
 import { wsiStainKind } from './wsiSlideUtils';
+import {
+    sequencedRelativeToProcedureText,
+    WsiSampleTimeline,
+} from './wsiSampleTimeline';
 
 function freezeMetaRows(rows: MetaRow[]): MetaRow[] {
     rows.forEach(row => Object.freeze(row));
@@ -180,7 +184,8 @@ export function buildPathRows(
     sample: Sample,
     patientId?: string,
     studyId?: string,
-    association?: SlideAssociation
+    association?: SlideAssociation,
+    sampleTimeline?: WsiSampleTimeline
 ): MetaRow[] {
     const isUnmatchedSample = sample.sample_id === 'UNMATCHED';
     const stainBadge = getStainBadge(slide);
@@ -239,7 +244,11 @@ export function buildPathRows(
             valueTip: sampleTip,
         },
     ];
-    const timeline = buildTimelineRow(slide, sample);
+    const timeline = buildTimelineRow(
+        slide,
+        sample,
+        isUnmatchedSample ? undefined : sampleTimeline
+    );
     if (timeline) {
         rows.push(timeline);
     }
@@ -324,10 +333,15 @@ export function buildSeqRows(sample: Sample, sampleUrl?: string): MetaRow[] {
 
 /**
  * One row for the slide's timing: the procedure day (or other recorded
- * timepoint), then the sample's sequencing date when known. Days count from
- * the patient's first tumor sequencing.
+ * timepoint), then the sample's acquisition and sequencing days when the
+ * patient timeline has them. Days count from the patient's first tumor
+ * sequencing.
  */
-function buildTimelineRow(slide: Slide, sample: Sample): MetaRow | undefined {
+function buildTimelineRow(
+    slide: Slide,
+    sample: Sample,
+    sampleTimeline: WsiSampleTimeline | undefined
+): MetaRow | undefined {
     const timepoint = procedureSlideTimepointText(slide);
     const procedureDays = timepoint ? getSlideTimepointDays(slide) : undefined;
     const parts: string[] = [];
@@ -336,7 +350,21 @@ function buildTimelineRow(slide: Slide, sample: Sample): MetaRow | undefined {
     } else if (timepoint) {
         parts.push(timepoint);
     }
-    if (sample.sequencing_date) {
+    if (sampleTimeline?.acquisitionDays != null) {
+        parts.push(
+            `acquired ${formatDaysSinceDiagnosis(
+                sampleTimeline.acquisitionDays
+            )}`
+        );
+    }
+    if (sampleTimeline?.sequencingDays != null) {
+        parts.push(
+            `sequenced ${sequencedRelativeToProcedureText(
+                sampleTimeline.sequencingDays,
+                procedureDays
+            )}`
+        );
+    } else if (sample.sequencing_date) {
         parts.push(`sequenced ${sample.sequencing_date}`);
     }
     if (parts.length === 0) {
@@ -344,7 +372,8 @@ function buildTimelineRow(slide: Slide, sample: Sample): MetaRow | undefined {
     }
     return {
         label: 'Timeline',
-        labelTip: 'Procedure day and sample sequencing date for this slide',
+        labelTip:
+            'Procedure, sample acquisition and sequencing days for this slide',
         value: parts.join(' · '),
         valueTip: slide.slide_timepoint_source
             ? `${slide.slide_timepoint_source}. ${DAY_ZERO_TOOLTIP}`

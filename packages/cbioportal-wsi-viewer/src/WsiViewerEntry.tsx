@@ -1,5 +1,7 @@
 import * as React from 'react';
+import { ClinicalEvent } from 'cbioportal-ts-api-client';
 import { buildWsiHierarchyApiUrl } from './wsiUrls';
+import { buildWsiSampleTimelineMap } from './wsiSampleTimeline';
 import { getWsiViewerRuntime } from './wsiViewerConfig';
 import WSIViewer from './WSIViewer';
 import {
@@ -33,6 +35,11 @@ export interface WsiViewerProps {
     /** Slide named by a `slideKey` viewer link. */
     requestedSlideKey?: string;
     /**
+     * Patient clinical events; sample acquisition and sequencing days are
+     * read from them to relate each slide's procedure to its sample.
+     */
+    clinicalEvents?: ClinicalEvent[];
+    /**
      * Rows for the sidebar's Clinical section, in display order. Rows with a
      * `sampleId` show only for that sample's slides. Unset hides the section;
      * an empty list shows it with no values.
@@ -60,12 +67,20 @@ export interface WsiViewerProps {
 export default function WsiViewer({
     patientId,
     studyId,
+    clinicalEvents,
     ...viewerProps
 }: WsiViewerProps) {
     const hierarchyUrl = buildWsiHierarchyApiUrl(
         getWsiViewerRuntime().buildApiUrl,
         studyId,
         patientId
+    );
+    const sampleTimelines = React.useMemo(
+        () =>
+            clinicalEvents && clinicalEvents.length > 0
+                ? buildWsiSampleTimelineMap(clinicalEvents)
+                : undefined,
+        [clinicalEvents]
     );
 
     return (
@@ -79,6 +94,7 @@ export default function WsiViewer({
                 !!getWsiViewerRuntime().agent?.enabled &&
                 !!getWsiViewerRuntime().annotations?.apiUrl
             }
+            sampleTimelines={sampleTimelines}
         />
     );
 }

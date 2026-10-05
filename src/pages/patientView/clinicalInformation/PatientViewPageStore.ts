@@ -207,6 +207,10 @@ import {
     retrieveMutationalSignatureVersionFromData,
 } from 'shared/lib/GenericAssayUtils/MutationalSignaturesUtils';
 import { getServerConfig } from 'config/config';
+import {
+    loadPathologySlidesTimeline,
+    PathologySlidesTimeline,
+} from 'pages/patientView/timeline/pathologySlidesTimelineLoader';
 import { StructuralVariantFilter } from 'cbioportal-ts-api-client';
 import { IGenePanelDataByProfileIdAndSample } from 'shared/lib/isSampleProfiled';
 import { NamespaceColumnConfig } from 'shared/components/namespaceColumns/NamespaceColumnConfig';
@@ -2349,6 +2353,24 @@ export class PatientViewPageStore {
         },
         []
     );
+
+    /**
+     * The PATHOLOGY SLIDES timeline track, loaded for the Summary tab only
+     * when the patient has slides; undefined otherwise.
+     */
+    readonly pathologySlidesTimeline = remoteData<
+        PathologySlidesTimeline | undefined
+    >({
+        await: () => [this.clinicalDataPatient],
+        invoke: () =>
+            loadPathologySlidesTimeline({
+                tileServerUrl: getServerConfig().msk_wsi_tile_server_url,
+                clinicalDataPatient: this.clinicalDataPatient.result,
+                studyId: this.studyId,
+                patientId: this.patientId,
+                authScope: wsiAuthScope(this.appStore.userName),
+            }),
+    });
 
     readonly molecularProfileIdDiscrete = remoteData({
         await: () => [this.molecularProfilesInStudy],

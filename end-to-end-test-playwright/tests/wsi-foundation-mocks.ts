@@ -161,6 +161,17 @@ export async function installFoundationMocks(
             body: JSON.stringify([]),
         })
     );
+    // The viewer route loads the patient's clinical events to relate slides
+    // to sequencing; the smoke patient has none.
+    await page.route(
+        `**/api/studies/${STUDY_ID}/patients/${PATIENT_ID}/clinical-events**`,
+        route =>
+            route.fulfill({
+                status: 200,
+                contentType: 'application/json',
+                body: JSON.stringify([]),
+            })
+    );
     await page.route(`**/api/studies/${STUDY_ID}/molecular-profiles**`, route =>
         route.fulfill({
             status: 200,
