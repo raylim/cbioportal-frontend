@@ -116,7 +116,7 @@ describe('selectWsiClinicalAttributes', () => {
             ],
             [],
             sampleValues(
-                'TUMOR_PURITY',
+                'MUTATION_COUNT',
                 'PRIMARY_SITE',
                 'HIDDEN',
                 'SAMPLE_TYPE',
