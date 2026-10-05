@@ -19,7 +19,7 @@ describe('WsiAgentProposalOverlay', () => {
             session_id: 'session-1',
             action_type: 'annotation_batch',
             study_id: 'study-1',
-            slide_id: 'slide-1',
+            slide_key: 'slide-1',
             payload: {
                 color: '#ff0000',
                 context: {
@@ -121,7 +121,7 @@ describe('WsiAgentProposalOverlay', () => {
             session_id: 'session-1',
             action_type: 'create_annotation',
             study_id: 'study-1',
-            slide_id: 'slide-1',
+            slide_key: 'slide-1',
             payload: {
                 context: {
                     viewport: {

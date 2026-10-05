@@ -55,6 +55,7 @@ import {
 } from './wsiAnnotationControls';
 import {
     buildWsiAgentEmbeddingContext,
+    buildWsiAgentSlideMetadata,
     buildWsiAgentSvgSelectorFromSlidePoints,
     WsiAgentContext,
     WsiAgentProposal,
@@ -754,7 +755,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
         if (!this.selectedSlide || !this.selectedSample || !this.selectedMeta) {
             return null;
         }
-        const slideId = this.selectedSlide.image_id;
+        const slideKey = this.selectedSlide.slide_key;
         const sampleId = this.selectedSample.sample_id;
         const studyId = this.props.studyId || '';
         const patientId = this.props.patientId;
@@ -765,7 +766,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
             !viewport ||
             this.props.studyId !== studyId ||
             this.props.patientId !== patientId ||
-            this.selectedSlide?.image_id !== slideId ||
+            this.selectedSlide?.slide_key !== slideKey ||
             this.selectedSample?.sample_id !== sampleId ||
             this.selectedMeta?.dimensions.width !== width ||
             this.selectedMeta?.dimensions.height !== height
@@ -776,7 +777,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
             study_id: studyId,
             patient_id: patientId,
             sample_id: sampleId,
-            slide_id: slideId,
+            slide_key: slideKey,
             stain_name: this.selectedSlide.stain_name,
             match_level: this.activePathologyFilter?.matchLevel,
             filters: {
@@ -784,7 +785,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
                 match: this.matchFilter,
                 timepoint_days: this.timepointDays,
             },
-            slide_metadata: { ...this.selectedMeta },
+            slide_metadata: buildWsiAgentSlideMetadata(this.selectedMeta),
             patient_context: {},
             existing_annotations: this.annotationController.annotations.map(
                 annotation => ({
@@ -802,7 +803,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
             },
             embedding_context: buildWsiAgentEmbeddingContext(
                 studyId,
-                this.servableSlides.map(entry => entry.slide.image_id)
+                this.servableSlides.map(entry => entry.slide.slide_key)
             ),
         };
     };
@@ -819,11 +820,11 @@ export default class WSIViewer extends React.Component<Props, {}> {
             | undefined;
         return (
             proposal.study_id === context.study_id &&
-            proposal.slide_id === context.slide_id &&
+            proposal.slide_key === context.slide_key &&
             !!proposalContext &&
             proposalContext.study_id === context.study_id &&
             proposalContext.patient_id === context.patient_id &&
-            proposalContext.slide_id === context.slide_id &&
+            proposalContext.slide_key === context.slide_key &&
             viewport?.source_fingerprint ===
                 context.viewport.source_fingerprint &&
             viewport?.viewer_generation === context.viewport.viewer_generation
@@ -832,23 +833,26 @@ export default class WSIViewer extends React.Component<Props, {}> {
 
     private slideMatchesAgentFilters(entry: { slide: Slide; sample: Sample }) {
         if (!this.hierarchy) return false;
-        const preferredImageIds = getPathologyPreferredImageIds(
+        const preferredSlideKeys = getPathologyPreferredSlideKeys(
             this.hierarchy,
             this.activePathologyFilter
         );
-        if (preferredImageIds && !preferredImageIds.has(entry.slide.image_id)) {
+        if (
+            preferredSlideKeys &&
+            !preferredSlideKeys.has(entry.slide.slide_key)
+        ) {
             return false;
         }
         if (!matchesWsiStainFilter(entry.slide, this.stainFilter)) {
             return false;
         }
-        const associations = getServableSlideAssociationsByImageIdReadOnly(
+        const associations = getServableSlideAssociationsBySlideKeyReadOnly(
             this.hierarchy.slide_associations
         );
         if (
             !matchesWsiTimepointFilter(
                 entry.slide,
-                associations.get(entry.slide.image_id),
+                associations.get(entry.slide.slide_key),
                 this.timepointDays
             )
         ) {
@@ -856,7 +860,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
         }
         return (
             this.matchFilter === 'all' ||
-            associations.get(entry.slide.image_id)?.match_level ===
+            associations.get(entry.slide.slide_key)?.match_level ===
                 this.matchFilter.toUpperCase()
         );
     }
@@ -881,9 +885,9 @@ export default class WSIViewer extends React.Component<Props, {}> {
         }
 
         if (actionType === 'select_slide') {
-            const slideId = parameters.slide_id;
+            const slideKey = parameters.slide_key;
             const entry = this.servableSlides.find(
-                candidate => candidate.slide.image_id === slideId
+                candidate => candidate.slide.slide_key === slideKey
             );
             if (!entry || !this.slideMatchesAgentFilters(entry)) {
                 return {
@@ -897,7 +901,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
                 entry.sample
             );
             return selection.status === 'ready' &&
-                this.selectedSlide?.image_id === slideId
+                this.selectedSlide?.slide_key === slideKey
                 ? { success: true, detail: 'Slide selected.' }
                 : {
                       success: false,
@@ -1084,7 +1088,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
                 : [proposal.payload];
         if (
             !context ||
-            context.slide_id !== proposal.slide_id ||
+            context.slide_key !== proposal.slide_key ||
             !drafts.length
         ) {
             return {
@@ -1360,7 +1364,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
         if (!this.hierarchy || !servableSlides.length) {
             return {
                 status: 'failed',
-                slideId: '',
+                slideKey: '',
                 detail: 'No slide matches the requested filters.',
             };
         }
@@ -1401,20 +1405,20 @@ export default class WSIViewer extends React.Component<Props, {}> {
             this.controller.clearSelectedSlide();
             return {
                 status: 'failed',
-                slideId: '',
+                slideKey: '',
                 detail: 'No slide matches the requested filters.',
             };
         }
 
         const next = matchingSlides[0];
         if (
-            this.selectedSlide?.image_id === next.slide.image_id &&
+            this.selectedSlide?.slide_key === next.slide.slide_key &&
             this.selectedSample?.sample_id === next.sample.sample_id &&
             this.viewerReady &&
             this.tilesReady &&
             this.error === null
         ) {
-            return { status: 'ready', slideId: next.slide.image_id };
+            return { status: 'ready', slideKey: next.slide.slide_key };
         }
         return this.controller.selectSlide(next.slide, next.sample);
     }

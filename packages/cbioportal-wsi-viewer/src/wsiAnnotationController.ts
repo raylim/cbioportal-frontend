@@ -714,7 +714,7 @@ export class WsiAnnotationController {
         color: string;
         selector: string;
     }): Promise<boolean> {
-        if (!this.slideId) return false;
+        if (!this.slideKey) return false;
         return this.createAnnotation({
             '@context': 'http://www.w3.org/ns/anno.jsonld',
             type: 'Annotation',
@@ -729,7 +729,7 @@ export class WsiAnnotationController {
                 },
             ],
             target: {
-                source: this.slideId,
+                source: this.slideKey,
                 selector: { type: 'SvgSelector', value: input.selector },
             },
             color: input.color,
@@ -740,20 +740,20 @@ export class WsiAnnotationController {
 
     @action.bound
     adoptAgentAnnotations(items: Array<Record<string, unknown>>) {
-        const slideId = this.slideId;
-        if (!slideId) return;
+        const slideKey = this.slideKey;
+        if (!slideKey) return;
         const saved = items
             .filter(item => {
-                const itemSlideId = item.slide_id;
+                const itemSlideKey = item.slide_key;
                 const itemStudyId = item.study_id;
                 return (
-                    itemSlideId === slideId &&
+                    itemSlideKey === slideKey &&
                     (typeof itemStudyId !== 'string' ||
                         !this.studyId ||
                         itemStudyId === this.studyId)
                 );
             })
-            .map(item => this.fromApi(item, slideId));
+            .map(item => this.fromApi(item, slideKey));
         if (!saved.length) return;
         const savedById = new Map(
             saved.map(annotation => [annotation.id, annotation])

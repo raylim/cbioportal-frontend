@@ -320,36 +320,14 @@ export function clearWsiSlideAccess(studyId?: string): void {
 }
 
 /**
- * Identifies the tile source of a slide access: the capability's
- * `tile_source_sha256` claim when present, the source URL otherwise, and the
- * slide dimensions.
+ * Identifies the pixels a slide access serves, so that an agent proposal made
+ * against one capture is not applied to another: the opaque slide key and the
+ * tile pyramid's shape. The capability's source is encrypted and the browser
+ * never sees it, so it is not part of the fingerprint.
  */
 export function getWsiSourceFingerprint(access: WsiSlideAccess): string {
-    let sourceDigest = '';
-    try {
-        const encodedPayload = access.accessToken.split('.')[1];
-        if (encodedPayload) {
-            const normalized = encodedPayload
-                .replace(/-/g, '+')
-                .replace(/_/g, '/');
-            const decoded = atob(
-                normalized + '='.repeat((4 - (normalized.length % 4)) % 4)
-            );
-            const payload = JSON.parse(decoded) as {
-                tile_source_sha256?: unknown;
-            };
-            if (
-                typeof payload.tile_source_sha256 === 'string' &&
-                /^[0-9a-f]{64}$/.test(payload.tile_source_sha256)
-            ) {
-                sourceDigest = payload.tile_source_sha256;
-            }
-        }
-    } catch (_) {
-        // Use the source URL when the capability payload is unavailable.
-    }
-    const source = sourceDigest || access.sourceUrl;
-    return `wsi-v2:${source}:${access.tileMetadata.dimensions.width}x${access.tileMetadata.dimensions.height}`;
+    const meta = access.tileMetadata;
+    return `wsi-v3:${access.slideKey}:${meta.dimensions.width}x${meta.dimensions.height}:${meta.levels}:${meta.tile_size}`;
 }
 
 /** Services that accept a study-scoped portal access token. */

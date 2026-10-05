@@ -1,3 +1,5 @@
+import { TileMetadata } from './wsiViewerTypes';
+
 export type WsiAgentActionStatus =
     | 'pending'
     | 'approved'
@@ -25,7 +27,7 @@ export interface WsiAgentContext {
     study_id: string;
     patient_id: string;
     sample_id?: string;
-    slide_id: string;
+    slide_key: string;
     stain_name?: string;
     match_level?: string;
     filters: Record<string, unknown>;
@@ -39,22 +41,54 @@ export interface WsiAgentContext {
 export interface WsiAgentEmbeddingContext {
     provider: 'quiltnet';
     scope: 'study';
-    slide_ids: string[];
+    slide_keys: string[];
 }
 
 export function buildWsiAgentEmbeddingContext(
     studyId: string,
-    slideIds: string[]
+    slideKeys: string[]
 ): WsiAgentEmbeddingContext | undefined {
     if (studyId !== 'coad_msk_2025') return undefined;
-    const uniqueSlideIds = Array.from(
-        new Set(slideIds.filter(slideId => slideId.length > 0))
+    const uniqueSlideKeys = Array.from(
+        new Set(slideKeys.filter(slideKey => slideKey.length > 0))
     );
     return {
         provider: 'quiltnet',
         scope: 'study',
-        slide_ids: uniqueSlideIds,
+        slide_keys: uniqueSlideKeys,
     };
+}
+
+/**
+ * The slide metadata the assistant may see: the pixel pyramid's shape and
+ * scan properties, picked field by field so that nothing else the tile
+ * metadata may carry (a file name, an image ID, an accession) is sent.
+ */
+export function buildWsiAgentSlideMetadata(
+    meta: TileMetadata
+): Record<string, unknown> {
+    const metadata: Record<string, unknown> = {
+        dimensions: {
+            width: meta.dimensions.width,
+            height: meta.dimensions.height,
+        },
+        levels: meta.levels,
+        level_dimensions: (meta.level_dimensions || []).map(level => ({
+            width: level.width,
+            height: level.height,
+        })),
+        max_zoom: meta.max_zoom,
+        tile_size: meta.tile_size,
+    };
+    if (meta.level_downsamples) {
+        metadata.level_downsamples = [...meta.level_downsamples];
+    }
+    if (meta.mpp) metadata.mpp = { x: meta.mpp.x, y: meta.mpp.y };
+    if (meta.objective_power != null) {
+        metadata.objective_power = meta.objective_power;
+    }
+    if (meta.vendor) metadata.vendor = meta.vendor;
+    return metadata;
 }
 
 export interface WsiAgentCoordinateRegion {
@@ -90,7 +124,7 @@ export interface WsiAgentProposal {
         | 'delete_annotation'
         | 'viewer_action';
     study_id: string;
-    slide_id: string;
+    slide_key: string;
     payload: Record<string, any>;
     status: WsiAgentActionStatus;
     created_at: string;

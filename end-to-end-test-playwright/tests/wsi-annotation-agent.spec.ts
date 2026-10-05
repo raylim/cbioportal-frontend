@@ -1,6 +1,6 @@
 import { expect, test } from '../fixtures';
 import {
-    IMAGE_ID,
+    SLIDE_KEY,
     installFoundationMocks,
     PATIENT_ID,
     STUDY_ID,
@@ -43,7 +43,7 @@ if (process.env.PW_SUITE === 'wsi' && process.env.WSI_CHILD_CONTRACT !== '1') {
                     contentType: 'application/json',
                     body: JSON.stringify({
                         id: 'annotation-agent-1',
-                        slide_id: IMAGE_ID,
+                        slide_key: SLIDE_KEY,
                         study_id: STUDY_ID,
                         body: {
                             label: 'AI tumor region',
@@ -63,12 +63,14 @@ if (process.env.PW_SUITE === 'wsi' && process.env.WSI_CHILD_CONTRACT !== '1') {
                 });
             });
 
+            const chatBodies: string[] = [];
             await page.route('**/wsi/agent/chat', async route => {
+                chatBodies.push(route.request().postData() || '');
                 const request = JSON.parse(
                     route.request().postData() || '{}'
                 ) as {
                     context: {
-                        slide_id: string;
+                        slide_key: string;
                         study_id: string;
                         viewport: {
                             source_fingerprint: string;
@@ -84,7 +86,7 @@ if (process.env.PW_SUITE === 'wsi' && process.env.WSI_CHILD_CONTRACT !== '1') {
                     session_id: request.session_id,
                     action_type: 'create_annotation',
                     study_id: request.context.study_id,
-                    slide_id: request.context.slide_id,
+                    slide_key: request.context.slide_key,
                     payload: {
                         label: 'AI tumor region',
                         layer_name: 'AI review',
@@ -135,7 +137,7 @@ if (process.env.PW_SUITE === 'wsi' && process.env.WSI_CHILD_CONTRACT !== '1') {
                                 session_id: 'browser-e2e',
                                 action_type: 'create_annotation',
                                 study_id: STUDY_ID,
-                                slide_id: IMAGE_ID,
+                                slide_key: SLIDE_KEY,
                                 payload: {},
                                 status: 'completed',
                                 created_at: new Date().toISOString(),
@@ -143,7 +145,7 @@ if (process.env.PW_SUITE === 'wsi' && process.env.WSI_CHILD_CONTRACT !== '1') {
                             annotations: [
                                 {
                                     id: 'annotation-agent-1',
-                                    slide_id: IMAGE_ID,
+                                    slide_key: SLIDE_KEY,
                                     study_id: STUDY_ID,
                                     body: {
                                         label: 'AI tumor region',
@@ -166,7 +168,7 @@ if (process.env.PW_SUITE === 'wsi' && process.env.WSI_CHILD_CONTRACT !== '1') {
             );
 
             await page.goto(
-                `/wsi/patient/${PATIENT_ID}?studyId=${STUDY_ID}#wsi:slide=${IMAGE_ID}&x=256&y=256&z=0.75`
+                `/wsi/patient/${PATIENT_ID}?studyId=${STUDY_ID}#wsi:slide=${SLIDE_KEY}&x=256&y=256&z=0.75`
             );
 
             await expect(
@@ -197,6 +199,12 @@ if (process.env.PW_SUITE === 'wsi' && process.env.WSI_CHILD_CONTRACT !== '1') {
                 timeout: 30_000,
             });
             await expect(page.getByText('AI tumor region')).toBeVisible();
+            // The assistant learns the slide by its opaque key only.
+            expect(chatBodies.length).toBeGreaterThan(0);
+            for (const body of chatBodies) {
+                expect(JSON.parse(body).context.slide_key).toBe(SLIDE_KEY);
+                expect(body).not.toMatch(/image_?id|barcode|slide_id|s3:/i);
+            }
         });
 
         test('applies an approved navigation proposal to the native viewer', async ({
@@ -232,7 +240,7 @@ if (process.env.PW_SUITE === 'wsi' && process.env.WSI_CHILD_CONTRACT !== '1') {
                     route.request().postData() || '{}'
                 ) as {
                     context: {
-                        slide_id: string;
+                        slide_key: string;
                         study_id: string;
                         patient_id: string;
                         viewport: {
@@ -248,14 +256,14 @@ if (process.env.PW_SUITE === 'wsi' && process.env.WSI_CHILD_CONTRACT !== '1') {
                     session_id: request.session_id,
                     action_type: 'viewer_action',
                     study_id: request.context.study_id,
-                    slide_id: request.context.slide_id,
+                    slide_key: request.context.slide_key,
                     payload: {
                         action: 'go_to_coordinates',
                         parameters: { x: 100, y: 120 },
                         context: {
                             study_id: request.context.study_id,
                             patient_id: request.context.patient_id,
-                            slide_id: request.context.slide_id,
+                            slide_key: request.context.slide_key,
                             viewport: request.context.viewport,
                         },
                         rationale: 'Move to the requested region.',
@@ -291,7 +299,7 @@ if (process.env.PW_SUITE === 'wsi' && process.env.WSI_CHILD_CONTRACT !== '1') {
                             session_id: 'browser-e2e',
                             action_type: 'viewer_action',
                             study_id: STUDY_ID,
-                            slide_id: IMAGE_ID,
+                            slide_key: SLIDE_KEY,
                             payload: {
                                 action: 'go_to_coordinates',
                                 parameters: { x: 100, y: 120 },
@@ -313,7 +321,7 @@ if (process.env.PW_SUITE === 'wsi' && process.env.WSI_CHILD_CONTRACT !== '1') {
                             session_id: 'browser-e2e',
                             action_type: 'viewer_action',
                             study_id: STUDY_ID,
-                            slide_id: IMAGE_ID,
+                            slide_key: SLIDE_KEY,
                             payload: {
                                 action: 'go_to_coordinates',
                                 parameters: { x: 100, y: 120 },
@@ -330,7 +338,7 @@ if (process.env.PW_SUITE === 'wsi' && process.env.WSI_CHILD_CONTRACT !== '1') {
             );
 
             await page.goto(
-                `/wsi/patient/${PATIENT_ID}?studyId=${STUDY_ID}#wsi:slide=${IMAGE_ID}`
+                `/wsi/patient/${PATIENT_ID}?studyId=${STUDY_ID}#wsi:slide=${SLIDE_KEY}`
             );
             await expect(page.getByTestId('wsi-agent-panel')).toBeVisible();
             await page

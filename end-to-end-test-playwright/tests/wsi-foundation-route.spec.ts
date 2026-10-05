@@ -21,7 +21,7 @@ if (process.env.PW_SUITE === 'wsi' && process.env.WSI_CHILD_CONTRACT !== '1') {
                 const pageErrors: string[] = [];
                 page.on('pageerror', error => pageErrors.push(error.message));
                 await page.goto(
-                    `/wsi/patient/${MOCK_PATIENT_ID}?studyId=${MOCK_STUDY_ID}#wsi:slide=${MOCK_IMAGE_ID}&x=256&y=256&z=0.75`
+                    `/wsi/patient/${MOCK_PATIENT_ID}?studyId=${MOCK_STUDY_ID}#wsi:slide=${MOCK_SLIDE_KEY}&x=256&y=256&z=0.75`
                 );
                 await expect(
                     page.getByTestId('wsi-route-unavailable')

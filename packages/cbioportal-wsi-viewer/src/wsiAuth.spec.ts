@@ -295,22 +295,24 @@ describe('WSI access capability', () => {
         expect(fetchImpl).toHaveBeenCalledTimes(2);
     });
 
-    it('fingerprints the tile source from the capability claim', () => {
-        const digest = 'a'.repeat(64);
-        const claims = btoa(JSON.stringify({ tile_source_sha256: digest }))
-            .replace(/\+/g, '-')
-            .replace(/\//g, '_')
-            .replace(/=+$/, '');
+    it('fingerprints a slide access by its slide key and pyramid shape', () => {
+        const slideKey = '0123456789abcdef0123456789abcdef';
         const access = {
-            accessToken: `header.${claims}.signature`,
-            sourceUrl: 's3://bucket/slide-1.svs',
-            tileMetadata: { dimensions: { width: 100, height: 80 } },
+            slideKey,
+            accessToken: 'header.payload.signature',
+            tileMetadata: {
+                dimensions: { width: 100, height: 80 },
+                levels: 3,
+                tile_size: 256,
+            },
         } as any;
 
-        expect(getWsiSourceFingerprint(access)).toBe(`wsi-v2:${digest}:100x80`);
+        expect(getWsiSourceFingerprint(access)).toBe(
+            `wsi-v3:${slideKey}:100x80:3:256`
+        );
         expect(
-            getWsiSourceFingerprint({ ...access, accessToken: 'opaque' })
-        ).toBe('wsi-v2:s3://bucket/slide-1.svs:100x80');
+            getWsiSourceFingerprint({ ...access, accessToken: 'other' })
+        ).toBe(getWsiSourceFingerprint(access));
     });
 
     it('rejects a schema-v2 metadata object with a non-current decode policy', async () => {

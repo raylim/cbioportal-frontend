@@ -65,7 +65,7 @@ export type WsiSlideSelectionStatus = 'ready' | 'failed' | 'cancelled';
 
 export interface WsiSlideSelectionResult {
     status: WsiSlideSelectionStatus;
-    slideId: string;
+    slideKey: string;
     detail?: string;
 }
 
@@ -184,7 +184,7 @@ export class WsiViewerController {
     private selectionWaiters = new Map<
         number,
         {
-            slideId: string;
+            slideKey: string;
             resolve: (result: WsiSlideSelectionResult) => void;
         }
     >();
@@ -495,7 +495,7 @@ export class WsiViewerController {
         const waiter = this.selectionWaiters.get(seq);
         if (!waiter) return;
         this.selectionWaiters.delete(seq);
-        waiter.resolve({ status, slideId: waiter.slideId, detail });
+        waiter.resolve({ status, slideKey: waiter.slideKey, detail });
     }
 
     private primeOpenSeadragonLoad() {
@@ -1136,7 +1136,7 @@ export class WsiViewerController {
             this.mountedViewer != null &&
             this.nativeTileReadySeq === this.mountSeq
         ) {
-            return { status: 'ready', slideId: slide.image_id };
+            return { status: 'ready', slideKey: slide.slide_key };
         }
         this.cancelActiveMount();
         this.restoreHashViewportForNextSelection = false;
@@ -1154,7 +1154,7 @@ export class WsiViewerController {
         const seq = this.mountSeq;
         const selectionResult = new Promise<WsiSlideSelectionResult>(resolve =>
             this.selectionWaiters.set(seq, {
-                slideId: slide.image_id,
+                slideKey: slide.slide_key,
                 resolve,
             })
         );
