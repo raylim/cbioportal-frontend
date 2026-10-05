@@ -140,8 +140,9 @@ const tileMetadata = {
     tile_size: 256,
 };
 
-function slideImageId(patientId: string) {
-    return `slide-${patientId}`;
+/** An opaque 32-hex slide key per patient, as the backend publishes them. */
+function slideKeyFor(patientId: string) {
+    return (patientIds.indexOf(patientId) + 1).toString(16).padStart(32, '0');
 }
 
 function hierarchyFor(patientId: string) {
@@ -164,9 +165,7 @@ function hierarchyFor(patientId: string) {
                                 blockLabel: 'A1',
                                 slides: [
                                     {
-                                        imageId: slideImageId(patientId),
-                                        resourceId: 'WSI_SAMPLE',
-                                        resourceDataId: '1',
+                                        slideKey: slideKeyFor(patientId),
                                         stainName: 'H&E initial',
                                         stainGroup: 'H&E',
                                         isHne: true,
@@ -174,7 +173,6 @@ function hierarchyFor(patientId: string) {
                                         magnification: '',
                                         fileSizeBytes: null,
                                         canServeTiles: true,
-                                        barcode: '',
                                         slideType: 'H&E',
                                         sampleId: `${patientId}-S`,
                                         matchLevel: 'BLOCK',
@@ -208,6 +206,8 @@ interface StudySlidesMocks {
     studySlidesRequests: StudySlidesRequestBody[];
     facetRequests: StudySlidesRequestBody[];
     hierarchyPatients: string[];
+    /** Every slide access request URL. */
+    accessRequests: string[];
     /** Delay for list pages after the first, to observe the pending state. */
     pageDelayMs: number;
 }
@@ -217,6 +217,7 @@ async function installStudySlidesMocks(page: Page): Promise<StudySlidesMocks> {
         studySlidesRequests: [],
         facetRequests: [],
         hierarchyPatients: [],
+        accessRequests: [],
         pageDelayMs: 0,
     };
     const serverConfig = {
@@ -369,21 +370,29 @@ async function installStudySlidesMocks(page: Page): Promise<StudySlidesMocks> {
     await page.route(
         `**/api/wsi/v2/resources/${STUDY_ID}/*/access?*`,
         route => {
-            const imageId =
-                new URL(route.request().url()).searchParams.get('imageId') ||
-                '';
+            const url = new URL(route.request().url());
+            mocks.accessRequests.push(url.toString());
+            const patientId = decodeURIComponent(
+                url.pathname.split('/').slice(-2, -1)[0]
+            );
+            const slideKey = url.searchParams.get('slideKey') || '';
+            // As the backend: 400 unless 32 hex, 404 for an unknown slide.
+            if (!/^[0-9a-f]{32}$/.test(slideKey)) {
+                return route.fulfill({ status: 400, body: '' });
+            }
+            if (slideKey !== slideKeyFor(patientId)) {
+                return route.fulfill({ status: 404, body: '' });
+            }
             return route.fulfill({
                 status: 200,
                 contentType: 'application/json',
                 body: JSON.stringify({
-                    imageId,
-                    sourceUrl: `s3://wsi-study-slides/${imageId}.svs`,
+                    slideKey,
                     accessToken: 'wsi-study-slides-token',
                     tokenType: 'Bearer',
                     expiresIn: 300,
                     tileMetadata,
                     thumbnail: {
-                        sourceUrl: `s3://wsi-study-slides/${imageId}.png`,
                         width: 1,
                         height: 1,
                         contentType: 'image/png',
@@ -423,22 +432,25 @@ if (process.env.PW_SUITE === 'wsi') {
                 `${patientIds[0]} · 1 of ${PATIENT_COUNT}`
             );
             await expect(
-                page.getByTestId(
-                    `wsi-slide-item-${slideImageId(patientIds[0])}`
-                )
+                page.getByTestId(`wsi-slide-item-${slideKeyFor(patientIds[0])}`)
             ).toBeVisible({ timeout: 30000 });
             expect(
                 mocks.studySlidesRequests[0].studyViewFilter.studyIds
             ).toEqual([STUDY_ID]);
+            // Slides are addressed only by their opaque key.
+            expect(mocks.accessRequests.length).toBeGreaterThan(0);
+            for (const accessUrl of mocks.accessRequests) {
+                const params = new URL(accessUrl).searchParams;
+                expect(params.get('slideKey')).toMatch(/^[0-9a-f]{32}$/);
+                expect([...params.keys()]).toEqual(['slideKey']);
+            }
 
             await page.getByTestId('study-slides-next').click();
             await expect(patientPosition(page)).toHaveText(
                 `${patientIds[1]} · 2 of ${PATIENT_COUNT}`
             );
             await expect(
-                page.getByTestId(
-                    `wsi-slide-item-${slideImageId(patientIds[1])}`
-                )
+                page.getByTestId(`wsi-slide-item-${slideKeyFor(patientIds[1])}`)
             ).toBeVisible({ timeout: 30000 });
             await expect
                 .poll(() =>
@@ -554,9 +566,7 @@ if (process.env.PW_SUITE === 'wsi') {
             await installStudySlidesMocks(page);
             await page.goto(`/study/pathologySlides?id=${STUDY_ID}`);
             await expect(
-                page.getByTestId(
-                    `wsi-slide-item-${slideImageId(patientIds[0])}`
-                )
+                page.getByTestId(`wsi-slide-item-${slideKeyFor(patientIds[0])}`)
             ).toBeVisible({ timeout: 30000 });
 
             await page.getByTestId('study-slides-hide').click();
