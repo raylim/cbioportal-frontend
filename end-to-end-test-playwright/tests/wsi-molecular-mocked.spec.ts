@@ -16,11 +16,9 @@ const molecularHierarchy = {
             parts: [
                 {
                     partNumber: '1',
-                    partDesignator: '1',
                     partType: '',
                     partDescription: 'Molecular specimen',
                     subspecialty: '',
-                    pathDxTitle: '',
                     blocks: [
                         {
                             blockNumber: 'A1',
