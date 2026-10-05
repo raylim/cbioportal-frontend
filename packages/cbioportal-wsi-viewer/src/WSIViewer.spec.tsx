@@ -154,11 +154,9 @@ function makeBlock(slides: Slide[], blockNumber = '1'): Block {
 function makePart(blocks: Block[]): Part {
     return {
         part_number: '1',
-        part_designator: 'A',
         part_type: 'Resection',
         part_description: 'Test part',
         subspecialty: 'GI',
-        path_dx_title: 'COLON ADENOCARCINOMA',
         blocks,
     };
 }
@@ -194,11 +192,9 @@ function makeWireHierarchy(slides: Slide[], patientId = 'P-123'): any {
                 parts: [
                     {
                         partNumber: part.part_number,
-                        partDesignator: part.part_designator,
                         partType: part.part_type,
                         partDescription: part.part_description,
                         subspecialty: part.subspecialty,
-                        pathDxTitle: part.path_dx_title,
                         blocks: [
                             {
                                 blockNumber: block.block_number,
@@ -271,11 +267,9 @@ function toWireHierarchy(hierarchy: PatientHierarchy): any {
                 sample.sample_id === 'UNMATCHED' ? null : sample.sample_id,
             parts: sample.parts.map(part => ({
                 partNumber: part.part_number,
-                partDesignator: part.part_designator,
                 partType: part.part_type,
                 partDescription: part.part_description,
                 subspecialty: part.subspecialty,
-                pathDxTitle: part.path_dx_title,
                 blocks: part.blocks.map(block => ({
                     blockNumber: block.block_number,
                     blockLabel: block.block_label,
@@ -4358,11 +4352,9 @@ describe('WSIViewer — open handler (mountOSD integration)', () => {
                     parts: [
                         {
                             partNumber: '1',
-                            partDesignator: 'A',
                             partType: 'Resection',
                             partDescription: 'Test part',
                             subspecialty: 'GI',
-                            pathDxTitle: 'COLON ADENOCARCINOMA',
                             blocks: [
                                 {
                                     blockNumber: '1',

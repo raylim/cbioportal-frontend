@@ -31,11 +31,9 @@ function makeSample(): Sample {
         parts: [
             {
                 part_number: '1',
-                part_designator: 'A',
                 part_type: 'Resection',
                 part_description: '',
                 subspecialty: '',
-                path_dx_title: '',
                 blocks: [
                     { block_number: '1', block_label: 'A1', slides: [slide] },
                 ],
