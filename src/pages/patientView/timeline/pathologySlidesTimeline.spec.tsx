@@ -68,7 +68,7 @@ function slide(
         matchLevel: 'PART',
         stain: 'H&E',
         specimen: 'Part 1',
-        viewableImageIds: ['496610'],
+        viewableSlideKeys: ['5d41402abc4b2a76b9719d911017c592'],
         totalCount: 1,
         openPath: LINKOUT,
         ...details,
@@ -326,7 +326,9 @@ describe('PATHOLOGY SLIDES timeline track', () => {
             screen.getByText('d+920 — 42 d before sequencing (d+962)')
         ).toBeTruthy();
         expect(screen.getByText('1 of 1 viewable')).toBeTruthy();
-        expect(screen.queryByText(/IMAGE_IDS|496610"/)).toBeNull();
+        expect(document.body.textContent).not.toContain(
+            '5d41402abc4b2a76b9719d911017c592'
+        );
 
         // The timeline renders tooltips in a portal; the router context
         // still reaches the link, so it navigates without a page load.
@@ -338,7 +340,7 @@ describe('PATHOLOGY SLIDES timeline track', () => {
     });
 
     it('omits Open slides when nothing is viewable', () => {
-        const track = pathologyTrack([slide({ viewableImageIds: [] })]);
+        const track = pathologyTrack([slide({ viewableSlideKeys: [] })]);
         renderTooltip(track, track.items[0]);
         expect(screen.getByText('0 of 1 viewable')).toBeTruthy();
         expect(screen.queryByRole('link')).toBeNull();
@@ -374,7 +376,8 @@ describe('loadPathologySlideTimelineData', () => {
                                 blockLabel: 'Block 1',
                                 slides: [
                                     {
-                                        imageId: '496610',
+                                        slideKey:
+                                            '5d41402abc4b2a76b9719d911017c592',
                                         stainName: 'H&E',
                                         stainGroup: 'initial',
                                         isHne: true,
@@ -382,7 +385,6 @@ describe('loadPathologySlideTimelineData', () => {
                                         magnification: '40x',
                                         fileSizeBytes: null,
                                         canServeTiles: true,
-                                        barcode: '',
                                         slideType: 'H&E',
                                         sampleId: SAMPLE,
                                         matchLevel: 'PART',

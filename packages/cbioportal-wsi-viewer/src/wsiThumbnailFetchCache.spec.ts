@@ -10,11 +10,9 @@ import { WsiSlideAccess } from './wsiViewerTypes';
 
 function makeAccess(overrides: Partial<WsiSlideAccess> = {}): WsiSlideAccess {
     return {
-        imageId: 'slide-1',
-        sourceUrl: 's3://slides/slide-1.svs',
+        slideKey: 'slide-1',
         tileMetadata: {} as WsiSlideAccess['tileMetadata'],
         thumbnail: {
-            sourceUrl: 's3://slides/slide-1.jpg',
             width: 128,
             height: 88,
             contentType: 'image/jpeg',
@@ -82,7 +80,6 @@ describe('wsiThumbnailFetchCache', () => {
                 cache: 'default',
                 headers: {
                     Authorization: 'Bearer token-1',
-                    'X-WSI-Source': 's3://slides/slide-1.jpg',
                 },
             })
         );
@@ -96,6 +93,25 @@ describe('wsiThumbnailFetchCache', () => {
                 access
             )
         ).resolves.toBe(firstBlob);
+        expect(global.fetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps a cached thumbnail when the access token is refreshed', async () => {
+        const blob = await fetchWsiThumbnailBlob(
+            'https://tiles.example.com',
+            'study-1',
+            'slide-1',
+            makeAccess()
+        );
+
+        await expect(
+            fetchWsiThumbnailBlob(
+                'https://tiles.example.com',
+                'study-1',
+                'slide-1',
+                makeAccess({ accessToken: 'token-2' })
+            )
+        ).resolves.toBe(blob);
         expect(global.fetch).toHaveBeenCalledTimes(1);
     });
 

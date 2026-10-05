@@ -1,5 +1,9 @@
 import { ClinicalEvent } from 'cbioportal-ts-api-client';
-import { formatDaysSinceDiagnosis } from './wsiNavUtils';
+import {
+    DAY_ZERO_TOOLTIP,
+    formatDaysSinceDiagnosis,
+    procedureSequencingOffset,
+} from './wsiNavUtils';
 
 /** Per-sample acquisition and sequencing days from the patient timeline. */
 export interface WsiSampleTimeline {
@@ -69,11 +73,6 @@ export function buildWsiSampleTimelineMap(
     return map;
 }
 
-/** Explains the day notation wherever a slide or sample day is shown. */
-export const DAY_ZERO_TOOLTIP =
-    "Days are counted from the patient's first tumor sequencing (d0): " +
-    'd-242 is 242 days before it, d+7 is 7 days after.';
-
 /** Tooltip for a sample's "sequenced d+7" label. */
 export function sampleSequencedTooltip(
     timeline: WsiSampleTimeline | undefined
@@ -83,49 +82,6 @@ export function sampleSequencedTooltip(
               timeline.sequencingDays
           )}. ${DAY_ZERO_TOOLTIP}`
         : undefined;
-}
-
-/**
- * Offset of a procedure from its sample's sequencing: `days` apart, with the
- * procedure `before` or `after` sequencing, or on the `same` day. Undefined
- * when either day is unknown.
- */
-export function procedureSequencingOffset(
-    procedureDays: number | null | undefined,
-    sequencingDays: number | null | undefined
-): { days: number; relation: 'before' | 'after' | 'same' } | undefined {
-    if (procedureDays == null || sequencingDays == null) {
-        return undefined;
-    }
-    const delta = sequencingDays - procedureDays;
-    return {
-        days: Math.abs(delta),
-        relation: delta === 0 ? 'same' : delta > 0 ? 'before' : 'after',
-    };
-}
-
-/** Tooltip for a slide's procedure timepoint, with its sample's sequencing when known. */
-export function procedureTooltip(
-    procedureDays: number | null | undefined,
-    sequencingDays: number | null | undefined
-): string | undefined {
-    if (procedureDays == null) {
-        return undefined;
-    }
-    const procedure = `Procedure on ${formatDaysSinceDiagnosis(procedureDays)}`;
-    const offset = procedureSequencingOffset(procedureDays, sequencingDays);
-    if (!offset) {
-        return `${procedure}. ${DAY_ZERO_TOOLTIP}`;
-    }
-    const relation =
-        offset.relation === 'same'
-            ? 'the same day this sample was sequenced'
-            : `${offset.days} days ${
-                  offset.relation
-              } this sample was sequenced (${formatDaysSinceDiagnosis(
-                  sequencingDays!
-              )})`;
-    return `${procedure}, ${relation}. ${DAY_ZERO_TOOLTIP}`;
 }
 
 /** "sequenced d+7" for a sample group header, or null when unknown. */

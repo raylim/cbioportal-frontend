@@ -14,7 +14,7 @@ import {
     WsiTimepointSelection,
 } from './wsiViewerTypes';
 import {
-    getServableSlideAssociationsByImageIdReadOnly,
+    getServableSlideAssociationsBySlideKeyReadOnly,
     getOrderedServableSlidesForSampleReadOnly,
     getServableSlideIdsForPathologyFilterReadOnly,
     matchesWsiTimepointFilter,
@@ -90,11 +90,11 @@ interface Props {
     /** Authenticated subject scope used to isolate protected in-memory caches. */
     authScope?: string;
     /**
-     * Slide named by an `imageId` viewer link. A URL hash selection wins over
+     * Slide named by a `slideKey` viewer link. A URL hash selection wins over
      * it; an ID absent from the loaded hierarchy shows a notice and falls
      * back to the default slide without any backend lookup.
      */
-    requestedImageId?: string;
+    requestedSlideKey?: string;
     /** Sample acquisition/sequencing days from the patient timeline. */
     sampleTimelines?: WsiSampleTimelineMap;
     /**
@@ -118,6 +118,11 @@ interface Props {
      */
     metadataCollapsed?: boolean;
     onMetadataCollapsedChange?: (collapsed: boolean) => void;
+    /**
+     * The host hides the viewer without unmounting it (e.g. an inactive
+     * tab). Background work such as token refresh pauses meanwhile.
+     */
+    hidden?: boolean;
 }
 
 function DefaultLoadingIndicator() {
@@ -154,7 +159,7 @@ function getInitialMatchFilter(
     return 'all';
 }
 
-function getPathologyPreferredImageIds(
+function getPathologyPreferredSlideKeys(
     hierarchy: PatientHierarchy | null | undefined,
     pathologyFilter?: PathologySlideFilter
 ): Set<string> | undefined {
@@ -502,27 +507,41 @@ export default class WSIViewer extends React.Component<Props, {}> {
         this.unsubscribeUrlState = getWsiViewerRuntime().urlState.subscribe(
             this.handleHashChange
         );
+        if (typeof document !== 'undefined') {
+            document.addEventListener(
+                'visibilitychange',
+                this.updateControllerVisibility
+            );
+        }
+        this.updateControllerVisibility();
         void this.controller.loadHierarchy();
     }
+
+    private readonly updateControllerVisibility = () => {
+        const pageHidden =
+            typeof document !== 'undefined' &&
+            document.visibilityState === 'hidden';
+        this.controller.setVisible(!this.props.hidden && !pageHidden);
+    };
 
     private async selectSlideFromHash(): Promise<void> {
         const hashState = getWsiViewerRuntime().urlState.read();
         if (!hashState || !this.hierarchy) return;
 
-        const preferredImageIds = getPathologyPreferredImageIds(
+        const preferredSlideKeys = getPathologyPreferredSlideKeys(
             this.hierarchy,
             this.activePathologyFilter
         );
         const matching = this.servableSlides.find(
             entry =>
-                entry.slide.image_id === hashState.slideId &&
-                (!preferredImageIds ||
-                    preferredImageIds.has(entry.slide.image_id)) &&
+                entry.slide.slide_key === hashState.slideId &&
+                (!preferredSlideKeys ||
+                    preferredSlideKeys.has(entry.slide.slide_key)) &&
                 this.matchesCurrentTimepoint(entry.slide)
         );
         if (!matching) return;
 
-        if (this.selectedSlide?.image_id === matching.slide.image_id) {
+        if (this.selectedSlide?.slide_key === matching.slide.slide_key) {
             this.controller.restoreCurrentViewportFromHash();
             return;
         }
@@ -538,8 +557,8 @@ export default class WSIViewer extends React.Component<Props, {}> {
         const authScopeChanged = prev.authScope !== this.props.authScope;
         const preferredSampleChanged =
             prev.preferredSampleId !== this.props.preferredSampleId;
-        const requestedImageIdChanged =
-            prev.requestedImageId !== this.props.requestedImageId;
+        const requestedSlideKeyChanged =
+            prev.requestedSlideKey !== this.props.requestedSlideKey;
         const pathologyFilterChanged =
             !!prev.pathologyFilter !== !!this.props.pathologyFilter ||
             prev.pathologyFilter?.sampleId !==
@@ -561,11 +580,15 @@ export default class WSIViewer extends React.Component<Props, {}> {
         const timepointFilterChanged =
             prev.initialTimepointDays !== this.props.initialTimepointDays;
 
+        if (prev.hidden !== this.props.hidden) {
+            this.updateControllerVisibility();
+        }
+
         if (timepointFilterChanged) {
             this.timepointDays = this.props.initialTimepointDays;
         }
 
-        if (requestedImageIdChanged) {
+        if (requestedSlideKeyChanged) {
             this.requestedSlideNoticeDismissed = false;
         }
 
@@ -602,7 +625,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
             timepointFilterChanged
         ) {
             void this.reselectSlideForCurrentFilters();
-        } else if (preferredSampleChanged || requestedImageIdChanged) {
+        } else if (preferredSampleChanged || requestedSlideKeyChanged) {
             void this.reselectPreferredSampleSlide();
         }
     }
@@ -610,6 +633,12 @@ export default class WSIViewer extends React.Component<Props, {}> {
     componentWillUnmount() {
         this.unsubscribeUrlState?.();
         this.unsubscribeUrlState = null;
+        if (typeof document !== 'undefined') {
+            document.removeEventListener(
+                'visibilitychange',
+                this.updateControllerVisibility
+            );
+        }
         this.cancelPendingSlideSelection();
         action(() => {
             this.hierarchy = null; // stops the prefetchSlideMetadata loop
@@ -659,9 +688,9 @@ export default class WSIViewer extends React.Component<Props, {}> {
         if (!this.hierarchy) {
             return this.timepointDays == null;
         }
-        const association = getServableSlideAssociationsByImageIdReadOnly(
+        const association = getServableSlideAssociationsBySlideKeyReadOnly(
             this.hierarchy.slide_associations
-        ).get(slide.image_id);
+        ).get(slide.slide_key);
         return matchesWsiTimepointFilter(
             slide,
             association,
@@ -676,12 +705,12 @@ export default class WSIViewer extends React.Component<Props, {}> {
             return;
         }
 
-        const preferredImageIds = getPathologyPreferredImageIds(
+        const preferredSlideKeys = getPathologyPreferredSlideKeys(
             hierarchy,
             this.activePathologyFilter
         );
-        if (preferredImageIds) {
-            const currentImageId = this.selectedSlide?.image_id;
+        if (preferredSlideKeys) {
+            const currentSlideKey = this.selectedSlide?.slide_key;
             const currentSampleId = this.selectedSample?.sample_id;
             const currentSample = hierarchy.samples.find(
                 sample => sample.sample_id === currentSampleId
@@ -689,26 +718,26 @@ export default class WSIViewer extends React.Component<Props, {}> {
             const firstMatchingSlide = currentSample
                 ? getOrderedServableSlidesForSampleReadOnly(currentSample).find(
                       ({ slide }) =>
-                          preferredImageIds.has(slide.image_id) &&
+                          preferredSlideKeys.has(slide.slide_key) &&
                           matchesWsiStainFilter(slide, this.stainFilter) &&
                           this.matchesCurrentTimepoint(slide)
                   )?.slide
                 : undefined;
             if (
-                currentImageId &&
-                firstMatchingSlide?.image_id === currentImageId
+                currentSlideKey &&
+                firstMatchingSlide?.slide_key === currentSlideKey
             ) {
                 this.selectedSlide = firstMatchingSlide;
                 this.selectedSample = currentSample!;
                 return;
             }
-            void this.reselectSlideForPathologyFilter(preferredImageIds);
+            void this.reselectSlideForPathologyFilter(preferredSlideKeys);
             return;
         }
 
-        const currentImageId = this.selectedSlide?.image_id;
+        const currentSlideKey = this.selectedSlide?.slide_key;
         const currentSampleId = this.selectedSample?.sample_id;
-        if (!currentImageId || !currentSampleId) {
+        if (!currentSlideKey || !currentSampleId) {
             void this.reselectSlideForCurrentFilters();
             return;
         }
@@ -716,12 +745,12 @@ export default class WSIViewer extends React.Component<Props, {}> {
         const matchingSample = hierarchy.samples.find(
             sample =>
                 sample.sample_id === currentSampleId &&
-                sampleHasServableSlide(sample, currentImageId)
+                sampleHasServableSlide(sample, currentSlideKey)
         );
         const matchingSlide = matchingSample
             ? getOrderedServableSlidesForSampleReadOnly(matchingSample).find(
                   ({ slide }) =>
-                      slide.image_id === currentImageId &&
+                      slide.slide_key === currentSlideKey &&
                       this.matchesCurrentTimepoint(slide)
               )?.slide
             : undefined;
@@ -736,7 +765,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
     }
 
     private async reselectSlideForPathologyFilter(
-        preferredImageIds: Set<string>
+        preferredSlideKeys: Set<string>
     ): Promise<void> {
         const servableSlides = this.servableSlides;
         if (!this.hierarchy || !servableSlides.length) {
@@ -747,7 +776,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
             preferredSampleId: this.props.preferredSampleId,
             stainFilter: this.stainFilter,
             matchesEntry: entry =>
-                preferredImageIds.has(entry.slide.image_id) &&
+                preferredSlideKeys.has(entry.slide.slide_key) &&
                 this.matchesCurrentTimepoint(entry.slide),
         });
 
@@ -757,7 +786,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
         }
 
         if (
-            this.selectedSlide?.image_id === next.slide.image_id &&
+            this.selectedSlide?.slide_key === next.slide.slide_key &&
             this.selectedSample?.sample_id === next.sample.sample_id
         ) {
             return;
@@ -770,7 +799,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
         allSlides: Array<{ slide: Slide; sample: Sample }>
     ) {
         const hashState = getWsiViewerRuntime().urlState.read();
-        const preferredImageIds = getPathologyPreferredImageIds(
+        const preferredSlideKeys = getPathologyPreferredSlideKeys(
             this.hierarchy,
             this.activePathologyFilter
         );
@@ -783,11 +812,11 @@ export default class WSIViewer extends React.Component<Props, {}> {
             {
                 preferredSampleId: this.props.preferredSampleId,
                 preferredSlideId: hashState?.slideId,
-                requestedImageId: this.props.requestedImageId,
+                requestedSlideKey: this.props.requestedSlideKey,
                 stainFilter: this.stainFilter,
                 matchesEntry: entry =>
-                    !preferredImageIds ||
-                    preferredImageIds.has(entry.slide.image_id),
+                    !preferredSlideKeys ||
+                    preferredSlideKeys.has(entry.slide.slide_key),
             }
         );
         return preferredSlide;
@@ -825,7 +854,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
         }
 
         if (
-            this.selectedSlide?.image_id === next.slide.image_id &&
+            this.selectedSlide?.slide_key === next.slide.slide_key &&
             this.selectedSample?.sample_id === next.sample.sample_id
         ) {
             return;
@@ -840,15 +869,18 @@ export default class WSIViewer extends React.Component<Props, {}> {
             return;
         }
 
-        const preferredImageIds = getPathologyPreferredImageIds(
+        const preferredSlideKeys = getPathologyPreferredSlideKeys(
             this.hierarchy,
             this.activePathologyFilter
         );
-        const associationsByImageId = getServableSlideAssociationsByImageIdReadOnly(
+        const associationsBySlideKey = getServableSlideAssociationsBySlideKeyReadOnly(
             this.hierarchy.slide_associations
         );
         const matchingSlides = servableSlides.filter(({ slide }) => {
-            if (preferredImageIds && !preferredImageIds.has(slide.image_id)) {
+            if (
+                preferredSlideKeys &&
+                !preferredSlideKeys.has(slide.slide_key)
+            ) {
                 return false;
             }
             if (!matchesWsiStainFilter(slide, this.stainFilter)) {
@@ -857,7 +889,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
             if (
                 !matchesWsiTimepointFilter(
                     slide,
-                    associationsByImageId.get(slide.image_id),
+                    associationsBySlideKey.get(slide.slide_key),
                     this.timepointDays
                 )
             ) {
@@ -865,7 +897,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
             }
             return (
                 this.matchFilter === 'all' ||
-                associationsByImageId.get(slide.image_id)?.match_level ===
+                associationsBySlideKey.get(slide.slide_key)?.match_level ===
                     this.matchFilter.toUpperCase()
             );
         });
@@ -895,14 +927,14 @@ export default class WSIViewer extends React.Component<Props, {}> {
             );
     }
 
-    /** True when an `imageId` link names a slide this patient cannot serve. */
+    /** True when a `slideKey` link names a slide this patient cannot serve. */
     @computed get requestedSlideUnavailable(): boolean {
-        const requestedImageId = this.props.requestedImageId;
+        const requestedSlideKey = this.props.requestedSlideKey;
         return (
-            !!requestedImageId &&
+            !!requestedSlideKey &&
             !!this.hierarchy &&
             !this.servableSlides.some(
-                entry => entry.slide.image_id === requestedImageId
+                entry => entry.slide.slide_key === requestedSlideKey
             )
         );
     }
@@ -967,9 +999,9 @@ export default class WSIViewer extends React.Component<Props, {}> {
             this.viewerPatientId,
             this.props.studyId,
             this.hierarchy
-                ? getServableSlideAssociationsByImageIdReadOnly(
+                ? getServableSlideAssociationsBySlideKeyReadOnly(
                       this.hierarchy.slide_associations
-                  ).get(this.selectedSlide.image_id)
+                  ).get(this.selectedSlide.slide_key)
                 : undefined,
             this.props.sampleTimelines?.get(this.selectedSample.sample_id)
         );
@@ -1069,7 +1101,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
                     <WsiNavPanel
                         hierarchy={hierarchy}
                         selectedSlide={selectedSlide}
-                        slideIdFilter={getPathologyPreferredImageIds(
+                        slideIdFilter={getPathologyPreferredSlideKeys(
                             hierarchy,
                             this.activePathologyFilter
                         )}

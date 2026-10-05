@@ -1,6 +1,9 @@
 import {
     compareSamplesByTimepoint,
+    DAY_ZERO_TOOLTIP,
+    procedureSequencingOffset,
     procedureSlideTimepointText,
+    procedureTooltip,
     timepointText,
 } from './wsiNavUtils';
 import { Sample } from './wsiViewerTypes';
@@ -78,7 +81,7 @@ describe('wsiNavUtils', () => {
                                 block_label: 'A1',
                                 slides: [
                                     {
-                                        image_id: 'img-1',
+                                        slide_key: 'img-1',
                                         stain_name: 'H&E',
                                         stain_group: 'H&E (Initial)',
                                         is_hne: true,
@@ -86,7 +89,6 @@ describe('wsiNavUtils', () => {
                                         magnification: '',
                                         file_size_bytes: '',
                                         can_serve_tiles: true,
-                                        barcode: '',
                                         block_label: 'A1',
                                         block_number: '1',
                                         slide_timepoint_days: -25,
@@ -127,7 +129,7 @@ describe('wsiNavUtils', () => {
                                 block_label: 'A1',
                                 slides: [
                                     {
-                                        image_id: 'unmatched-slide',
+                                        slide_key: 'unmatched-slide',
                                         stain_name: 'H&E',
                                         stain_group: 'H&E (Initial)',
                                         is_hne: true,
@@ -135,7 +137,6 @@ describe('wsiNavUtils', () => {
                                         magnification: '',
                                         file_size_bytes: '',
                                         can_serve_tiles: true,
-                                        barcode: '',
                                         block_label: 'A1',
                                         block_number: '1',
                                         slide_timepoint_days: -100,
@@ -164,7 +165,7 @@ describe('wsiNavUtils', () => {
                                 block_label: 'A1',
                                 slides: [
                                     {
-                                        image_id: 'matched-slide',
+                                        slide_key: 'matched-slide',
                                         stain_name: 'H&E',
                                         stain_group: 'H&E (Initial)',
                                         is_hne: true,
@@ -172,7 +173,6 @@ describe('wsiNavUtils', () => {
                                         magnification: '',
                                         file_size_bytes: '',
                                         can_serve_tiles: true,
-                                        barcode: '',
                                         block_label: 'A1',
                                         block_number: '1',
                                         slide_timepoint_days: 10,
@@ -210,7 +210,7 @@ describe('wsiNavUtils', () => {
                                 block_label: 'A1',
                                 slides: [
                                     {
-                                        image_id: 'img-ns',
+                                        slide_key: 'img-ns',
                                         stain_name: 'H&E',
                                         stain_group: 'H&E (Initial)',
                                         is_hne: true,
@@ -218,7 +218,6 @@ describe('wsiNavUtils', () => {
                                         magnification: '',
                                         file_size_bytes: '',
                                         can_serve_tiles: false,
-                                        barcode: '',
                                         block_label: 'A1',
                                         block_number: '1',
                                         slide_timepoint_days: -30,
@@ -226,7 +225,7 @@ describe('wsiNavUtils', () => {
                                             'Procedure date',
                                     },
                                     {
-                                        image_id: 'img-other',
+                                        slide_key: 'img-other',
                                         stain_name: 'Slides submitted',
                                         stain_group: 'Slides submitted',
                                         is_hne: false,
@@ -234,7 +233,6 @@ describe('wsiNavUtils', () => {
                                         magnification: '',
                                         file_size_bytes: '',
                                         can_serve_tiles: true,
-                                        barcode: '',
                                         block_label: 'A2',
                                         block_number: '2',
                                         slide_timepoint_days: -40,
@@ -280,7 +278,7 @@ describe('wsiNavUtils', () => {
                                 block_label: 'A1',
                                 slides: [
                                     {
-                                        image_id: 'img-1',
+                                        slide_key: 'img-1',
                                         stain_name: 'H&E',
                                         stain_group: 'H&E (Initial)',
                                         is_hne: true,
@@ -288,7 +286,6 @@ describe('wsiNavUtils', () => {
                                         magnification: '',
                                         file_size_bytes: '',
                                         can_serve_tiles: true,
-                                        barcode: '',
                                         block_label: 'A1',
                                         block_number: '1',
                                         slide_timepoint_days: -20,
@@ -332,5 +329,49 @@ describe('wsiNavUtils', () => {
                 0
             );
         });
+    });
+});
+
+describe('day tooltips', () => {
+    it('explains d0 as the first tumor sequencing', () => {
+        expect(DAY_ZERO_TOOLTIP).toContain('first tumor sequencing (d0)');
+    });
+
+    it('relates the procedure to the sample sequencing in words', () => {
+        expect(procedureTooltip(-242, 7)).toBe(
+            `Procedure on d-242, 249 days before this sample was sequenced (d+7). ${DAY_ZERO_TOOLTIP}`
+        );
+        expect(procedureTooltip(20, 7)).toContain(
+            '13 days after this sample was sequenced (d+7)'
+        );
+        expect(procedureTooltip(7, 7)).toContain(
+            'the same day this sample was sequenced'
+        );
+        expect(procedureTooltip(-242, undefined)).toBe(
+            `Procedure on d-242. ${DAY_ZERO_TOOLTIP}`
+        );
+        expect(procedureTooltip(undefined, 7)).toBeUndefined();
+    });
+});
+
+describe('procedureSequencingOffset', () => {
+    it('measures the procedure against sequencing', () => {
+        expect(procedureSequencingOffset(-42, 0)).toEqual({
+            days: 42,
+            relation: 'before',
+        });
+        expect(procedureSequencingOffset(10, 3)).toEqual({
+            days: 7,
+            relation: 'after',
+        });
+        expect(procedureSequencingOffset(5, 5)).toEqual({
+            days: 0,
+            relation: 'same',
+        });
+    });
+
+    it('is undefined when either day is unknown', () => {
+        expect(procedureSequencingOffset(undefined, 5)).toBeUndefined();
+        expect(procedureSequencingOffset(5, null)).toBeUndefined();
     });
 });

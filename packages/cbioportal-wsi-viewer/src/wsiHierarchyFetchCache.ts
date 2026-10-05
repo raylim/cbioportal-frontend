@@ -11,6 +11,7 @@ import {
 } from './wsiAuth';
 import { getWsiViewerRuntime } from './wsiViewerConfig';
 import { deleteExpiredEntries, withAbort } from './wsiCacheUtils';
+import { buildWsiHierarchyApiUrl } from './wsiUrls';
 
 const HIERARCHY_CACHE_TTL_MS = 5 * 60 * 1000;
 
@@ -35,7 +36,7 @@ function deriveSlideAssociations(
         sample.parts.flatMap(part =>
             part.blocks.flatMap(block =>
                 block.slides.map(slide => ({
-                    image_id: slide.image_id,
+                    slide_key: slide.slide_key,
                     sample_id:
                         slide.sample_id ??
                         (sample.sample_id === 'UNMATCHED'
@@ -166,7 +167,7 @@ function normalizeV2Hierarchy(
                     block_number: block.blockNumber,
                     block_label: block.blockLabel,
                     slides: block.slides.map(slide => ({
-                        image_id: slide.imageId,
+                        slide_key: slide.slideKey,
                         stain_name: slide.stainName,
                         stain_group: slide.stainGroup,
                         is_hne: slide.isHne,
@@ -177,7 +178,6 @@ function normalizeV2Hierarchy(
                                 ? ''
                                 : String(slide.fileSizeBytes),
                         can_serve_tiles: slide.canServeTiles,
-                        barcode: slide.barcode,
                         block_label: block.blockLabel,
                         block_number: block.blockNumber,
                         part_description: part.partDescription,
@@ -275,10 +275,7 @@ function getOrCreateHierarchyRequest(
     const expiresAt = now + HIERARCHY_CACHE_TTL_MS;
 
     const promise: Promise<PatientHierarchy> = getWsiViewerRuntime()
-        .fetchImpl(url, {
-            cache: 'no-store',
-            credentials: 'include',
-        })
+        .fetchImpl(url, { credentials: 'include' })
         .then(async response => {
             if (!response.ok) {
                 throw new Error(`Server returned ${response.status}`);
@@ -325,6 +322,30 @@ export async function fetchPatientHierarchyReadOnly(
     return withAbort(
         getOrCreateHierarchyRequest(url, authScope, studyId, patientId),
         signal
+    );
+}
+
+/**
+ * Loads one patient's hierarchy from the portal through the cache the viewer
+ * reads, so a viewer opened later for the same patient and `authScope` reuses
+ * this request.
+ */
+export function fetchWsiPatientHierarchy(
+    studyId: string,
+    patientId: string,
+    authScope?: string,
+    signal?: AbortSignal
+): Promise<PatientHierarchy> {
+    return fetchPatientHierarchyReadOnly(
+        buildWsiHierarchyApiUrl(
+            getWsiViewerRuntime().buildApiUrl,
+            studyId,
+            patientId
+        ),
+        signal,
+        authScope,
+        studyId,
+        patientId
     );
 }
 

@@ -12,6 +12,57 @@ export function formatDaysSinceDiagnosis(days: number): string {
     return days > 0 ? `d+${days}` : `d${days}`;
 }
 
+/** Explains the day notation wherever a slide or sample day is shown. */
+export const DAY_ZERO_TOOLTIP =
+    "Days are counted from the patient's first tumor sequencing (d0): " +
+    'd-242 is 242 days before it, d+7 is 7 days after.';
+
+/**
+ * Offset of a procedure from its sample's sequencing: `days` apart, with the
+ * procedure `before` or `after` sequencing, or on the `same` day. Undefined
+ * when either day is unknown.
+ */
+export function procedureSequencingOffset(
+    procedureDays: number | null | undefined,
+    sequencingDays: number | null | undefined
+): { days: number; relation: 'before' | 'after' | 'same' } | undefined {
+    if (procedureDays == null || sequencingDays == null) {
+        return undefined;
+    }
+    const delta = sequencingDays - procedureDays;
+    return {
+        days: Math.abs(delta),
+        relation: delta === 0 ? 'same' : delta > 0 ? 'before' : 'after',
+    };
+}
+
+/**
+ * Tooltip for a slide's procedure timepoint, related to its sample's
+ * sequencing day when known.
+ */
+export function procedureTooltip(
+    procedureDays: number | null | undefined,
+    sequencingDays?: number | null
+): string | undefined {
+    if (procedureDays == null) {
+        return undefined;
+    }
+    const procedure = `Procedure on ${formatDaysSinceDiagnosis(procedureDays)}`;
+    const offset = procedureSequencingOffset(procedureDays, sequencingDays);
+    if (!offset) {
+        return `${procedure}. ${DAY_ZERO_TOOLTIP}`;
+    }
+    const relation =
+        offset.relation === 'same'
+            ? 'the same day this sample was sequenced'
+            : `${offset.days} days ${
+                  offset.relation
+              } this sample was sequenced (${formatDaysSinceDiagnosis(
+                  sequencingDays!
+              )})`;
+    return `${procedure}, ${relation}. ${DAY_ZERO_TOOLTIP}`;
+}
+
 function timepointSourceAbbreviation(source: string): string {
     const normalizedSource = source.toLowerCase();
     return normalizedSource.includes('procedure')
@@ -73,7 +124,7 @@ function computeEarliestServableSlideTimepoint(
             for (const slide of block.slides) {
                 if (
                     !slide.can_serve_tiles ||
-                    !slide.image_id ||
+                    !slide.slide_key ||
                     (!slide.is_hne && !slide.is_ihc)
                 ) {
                     continue;
@@ -145,20 +196,6 @@ export function normalizeBlockLabel(
     number?: string | number | null
 ): string {
     return (label || '').trim() || (number != null ? String(number) : '');
-}
-
-export function barcodeSection(
-    barcode: string | null | undefined
-): string | null {
-    const m = barcode?.match(/-T\d+-[^-]+-(\d+)-(\d+)$/i);
-    return m ? `${m[1]}.${m[2]}` : null;
-}
-
-export function barcodeAccession(
-    barcode: string | null | undefined
-): string | null {
-    const m = barcode?.match(/^(S-\d+)/i);
-    return m ? m[1] : null;
 }
 
 export function abbreviatePartDesc(

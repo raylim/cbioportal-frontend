@@ -49,7 +49,7 @@ function slideEvent(
             matchLevel: 'PART',
             stain: 'H&E',
             specimen: 'Part 1',
-            viewableImageIds: ['496610'],
+            viewableSlideKeys: ['5d41402abc4b2a76b9719d911017c592'],
             totalCount: 1,
             timepointSource:
                 'Recorded procedure date relative to first tumor sequencing',
@@ -87,7 +87,7 @@ describe('buildPathologySlideRow', () => {
         );
         expect(row.specimen).toBe('Part 1');
         expect(row.slidesText).toBe('1 of 1 viewable');
-        expect(row.slidesTooltip).toBe('Image IDs: 496610.');
+        expect(row.slidesTooltip).toBeUndefined();
         expect(row.openPath).toBe(LINKOUT);
         expect(row.openLabel).toBe('Open H&E slides for P-0000081-T02-IM6');
     });
@@ -121,21 +121,20 @@ describe('buildPathologySlideRow', () => {
 
     it('reports non-viewable slides', () => {
         const [row] = rows([
-            slideEvent(920, { viewableImageIds: ['1', '2'], totalCount: 3 }),
+            slideEvent(920, { viewableSlideKeys: ['1', '2'], totalCount: 3 }),
         ]);
-        expect(row.imageIds).toEqual(['1', '2']);
         expect(row.slidesText).toBe('2 of 3 viewable');
         expect(row.slidesTooltip).toBe(
-            'Image IDs: 1, 2. 1 slide is not viewable: no scanned image is available.'
+            '1 slide is not viewable: no scanned image is available.'
         );
     });
 
     it('has no link when nothing is viewable', () => {
-        const [none] = rows([slideEvent(921, { viewableImageIds: [] })]);
+        const [none] = rows([slideEvent(921, { viewableSlideKeys: [] })]);
         expect(none.openPath).toBeUndefined();
         expect(none.slidesText).toBe('0 of 1 viewable');
         expect(none.slidesTooltip).toBe(
-            'No image IDs recorded. 1 slide is not viewable: no scanned image is available.'
+            '1 slide is not viewable: no scanned image is available.'
         );
     });
 });
@@ -162,6 +161,16 @@ describe('buildPathologySlideTooltipContent', () => {
             '42 days before this sample was sequenced (d+962)'
         );
         expect(content.openPath).toBe(LINKOUT);
+    });
+
+    it('never shows a slide key', () => {
+        const key = '5d41402abc4b2a76b9719d911017c592';
+        const content = tooltip(
+            { viewableSlideKeys: [key, key.replace('5', '6')], totalCount: 3 },
+            920
+        );
+        expect(JSON.stringify(content)).not.toContain(key);
+        expect(JSON.stringify(content)).not.toMatch(/image id/i);
     });
 
     it('describes same-day and after-sequencing procedures', () => {
@@ -200,7 +209,7 @@ describe('buildPathologySlideTooltipContent', () => {
     });
 
     it('omits the procedure line and Open path when unavailable', () => {
-        const content = tooltip({ viewableImageIds: [] });
+        const content = tooltip({ viewableSlideKeys: [] });
         expect(content.lines.map(l => l.label)).toEqual([
             'Sample',
             'Specimen',
@@ -233,11 +242,11 @@ const SCOPE = {
 };
 
 function hierarchySlide(
-    imageId: string,
+    slideKey: string,
     overrides: Partial<Slide> = {}
 ): Slide {
     return {
-        image_id: imageId,
+        slide_key: slideKey,
         stain_name: 'H&E',
         stain_group: 'initial',
         is_hne: true,
@@ -245,7 +254,6 @@ function hierarchySlide(
         magnification: '40x',
         file_size_bytes: '',
         can_serve_tiles: true,
-        barcode: '',
         block_label: 'Block 1',
         block_number: '1',
         slide_type: 'H&E',
@@ -321,28 +329,40 @@ describe('buildPathologySlideEvents', () => {
                                 {
                                     block: '1',
                                     slides: [
-                                        hierarchySlide('1729893', {
-                                            sample_id: SAMPLE_24,
-                                            match_level: 'PART',
-                                            specimen_key: 'part::1::block:1',
-                                        }),
+                                        hierarchySlide(
+                                            '7f3a1c9e2b4d6f8a0c1e3b5d7f9a1c3e',
+                                            {
+                                                sample_id: SAMPLE_24,
+                                                match_level: 'PART',
+                                                specimen_key:
+                                                    'part::1::block:1',
+                                            }
+                                        ),
                                     ],
                                 },
                                 {
                                     block: '2',
                                     slides: [
-                                        hierarchySlide('1729914', {
-                                            sample_id: SAMPLE_24,
-                                            match_level: 'PART',
-                                            specimen_key: 'part::1::block:2',
-                                        }),
+                                        hierarchySlide(
+                                            '8e4b2d0f3c5e7a9b1d3f5c7e9b1d3f5a',
+                                            {
+                                                sample_id: SAMPLE_24,
+                                                match_level: 'PART',
+                                                specimen_key:
+                                                    'part::1::block:2',
+                                            }
+                                        ),
                                         // Not viewable, still counted.
-                                        hierarchySlide('1729924', {
-                                            sample_id: SAMPLE_24,
-                                            match_level: 'PART',
-                                            specimen_key: 'part::1::block:2',
-                                            can_serve_tiles: false,
-                                        }),
+                                        hierarchySlide(
+                                            '9d5c3e1a4d6f8b0c2e4a6d8f0c2e4a6b',
+                                            {
+                                                sample_id: SAMPLE_24,
+                                                match_level: 'PART',
+                                                specimen_key:
+                                                    'part::1::block:2',
+                                                can_serve_tiles: false,
+                                            }
+                                        ),
                                     ],
                                 },
                             ],
@@ -365,7 +385,10 @@ describe('buildPathologySlideEvents', () => {
             matchLevel: 'PART',
             specimen: 'Part 1',
             totalCount: 3,
-            viewableImageIds: ['1729893', '1729914'],
+            viewableSlideKeys: [
+                '7f3a1c9e2b4d6f8a0c1e3b5d7f9a1c3e',
+                '8e4b2d0f3c5e7a9b1d3f5c7e9b1d3f5a',
+            ],
             timepointSource:
                 'Recorded procedure date relative to first tumor sequencing',
             openPath: expect.any(String),
@@ -436,7 +459,7 @@ describe('buildPathologySlideEvents', () => {
                 e.startNumberOfDaysSinceDiagnosis,
                 details(e).stain,
                 details(e).specimen,
-                details(e).viewableImageIds,
+                details(e).viewableSlideKeys,
             ])
         ).toEqual([
             [-136, 'H&E', 'Part 2 / Block 1', ['a']],
@@ -495,7 +518,7 @@ describe('buildPathologySlideEvents', () => {
         const part3 = details(events[1]);
         expect(part3.sampleId).toBeUndefined();
         expect(part3.matchLevel).toBe('UNMATCHED');
-        expect(part3.viewableImageIds).toHaveLength(2);
+        expect(part3.viewableSlideKeys).toHaveLength(2);
         expect(pathologySlideSampleId(events[1])).toBeUndefined();
         expect(linkoutQuery(events[1])).toEqual({
             studyId: 'mskimpact',
@@ -567,7 +590,7 @@ describe('buildPathologySlideEvents', () => {
             SCOPE
         );
         expect(events).toHaveLength(1);
-        expect(details(events[0]).viewableImageIds).toEqual(['dated']);
+        expect(details(events[0]).viewableSlideKeys).toEqual(['dated']);
         expect(details(events[0]).totalCount).toBe(1);
     });
 
@@ -624,10 +647,13 @@ describe('buildPathologySlideEvents', () => {
                                 {
                                     block: '1',
                                     slides: [
-                                        hierarchySlide('1729893', {
-                                            sample_id: SAMPLE_24,
-                                            match_level: 'PART',
-                                        }),
+                                        hierarchySlide(
+                                            '7f3a1c9e2b4d6f8a0c1e3b5d7f9a1c3e',
+                                            {
+                                                sample_id: SAMPLE_24,
+                                                match_level: 'PART',
+                                            }
+                                        ),
                                     ],
                                 },
                             ],
@@ -719,7 +745,8 @@ describe('fetchPathologySlideTimelineData', () => {
                                 blockLabel: 'Block 1',
                                 slides: [
                                     {
-                                        imageId: '1729893',
+                                        slideKey:
+                                            '7f3a1c9e2b4d6f8a0c1e3b5d7f9a1c3e',
                                         stainName: 'H&E',
                                         stainGroup: 'initial',
                                         isHne: true,
@@ -727,7 +754,6 @@ describe('fetchPathologySlideTimelineData', () => {
                                         magnification: '40x',
                                         fileSizeBytes: null,
                                         canServeTiles: true,
-                                        barcode: '',
                                         slideType: 'H&E',
                                         sampleId: SAMPLE_24,
                                         matchLevel: 'PART',
@@ -775,7 +801,9 @@ describe('fetchPathologySlideTimelineData', () => {
             'https://portal.example/api/wsi/v2/hierarchy/mskimpact/P-0000024'
         );
         expect(first.events).toHaveLength(1);
-        expect(details(first.events[0]).viewableImageIds).toEqual(['1729893']);
+        expect(details(first.events[0]).viewableSlideKeys).toEqual([
+            '7f3a1c9e2b4d6f8a0c1e3b5d7f9a1c3e',
+        ]);
         expect(first.undatedViewableSlideCount).toBe(0);
         expect(second).toEqual(first);
     });

@@ -32,8 +32,8 @@ export interface WsiViewerProps {
     onClearFilters?: () => void;
     preferredSampleId?: string;
     pathologyFilter?: PathologySlideFilter;
-    /** Slide named by an `imageId` viewer link. */
-    requestedImageId?: string;
+    /** Slide named by a `slideKey` viewer link. */
+    requestedSlideKey?: string;
     /**
      * Patient clinical events; sample acquisition and sequencing days are
      * read from them to relate each slide's procedure to its sample.
@@ -51,6 +51,11 @@ export interface WsiViewerProps {
     /** Hides the image details sidebar; unset keeps the user's stored choice. */
     metadataCollapsed?: boolean;
     onMetadataCollapsedChange?: (collapsed: boolean) => void;
+    /**
+     * The host hides the viewer without unmounting it (e.g. an inactive
+     * tab); token refresh pauses meanwhile.
+     */
+    hidden?: boolean;
 }
 
 /**
