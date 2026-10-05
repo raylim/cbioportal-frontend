@@ -11,7 +11,7 @@ const context: WsiAgentContext = {
     study_id: 'study-a',
     patient_id: 'patient-a',
     sample_id: 'sample-a',
-    slide_key: 'slide-a',
+    slide_id: 'slide-a',
     filters: {},
     slide_metadata: {},
     patient_context: {},
@@ -32,7 +32,7 @@ const proposal: WsiAgentProposal = {
     session_id: 'browser-session',
     action_type: 'create_annotation',
     study_id: 'study-a',
-    slide_key: 'slide-a',
+    slide_id: 'slide-a',
     payload: {
         geometry_type: 'rectangle',
         points: [
@@ -181,7 +181,7 @@ describe('WsiAgentPanel', () => {
                 body: JSON.stringify({
                     source_fingerprint: 'source-v2',
                     viewer_generation: 1,
-                    slide_key: 'slide-a',
+                    slide_id: 'slide-a',
                 }),
             })
         );

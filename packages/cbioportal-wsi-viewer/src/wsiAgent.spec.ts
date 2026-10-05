@@ -35,12 +35,12 @@ describe('buildWsiAgentSlideMetadata', () => {
 });
 
 describe('buildWsiAgentEmbeddingContext', () => {
-    it('names the study slides by their unique slide keys', () => {
+    it('names the study slides by their unique slide keys in slide_ids', () => {
         const a = '0123456789abcdef0123456789abcdef';
         const b = 'fedcba9876543210fedcba9876543210';
         expect(
             buildWsiAgentEmbeddingContext('coad_msk_2025', [a, b, a, ''])
-        ).toEqual({ provider: 'quiltnet', scope: 'study', slide_keys: [a, b] });
+        ).toEqual({ provider: 'quiltnet', scope: 'study', slide_ids: [a, b] });
         expect(buildWsiAgentEmbeddingContext('other_study', [a])).toBe(
             undefined
         );

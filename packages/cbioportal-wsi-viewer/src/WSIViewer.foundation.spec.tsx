@@ -268,7 +268,7 @@ describe('WSIViewer foundation behavior', () => {
         });
     });
 
-    it('gives the assistant the slide key and never an image ID, barcode or source', async () => {
+    it('sends the slide key as slide_id and never an image ID, barcode or source', async () => {
         const slideKey = '0123456789abcdef0123456789abcdef';
         const instance = makeInstance('https://tiles.example.com/patient/P-1', {
             studyId: 'coad_msk_2025',
@@ -303,8 +303,9 @@ describe('WSIViewer foundation behavior', () => {
 
         const context = await (instance as any).getAgentContext();
 
-        expect(context.slide_key).toBe(slideKey);
-        expect(context.embedding_context.slide_keys).toEqual([slideKey]);
+        expect(context.slide_id).toBe(slideKey);
+        expect(context.embedding_context.slide_ids).toEqual([slideKey]);
+        expect(context).not.toHaveProperty('slide_key');
         expect(context.slide_metadata).toEqual({
             dimensions: { width: 1000, height: 800 },
             levels: 2,
@@ -316,7 +317,7 @@ describe('WSIViewer foundation behavior', () => {
             tile_size: 256,
         });
         const serialized = JSON.stringify(context);
-        expect(serialized).not.toMatch(/image_?id|barcode|slide_id|s3:/i);
+        expect(serialized).not.toMatch(/image_?id|barcode|s3:/i);
         expect(serialized).not.toContain('leaked-image-id');
         expect(serialized).not.toContain('S00-12345');
     });
@@ -348,7 +349,7 @@ describe('WSIViewer foundation behavior', () => {
         const context = {
             study_id: 'study-a',
             patient_id: 'P-1',
-            slide_key: 'slide-a',
+            slide_id: 'slide-a',
             filters: {},
             slide_metadata: {},
             patient_context: {},
@@ -373,14 +374,14 @@ describe('WSIViewer foundation behavior', () => {
             session_id: 'session-a',
             action_type: 'viewer_action',
             study_id: 'study-a',
-            slide_key: 'slide-a',
+            slide_id: 'slide-a',
             payload: {
                 action,
                 parameters,
                 context: {
                     study_id: 'study-a',
                     patient_id: 'P-1',
-                    slide_key: 'slide-a',
+                    slide_id: 'slide-a',
                     viewport: {
                         source_fingerprint: 'source-a',
                         viewer_generation: 1,
@@ -393,7 +394,7 @@ describe('WSIViewer foundation behavior', () => {
 
         await expect(
             (instance as any).applyAgentProposal(
-                proposal('select_slide', { slide_key: 'slide-b' })
+                proposal('select_slide', { slide_id: 'slide-b' })
             )
         ).resolves.toMatchObject({ success: true });
         await expect(
@@ -432,7 +433,7 @@ describe('WSIViewer foundation behavior', () => {
         (instance as any).getAgentContext = jest.fn().mockResolvedValue({
             study_id: 'study-a',
             patient_id: 'P-1',
-            slide_key: 'slide-a',
+            slide_id: 'slide-a',
             filters: {},
             slide_metadata: {},
             patient_context: {},
@@ -450,14 +451,14 @@ describe('WSIViewer foundation behavior', () => {
             session_id: 'session-a',
             action_type: 'viewer_action',
             study_id: 'study-a',
-            slide_key: 'slide-a',
+            slide_id: 'slide-a',
             payload: {
                 action: 'select_slide',
-                parameters: { slide_key: 'slide-b' },
+                parameters: { slide_id: 'slide-b' },
                 context: {
                     study_id: 'study-a',
                     patient_id: 'P-1',
-                    slide_key: 'slide-a',
+                    slide_id: 'slide-a',
                     viewport: {
                         source_fingerprint: 'source-a',
                         viewer_generation: 1,

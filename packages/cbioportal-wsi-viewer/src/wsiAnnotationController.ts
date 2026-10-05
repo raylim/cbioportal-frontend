@@ -744,7 +744,7 @@ export class WsiAnnotationController {
         if (!slideKey) return;
         const saved = items
             .filter(item => {
-                const itemSlideKey = item.slide_key;
+                const itemSlideKey = item.slide_id;
                 const itemStudyId = item.study_id;
                 return (
                     itemSlideKey === slideKey &&

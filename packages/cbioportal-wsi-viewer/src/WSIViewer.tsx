@@ -777,7 +777,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
             study_id: studyId,
             patient_id: patientId,
             sample_id: sampleId,
-            slide_key: slideKey,
+            slide_id: slideKey,
             stain_name: this.selectedSlide.stain_name,
             match_level: this.activePathologyFilter?.matchLevel,
             filters: {
@@ -820,11 +820,11 @@ export default class WSIViewer extends React.Component<Props, {}> {
             | undefined;
         return (
             proposal.study_id === context.study_id &&
-            proposal.slide_key === context.slide_key &&
+            proposal.slide_id === context.slide_id &&
             !!proposalContext &&
             proposalContext.study_id === context.study_id &&
             proposalContext.patient_id === context.patient_id &&
-            proposalContext.slide_key === context.slide_key &&
+            proposalContext.slide_id === context.slide_id &&
             viewport?.source_fingerprint ===
                 context.viewport.source_fingerprint &&
             viewport?.viewer_generation === context.viewport.viewer_generation
@@ -885,7 +885,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
         }
 
         if (actionType === 'select_slide') {
-            const slideKey = parameters.slide_key;
+            const slideKey = parameters.slide_id;
             const entry = this.servableSlides.find(
                 candidate => candidate.slide.slide_key === slideKey
             );
@@ -1088,7 +1088,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
                 : [proposal.payload];
         if (
             !context ||
-            context.slide_key !== proposal.slide_key ||
+            context.slide_id !== proposal.slide_id ||
             !drafts.length
         ) {
             return {
