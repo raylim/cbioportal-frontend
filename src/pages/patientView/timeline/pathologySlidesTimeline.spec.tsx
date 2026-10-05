@@ -365,11 +365,9 @@ describe('loadPathologySlideTimelineData', () => {
                 parts: [
                     {
                         partNumber: '1',
-                        partDesignator: '',
                         partType: '',
                         partDescription: '',
                         subspecialty: '',
-                        pathDxTitle: '',
                         blocks: [
                             {
                                 blockNumber: '1',
