@@ -128,7 +128,7 @@ mockLoadOpenSeadragon.mockResolvedValue(OSD);
 
 function makeSlide(overrides: Partial<Slide> = {}): Slide {
     return {
-        image_id: '1000',
+        slide_key: '1000',
         stain_name: 'H&E',
         stain_group: 'Histology',
         is_hne: true,
@@ -136,7 +136,6 @@ function makeSlide(overrides: Partial<Slide> = {}): Slide {
         magnification: '20x',
         file_size_bytes: '100000000',
         can_serve_tiles: true,
-        barcode: 'S-1234567-T01-1-1-1-1',
         block_label: 'A1',
         block_number: '1',
         ...overrides,
@@ -204,7 +203,7 @@ function makeWireHierarchy(slides: Slide[], patientId = 'P-123'): any {
                                 blockNumber: block.block_number,
                                 blockLabel: block.block_label,
                                 slides: slides.map(slide => ({
-                                    imageId: slide.image_id,
+                                    slideKey: slide.slide_key,
                                     stainName: slide.stain_name,
                                     stainGroup: slide.stain_group,
                                     isHne: slide.is_hne,
@@ -214,7 +213,6 @@ function makeWireHierarchy(slides: Slide[], patientId = 'P-123'): any {
                                         slide.file_size_bytes
                                     ),
                                     canServeTiles: slide.can_serve_tiles,
-                                    barcode: slide.barcode,
                                     slideType: slide.slide_type || null,
                                     sampleId: sample.sample_id,
                                     matchLevel: slide.match_level || 'BLOCK',
@@ -249,19 +247,19 @@ function makeWireHierarchy(slides: Slide[], patientId = 'P-123'): any {
     };
 }
 
-// Slide access is requested by image ID for a slide a loaded hierarchy
+// Slide access is requested by slide key for a slide a loaded hierarchy
 // published for the patient.
-function testAccessUrl(studyId: string, patientId: string, imageId: string) {
-    return `http://localhost/api/wsi/v2/resources/${studyId}/${patientId}/access?imageId=${imageId}`;
+function testAccessUrl(studyId: string, patientId: string, slideKey: string) {
+    return `http://localhost/api/wsi/v2/resources/${studyId}/${patientId}/access?slideKey=${slideKey}`;
 }
 
 /** Publishes a slide as a loaded hierarchy would. */
 function registerTestSlideAccess(
     studyId: string,
     patientId: string,
-    imageId: string
+    slideKey: string
 ) {
-    registerWsiResourceAccessTarget(studyId, imageId, patientId);
+    registerWsiResourceAccessTarget(studyId, slideKey, patientId);
 }
 
 function toWireHierarchy(hierarchy: PatientHierarchy): any {
@@ -283,7 +281,7 @@ function toWireHierarchy(hierarchy: PatientHierarchy): any {
                     slides: block.slides.map(slide => {
                         const hasDays = slide.slide_timepoint_days != null;
                         return {
-                            imageId: slide.image_id,
+                            slideKey: slide.slide_key,
                             stainName: slide.stain_name,
                             stainGroup: slide.stain_group,
                             isHne: slide.is_hne,
@@ -293,7 +291,6 @@ function toWireHierarchy(hierarchy: PatientHierarchy): any {
                                 ? Number(slide.file_size_bytes)
                                 : null,
                             canServeTiles: slide.can_serve_tiles,
-                            barcode: slide.barcode,
                             slideType: slide.slide_type || null,
                             sampleId: slide.sample_id ?? sample.sample_id,
                             matchLevel:
@@ -513,26 +510,26 @@ describe('WSIViewer — servableSlides', () => {
 
     it('returns only slides with can_serve_tiles=true', () => {
         const inst = makeInstance('https://tiles.example.com/patient/P-1');
-        const servable = makeSlide({ image_id: 'A', can_serve_tiles: true });
+        const servable = makeSlide({ slide_key: 'A', can_serve_tiles: true });
         const notServable = makeSlide({
-            image_id: 'B',
+            slide_key: 'B',
             can_serve_tiles: false,
         });
         inst.hierarchy = makeHierarchy([servable, notServable]);
 
         const result: any[] = inst.servableSlides;
         assert.equal(result.length, 1);
-        assert.equal(result[0].slide.image_id, 'A');
+        assert.equal(result[0].slide.slide_key, 'A');
     });
 
-    it('deduplicates repeated servable entries for the same image within a sample', () => {
+    it('deduplicates repeated servable entries for the same slide within a sample', () => {
         const inst = makeInstance('https://tiles.example.com/patient/P-1');
-        const duplicated = makeSlide({ image_id: 'A', can_serve_tiles: true });
+        const duplicated = makeSlide({ slide_key: 'A', can_serve_tiles: true });
         inst.hierarchy = makeHierarchy([duplicated, { ...duplicated }]);
 
         const result: any[] = inst.servableSlides;
         assert.equal(result.length, 1);
-        assert.equal(result[0].slide.image_id, 'A');
+        assert.equal(result[0].slide.slide_key, 'A');
     });
 
     it('returns empty array when all slides have can_serve_tiles=false', () => {
@@ -547,16 +544,16 @@ describe('WSIViewer — servableSlides', () => {
     it('flattens slides across multiple samples, parts and blocks', () => {
         const inst = makeInstance('https://tiles.example.com/patient/P-1');
 
-        const slideA = makeSlide({ image_id: 'A', can_serve_tiles: true });
-        const slideB = makeSlide({ image_id: 'B', can_serve_tiles: true });
-        const slideC = makeSlide({ image_id: 'C', can_serve_tiles: false });
+        const slideA = makeSlide({ slide_key: 'A', can_serve_tiles: true });
+        const slideB = makeSlide({ slide_key: 'B', can_serve_tiles: true });
+        const slideC = makeSlide({ slide_key: 'C', can_serve_tiles: false });
 
         const block1 = makeBlock([slideA, slideC], '1');
         const block2 = makeBlock([slideB], '2');
         const part1 = makePart([block1, block2]);
         const sample1 = makeSample('S-001', [part1]);
 
-        const slideD = makeSlide({ image_id: 'D', can_serve_tiles: true });
+        const slideD = makeSlide({ slide_key: 'D', can_serve_tiles: true });
         const block3 = makeBlock([slideD], '1');
         const part2 = makePart([block3]);
         const sample2 = makeSample('S-002', [part2]);
@@ -566,14 +563,14 @@ describe('WSIViewer — servableSlides', () => {
         const result: any[] = inst.servableSlides;
         assert.equal(result.length, 3);
         assert.deepEqual(
-            result.map((r: any) => r.slide.image_id),
+            result.map((r: any) => r.slide.slide_key),
             ['A', 'B', 'D']
         );
     });
 
     it('attaches the correct sample to each slide entry', () => {
         const inst = makeInstance('https://tiles.example.com/patient/P-1');
-        const slide = makeSlide({ image_id: 'X', can_serve_tiles: true });
+        const slide = makeSlide({ slide_key: 'X', can_serve_tiles: true });
         inst.hierarchy = makeHierarchy([slide]);
 
         const result: any[] = inst.servableSlides;
@@ -583,10 +580,12 @@ describe('WSIViewer — servableSlides', () => {
     it('includes all servable samples while preferring the requested sample', () => {
         const inst = makeInstance('https://tiles.example.com/patient/P-1');
         const preferredSample = makeSample('S-preferred', [
-            makePart([makeBlock([makeSlide({ image_id: 'preferred-slide' })])]),
+            makePart([
+                makeBlock([makeSlide({ slide_key: 'preferred-slide' })]),
+            ]),
         ]);
         const otherSample = makeSample('S-other', [
-            makePart([makeBlock([makeSlide({ image_id: 'other-slide' })])]),
+            makePart([makeBlock([makeSlide({ slide_key: 'other-slide' })])]),
         ]);
         inst.props = { ...inst.props, preferredSampleId: 'S-preferred' };
         inst.hierarchy = {
@@ -596,7 +595,7 @@ describe('WSIViewer — servableSlides', () => {
 
         assert.deepEqual(
             inst.servableSlides
-                .map((entry: any) => entry.slide.image_id)
+                .map((entry: any) => entry.slide.slide_key)
                 .sort(),
             ['other-slide', 'preferred-slide']
         );
@@ -611,7 +610,7 @@ describe('WSIViewer — servableSlides', () => {
         const inst = makeInstance('https://tiles.example.com/patient/P-1');
         const preferredSample = makeSample('S-preferred', []);
         const otherSample = makeSample('S-other', [
-            makePart([makeBlock([makeSlide({ image_id: 'other-slide' })])]),
+            makePart([makeBlock([makeSlide({ slide_key: 'other-slide' })])]),
         ]);
         inst.props = { ...inst.props, preferredSampleId: 'S-preferred' };
         inst.hierarchy = {
@@ -620,7 +619,7 @@ describe('WSIViewer — servableSlides', () => {
         };
 
         assert.deepEqual(
-            inst.servableSlides.map((entry: any) => entry.slide.image_id),
+            inst.servableSlides.map((entry: any) => entry.slide.slide_key),
             ['other-slide']
         );
         assert.equal(
@@ -633,10 +632,10 @@ describe('WSIViewer — servableSlides', () => {
     it('keeps explicit pathology association filters hard during fallback', () => {
         const inst = makeInstance('https://tiles.example.com/patient/P-1');
         const matchingSample = makeSample('S-1', [
-            makePart([makeBlock([makeSlide({ image_id: 'matching-slide' })])]),
+            makePart([makeBlock([makeSlide({ slide_key: 'matching-slide' })])]),
         ]);
         const otherSample = makeSample('S-2', [
-            makePart([makeBlock([makeSlide({ image_id: 'other-slide' })])]),
+            makePart([makeBlock([makeSlide({ slide_key: 'other-slide' })])]),
         ]);
         inst.props = {
             ...inst.props,
@@ -652,7 +651,7 @@ describe('WSIViewer — servableSlides', () => {
             samples: [matchingSample, otherSample],
             slide_associations: [
                 {
-                    image_id: 'matching-slide',
+                    slide_key: 'matching-slide',
                     sample_id: 'S-1',
                     match_level: 'BLOCK',
                     specimen_key: 'block::matching',
@@ -660,7 +659,7 @@ describe('WSIViewer — servableSlides', () => {
                     can_serve_tiles: true,
                 },
                 {
-                    image_id: 'other-slide',
+                    slide_key: 'other-slide',
                     sample_id: 'S-2',
                     match_level: 'BLOCK',
                     specimen_key: 'block::other',
@@ -674,7 +673,7 @@ describe('WSIViewer — servableSlides', () => {
             inst.servableSlides
         );
 
-        assert.equal(selected.slide.image_id, 'matching-slide');
+        assert.equal(selected.slide.slide_key, 'matching-slide');
     });
 });
 
@@ -721,7 +720,7 @@ describe('WSIViewer — componentWillUnmount', () => {
         setFetchMock(jest.fn(() => new Promise(() => undefined)) as any);
 
         const { renderer, inst } = renderViewer();
-        const hierarchy = makeHierarchy([makeSlide({ image_id: 'A' })]);
+        const hierarchy = makeHierarchy([makeSlide({ slide_key: 'A' })]);
         const sample = hierarchy.samples[0];
         const slide = sample.parts[0].blocks[0].slides[0];
 
@@ -762,12 +761,12 @@ describe('WSIViewer — componentWillUnmount', () => {
 describe('WSIViewer — pathology filter updates', () => {
     it('selects a slide matching the initial and interactive timepoint filter', async () => {
         const early = makeSlide({
-            image_id: 'early',
+            slide_key: 'early',
             slide_timepoint_days: -20,
             slide_timepoint_source: 'Procedure date',
         });
         const late = makeSlide({
-            image_id: 'late',
+            slide_key: 'late',
             slide_timepoint_days: -5,
             slide_timepoint_source: 'Procedure date',
         });
@@ -794,7 +793,7 @@ describe('WSIViewer — pathology filter updates', () => {
         expect(
             (inst as any).chooseInitialServableSlide(
                 (inst as any).servableSlides
-            ).slide.image_id
+            ).slide.slide_key
         ).toBe('early');
 
         inst.timepointDays = undefined;
@@ -808,7 +807,7 @@ describe('WSIViewer — pathology filter updates', () => {
     it('preserves an unavailable linkout timepoint instead of broadening scope', () => {
         const onTimepointChange = jest.fn();
         const slide = makeSlide({
-            image_id: 'dated-slide',
+            slide_key: 'dated-slide',
             slide_timepoint_days: -5,
             slide_timepoint_source: 'Procedure date',
         });
@@ -831,7 +830,7 @@ describe('WSIViewer — pathology filter updates', () => {
             samples: [sample],
             slide_associations: [
                 {
-                    image_id: 'dated-slide',
+                    slide_key: 'dated-slide',
                     sample_id: 'S-1',
                     match_level: 'BLOCK',
                     specimen_key: 'block::1::A1',
@@ -857,8 +856,8 @@ describe('WSIViewer — pathology filter updates', () => {
             const sample = makeSample('S-1', [
                 makePart([
                     makeBlock([
-                        makeSlide({ image_id: 'slide-1' }),
-                        makeSlide({ image_id: 'slide-2' }),
+                        makeSlide({ slide_key: 'slide-1' }),
+                        makeSlide({ slide_key: 'slide-2' }),
                     ]),
                 ]),
             ]);
@@ -883,7 +882,7 @@ describe('WSIViewer — pathology filter updates', () => {
 
             expect(selectSlideSpy).toHaveBeenCalledTimes(1);
             expect(selectSlideSpy).toHaveBeenCalledWith(
-                expect.objectContaining({ image_id: 'slide-2' }),
+                expect.objectContaining({ slide_key: 'slide-2' }),
                 sample
             );
         } finally {
@@ -902,8 +901,8 @@ describe('WSIViewer — pathology filter updates', () => {
             makePart([
                 makeBlock(
                     [
-                        makeSlide({ image_id: 'first-unmatched' }),
-                        makeSlide({ image_id: 'linked-unmatched' }),
+                        makeSlide({ slide_key: 'first-unmatched' }),
+                        makeSlide({ slide_key: 'linked-unmatched' }),
                     ],
                     '1'
                 ),
@@ -914,13 +913,13 @@ describe('WSIViewer — pathology filter updates', () => {
             samples: [sample],
             slide_associations: [
                 {
-                    image_id: 'first-unmatched',
+                    slide_key: 'first-unmatched',
                     sample_id: 'S-1',
                     match_level: 'UNMATCHED',
                     can_serve_tiles: true,
                 },
                 {
-                    image_id: 'linked-unmatched',
+                    slide_key: 'linked-unmatched',
                     sample_id: 'S-1',
                     match_level: 'UNMATCHED',
                     can_serve_tiles: true,
@@ -936,7 +935,7 @@ describe('WSIViewer — pathology filter updates', () => {
             (inst as any).servableSlides
         );
 
-        expect(selected.slide.image_id).toBe('linked-unmatched');
+        expect(selected.slide.slide_key).toBe('linked-unmatched');
         window.location.hash = '';
     });
 
@@ -997,9 +996,9 @@ describe('WSIViewer — pathology filter updates', () => {
             makePart([
                 makeBlock(
                     [
-                        makeSlide({ image_id: 'block-slide' }),
+                        makeSlide({ slide_key: 'block-slide' }),
                         makeSlide({
-                            image_id: 'part-slide',
+                            slide_key: 'part-slide',
                             block_number: '2',
                             block_label: 'B1',
                         }),
@@ -1013,7 +1012,7 @@ describe('WSIViewer — pathology filter updates', () => {
             samples: [sample],
             slide_associations: [
                 {
-                    image_id: 'block-slide',
+                    slide_key: 'block-slide',
                     sample_id: 'S-1',
                     match_level: 'BLOCK',
                     specimen_key: 'block::1::A1',
@@ -1021,7 +1020,7 @@ describe('WSIViewer — pathology filter updates', () => {
                     can_serve_tiles: true,
                 },
                 {
-                    image_id: 'part-slide',
+                    slide_key: 'part-slide',
                     sample_id: 'S-1',
                     match_level: 'PART',
                     specimen_key: 'part::2::B1',
@@ -1067,7 +1066,7 @@ describe('WSIViewer — pathology filter updates', () => {
         expect(loadHierarchySpy).not.toHaveBeenCalled();
         expect(selectSlideSpy).toHaveBeenCalledTimes(1);
         expect(selectSlideSpy).toHaveBeenCalledWith(
-            expect.objectContaining({ image_id: 'part-slide' }),
+            expect.objectContaining({ slide_key: 'part-slide' }),
             expect.objectContaining({ sample_id: 'S-1' })
         );
         expect(inst.matchFilter).toBe('part');
@@ -1076,12 +1075,12 @@ describe('WSIViewer — pathology filter updates', () => {
     it('keeps linkout scope when a prop-driven stain changes', () => {
         const onStainFilterChange = jest.fn();
         const hne = makeSlide({
-            image_id: 'hne-slide',
+            slide_key: 'hne-slide',
             is_hne: true,
             is_ihc: false,
         });
         const ihc = makeSlide({
-            image_id: 'ihc-slide',
+            slide_key: 'ihc-slide',
             stain_name: 'IHC',
             stain_group: 'IHC',
             is_hne: false,
@@ -1105,7 +1104,7 @@ describe('WSIViewer — pathology filter updates', () => {
             samples: [sample],
             slide_associations: [
                 {
-                    image_id: 'hne-slide',
+                    slide_key: 'hne-slide',
                     sample_id: 'S-1',
                     match_level: 'BLOCK',
                     specimen_key: 'block::1::A1',
@@ -1113,7 +1112,7 @@ describe('WSIViewer — pathology filter updates', () => {
                     can_serve_tiles: true,
                 },
                 {
-                    image_id: 'ihc-slide',
+                    slide_key: 'ihc-slide',
                     sample_id: 'S-1',
                     match_level: 'BLOCK',
                     specimen_key: 'block::1::A1',
@@ -1153,9 +1152,9 @@ describe('WSIViewer — pathology filter updates', () => {
             makePart([
                 makeBlock(
                     [
-                        makeSlide({ image_id: 'block-slide' }),
+                        makeSlide({ slide_key: 'block-slide' }),
                         makeSlide({
-                            image_id: 'part-slide',
+                            slide_key: 'part-slide',
                             block_number: '2',
                             block_label: 'B1',
                         }),
@@ -1169,7 +1168,7 @@ describe('WSIViewer — pathology filter updates', () => {
             samples: [sample],
             slide_associations: [
                 {
-                    image_id: 'block-slide',
+                    slide_key: 'block-slide',
                     sample_id: 'S-1',
                     match_level: 'BLOCK',
                     specimen_key: 'block::1::A1',
@@ -1204,7 +1203,7 @@ describe('WSIViewer — pathology filter updates', () => {
 
         expect(getEntriesSpy).not.toHaveBeenCalled();
         expect(getOrderedSlidesSpy).toHaveBeenCalledTimes(1);
-        expect(inst.selectedSlide?.image_id).toBe('block-slide');
+        expect(inst.selectedSlide?.slide_key).toBe('block-slide');
         expect(inst.selectedSample?.sample_id).toBe('S-1');
         expect(inst.hierarchy).toEqual(sourceHierarchy);
     });
@@ -1217,10 +1216,10 @@ describe('WSIViewer — pathology filter updates', () => {
             preferredSampleId: 'S-1',
         });
         const sample1 = makeSample('S-1', [
-            makePart([makeBlock([makeSlide({ image_id: 'slide-1' })], '1')]),
+            makePart([makeBlock([makeSlide({ slide_key: 'slide-1' })], '1')]),
         ]);
         const sample2 = makeSample('S-2', [
-            makePart([makeBlock([makeSlide({ image_id: 'slide-2' })], '1')]),
+            makePart([makeBlock([makeSlide({ slide_key: 'slide-2' })], '1')]),
         ]);
         inst.hierarchy = {
             patient_id: 'P-XYZ',
@@ -1253,7 +1252,7 @@ describe('WSIViewer — pathology filter updates', () => {
         expect(disposeSpy).not.toHaveBeenCalled();
         expect(loadHierarchySpy).not.toHaveBeenCalled();
         expect(selectSlideSpy).toHaveBeenCalledWith(
-            expect.objectContaining({ image_id: 'slide-2' }),
+            expect.objectContaining({ slide_key: 'slide-2' }),
             expect.objectContaining({ sample_id: 'S-2' })
         );
     });
@@ -1268,9 +1267,9 @@ describe('WSIViewer — pathology filter updates', () => {
             makePart([
                 makeBlock(
                     [
-                        makeSlide({ image_id: 'hne-slide' }),
+                        makeSlide({ slide_key: 'hne-slide' }),
                         makeSlide({
-                            image_id: 'ihc-slide',
+                            slide_key: 'ihc-slide',
                             is_hne: false,
                             is_ihc: true,
                             stain_name: 'IHC',
@@ -1302,7 +1301,7 @@ describe('WSIViewer — pathology filter updates', () => {
         expect(disposeSpy).not.toHaveBeenCalled();
         expect(loadHierarchySpy).not.toHaveBeenCalled();
         expect(selectSlideSpy).toHaveBeenCalledWith(
-            expect.objectContaining({ image_id: 'hne-slide' }),
+            expect.objectContaining({ slide_key: 'hne-slide' }),
             expect.objectContaining({ sample_id: 'S-1' })
         );
     });
@@ -1317,8 +1316,8 @@ describe('WSIViewer — pathology filter updates', () => {
             makePart([
                 makeBlock(
                     [
-                        makeSlide({ image_id: 'first-hne-slide' }),
-                        makeSlide({ image_id: 'second-hne-slide' }),
+                        makeSlide({ slide_key: 'first-hne-slide' }),
+                        makeSlide({ slide_key: 'second-hne-slide' }),
                     ],
                     '1'
                 ),
@@ -1340,7 +1339,7 @@ describe('WSIViewer — pathology filter updates', () => {
         (inst as any).handleFilterChange('hne');
 
         expect(selectSlideSpy).toHaveBeenCalledWith(
-            expect.objectContaining({ image_id: 'first-hne-slide' }),
+            expect.objectContaining({ slide_key: 'first-hne-slide' }),
             expect.objectContaining({ sample_id: 'S-1' })
         );
     });
@@ -1355,9 +1354,9 @@ describe('WSIViewer — pathology filter updates', () => {
             makePart([
                 makeBlock(
                     [
-                        makeSlide({ image_id: 'block-slide' }),
+                        makeSlide({ slide_key: 'block-slide' }),
                         makeSlide({
-                            image_id: 'part-slide',
+                            slide_key: 'part-slide',
                             block_number: '2',
                             block_label: 'B1',
                         }),
@@ -1371,7 +1370,7 @@ describe('WSIViewer — pathology filter updates', () => {
             samples: [sample],
             slide_associations: [
                 {
-                    image_id: 'block-slide',
+                    slide_key: 'block-slide',
                     sample_id: 'S-1',
                     match_level: 'BLOCK',
                     specimen_key: 'block::1::A1',
@@ -1379,7 +1378,7 @@ describe('WSIViewer — pathology filter updates', () => {
                     can_serve_tiles: true,
                 },
                 {
-                    image_id: 'part-slide',
+                    slide_key: 'part-slide',
                     sample_id: 'S-1',
                     match_level: 'PART',
                     specimen_key: 'part::2::B1',
@@ -1405,7 +1404,7 @@ describe('WSIViewer — pathology filter updates', () => {
         expect(disposeSpy).not.toHaveBeenCalled();
         expect(loadHierarchySpy).not.toHaveBeenCalled();
         expect(selectSlideSpy).toHaveBeenCalledWith(
-            expect.objectContaining({ image_id: 'part-slide' }),
+            expect.objectContaining({ slide_key: 'part-slide' }),
             expect.objectContaining({ sample_id: 'S-1' })
         );
     });
@@ -1420,8 +1419,8 @@ describe('WSIViewer — pathology filter updates', () => {
             makePart([
                 makeBlock(
                     [
-                        makeSlide({ image_id: 'first-part-slide' }),
-                        makeSlide({ image_id: 'second-part-slide' }),
+                        makeSlide({ slide_key: 'first-part-slide' }),
+                        makeSlide({ slide_key: 'second-part-slide' }),
                     ],
                     '1'
                 ),
@@ -1432,7 +1431,7 @@ describe('WSIViewer — pathology filter updates', () => {
             samples: [sample],
             slide_associations: [
                 {
-                    image_id: 'first-part-slide',
+                    slide_key: 'first-part-slide',
                     sample_id: 'S-1',
                     match_level: 'PART',
                     specimen_key: 'part::1',
@@ -1440,7 +1439,7 @@ describe('WSIViewer — pathology filter updates', () => {
                     can_serve_tiles: true,
                 },
                 {
-                    image_id: 'second-part-slide',
+                    slide_key: 'second-part-slide',
                     sample_id: 'S-1',
                     match_level: 'PART',
                     specimen_key: 'part::2',
@@ -1461,7 +1460,7 @@ describe('WSIViewer — pathology filter updates', () => {
         (inst as any).handleMatchFilterChange('part');
 
         expect(selectSlideSpy).toHaveBeenCalledWith(
-            expect.objectContaining({ image_id: 'first-part-slide' }),
+            expect.objectContaining({ slide_key: 'first-part-slide' }),
             expect.objectContaining({ sample_id: 'S-1' })
         );
     });
@@ -1473,14 +1472,16 @@ describe('WSIViewer — pathology filter updates', () => {
             height: 500,
         });
         const sample = makeSample('S-1', [
-            makePart([makeBlock([makeSlide({ image_id: 'part-slide' })], '1')]),
+            makePart([
+                makeBlock([makeSlide({ slide_key: 'part-slide' })], '1'),
+            ]),
         ]);
         inst.hierarchy = {
             patient_id: 'P-XYZ',
             samples: [sample],
             slide_associations: [
                 {
-                    image_id: 'part-slide',
+                    slide_key: 'part-slide',
                     sample_id: 'S-1',
                     match_level: 'PART',
                     specimen_key: 'part::1',
@@ -1516,7 +1517,7 @@ describe('WSIViewer — pathology filter updates', () => {
             },
         });
         const sample = makeSample('S-1', [
-            makePart([makeBlock([makeSlide({ image_id: 'slide-1' })], '1')]),
+            makePart([makeBlock([makeSlide({ slide_key: 'slide-1' })], '1')]),
         ]);
         inst.hierarchy = {
             patient_id: 'P-XYZ',
@@ -1570,7 +1571,7 @@ describe('WSIViewer — pathology filter updates', () => {
             height: 500,
         });
         const sample = makeSample('S-1', [
-            makePart([makeBlock([makeSlide({ image_id: 'hne-slide' })], '1')]),
+            makePart([makeBlock([makeSlide({ slide_key: 'hne-slide' })], '1')]),
         ]);
         inst.hierarchy = {
             patient_id: 'P-XYZ',
@@ -1607,14 +1608,14 @@ describe('WSIViewer — pathology filter updates', () => {
             onStainFilterChange,
         });
         const sample = makeSample('S-1', [
-            makePart([makeBlock([makeSlide({ image_id: 'hne-slide' })], '1')]),
+            makePart([makeBlock([makeSlide({ slide_key: 'hne-slide' })], '1')]),
         ]);
         inst.hierarchy = {
             patient_id: 'P-XYZ',
             samples: [sample],
             slide_associations: [
                 {
-                    image_id: 'hne-slide',
+                    slide_key: 'hne-slide',
                     sample_id: 'S-1',
                     match_level: 'BLOCK',
                     specimen_key: 'block::1::A1',
@@ -1637,7 +1638,7 @@ describe('WSIViewer — pathology filter updates', () => {
             height: 500,
         });
         const sample = makeSample('S-1', [
-            makePart([makeBlock([makeSlide({ image_id: 'hne-slide' })], '1')]),
+            makePart([makeBlock([makeSlide({ slide_key: 'hne-slide' })], '1')]),
         ]);
         const slide = sample.parts[0].blocks[0].slides[0];
         const controller = controllerOf(inst);
@@ -1679,7 +1680,7 @@ describe('WSIViewer — cached sidebar data', () => {
 
     it('keeps metadata row references stable across unrelated state changes', () => {
         const inst = makeInstance('https://tiles.example.com/patient/P-1');
-        const hierarchy = makeHierarchy([makeSlide({ image_id: 'A' })], 'P-1');
+        const hierarchy = makeHierarchy([makeSlide({ slide_key: 'A' })], 'P-1');
         const sample = hierarchy.samples[0];
         const slide = sample.parts[0].blocks[0].slides[0];
 
@@ -1717,7 +1718,7 @@ describe('WSIViewer — cached sidebar data', () => {
 
     it('freezes cached sidebar rows so callers cannot mutate the shared viewer cache', () => {
         const inst = makeInstance('https://tiles.example.com/patient/P-1');
-        const hierarchy = makeHierarchy([makeSlide({ image_id: 'A' })], 'P-1');
+        const hierarchy = makeHierarchy([makeSlide({ slide_key: 'A' })], 'P-1');
         const sample = hierarchy.samples[0];
         const slide = sample.parts[0].blocks[0].slides[0];
 
@@ -1767,7 +1768,7 @@ describe('WSIViewer — cached sidebar data', () => {
 
     it('invalidates cached sidebar rows after in-place sample enrichment', () => {
         const inst = makeInstance('https://tiles.example.com/patient/P-1');
-        const hierarchy = makeHierarchy([makeSlide({ image_id: 'A' })], 'P-1');
+        const hierarchy = makeHierarchy([makeSlide({ slide_key: 'A' })], 'P-1');
         (hierarchy.samples[0] as any).tmb_score = '7.1';
 
         act(() => {
@@ -1808,7 +1809,7 @@ describe('WSIViewer — cached sidebar data', () => {
 
     it('recomputes WSI rows after in-place slide enrichment', () => {
         const inst = makeInstance('https://tiles.example.com/patient/P-1');
-        const hierarchy = makeHierarchy([makeSlide({ image_id: 'A' })], 'P-1');
+        const hierarchy = makeHierarchy([makeSlide({ slide_key: 'A' })], 'P-1');
         const sample = hierarchy.samples[0];
         const slide = sample.parts[0].blocks[0].slides[0];
         const meta = {
@@ -1854,7 +1855,7 @@ describe('WSIViewer — cached sidebar data', () => {
         };
 
         const inst = makeInstance('https://tiles.example.com/patient/P-1');
-        inst.hierarchy = makeHierarchy([makeSlide({ image_id: 'A' })], 'P-1');
+        inst.hierarchy = makeHierarchy([makeSlide({ slide_key: 'A' })], 'P-1');
         const updateSpy = jest.spyOn(inst as any, 'updateHierarchy');
 
         act(() => {
@@ -1880,7 +1881,7 @@ describe('WSIViewer — cached sidebar data', () => {
     it('preserves derived slide associations across hierarchy refreshes', () => {
         const inst = makeInstance('https://tiles.example.com/patient/P-1');
         const slide = makeSlide({
-            image_id: 'block-slide',
+            slide_key: 'block-slide',
             sample_id: 'S-1',
             match_level: 'BLOCK',
             slide_type: 'H&E',
@@ -1895,7 +1896,7 @@ describe('WSIViewer — cached sidebar data', () => {
                     sample.parts.flatMap(part =>
                         part.blocks.flatMap(block =>
                             block.slides.map(currentSlide => ({
-                                image_id: currentSlide.image_id,
+                                slide_key: currentSlide.slide_key,
                                 sample_id: sample.sample_id,
                                 match_level: currentSlide.match_level,
                                 slide_type: currentSlide.slide_type,
@@ -1922,7 +1923,7 @@ describe('WSIViewer — cached sidebar data', () => {
 
     it('keeps hierarchy identity stable across an enrichment refresh', () => {
         const inst = makeInstance('https://tiles.example.com/patient/P-1');
-        const hierarchy = makeHierarchy([makeSlide({ image_id: 'A' })], 'P-1');
+        const hierarchy = makeHierarchy([makeSlide({ slide_key: 'A' })], 'P-1');
         inst.hierarchy = hierarchy;
         const currentHierarchy = inst.hierarchy;
         const initialVersion = (inst as any).hierarchyDataVersion;
@@ -1937,7 +1938,7 @@ describe('WSIViewer — cached sidebar data', () => {
 
     it('defers MSK-IMPACT sidebar content until the first tile is ready', () => {
         const inst = makeInstance('https://tiles.example.com/patient/P-1');
-        const hierarchy = makeHierarchy([makeSlide({ image_id: 'A' })], 'P-1');
+        const hierarchy = makeHierarchy([makeSlide({ slide_key: 'A' })], 'P-1');
         const sample = hierarchy.samples[0];
         const slide = sample.parts[0].blocks[0].slides[0];
         sample.tmb_score = '12.3';
@@ -1970,7 +1971,7 @@ describe('WSIViewer — cached sidebar data', () => {
 
     it('uses the reference sample for molecular sidebar data on unmatched slides', () => {
         const inst = makeInstance('https://tiles.example.com/patient/P-1');
-        const slide = makeSlide({ image_id: 'unmatched-slide' });
+        const slide = makeSlide({ slide_key: 'unmatched-slide' });
         const unmatched = makeSample('UNMATCHED', [
             makePart([makeBlock([slide])]),
         ]);
@@ -2105,7 +2106,7 @@ describe('WSIViewer — loadHierarchy', () => {
                 return 0;
             };
             const mockHierarchy = makeWireHierarchy(
-                [makeSlide({ image_id: 'A', can_serve_tiles: true })],
+                [makeSlide({ slide_key: 'A', can_serve_tiles: true })],
                 'P-XYZ'
             );
             setFetchMock(
@@ -2152,7 +2153,7 @@ describe('WSIViewer — loadHierarchy', () => {
             return 0;
         };
         const mockHierarchy = makeWireHierarchy(
-            [makeSlide({ image_id: 'A', can_serve_tiles: true })],
+            [makeSlide({ slide_key: 'A', can_serve_tiles: true })],
             'P-XYZ'
         );
         setFetchMock(
@@ -2201,7 +2202,7 @@ describe('WSIViewer — loadHierarchy', () => {
             patient_id: 'P-XYZ',
             slide_associations: [
                 {
-                    image_id: 'matched-1',
+                    slide_key: 'matched-1',
                     sample_id: 'S-123456-T01',
                     match_level: 'BLOCK',
                     specimen_key: 'block::1::A1',
@@ -2209,7 +2210,7 @@ describe('WSIViewer — loadHierarchy', () => {
                     can_serve_tiles: true,
                 },
                 {
-                    image_id: 'unmatched-1',
+                    slide_key: 'unmatched-1',
                     sample_id: null,
                     match_level: 'UNMATCHED',
                     specimen_key: 'unmatched::1::B1',
@@ -2220,11 +2221,11 @@ describe('WSIViewer — loadHierarchy', () => {
             samples: [
                 makeSample('S-123456-T01', [
                     makePart([
-                        makeBlock([makeSlide({ image_id: 'matched-1' })], '1'),
+                        makeBlock([makeSlide({ slide_key: 'matched-1' })], '1'),
                         makeBlock(
                             [
                                 makeSlide({
-                                    image_id: 'unmatched-1',
+                                    slide_key: 'unmatched-1',
                                     block_number: '2',
                                     block_label: 'B1',
                                     sample_id: null,
@@ -2265,25 +2266,25 @@ describe('WSIViewer — loadHierarchy', () => {
         expect(inst.hierarchy.samples[0].parts[0].blocks).toHaveLength(2);
         expect(
             inst.hierarchy.samples[0].parts[0].blocks.flatMap((block: any) =>
-                block.slides.map((slide: Slide) => slide.image_id)
+                block.slides.map((slide: Slide) => slide.slide_key)
             )
         ).toEqual(['matched-1', 'unmatched-1']);
         expect(inst.matchFilter).toBe('unmatched');
         expect(inst.hierarchy.slide_associations).toEqual(
             expect.arrayContaining([
                 expect.objectContaining({
-                    image_id: 'matched-1',
+                    slide_key: 'matched-1',
                     match_level: 'BLOCK',
                 }),
                 expect.objectContaining({
-                    image_id: 'unmatched-1',
+                    slide_key: 'unmatched-1',
                     match_level: 'UNMATCHED',
                     specimen_key: 'unmatched::1::B1',
                 }),
             ])
         );
         expect(selectSlideSpy).toHaveBeenCalledTimes(1);
-        expect((selectSlideSpy.mock.calls[0][0] as Slide).image_id).toBe(
+        expect((selectSlideSpy.mock.calls[0][0] as Slide).slide_key).toBe(
             'unmatched-1'
         );
     });
@@ -2292,7 +2293,7 @@ describe('WSIViewer — loadHierarchy', () => {
         const hierarchy = makeWireHierarchy(
             [
                 makeSlide({
-                    image_id: 'bootstrap-slide',
+                    slide_key: 'bootstrap-slide',
                     can_serve_tiles: true,
                 }),
             ],
@@ -2362,14 +2363,14 @@ describe('WSIViewer — loadHierarchy', () => {
             { cache: 'no-store', credentials: 'same-origin' }
         );
         expect(selectSlideSpy).toHaveBeenCalledWith(
-            expect.objectContaining({ image_id: 'bootstrap-slide' }),
+            expect.objectContaining({ slide_key: 'bootstrap-slide' }),
             expect.objectContaining({ sample_id: 'S-123456-T01' })
         );
     });
 
     it('reuses the shared hierarchy cache when it is already warm', async () => {
         const hierarchy = makeHierarchy(
-            [makeSlide({ image_id: 'cached-slide', can_serve_tiles: true })],
+            [makeSlide({ slide_key: 'cached-slide', can_serve_tiles: true })],
             'P-1'
         );
         await warmHierarchyCache(
@@ -2412,7 +2413,7 @@ describe('WSIViewer — loadHierarchy', () => {
 
         expect(inst.hierarchy?.patient_id).toBe('P-1');
         expect(selectSlideSpy).toHaveBeenCalledWith(
-            expect.objectContaining({ image_id: 'cached-slide' }),
+            expect.objectContaining({ slide_key: 'cached-slide' }),
             expect.objectContaining({ sample_id: 'S-123456-T01' })
         );
     });
@@ -2422,7 +2423,7 @@ describe('WSIViewer — loadHierarchy', () => {
             patient_id: 'P-XYZ',
             slide_associations: [
                 {
-                    image_id: 'matched-1',
+                    slide_key: 'matched-1',
                     sample_id: 'S-123456-T01',
                     match_level: 'BLOCK',
                     specimen_key: 'block::1::A1',
@@ -2430,7 +2431,7 @@ describe('WSIViewer — loadHierarchy', () => {
                     can_serve_tiles: true,
                 },
                 {
-                    image_id: 'unmatched-1',
+                    slide_key: 'unmatched-1',
                     sample_id: null,
                     match_level: 'UNMATCHED',
                     specimen_key: 'unmatched::1::B1',
@@ -2441,11 +2442,11 @@ describe('WSIViewer — loadHierarchy', () => {
             samples: [
                 makeSample('S-123456-T01', [
                     makePart([
-                        makeBlock([makeSlide({ image_id: 'matched-1' })], '1'),
+                        makeBlock([makeSlide({ slide_key: 'matched-1' })], '1'),
                         makeBlock(
                             [
                                 makeSlide({
-                                    image_id: 'unmatched-1',
+                                    slide_key: 'unmatched-1',
                                     block_number: '2',
                                     block_label: 'B1',
                                     sample_id: null,
@@ -2522,7 +2523,7 @@ describe('WSIViewer — loadHierarchy', () => {
             return 0;
         };
         const mockHierarchy = makeWireHierarchy(
-            [makeSlide({ image_id: 'A', can_serve_tiles: true })],
+            [makeSlide({ slide_key: 'A', can_serve_tiles: true })],
             'P-XYZ'
         );
         const metadata = {
@@ -2542,12 +2543,9 @@ describe('WSIViewer — loadHierarchy', () => {
                                 ? mockHierarchy
                                 : {
                                       accessToken: 'test-token',
-                                      sourceUrl:
-                                          'https://tiles.example.com/slides/A',
+                                      slideKey: 'A',
                                       tileMetadata: metadata,
                                       thumbnail: {
-                                          sourceUrl:
-                                              'https://tiles.example.com/slides/A/thumb.jpg',
                                           width: 256,
                                           height: 256,
                                       },
@@ -2579,7 +2577,7 @@ describe('WSIViewer — loadHierarchy', () => {
         };
         mockLoadOpenSeadragon.mockRejectedValue(new Error('OSD chunk failed'));
         const mockHierarchy = makeWireHierarchy(
-            [makeSlide({ image_id: 'A', can_serve_tiles: true })],
+            [makeSlide({ slide_key: 'A', can_serve_tiles: true })],
             'P-XYZ'
         );
         const metadata = {
@@ -2599,12 +2597,9 @@ describe('WSIViewer — loadHierarchy', () => {
                                 ? mockHierarchy
                                 : {
                                       accessToken: 'test-token',
-                                      sourceUrl:
-                                          'https://tiles.example.com/slides/A',
+                                      slideKey: 'A',
                                       tileMetadata: metadata,
                                       thumbnail: {
-                                          sourceUrl:
-                                              'https://tiles.example.com/slides/A/thumb.jpg',
                                           width: 256,
                                           height: 256,
                                       },
@@ -2642,8 +2637,8 @@ describe('WSIViewer — prefetchSlideMetadata cancellation', () => {
         // Each fetch call in the prefetch loop checks `if (!this.hierarchy) return`.
         // Setting hierarchy=null between fetches should halt the loop without error.
         const inst = makeInstance('https://tiles.example.com/patient/P-1');
-        const slide1 = makeSlide({ image_id: 'AAA', can_serve_tiles: true });
-        const slide2 = makeSlide({ image_id: 'BBB', can_serve_tiles: true });
+        const slide1 = makeSlide({ slide_key: 'AAA', can_serve_tiles: true });
+        const slide2 = makeSlide({ slide_key: 'BBB', can_serve_tiles: true });
         inst.hierarchy = makeHierarchy([slide1, slide2]);
 
         let fetchCallCount = 0;
@@ -2671,7 +2666,7 @@ describe('WSIViewer — prefetchSlideMetadata cancellation', () => {
     it('deduplicates concurrent metadata fetches for the same slide', async () => {
         const inst = makeInstance('https://tiles.example.com/patient/P-1');
         const controller = controllerOf(inst);
-        const slide = makeSlide({ image_id: 'AAA', can_serve_tiles: true });
+        const slide = makeSlide({ slide_key: 'AAA', can_serve_tiles: true });
         inst.hierarchy = makeHierarchy([slide]);
         registerTestSlideAccess('study', 'P-123', 'AAA');
 
@@ -2681,7 +2676,7 @@ describe('WSIViewer — prefetchSlideMetadata cancellation', () => {
                 json: () =>
                     Promise.resolve({
                         accessToken: 'test-token',
-                        sourceUrl: 'https://tiles.example.com/slides/AAA',
+                        slideKey: 'AAA',
                         tileMetadata: {
                             dimensions: { width: 1000, height: 800 },
                             levels: 1,
@@ -2690,8 +2685,6 @@ describe('WSIViewer — prefetchSlideMetadata cancellation', () => {
                             tile_size: 256,
                         },
                         thumbnail: {
-                            sourceUrl:
-                                'https://tiles.example.com/slides/AAA/thumb.jpg',
                             width: 256,
                             height: 256,
                         },
@@ -2711,8 +2704,8 @@ describe('WSIViewer — prefetchSlideMetadata cancellation', () => {
     it('prefetches metadata in bounded concurrent batches', async () => {
         const inst = makeInstance('https://tiles.example.com/patient/P-1');
         const controller = controllerOf(inst);
-        const slides = ['AAA', 'BBB', 'CCC', 'DDD'].map(image_id =>
-            makeSlide({ image_id, can_serve_tiles: true })
+        const slides = ['AAA', 'BBB', 'CCC', 'DDD'].map(slide_key =>
+            makeSlide({ slide_key, can_serve_tiles: true })
         );
         inst.hierarchy = makeHierarchy(slides);
         // Only the selected sample's slides are prefetched.
@@ -2721,13 +2714,13 @@ describe('WSIViewer — prefetchSlideMetadata cancellation', () => {
         const order: string[] = [];
         const deferred = new Map<string, ReturnType<typeof deferredPromise>>();
         slides.forEach(slide => {
-            deferred.set(slide.image_id, deferredPromise<void>());
+            deferred.set(slide.slide_key, deferredPromise<void>());
         });
 
         jest.spyOn(controller, 'fetchSlideMetadata').mockImplementation(
-            (imageId: string) => {
-                order.push(imageId);
-                return deferred.get(imageId)!.promise.then(() => ({
+            (slideKey: string) => {
+                order.push(slideKey);
+                return deferred.get(slideKey)!.promise.then(() => ({
                     dimensions: { width: 1000, height: 800 },
                     max_zoom: 6,
                     tile_size: 256,
@@ -2756,9 +2749,13 @@ describe('WSIViewer — prefetchSlideMetadata cancellation', () => {
         const inst = makeInstance('https://tiles.example.com/patient/P-1');
         const controller = controllerOf(inst);
         const selectedSampleSlides = [
-            makeSlide({ image_id: 'BBB', can_serve_tiles: true, is_hne: true }),
             makeSlide({
-                image_id: 'CCC',
+                slide_key: 'BBB',
+                can_serve_tiles: true,
+                is_hne: true,
+            }),
+            makeSlide({
+                slide_key: 'CCC',
                 can_serve_tiles: true,
                 is_hne: false,
                 is_ihc: true,
@@ -2766,9 +2763,13 @@ describe('WSIViewer — prefetchSlideMetadata cancellation', () => {
             }),
         ];
         const otherSampleSlides = [
-            makeSlide({ image_id: 'AAA', can_serve_tiles: true, is_hne: true }),
             makeSlide({
-                image_id: 'DDD',
+                slide_key: 'AAA',
+                can_serve_tiles: true,
+                is_hne: true,
+            }),
+            makeSlide({
+                slide_key: 'DDD',
                 can_serve_tiles: true,
                 is_hne: false,
                 is_ihc: true,
@@ -2790,8 +2791,8 @@ describe('WSIViewer — prefetchSlideMetadata cancellation', () => {
 
         const order: string[] = [];
         jest.spyOn(controller, 'fetchSlideMetadata').mockImplementation(
-            async (imageId: string) => {
-                order.push(imageId);
+            async (slideKey: string) => {
+                order.push(slideKey);
                 return {
                     dimensions: { width: 1000, height: 800 },
                     levels: 1,
@@ -2808,40 +2809,36 @@ describe('WSIViewer — prefetchSlideMetadata cancellation', () => {
         expect(order).toEqual(['BBB', 'CCC']);
     });
 
-    it('does not spend prefetch queue slots on duplicate servable image ids', async () => {
+    it('does not spend prefetch queue slots on duplicate servable slide keys', async () => {
         const inst = makeInstance('https://tiles.example.com/patient/P-1');
         const controller = controllerOf(inst);
         const duplicateSlideA = makeSlide({
-            image_id: 'AAA',
+            slide_key: 'AAA',
             can_serve_tiles: true,
         });
         const duplicateSlideB = makeSlide({
-            image_id: 'AAA',
+            slide_key: 'AAA',
             can_serve_tiles: true,
             block_number: '2',
             block_label: 'A2',
-            barcode: 'dup-aaa',
         });
         const slideB = makeSlide({
-            image_id: 'BBB',
+            slide_key: 'BBB',
             can_serve_tiles: true,
             block_number: '3',
             block_label: 'A3',
-            barcode: 'bbb',
         });
         const slideC = makeSlide({
-            image_id: 'CCC',
+            slide_key: 'CCC',
             can_serve_tiles: true,
             block_number: '4',
             block_label: 'A4',
-            barcode: 'ccc',
         });
         const slideD = makeSlide({
-            image_id: 'DDD',
+            slide_key: 'DDD',
             can_serve_tiles: true,
             block_number: '5',
             block_label: 'A5',
-            barcode: 'ddd',
         });
         inst.hierarchy = makeHierarchy([
             duplicateSlideA,
@@ -2854,14 +2851,14 @@ describe('WSIViewer — prefetchSlideMetadata cancellation', () => {
 
         const order: string[] = [];
         const deferred = new Map<string, ReturnType<typeof deferredPromise>>();
-        ['AAA', 'BBB', 'CCC', 'DDD'].forEach(imageId => {
-            deferred.set(imageId, deferredPromise<void>());
+        ['AAA', 'BBB', 'CCC', 'DDD'].forEach(slideKey => {
+            deferred.set(slideKey, deferredPromise<void>());
         });
 
         jest.spyOn(controller, 'fetchSlideMetadata').mockImplementation(
-            (imageId: string) => {
-                order.push(imageId);
-                return deferred.get(imageId)!.promise.then(() => ({
+            (slideKey: string) => {
+                order.push(slideKey);
+                return deferred.get(slideKey)!.promise.then(() => ({
                     dimensions: { width: 1000, height: 800 },
                     levels: 1,
                     level_dimensions: [{ width: 1000, height: 800 }],
@@ -2906,7 +2903,7 @@ describe('WSIViewer — sample enrichment scheduling', () => {
     it('does not apply stale mutation frequency or annotation results to a new hierarchy', async () => {
         const makeEnrichmentHierarchy = (patientId: string) => {
             const hierarchy = makeHierarchy(
-                [makeSlide({ image_id: `${patientId}-slide` })],
+                [makeSlide({ slide_key: `${patientId}-slide` })],
                 patientId
             );
             hierarchy.samples[0].oncogenic_mutation_details = [
@@ -3007,7 +3004,7 @@ describe('WSIViewer — sample enrichment scheduling', () => {
     it('applies enrichment results when the hierarchy is still current', async () => {
         const inst = makeInstance('https://tiles.example.com/patient/P-1');
         const hierarchy = makeHierarchy(
-            [makeSlide({ image_id: 'current-slide' })],
+            [makeSlide({ slide_key: 'current-slide' })],
             'P-current'
         );
         hierarchy.samples[0].oncogenic_mutation_details = [
@@ -3166,7 +3163,7 @@ describe('WSIViewer — sample enrichment scheduling', () => {
 
     it('skips mutation hierarchy updates when no mutation data and no existing mutation text are available', async () => {
         const inst = makeInstance('https://tiles.example.com/patient/P-1');
-        inst.hierarchy = makeHierarchy([makeSlide({ image_id: 'A' })], 'P-1');
+        inst.hierarchy = makeHierarchy([makeSlide({ slide_key: 'A' })], 'P-1');
         const sampleIdentifiers = [
             {
                 studyId: 'study-1',
@@ -3208,7 +3205,7 @@ describe('WSIViewer — sample enrichment scheduling', () => {
 
     it('retries a transient mutation profile response before giving up', async () => {
         const inst = makeInstance('https://tiles.example.com/patient/P-1');
-        inst.hierarchy = makeHierarchy([makeSlide({ image_id: 'A' })], 'P-1');
+        inst.hierarchy = makeHierarchy([makeSlide({ slide_key: 'A' })], 'P-1');
         const sampleIdentifiers = [
             {
                 studyId: 'study-1',
@@ -3271,7 +3268,7 @@ describe('WSIViewer — sample enrichment scheduling', () => {
 
     it('reports an error after mutation retries are exhausted', async () => {
         const inst = makeInstance('https://tiles.example.com/patient/P-1');
-        inst.hierarchy = makeHierarchy([makeSlide({ image_id: 'A' })], 'P-1');
+        inst.hierarchy = makeHierarchy([makeSlide({ slide_key: 'A' })], 'P-1');
         const sampleIdentifiers = [
             {
                 studyId: 'study-1',
@@ -3493,7 +3490,7 @@ describe('WSIViewer — URL hash state', () => {
 
     it('copyViewLink copies the current viewport hash instead of the stale URL', async () => {
         const inst = makeInstance('https://tiles.example.com/patient/P-1');
-        inst.selectedSlide = makeSlide({ image_id: '12345' });
+        inst.selectedSlide = makeSlide({ slide_key: '12345' });
 
         const writeText = jest.fn().mockResolvedValue(undefined);
         Object.assign(navigator, {
@@ -3581,11 +3578,9 @@ describe('WSIViewer — open handler (mountOSD integration)', () => {
             json: () =>
                 Promise.resolve({
                     accessToken: 'test-token',
-                    sourceUrl: 'https://tiles.example.com/slides/42',
+                    slideKey: '42',
                     tileMetadata: metaMock,
                     thumbnail: {
-                        sourceUrl:
-                            'https://tiles.example.com/slides/42/thumb.jpg',
                         width: 256,
                         height: 256,
                     },
@@ -3655,7 +3650,7 @@ describe('WSIViewer — open handler (mountOSD integration)', () => {
         registerTestSlideAccess(
             String(props.studyId ?? 'study-1'),
             'P-XYZ',
-            slide.image_id
+            slide.slide_key
         );
         // Provide a real DOM container so the containerEl guard passes
         const container = document.createElement('div');
@@ -3668,7 +3663,7 @@ describe('WSIViewer — open handler (mountOSD integration)', () => {
 
     it('calls goHome(true) on fresh load with no wsi hash', async () => {
         window.location.hash = '';
-        const slide = makeSlide({ image_id: '42' });
+        const slide = makeSlide({ slide_key: '42' });
         await runMount(slide);
 
         expect(capturedOpenCb).not.toBeNull();
@@ -3693,11 +3688,10 @@ describe('WSIViewer — open handler (mountOSD integration)', () => {
             json: () =>
                 Promise.resolve({
                     accessToken: 'test-token',
-                    sourceUrl: 's3://slides/42.svs',
+                    slideKey: '42',
                     tileMetadata: metaMock,
                     // This represents the already-published S3 artifact.
                     thumbnail: {
-                        sourceUrl: 's3://mskmind-bkt/wsi-thumbnails/42.jpg',
                         width: 256,
                         height: 256,
                         contentType: 'image/jpeg',
@@ -3723,7 +3717,7 @@ describe('WSIViewer — open handler (mountOSD integration)', () => {
         (global as any).fetch = fetchMock;
 
         try {
-            const inst = await runMount(makeSlide({ image_id: '42' }));
+            const inst = await runMount(makeSlide({ slide_key: '42' }));
             await new Promise(resolve => setTimeout(resolve, 0));
 
             expect(fetchMock).toHaveBeenCalledWith(
@@ -3732,8 +3726,6 @@ describe('WSIViewer — open handler (mountOSD integration)', () => {
                     cache: 'default',
                     headers: {
                         Authorization: 'Bearer test-token',
-                        'X-WSI-Source':
-                            's3://mskmind-bkt/wsi-thumbnails/42.jpg',
                     },
                 })
             );
@@ -3769,7 +3761,7 @@ describe('WSIViewer — open handler (mountOSD integration)', () => {
 
     it('treats a loaded tile as viewer-ready when no draw event is emitted', async () => {
         window.location.hash = '';
-        const slide = makeSlide({ image_id: '42' });
+        const slide = makeSlide({ slide_key: '42' });
         const inst = await runMount(slide);
         const controller = controllerOf(inst);
         (inst as any).spinnerVisible = true;
@@ -3788,7 +3780,7 @@ describe('WSIViewer — open handler (mountOSD integration)', () => {
 
     it('surfaces a retryable error when no tile becomes ready', async () => {
         window.location.hash = '';
-        const slide = makeSlide({ image_id: '42' });
+        const slide = makeSlide({ slide_key: '42' });
         const inst = await runMount(slide);
         jest.useFakeTimers();
         try {
@@ -3806,7 +3798,7 @@ describe('WSIViewer — open handler (mountOSD integration)', () => {
 
     it('clears the timeout error when a tile is drawn late', async () => {
         window.location.hash = '';
-        const slide = makeSlide({ image_id: '42' });
+        const slide = makeSlide({ slide_key: '42' });
         const inst = await runMount(slide);
         jest.useFakeTimers();
         try {
@@ -3825,17 +3817,15 @@ describe('WSIViewer — open handler (mountOSD integration)', () => {
 
     it('reuses the published thumbnail when retrying the selected slide', async () => {
         window.location.hash = '';
-        const slide = makeSlide({ image_id: '42' });
+        const slide = makeSlide({ slide_key: '42' });
         const accessResponse = {
             ok: true,
             json: () =>
                 Promise.resolve({
                     accessToken: 'test-token',
-                    sourceUrl: 'https://tiles.example.com/slides/42',
+                    slideKey: '42',
                     tileMetadata: metaMock,
                     thumbnail: {
-                        sourceUrl:
-                            'https://tiles.example.com/slides/42/thumb.jpg',
                         width: 256,
                         height: 256,
                         contentType: 'image/jpeg',
@@ -3881,7 +3871,7 @@ describe('WSIViewer — open handler (mountOSD integration)', () => {
 
     it('calls goHome(true) when hash belongs to a different slide', async () => {
         window.location.hash = '#wsi:slide=99&x=5000&y=3000&z=0.8';
-        const slide = makeSlide({ image_id: '42' }); // hash has slideId=99
+        const slide = makeSlide({ slide_key: '42' }); // hash has slideId=99
         await runMount(slide);
         capturedOpenCb!();
 
@@ -3891,7 +3881,7 @@ describe('WSIViewer — open handler (mountOSD integration)', () => {
 
     it('calls panTo + zoomTo (not goHome) when hash slideId matches', async () => {
         window.location.hash = '#wsi:slide=42&x=15000&y=10000&z=2.500000';
-        const slide = makeSlide({ image_id: '42' });
+        const slide = makeSlide({ slide_key: '42' });
         await runMount(slide);
         capturedOpenCb!();
 
@@ -3910,7 +3900,7 @@ describe('WSIViewer — open handler (mountOSD integration)', () => {
 
     it('homes ordinary slide navigation even when a stale hash names the slide', async () => {
         window.location.hash = '#wsi:slide=42&x=15000&y=10000&z=2.500000';
-        const slide = makeSlide({ image_id: '42' });
+        const slide = makeSlide({ slide_key: '42' });
         await runMount(slide, {}, false);
         capturedOpenCb!();
 
@@ -3924,7 +3914,7 @@ describe('WSIViewer — open handler (mountOSD integration)', () => {
         // but before the OSD 'open' event fired. The viewport existed but had no tile
         // source, so image coordinates defaulted to ~(1,1), overwriting the hash.
         window.location.hash = '#wsi:slide=42&x=15000&y=10000&z=2.5';
-        const slide = makeSlide({ image_id: '42' });
+        const slide = makeSlide({ slide_key: '42' });
 
         await runMount(slide); // mountOSD returns; 'open' has NOT fired yet
 
@@ -3943,7 +3933,7 @@ describe('WSIViewer — open handler (mountOSD integration)', () => {
         // animation-finish must only be registered AFTER hash is read and viewport
         // is set, so OSD's own initial-animation-finish cannot clobber the hash.
         window.location.hash = '';
-        const slide = makeSlide({ image_id: '42' });
+        const slide = makeSlide({ slide_key: '42' });
         await runMount(slide);
 
         // Before 'open' fires: no animation-finish listener should exist
@@ -3965,11 +3955,11 @@ describe('WSIViewer — open handler (mountOSD integration)', () => {
 
     it('starts metadata prefetch only after the first tile readiness event', async () => {
         window.location.hash = '';
-        const slide = makeSlide({ image_id: '42' });
+        const slide = makeSlide({ slide_key: '42' });
         const inst = await runMount(slide, { studyId: 'study-1' });
         const controller = controllerOf(inst);
         inst.hierarchy = makeHierarchy([slide]);
-        controller.initialSlideImageId = '42';
+        controller.initialSlideKey = '42';
         controller.hierarchyLoadSeq = 1;
         controller.loadingStart = Date.now() - 1000;
         const prefetchSpy = jest
@@ -4017,11 +4007,11 @@ describe('WSIViewer — open handler (mountOSD integration)', () => {
 
     it('cancels scheduled background work on dispose before idle execution', async () => {
         window.location.hash = '';
-        const slide = makeSlide({ image_id: '42' });
+        const slide = makeSlide({ slide_key: '42' });
         const inst = await runMount(slide, { studyId: 'study-1' });
         const controller = controllerOf(inst);
         inst.hierarchy = makeHierarchy([slide]);
-        controller.initialSlideImageId = '42';
+        controller.initialSlideKey = '42';
         controller.hierarchyLoadSeq = 1;
         controller.loadingStart = Date.now() - 1000;
         const prefetchSpy = jest
@@ -4042,14 +4032,14 @@ describe('WSIViewer — open handler (mountOSD integration)', () => {
 
     it('reports staged initial-slide timings after the first tile is ready', async () => {
         window.location.hash = '';
-        const slide = makeSlide({ image_id: '42' });
+        const slide = makeSlide({ slide_key: '42' });
         const inst = await runMount(slide, { studyId: 'study-1' });
         const controller = controllerOf(inst);
         const reportSpy = jest
             .spyOn(inst as any, 'reportInitialSlideLoadPerformance')
             .mockImplementation(() => undefined);
 
-        controller.initialSlideImageId = '42';
+        controller.initialSlideKey = '42';
         controller.initialSlideLoadTrace = {
             loadSeq: 7,
             startedAt: 10,
@@ -4137,7 +4127,10 @@ describe('WSIViewer — open handler (mountOSD integration)', () => {
     });
 
     it('reports cache-hit flags when initial hierarchy and metadata were warmed', async () => {
-        const hierarchy = makeHierarchy([makeSlide({ image_id: '42' })], 'P-1');
+        const hierarchy = makeHierarchy(
+            [makeSlide({ slide_key: '42' })],
+            'P-1'
+        );
         setFetchMock(
             jest.fn().mockImplementation((url: string) => {
                 if (url.includes('/wsi/v2/resources/')) {
@@ -4146,8 +4139,7 @@ describe('WSIViewer — open handler (mountOSD integration)', () => {
                         json: () =>
                             Promise.resolve({
                                 accessToken: 'test-token',
-                                sourceUrl:
-                                    'https://tiles.example.com/slides/42',
+                                slideKey: '42',
                                 tileMetadata: {
                                     dimensions: { width: 1000, height: 800 },
                                     levels: 1,
@@ -4158,8 +4150,6 @@ describe('WSIViewer — open handler (mountOSD integration)', () => {
                                     tile_size: 256,
                                 },
                                 thumbnail: {
-                                    sourceUrl:
-                                        'https://tiles.example.com/slides/42/thumb.jpg',
                                     width: 256,
                                     height: 256,
                                 },
@@ -4190,13 +4180,13 @@ describe('WSIViewer — open handler (mountOSD integration)', () => {
         );
 
         window.location.hash = '';
-        const inst = await runMount(makeSlide({ image_id: '42' }));
+        const inst = await runMount(makeSlide({ slide_key: '42' }));
         const controller = controllerOf(inst);
         const reportSpy = jest
             .spyOn(inst as any, 'reportInitialSlideLoadPerformance')
             .mockImplementation(() => undefined);
 
-        controller.initialSlideImageId = '42';
+        controller.initialSlideKey = '42';
         controller.initialSlideLoadTrace = {
             loadSeq: 8,
             startedAt: 10,
@@ -4237,7 +4227,7 @@ describe('WSIViewer — open handler (mountOSD integration)', () => {
         const inst = makeInstance('https://tiles.example.com/patient/P-1');
         const controller = controllerOf(inst);
 
-        controller.initialSlideImageId = '42';
+        controller.initialSlideKey = '42';
         controller.initialSlideLoadTrace = {
             loadSeq: 9,
             startedAt: 10,
@@ -4256,11 +4246,9 @@ describe('WSIViewer — open handler (mountOSD integration)', () => {
                 ok: true,
                 json: async () => ({
                     accessToken: 'test-token',
-                    sourceUrl: 'https://tiles.example.com/slides/42',
+                    slideKey: '42',
                     tileMetadata: metadata,
                     thumbnail: {
-                        sourceUrl:
-                            'https://tiles.example.com/slides/42/thumb.jpg',
                         width: 256,
                         height: 256,
                     },
@@ -4290,7 +4278,7 @@ describe('WSIViewer — open handler (mountOSD integration)', () => {
         const hierarchy = makeHierarchy(
             [
                 makeSlide({
-                    image_id: 'bootstrap-slide',
+                    slide_key: 'bootstrap-slide',
                     can_serve_tiles: true,
                 }),
             ],
@@ -4356,7 +4344,7 @@ describe('WSIViewer — open handler (mountOSD integration)', () => {
                                     blockLabel: 'A1',
                                     slides: [
                                         {
-                                            imageId: '42',
+                                            slideKey: '42',
                                             stainName: 'H&E',
                                             stainGroup: 'Histology',
                                             isHne: true,
@@ -4364,7 +4352,6 @@ describe('WSIViewer — open handler (mountOSD integration)', () => {
                                             magnification: '20x',
                                             fileSizeBytes: 100000000,
                                             canServeTiles: true,
-                                            barcode: 'S-1234567-T01-1-1-1-1',
                                             slideType: 'H&E',
                                             sampleId: 'S-123456-T01',
                                             matchLevel: 'BLOCK',
@@ -4395,7 +4382,7 @@ describe('WSIViewer — open handler (mountOSD integration)', () => {
                     json: () =>
                         Promise.resolve({
                             accessToken: 'test-token',
-                            sourceUrl: 'https://tiles.example.com/slides/42',
+                            slideKey: '42',
                             tileMetadata: {
                                 dimensions: { width: 1000, height: 800 },
                                 levels: 1,
@@ -4406,8 +4393,6 @@ describe('WSIViewer — open handler (mountOSD integration)', () => {
                                 tile_size: 256,
                             },
                             thumbnail: {
-                                sourceUrl:
-                                    'https://tiles.example.com/slides/42/thumb.jpg',
                                 width: 256,
                                 height: 256,
                             },
@@ -4454,7 +4439,7 @@ describe('WSIViewer — open handler (mountOSD integration)', () => {
                     json: () =>
                         Promise.resolve({
                             accessToken: 'test-token',
-                            sourceUrl: 'https://tiles.example.com/slides/42',
+                            slideKey: '42',
                             tileMetadata: {
                                 dimensions: { width: 1000, height: 800 },
                                 levels: 1,
@@ -4465,8 +4450,6 @@ describe('WSIViewer — open handler (mountOSD integration)', () => {
                                 tile_size: 256,
                             },
                             thumbnail: {
-                                sourceUrl:
-                                    'https://tiles.example.com/slides/42/thumb.jpg',
                                 width: 256,
                                 height: 256,
                             },

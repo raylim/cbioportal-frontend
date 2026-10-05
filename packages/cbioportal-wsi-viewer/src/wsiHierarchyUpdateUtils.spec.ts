@@ -10,7 +10,7 @@ import { Sample, Slide } from './wsiViewerTypes';
 
 function makeSample(): Sample {
     const slide: Slide = {
-        image_id: 'slide-1',
+        slide_key: 'slide-1',
         stain_name: 'H&E',
         stain_group: 'Histology',
         is_hne: true,
@@ -18,7 +18,6 @@ function makeSample(): Sample {
         magnification: '20x',
         file_size_bytes: '1',
         can_serve_tiles: true,
-        barcode: 'S-1',
         block_label: 'A1',
         block_number: '1',
     };
@@ -78,6 +77,6 @@ describe('wsiHierarchyUpdateUtils', () => {
         ]);
         expect(sample.parts).toBe(parts);
         expect(sample.parts[0].blocks[0].slides[0]).toBe(slide);
-        expect(slide.image_id).toBe('slide-1');
+        expect(slide.slide_key).toBe('slide-1');
     });
 });
