@@ -25,6 +25,21 @@ export interface ResourceTableRow {
     metadata: { [key: string]: any };
 }
 
+/**
+ * The half of the resource table that does not depend on which page is shown. Fetch it once per
+ * study/resource/cohort/search/filter combination and keep it while the user pages: on a large
+ * resource, recomputing facets and key discovery per page was most of the response time.
+ */
+export interface ResourceTableMetadataResult {
+    columns: ResourceColumnInfo[];
+    totalRowCount: number;
+    filteredPatientCount: number;
+    filteredSampleCount: number;
+    facets: { [columnId: string]: ResourceFacetOption[] };
+    facetRanges: { [columnId: string]: ResourceNumericRange };
+    distinctValueCounts: { [backendField: string]: number };
+}
+
 export interface ResourceColumnInfo {
     id: string;
     label: string;
@@ -111,9 +126,19 @@ export async function fetchResourceTableTabs(
 
 export async function fetchResourceTableData(
     query: ResourceTableQuery
-): Promise<ResourceTableResult> {
-    const response = await axios.post<ResourceTableResult>(
+): Promise<ResourceTableRow[]> {
+    const response = await axios.post<ResourceTableRow[]>(
         resourceTableApiUrl('query/fetch'),
+        query
+    );
+    return response.data;
+}
+
+export async function fetchResourceTableMetadata(
+    query: ResourceTableQuery
+): Promise<ResourceTableMetadataResult> {
+    const response = await axios.post<ResourceTableMetadataResult>(
+        resourceTableApiUrl('metadata/fetch'),
         query
     );
     return response.data;
