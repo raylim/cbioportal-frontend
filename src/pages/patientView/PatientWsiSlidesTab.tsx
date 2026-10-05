@@ -56,10 +56,10 @@ export function parseTimepointDays(
  */
 export function wsiSlidesTabScopeFromQuery(
     query: WsiSlidesTabQuery,
-    hashSlideId?: string
+    hashSlideKey?: string
 ): WsiSlidesTabScope {
     const sampleId = queryValue(query.sampleId);
-    if (hashSlideId) {
+    if (hashSlideKey) {
         return { preferredSampleId: sampleId };
     }
     const matchLevel = queryValue(query.matchLevel);

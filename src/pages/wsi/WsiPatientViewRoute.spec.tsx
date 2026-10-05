@@ -136,7 +136,9 @@ describe('WsiPatientViewRoute', () => {
         mockGetClinicalEvents.mockRejectedValue(new Error('unavailable'));
 
         await act(async () => {
-            renderRoute('?studyId=study-1&imageId=slide-2');
+            renderRoute(
+                '?studyId=study-1&slideKey=0123456789abcdef0123456789abcdef'
+            );
         });
 
         expect(mockGetClinicalEvents).toHaveBeenCalledTimes(1);
@@ -145,14 +147,14 @@ describe('WsiPatientViewRoute', () => {
         expect(lastProps).toEqual(
             expect.objectContaining({
                 studyId: 'study-1',
-                requestedImageId: 'slide-2',
+                requestedSlideKey: '0123456789abcdef0123456789abcdef',
             })
         );
         expect(lastProps.clinicalEvents).toBeUndefined();
     });
 
     it('does not fetch clinical events without a study', () => {
-        renderRoute('?imageId=slide-2');
+        renderRoute('?slideKey=0123456789abcdef0123456789abcdef');
 
         expect(mockGetClinicalEvents).not.toHaveBeenCalled();
     });

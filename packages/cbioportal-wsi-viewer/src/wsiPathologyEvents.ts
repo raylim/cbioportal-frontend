@@ -51,8 +51,8 @@ export interface PathologySlideRow {
     viewableCount: number;
     totalCount: number;
     slidesText: string;
-    slidesTooltip: string;
-    imageIds: string[];
+    /** Why some slides are not viewable; unset when all are. */
+    slidesTooltip?: string;
     /** In-app path to the Pathology Slides tab; unset when nothing is viewable. */
     openPath?: string;
     openLabel: string;
@@ -66,7 +66,8 @@ export interface PathologySlideEventDetails {
     /** Stain row label: H&E, IHC, Other or Unknown. */
     stain: string;
     specimen: string;
-    viewableImageIds: string[];
+    /** Opaque slide keys of the event's viewable slides. */
+    viewableSlideKeys: string[];
     totalCount: number;
     timepointSource?: string;
     /** In-app path to the Pathology Slides tab, scoped to this event. */
@@ -122,24 +123,15 @@ function sequencingRelation(
 }
 
 function slidesTooltip(
-    imageIds: string[],
     viewableCount: number,
     totalCount: number
-): string {
-    const parts = [
-        imageIds.length > 0
-            ? `Image IDs: ${imageIds.join(', ')}.`
-            : 'No image IDs recorded.',
-    ];
+): string | undefined {
     const nonViewable = Math.max(totalCount - viewableCount, 0);
-    if (nonViewable > 0) {
-        parts.push(
-            `${nonViewable} ${
-                nonViewable === 1 ? 'slide is' : 'slides are'
-            } not viewable: no scanned image is available.`
-        );
-    }
-    return parts.join(' ');
+    return nonViewable > 0
+        ? `${nonViewable} ${
+              nonViewable === 1 ? 'slide is' : 'slides are'
+          } not viewable: no scanned image is available.`
+        : undefined;
 }
 
 /** Sequenced sample of a BLOCK- or PART-matched event; unset when unmatched. */
@@ -166,8 +158,7 @@ export function buildPathologySlideRow(
         : undefined;
     const sequencingText = sequencingRelation(procedureDays, sequencingDays);
     const stain = details?.stain || '';
-    const imageIds = details?.viewableImageIds || [];
-    const viewableCount = imageIds.length;
+    const viewableCount = details?.viewableSlideKeys.length || 0;
     const totalCount = Math.max(details?.totalCount || 0, viewableCount);
     const sampleText = sampleId || UNMATCHED_LABEL;
 
@@ -197,8 +188,7 @@ export function buildPathologySlideRow(
         viewableCount,
         totalCount,
         slidesText: `${viewableCount} of ${totalCount} viewable`,
-        slidesTooltip: slidesTooltip(imageIds, viewableCount, totalCount),
-        imageIds,
+        slidesTooltip: slidesTooltip(viewableCount, totalCount),
         openPath: viewableCount > 0 ? details?.openPath : undefined,
         openLabel: `Open ${stain || 'pathology'} slides for ${sampleText}`,
     };
@@ -303,7 +293,7 @@ interface PathologySlideEventGroup {
     specimen: string;
     specimenKeys: Set<string>;
     timepointSource?: string;
-    viewableImageIds: string[];
+    viewableSlideKeys: string[];
     slideKeys: Set<string>;
 }
 
@@ -386,13 +376,13 @@ export function buildPathologySlideEvents(
                             stain,
                             specimen,
                             specimenKeys: new Set(),
-                            viewableImageIds: [],
+                            viewableSlideKeys: [],
                             slideKeys: new Set(),
                         };
                         groups.set(key, group);
                     }
                     const slideKey =
-                        slide.image_id ||
+                        slide.slide_key ||
                         `${part.part_number}/${block.block_number}/${slideIndex}`;
                     if (group.slideKeys.has(slideKey)) {
                         return;
@@ -406,7 +396,7 @@ export function buildPathologySlideEvents(
                         slide.slide_timepoint_source ||
                         undefined;
                     if (isServableDiagnosticSlide(slide)) {
-                        group.viewableImageIds.push(slide.image_id);
+                        group.viewableSlideKeys.push(slide.slide_key);
                     }
                 })
             )
@@ -442,7 +432,7 @@ export function buildPathologySlideEvents(
                         matchLevel: group.matchLevel,
                         stain: STAIN_LABELS[group.stain],
                         specimen: group.specimen,
-                        viewableImageIds: group.viewableImageIds,
+                        viewableSlideKeys: group.viewableSlideKeys,
                         totalCount: group.slideKeys.size,
                         timepointSource: group.timepointSource,
                         openPath: pathologySlideEventOpenPath(group, scope),
@@ -458,7 +448,7 @@ export function buildPathologySlideEvents(
 export function countUndatedViewableSlides(
     hierarchy: PatientHierarchy
 ): number {
-    const imageIds = new Set<string>();
+    const slideKeys = new Set<string>();
     hierarchy.samples.forEach(sample =>
         sample.parts.forEach(part =>
             part.blocks.forEach(block =>
@@ -467,13 +457,13 @@ export function countUndatedViewableSlides(
                         isServableDiagnosticSlide(slide) &&
                         getSlideTimepointDays(slide) == null
                     ) {
-                        imageIds.add(slide.image_id);
+                        slideKeys.add(slide.slide_key);
                     }
                 })
             )
         )
     );
-    return imageIds.size;
+    return slideKeys.size;
 }
 
 /** What the patient timeline shows for the patient's slides. */
