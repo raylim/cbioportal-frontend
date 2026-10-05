@@ -66,6 +66,8 @@ export interface IServerConfig {
     ptmSources: string[] | undefined;
     oncoprint_hide_vus_default: boolean;
     oncokb_public_api_url: string | null;
+    digital_slide_archive_iframe_url: string | null;
+    digital_slide_archive_meta_url: string | null;
     mdacc_heatmap_meta_url: string | null;
     mdacc_heatmap_patient_url: string | null;
     pubmed_url: string | null;
@@ -179,6 +181,7 @@ export interface IServerConfig {
     enable_treatment_groups: boolean;
     referenceGenomeVersion: string;
     skin_home_page_show_unauthorized_studies: boolean;
+    study_availability_enabled: boolean;
     skin_home_page_show_reference_genome: string;
     skin_home_page_unauthorized_studies_global_message: string;
     skin_mutation_table_namespace_column_show_by_default: boolean;

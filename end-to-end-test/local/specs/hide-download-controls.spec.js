@@ -476,6 +476,7 @@ describe('hide download controls feature', function() {
                 'Pathways',
                 'Clinical Data',
                 'Files & Links',
+                'Tissue Image',
                 'Pathology Slide',
                 'Study Sponsors',
             ];
@@ -543,6 +544,13 @@ describe('hide download controls feature', function() {
                     await getElement('.resourcesSection', {
                         waitForExist: true,
                     });
+                    await globalCheck();
+                });
+            });
+            describe('tissue image tab', () => {
+                it('global check for icon and occurrence of "Download" as a word', async () => {
+                    await clickElement('.tabAnchor_tissueImage');
+                    await getElement('iframe', { waitForExist: true });
                     await globalCheck();
                 });
             });

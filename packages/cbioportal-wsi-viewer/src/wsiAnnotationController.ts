@@ -168,12 +168,16 @@ export class WsiAnnotationController {
     } | null = null;
 
     private generation = 0;
+    private loadGeneration = 0;
     private attachGeneration = 0;
+    // Mutations are scoped to the slide session; loads can be restarted on
+    // their own (e.g. after a conflict) without cancelling pending saves.
     private abortController: AbortController | null = null;
+    private loadAbortController: AbortController | null = null;
     private annotorious: any = null;
     private osdViewer: any = null;
     private openSeadragon: any = null;
-    private slideId: string | null = null;
+    private slideKey: string | null = null;
     private pointerCleanup: (() => void) | null = null;
     private keydownCleanup: (() => void) | null = null;
     private pointerDown: {
@@ -186,8 +190,8 @@ export class WsiAnnotationController {
     private synchronizing = false;
 
     constructor(
-        private readonly apiUrl: string | null | undefined,
-        private readonly studyId: string | undefined,
+        private apiUrl: string | null | undefined,
+        private studyId: string | undefined,
         private readonly getToken: TokenProvider
     ) {
         makeObservable(this);
@@ -241,27 +245,56 @@ export class WsiAnnotationController {
     }
 
     @action.bound
-    beginSlide(slideId: string) {
-        this.generation += 1;
-        this.abortController?.abort();
-        this.abortController = new AbortController();
-        this.slideId = slideId;
+    beginSlide(slideKey: string) {
+        this.restartRequests();
+        this.slideKey = slideKey;
         this.annotations = [];
         this.error = null;
         this.loading = Boolean(this.apiUrl);
         this.destroyAnnotorious();
         if (this.apiUrl) {
-            void this.loadAnnotations(slideId, this.generation);
+            void this.loadAnnotations(slideKey, this.loadGeneration);
         }
     }
 
+    /**
+     * Points the controller at a new annotation API or study. Pending requests
+     * for the previous context are dropped and the current slide, if any, is
+     * reloaded against the new one.
+     */
     @action.bound
-    attachViewer(viewer: any, openSeadragon: any, slideId: string) {
-        if (!this.apiUrl || this.slideId !== slideId) return;
+    setContext(apiUrl: string | null | undefined, studyId: string | undefined) {
+        this.apiUrl = apiUrl;
+        this.studyId = studyId;
+        this.restartRequests();
+        this.cancelDrawing();
+        this.annotations = [];
+        this.error = null;
+        this.annotationTooltip = null;
+        this.applyLayerFilter();
+        const slideKey = this.slideKey;
+        this.loading = Boolean(this.apiUrl && slideKey);
+        if (this.apiUrl && slideKey) {
+            void this.loadAnnotations(slideKey, this.loadGeneration);
+        }
+    }
+
+    private restartRequests() {
+        this.generation += 1;
+        this.loadGeneration += 1;
+        this.abortController?.abort();
+        this.loadAbortController?.abort();
+        this.abortController = new AbortController();
+        this.loadAbortController = new AbortController();
+    }
+
+    @action.bound
+    attachViewer(viewer: any, openSeadragon: any, slideKey: string) {
+        if (!this.apiUrl || this.slideKey !== slideKey) return;
         this.destroyAnnotorious();
         const loaded = getLoadedAnnotorious();
         if (loaded) {
-            this.createAnnotator(loaded, viewer, openSeadragon, slideId);
+            this.createAnnotator(loaded, viewer, openSeadragon, slideKey);
             return;
         }
         // Annotorious is its own async chunk, fetched on the first slide
@@ -271,7 +304,7 @@ export class WsiAnnotationController {
             annotorious => {
                 if (
                     attachGeneration !== this.attachGeneration ||
-                    this.slideId !== slideId
+                    this.slideKey !== slideKey
                 ) {
                     return;
                 }
@@ -279,13 +312,13 @@ export class WsiAnnotationController {
                     annotorious,
                     viewer,
                     openSeadragon,
-                    slideId
+                    slideKey
                 );
             },
             () => {
                 if (
                     attachGeneration !== this.attachGeneration ||
-                    this.slideId !== slideId
+                    this.slideKey !== slideKey
                 ) {
                     return;
                 }
@@ -301,14 +334,14 @@ export class WsiAnnotationController {
         annotorious: AnnotoriousModule,
         viewer: any,
         openSeadragon: any,
-        slideId: string
+        slideKey: string
     ) {
         this.osdViewer = viewer;
         this.openSeadragon = openSeadragon;
         this.annotorious = annotorious.createOSDAnnotator(viewer, {
             drawingEnabled: false,
             drawingMode: 'drag',
-            adapter: annotorious.W3CImageFormat(slideId),
+            adapter: annotorious.W3CImageFormat(slideKey),
         });
         this.annotorious.on('createAnnotation', (annotation: WsiAnnotation) => {
             if (this.synchronizing) return;
@@ -359,9 +392,15 @@ export class WsiAnnotationController {
     @action.bound
     invalidatePendingRequests() {
         this.generation += 1;
+        this.loadGeneration += 1;
         this.abortController?.abort();
+        this.loadAbortController?.abort();
         this.abortController = null;
-        this.slideId = null;
+        this.loadAbortController = null;
+        this.slideKey = null;
+        this.annotations = [];
+        this.error = null;
+        this.annotationTooltip = null;
         this.loading = false;
         this.destroyAnnotorious();
     }
@@ -434,6 +473,21 @@ export class WsiAnnotationController {
             saveNamedColors(this.customColors);
         }
         this.setActiveNamedColor(normalizedName, hex);
+    }
+
+    /** Only user-added colors that no annotation uses can be removed. */
+    canRemoveNamedColor(name: string, hex: string): boolean {
+        const matches = (color: NamedColor) =>
+            color.name === name && color.hex === hex;
+        return (
+            this.customColors.some(matches) &&
+            !DEFAULT_NAMED_COLORS.some(matches) &&
+            !this.annotations.some(
+                annotation =>
+                    (annotation.colorName || '') === name &&
+                    annotation.color === hex
+            )
+        );
     }
 
     @action.bound
@@ -540,19 +594,26 @@ export class WsiAnnotationController {
         });
     }
 
-    private async loadAnnotations(slideId: string, generation: number) {
+    // The annotation service names a slide by its opaque slide key (contract
+    // wsi-serving-v5); the browser never holds the image ID to send instead.
+    private async loadAnnotations(slideKey: string, loadGeneration: number) {
         try {
             const response = await this.request(
-                `/annotations?slide_id=${encodeURIComponent(
-                    slideId
-                )}&study_id=${encodeURIComponent(this.studyId || '')}`
+                `/annotations?slide_key=${encodeURIComponent(
+                    slideKey
+                )}&study_id=${encodeURIComponent(this.studyId || '')}`,
+                {},
+                this.loadAbortController?.signal
             );
             if (!response.ok)
                 throw new Error(`Annotation load failed (${response.status})`);
             const raw = (await response.json()) as any[];
-            if (generation !== this.generation || this.slideId !== slideId)
+            if (
+                loadGeneration !== this.loadGeneration ||
+                this.slideKey !== slideKey
+            )
                 return;
-            const annotations = raw.map(item => this.fromApi(item, slideId));
+            const annotations = raw.map(item => this.fromApi(item, slideKey));
             action(() => {
                 this.annotations = annotations;
                 this.loading = false;
@@ -561,7 +622,7 @@ export class WsiAnnotationController {
             })();
         } catch (error) {
             if (
-                generation !== this.generation ||
+                loadGeneration !== this.loadGeneration ||
                 (error as Error).name === 'AbortError'
             )
                 return;
@@ -575,15 +636,15 @@ export class WsiAnnotationController {
     private async createAnnotation(
         annotation: WsiAnnotation
     ): Promise<boolean> {
-        if (!this.slideId) return false;
+        if (!this.slideKey) return false;
         const context = {
             generation: this.generation,
-            slideId: this.slideId,
+            slideKey: this.slideKey,
             signal: this.abortController?.signal,
         };
-        const slideId = context.slideId;
+        const slideKey = context.slideKey;
         const payload = {
-            slide_id: slideId,
+            slide_key: slideKey,
             study_id: this.studyId || '',
             body: {
                 label: annotation.body?.[0]?.value || '',
@@ -611,17 +672,19 @@ export class WsiAnnotationController {
                 );
             if (
                 context.generation !== this.generation ||
-                context.slideId !== this.slideId ||
+                context.slideKey !== this.slideKey ||
                 context.signal?.aborted
             ) {
                 return false;
             }
-            const saved = this.fromApi(await response.json(), slideId);
+            const saved = this.fromApi(await response.json(), slideKey);
             this.synchronizing = true;
             try {
+                // A reload may already have brought in the saved annotation.
                 this.annotations = [
                     ...this.annotations.filter(
-                        item => item.id !== annotation.id
+                        item =>
+                            item.id !== annotation.id && item.id !== saved.id
                     ),
                     saved,
                 ];
@@ -634,7 +697,7 @@ export class WsiAnnotationController {
         } catch (_) {
             if (
                 context.generation !== this.generation ||
-                context.slideId !== this.slideId ||
+                context.slideKey !== this.slideKey ||
                 context.signal?.aborted
             ) {
                 return false;
@@ -708,7 +771,7 @@ export class WsiAnnotationController {
     private async updateAnnotation(annotation: WsiAnnotation) {
         const context = {
             generation: this.generation,
-            slideId: this.slideId,
+            slideKey: this.slideKey,
             signal: this.abortController?.signal,
         };
         try {
@@ -734,7 +797,7 @@ export class WsiAnnotationController {
             if (response.status === 409) {
                 if (
                     context.generation !== this.generation ||
-                    context.slideId !== this.slideId ||
+                    context.slideKey !== this.slideKey ||
                     context.signal?.aborted
                 ) {
                     return;
@@ -750,19 +813,19 @@ export class WsiAnnotationController {
                 );
             if (
                 context.generation !== this.generation ||
-                context.slideId !== this.slideId ||
+                context.slideKey !== this.slideKey ||
                 context.signal?.aborted
             ) {
                 return;
             }
             this.replaceAnnotation(
                 annotation.id,
-                this.fromApi(await response.json(), this.slideId || '')
+                this.fromApi(await response.json(), this.slideKey || '')
             );
         } catch (_) {
             if (
                 context.generation !== this.generation ||
-                context.slideId !== this.slideId ||
+                context.slideKey !== this.slideKey ||
                 context.signal?.aborted
             ) {
                 return;
@@ -774,7 +837,7 @@ export class WsiAnnotationController {
     private async deleteAnnotation(id: string) {
         const context = {
             generation: this.generation,
-            slideId: this.slideId,
+            slideKey: this.slideKey,
             signal: this.abortController?.signal,
         };
         try {
@@ -791,7 +854,7 @@ export class WsiAnnotationController {
                 );
             if (
                 context.generation !== this.generation ||
-                context.slideId !== this.slideId ||
+                context.slideKey !== this.slideKey ||
                 context.signal?.aborted
             ) {
                 return;
@@ -800,7 +863,7 @@ export class WsiAnnotationController {
         } catch (_) {
             if (
                 context.generation !== this.generation ||
-                context.slideId !== this.slideId ||
+                context.slideKey !== this.slideKey ||
                 context.signal?.aborted
             ) {
                 return;
@@ -810,13 +873,16 @@ export class WsiAnnotationController {
     }
 
     private async reloadCurrentSlide(message: string) {
-        if (!this.slideId) return;
-        const slideId = this.slideId;
-        const generation = ++this.generation;
-        this.abortController?.abort();
-        this.abortController = new AbortController();
-        await this.loadAnnotations(slideId, generation);
-        if (generation === this.generation && this.slideId === slideId) {
+        if (!this.slideKey) return;
+        const slideKey = this.slideKey;
+        const loadGeneration = ++this.loadGeneration;
+        this.loadAbortController?.abort();
+        this.loadAbortController = new AbortController();
+        await this.loadAnnotations(slideKey, loadGeneration);
+        if (
+            loadGeneration === this.loadGeneration &&
+            this.slideKey === slideKey
+        ) {
             this.error = message;
         }
     }
@@ -835,7 +901,7 @@ export class WsiAnnotationController {
         this.refreshStyle();
     }
 
-    private fromApi(item: any, slideId: string): WsiAnnotation {
+    private fromApi(item: any, slideKey: string): WsiAnnotation {
         const parsedColor = parseColor(item.body?.type);
         return {
             '@context': 'http://www.w3.org/ns/anno.jsonld',
@@ -851,7 +917,7 @@ export class WsiAnnotationController {
                   ]
                 : [],
             target: {
-                source: slideId,
+                source: slideKey,
                 selector: (() => {
                     const selector = item.target?.selector || item.target;
                     if (
@@ -949,7 +1015,17 @@ export class WsiAnnotationController {
                     event.clientY - start.client.y
                 );
                 if (moved > 15) {
-                    this.customDrawPreview = null;
+                    // A drag is not a vertex; keep showing the polygon so far.
+                    this.customDrawPreview = this.polygonScreenPoints.length
+                        ? {
+                              tool: 'polygon',
+                              start: this.polygonScreenPoints[0],
+                              current: this.polygonScreenPoints[
+                                  this.polygonScreenPoints.length - 1
+                              ],
+                              points: this.polygonScreenPoints,
+                          }
+                        : null;
                     event.preventDefault();
                     event.stopPropagation();
                     return;
@@ -959,6 +1035,16 @@ export class WsiAnnotationController {
                     y: event.clientY - rect.top,
                 };
                 const first = this.polygonScreenPoints[0];
+                const last = this.polygonScreenPoints[
+                    this.polygonScreenPoints.length - 1
+                ];
+                // The clicks of a closing double-click land on the last vertex.
+                const repeatsLast =
+                    !!last &&
+                    Math.hypot(
+                        screenPoint.x - last.x,
+                        screenPoint.y - last.y
+                    ) <= 4;
                 const closes =
                     this.polygonPoints.length >= 3 &&
                     first &&
@@ -972,7 +1058,7 @@ export class WsiAnnotationController {
                     this.polygonScreenPoints = [];
                     this.customDrawPreview = null;
                     void this.createPolygonShape(points);
-                } else {
+                } else if (!repeatsLast) {
                     this.polygonPoints = [...this.polygonPoints, endPoint];
                     this.polygonScreenPoints = [
                         ...this.polygonScreenPoints,
@@ -1123,15 +1209,17 @@ export class WsiAnnotationController {
                 },
             ],
             target: {
-                source: this.slideId || '',
+                source: this.slideKey || '',
                 selector: { type: 'SvgSelector', value: selector },
             },
             color: this.activeColor,
             colorName: this.activeColorName,
             layerName: this.activeLayer,
         };
-        await this.createAnnotation(annotation);
+        // Release the tool before saving so a slow save cannot cut short
+        // the next shape.
         this.cancelDrawing();
+        await this.createAnnotation(annotation);
     }
 
     private async createPolygonShape(points: Array<{ x: number; y: number }>) {
@@ -1153,15 +1241,15 @@ export class WsiAnnotationController {
                 },
             ],
             target: {
-                source: this.slideId || '',
+                source: this.slideKey || '',
                 selector: { type: 'SvgSelector', value: selector },
             },
             color: this.activeColor,
             colorName: this.activeColorName,
             layerName: this.activeLayer,
         };
-        await this.createAnnotation(annotation);
         this.cancelDrawing();
+        await this.createAnnotation(annotation);
     }
 
     private nextAutoLabel(): string {

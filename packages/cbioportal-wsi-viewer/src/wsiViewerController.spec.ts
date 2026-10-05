@@ -97,14 +97,13 @@ class FakeViewer {
     }
 }
 
-function makeSlide(imageId: string): Slide {
-    return { image_id: imageId, can_serve_tiles: true } as Slide;
+function makeSlide(slideKey: string): Slide {
+    return { slide_key: slideKey, can_serve_tiles: true } as Slide;
 }
 
-function makeAccess(imageId: string, token: string) {
+function makeAccess(slideKey: string, token: string) {
     return {
-        imageId,
-        sourceUrl: `s3://bucket/${imageId}.svs`,
+        slideKey,
         accessToken: token,
         tokenType: 'Bearer',
         expiresIn: 600,
@@ -206,8 +205,8 @@ describe('WsiViewerController viewer lifecycle', () => {
                 return 0;
             });
         getWsiSlideAccessMock.mockImplementation(
-            (_study: string, imageId: string) =>
-                Promise.resolve(makeAccess(imageId, `token-${imageId}`))
+            (_study: string, slideKey: string) =>
+                Promise.resolve(makeAccess(slideKey, `token-${slideKey}`))
         );
     });
 
@@ -235,7 +234,6 @@ describe('WsiViewerController viewer lifecycle', () => {
         expect(viewer.close).toHaveBeenCalled();
         expect(viewer.setAjaxHeaders).toHaveBeenCalledWith(
             {
-                'X-WSI-Source': 's3://bucket/slide-b.svs',
                 Authorization: 'Bearer token-slide-b',
             },
             true
@@ -338,10 +336,10 @@ describe('WsiViewerController token refresh', () => {
                 return 0;
             });
         getWsiSlideAccessMock.mockImplementation(
-            (_study: string, imageId: string, forceRefresh: boolean) =>
+            (_study: string, slideKey: string, forceRefresh: boolean) =>
                 Promise.resolve({
                     ...makeAccess(
-                        imageId,
+                        slideKey,
                         forceRefresh ? 'token-new' : 'token-old'
                     ),
                     // Due for refresh 10 s from now.

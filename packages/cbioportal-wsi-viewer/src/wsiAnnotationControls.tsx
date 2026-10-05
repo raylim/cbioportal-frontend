@@ -37,7 +37,7 @@ const tools: Array<{
         name: 'circle',
         label: 'Circle',
         icon: '○',
-        hint: 'Draw a circle — click and drag from center',
+        hint: 'Draw a circle — click and drag a box to fit it in',
     },
     {
         name: 'line',
@@ -176,27 +176,32 @@ export const WsiAnnotationToolbar = observer(
                             >
                                 {color.name || color.hex}
                             </button>
-                            <button
-                                title={`Remove "${color.name ||
-                                    color.hex}" from palette`}
-                                onClick={() =>
-                                    controller.removeNamedColor(
-                                        color.name,
-                                        color.hex
-                                    )
-                                }
-                                style={{
-                                    fontSize: 8,
-                                    padding: '0 2px',
-                                    border: 'none',
-                                    background: 'transparent',
-                                    cursor: 'pointer',
-                                    color: '#bbb',
-                                    lineHeight: 1,
-                                }}
-                            >
-                                ×
-                            </button>
+                            {controller.canRemoveNamedColor(
+                                color.name,
+                                color.hex
+                            ) && (
+                                <button
+                                    title={`Remove "${color.name ||
+                                        color.hex}" from palette`}
+                                    onClick={() =>
+                                        controller.removeNamedColor(
+                                            color.name,
+                                            color.hex
+                                        )
+                                    }
+                                    style={{
+                                        fontSize: 8,
+                                        padding: '0 2px',
+                                        border: 'none',
+                                        background: 'transparent',
+                                        cursor: 'pointer',
+                                        color: '#bbb',
+                                        lineHeight: 1,
+                                    }}
+                                >
+                                    ×
+                                </button>
+                            )}
                         </span>
                     );
                 })}
@@ -533,6 +538,14 @@ export const WsiAnnotationPanel = observer(
                 data-testid="wsi-annotation-panel"
                 style={{ maxHeight: 260, overflowY: 'auto', marginTop: 6 }}
             >
+                {controller.error && (
+                    <div
+                        role="alert"
+                        style={{ color: '#a00', fontSize: 11, marginBottom: 4 }}
+                    >
+                        {controller.error}
+                    </div>
+                )}
                 {controller.annotations.map(annotation =>
                     controller.hiddenLayerNames.has(
                         annotation.layerName || DEFAULT_LAYER

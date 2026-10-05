@@ -19,7 +19,7 @@ describe('WsiAnnotationController before Annotorious loads', () => {
             's1',
             () => Promise.resolve('token')
         );
-        (controller as any).slideId = 'slide1';
+        (controller as any).slideKey = 'slide1';
         return controller;
     }
 
