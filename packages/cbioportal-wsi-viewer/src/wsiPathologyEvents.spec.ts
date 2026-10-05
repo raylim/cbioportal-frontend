@@ -284,11 +284,9 @@ function hierarchy(
             sample_type: '',
             parts: group.parts.map(part => ({
                 part_number: part.part,
-                part_designator: '',
                 part_type: '',
                 part_description: '',
                 subspecialty: '',
-                path_dx_title: '',
                 blocks: part.blocks.map(block => ({
                     block_number: block.block,
                     block_label: `Block ${block.block}`,
@@ -734,11 +732,9 @@ describe('fetchPathologySlideTimelineData', () => {
                 parts: [
                     {
                         partNumber: '1',
-                        partDesignator: '',
                         partType: '',
                         partDescription: '',
                         subspecialty: '',
-                        pathDxTitle: '',
                         blocks: [
                             {
                                 blockNumber: '1',
