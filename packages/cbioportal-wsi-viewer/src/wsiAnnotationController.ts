@@ -594,12 +594,12 @@ export class WsiAnnotationController {
         });
     }
 
-    // The annotation service names a slide by its opaque slide key (contract
-    // wsi-serving-v5); the browser never holds the image ID to send instead.
+    // The annotation service's slide_id field carries the opaque slide key
+    // (contract wsi-serving-v5); the browser never holds the image ID.
     private async loadAnnotations(slideKey: string, loadGeneration: number) {
         try {
             const response = await this.request(
-                `/annotations?slide_key=${encodeURIComponent(
+                `/annotations?slide_id=${encodeURIComponent(
                     slideKey
                 )}&study_id=${encodeURIComponent(this.studyId || '')}`,
                 {},
@@ -644,7 +644,7 @@ export class WsiAnnotationController {
         };
         const slideKey = context.slideKey;
         const payload = {
-            slide_key: slideKey,
+            slide_id: slideKey,
             study_id: this.studyId || '',
             body: {
                 label: annotation.body?.[0]?.value || '',
@@ -744,7 +744,7 @@ export class WsiAnnotationController {
         if (!slideKey) return;
         const saved = items
             .filter(item => {
-                const itemSlideKey = item.slide_key;
+                const itemSlideKey = item.slide_id;
                 const itemStudyId = item.study_id;
                 return (
                     itemSlideKey === slideKey &&

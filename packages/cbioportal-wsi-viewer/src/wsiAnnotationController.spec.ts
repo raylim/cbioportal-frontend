@@ -70,7 +70,7 @@ describe('WsiAnnotationController', () => {
         expect(controller.annotations[0].id).toBe('a1');
     });
 
-    it('keys annotation loads and writes by the opaque slide key', async () => {
+    it('sends the opaque slide key as the service slide_id on loads and writes', async () => {
         jest.spyOn(global, 'fetch').mockImplementation(async (_url, init) => {
             if (init?.method === 'POST') {
                 return {
@@ -102,11 +102,12 @@ describe('WsiAnnotationController', () => {
 
         const [load, create] = (global.fetch as jest.Mock).mock.calls;
         const loadUrl = new URL(load[0]);
-        expect(loadUrl.searchParams.get('slide_key')).toBe(SLIDE_KEY);
-        expect(loadUrl.search).not.toMatch(/slide_id|image_?id/i);
+        expect(loadUrl.searchParams.get('slide_id')).toBe(SLIDE_KEY);
+        expect(loadUrl.search).not.toMatch(/slide_key|image_?id/i);
         const payload = JSON.parse(create[1].body);
-        expect(payload.slide_key).toBe(SLIDE_KEY);
-        expect(JSON.stringify(payload)).not.toMatch(/slide_id|image_?id/i);
+        expect(payload.slide_id).toBe(SLIDE_KEY);
+        expect(payload).not.toHaveProperty('slide_key');
+        expect(JSON.stringify(payload)).not.toMatch(/image_?id/i);
     });
 
     it('ignores an out-of-order response from a previous slide', async () => {

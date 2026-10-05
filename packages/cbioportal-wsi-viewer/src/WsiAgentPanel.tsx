@@ -351,7 +351,7 @@ export function WsiAgentPanel({
                         firstPayload?.viewer_generation;
                     if (
                         !context ||
-                        context.slide_key !== proposal.slide_key ||
+                        context.slide_id !== proposal.slide_id ||
                         typeof sourceFingerprint !== 'string' ||
                         typeof viewerGeneration !== 'number'
                     ) {
@@ -375,7 +375,7 @@ export function WsiAgentPanel({
                             body: JSON.stringify({
                                 source_fingerprint: sourceFingerprint,
                                 viewer_generation: viewerGeneration,
-                                slide_key: context.slide_key,
+                                slide_id: context.slide_id,
                             }),
                         }
                     );
@@ -398,7 +398,7 @@ export function WsiAgentPanel({
                     setHasApprovedAnnotation(true);
                     const postCommitContext = await getContext();
                     const stillCurrent =
-                        postCommitContext?.slide_key === proposal.slide_key &&
+                        postCommitContext?.slide_id === proposal.slide_id &&
                         postCommitContext.viewport.source_fingerprint ===
                             sourceFingerprint &&
                         postCommitContext.viewport.viewer_generation ===

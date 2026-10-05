@@ -27,7 +27,8 @@ export interface WsiAgentContext {
     study_id: string;
     patient_id: string;
     sample_id?: string;
-    slide_key: string;
+    /** The opaque slide key, in the service's slide_id field; never an image ID. */
+    slide_id: string;
     stain_name?: string;
     match_level?: string;
     filters: Record<string, unknown>;
@@ -41,7 +42,8 @@ export interface WsiAgentContext {
 export interface WsiAgentEmbeddingContext {
     provider: 'quiltnet';
     scope: 'study';
-    slide_keys: string[];
+    /** Opaque slide keys, in the service's slide_ids field. */
+    slide_ids: string[];
 }
 
 export function buildWsiAgentEmbeddingContext(
@@ -55,7 +57,7 @@ export function buildWsiAgentEmbeddingContext(
     return {
         provider: 'quiltnet',
         scope: 'study',
-        slide_keys: uniqueSlideKeys,
+        slide_ids: uniqueSlideKeys,
     };
 }
 
@@ -124,7 +126,8 @@ export interface WsiAgentProposal {
         | 'delete_annotation'
         | 'viewer_action';
     study_id: string;
-    slide_key: string;
+    /** The opaque slide key the proposal was made on. */
+    slide_id: string;
     payload: Record<string, any>;
     status: WsiAgentActionStatus;
     created_at: string;
