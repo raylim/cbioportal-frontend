@@ -3,7 +3,7 @@ import {
     installFoundationMocks,
     STUDY_ID,
     PATIENT_ID,
-    IMAGE_ID,
+    SLIDE_KEY,
 } from './wsi-foundation-mocks';
 
 const SAMPLE_ID = 'wsi-foundation-smoke-sample';
@@ -27,7 +27,7 @@ const molecularHierarchy = {
                             blockLabel: 'A1',
                             slides: [
                                 {
-                                    imageId: IMAGE_ID,
+                                    slideKey: SLIDE_KEY,
                                     stainName: 'H&E initial',
                                     stainGroup: 'H&E (Initial)',
                                     isHne: true,
@@ -35,7 +35,6 @@ const molecularHierarchy = {
                                     magnification: '',
                                     fileSizeBytes: null,
                                     canServeTiles: true,
-                                    barcode: '',
                                     slideType: 'H&E',
                                     sampleId: SAMPLE_ID,
                                     matchLevel: 'BLOCK',
@@ -229,7 +228,7 @@ test.describe('WSI molecular child contract', () => {
         page.on('pageerror', error => errors.push(error.message));
 
         await page.goto(
-            `/wsi/patient/${PATIENT_ID}?studyId=${STUDY_ID}#wsi:slide=${IMAGE_ID}`
+            `/wsi/patient/${PATIENT_ID}?studyId=${STUDY_ID}#wsi:slide=${SLIDE_KEY}`
         );
 
         await expect(page.getByTitle('Fit to view')).toBeVisible({
@@ -249,7 +248,7 @@ test.describe('WSI molecular child contract', () => {
                 return (
                     parsed.pathname.endsWith(
                         `/api/wsi/v2/resources/${STUDY_ID}/${PATIENT_ID}/access`
-                    ) && parsed.searchParams.get('imageId') === IMAGE_ID
+                    ) && parsed.searchParams.get('slideKey') === SLIDE_KEY
                 );
             })
         ).toBe(true);
@@ -268,7 +267,7 @@ test.describe('WSI molecular child contract', () => {
         page.on('pageerror', error => errors.push(error.message));
 
         await page.goto(
-            `/wsi/patient/${PATIENT_ID}?studyId=${STUDY_ID}#wsi:slide=${IMAGE_ID}`
+            `/wsi/patient/${PATIENT_ID}?studyId=${STUDY_ID}#wsi:slide=${SLIDE_KEY}`
         );
 
         await expect(page.getByTitle('Fit to view')).toBeVisible({
