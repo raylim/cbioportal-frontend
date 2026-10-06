@@ -7,7 +7,7 @@ import WSIViewer from './WSIViewer';
 import { WsiViewerController } from './wsiViewerController';
 import * as wsiMetaUtils from './wsiMetaUtils';
 import * as wsiSlideUtils from './wsiSlideUtils';
-import * as wsiAnnotationDataUtils from './wsiAnnotationDataUtils';
+import * as wsiMolecularAnnotationDataUtils from './wsiMolecularAnnotationDataUtils';
 import * as wsiCbioportalDataUtils from './wsiCbioportalDataUtils';
 import {
     clearPatientHierarchyCache,
@@ -721,7 +721,7 @@ describe('WSIViewer — sample enrichment scheduling', () => {
             .mockReturnValue(frequency.promise);
         const annotationSpy = jest
             .spyOn(
-                wsiAnnotationDataUtils,
+                wsiMolecularAnnotationDataUtils,
                 'fetchOncoKbMutationAnnotationsReadOnly'
             )
             .mockReturnValue(annotations.promise);
@@ -816,7 +816,7 @@ describe('WSIViewer — sample enrichment scheduling', () => {
             });
         const annotationSpy = jest
             .spyOn(
-                wsiAnnotationDataUtils,
+                wsiMolecularAnnotationDataUtils,
                 'fetchOncoKbMutationAnnotationsReadOnly'
             )
             .mockResolvedValue([

@@ -6,14 +6,14 @@ import {
     buildOncoKbCnaItems,
     buildOncoKbMutationItems,
     buildOncoKbStructuralVariantItems,
-} from './wsiAnnotationFetchUtils';
+} from './wsiMolecularAnnotationFetchUtils';
 import {
     CNADetail,
     MutationDetail,
     StructuralVariantDetail,
 } from './wsiViewerTypes';
 
-describe('wsiAnnotationFetchUtils', () => {
+describe('wsiMolecularAnnotationFetchUtils', () => {
     describe('buildOncoKbMutationItems', () => {
         it('deduplicates and sorts mutation items deterministically', () => {
             const details: MutationDetail[] = [

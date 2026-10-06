@@ -15,12 +15,12 @@ import {
     OncoKbCnaAnnotation,
     OncoKbMutationAnnotation,
     OncoKbStructuralVariantAnnotation,
-} from './wsiAnnotationDataUtils';
+} from './wsiMolecularAnnotationDataUtils';
 import {
     cnaOncoKbId,
     mutationOncoKbId,
     structuralVariantOncoKbId,
-} from './wsiAnnotationFetchUtils';
+} from './wsiMolecularAnnotationFetchUtils';
 
 export function applyClinicalDataRecords(
     samples: Sample[],

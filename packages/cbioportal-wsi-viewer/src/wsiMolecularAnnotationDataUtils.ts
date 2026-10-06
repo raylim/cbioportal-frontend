@@ -15,7 +15,7 @@ import {
     cnaOncoKbId,
     mutationOncoKbId,
     structuralVariantOncoKbId,
-} from './wsiAnnotationFetchUtils';
+} from './wsiMolecularAnnotationFetchUtils';
 import { parseMutationToken } from './wsiMolecularUtils';
 import {
     CNADetail,
@@ -539,7 +539,7 @@ export async function fetchOncoKbStructuralVariantAnnotations(
     );
 }
 
-export function clearWsiAnnotationRequestCaches() {
+export function clearWsiMolecularAnnotationRequestCaches() {
     oncoKbMutationAnnotationRequestCache.clear();
     civicMutationAnnotationRequestCache.clear();
     oncoKbCnaAnnotationRequestCache.clear();

@@ -25,7 +25,7 @@ import {
     AnnotationLinkIcon,
     AnnotationSummaryText,
     hasOncoKbAnnotationContent,
-} from './wsiAnnotationUtils';
+} from './wsiMolecularAnnotationUtils';
 import {
     buildOncoKbUrl,
     cnaLabel,
