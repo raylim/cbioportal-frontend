@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { observer } from 'mobx-react';
 import { CheckedSelect } from 'cbioportal-frontend-commons';
+import { components as SelectComponents } from 'react-select';
 import {
     readWsiPanelFlag,
     WSI_SECTION_TITLE_STYLE,
@@ -291,6 +292,70 @@ export const StudySlidesSearch: React.FunctionComponent<{
     );
 });
 
+/**
+ * Selected values on one line: the first value, cut with an ellipsis when
+ * long, then a count of the others. The full list is in the tooltip.
+ */
+export function SelectedValues({ values }: { values: string[] }) {
+    const more = values.length - 1;
+    return (
+        <span
+            title={values.join(', ')}
+            style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 4,
+                maxWidth: '100%',
+                minWidth: 0,
+                verticalAlign: 'bottom',
+            }}
+        >
+            <span
+                style={{
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                }}
+            >
+                {values[0]}
+            </span>
+            {more > 0 && (
+                <span
+                    data-testid="selected-values-more"
+                    aria-label={`and ${more} more`}
+                    style={{
+                        flexShrink: 0,
+                        padding: '0 5px',
+                        borderRadius: 8,
+                        background: C.blue,
+                        color: '#fff',
+                        fontSize: 10,
+                        fontWeight: 600,
+                        lineHeight: '15px',
+                    }}
+                >
+                    +{more}
+                </span>
+            )}
+        </span>
+    );
+}
+
+/**
+ * react-select's placeholder has no right bound, so a long selection would
+ * run under the dropdown arrow; this caps it like a single value.
+ */
+const BoundedPlaceholder = (props: any) => (
+    <SelectComponents.Placeholder
+        {...props}
+        getStyles={(key: string, state: any) => ({
+            ...props.getStyles(key, state),
+            maxWidth: 'calc(100% - 8px)',
+        })}
+    />
+);
+const FACET_SELECT_COMPONENTS = { Placeholder: BoundedPlaceholder };
+
 function Chip({
     label,
     onRemove,
@@ -318,8 +383,10 @@ function Chip({
         >
             <span
                 style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    minWidth: 0,
                     overflow: 'hidden',
-                    textOverflow: 'ellipsis',
                     whiteSpace: 'nowrap',
                 }}
             >
@@ -352,7 +419,10 @@ export const StudySlidesFilterChips: React.FunctionComponent<{
         return null;
     }
     const muted = (text: string) => (
-        <span style={{ color: C.muted }}>{text}: </span>
+        // Kept whole, with its trailing space, beside the shrinking values.
+        <span style={{ color: C.muted, flexShrink: 0, whiteSpace: 'pre' }}>
+            {text}:{' '}
+        </span>
     );
     return (
         <div
@@ -372,7 +442,7 @@ export const StudySlidesFilterChips: React.FunctionComponent<{
                     label={
                         <>
                             {muted(f.displayName)}
-                            {f.values.join(', ')}
+                            <SelectedValues values={f.values} />
                         </>
                     }
                     onRemove={() => store.setClinicalValues(f.attributeId, [])}
@@ -485,11 +555,13 @@ const ClinicalFacet: React.FunctionComponent<{
             <CheckedSelect
                 name={`study-slides-facet-${facet.attributeId}`}
                 placeholder={
-                    selected.length > 0
-                        ? selected.join(', ')
-                        : `Any ${(
-                              attribute?.displayName || facet.attributeId
-                          ).toLowerCase()}`
+                    selected.length > 0 ? (
+                        <SelectedValues values={selected} />
+                    ) : (
+                        `Any ${(
+                            attribute?.displayName || facet.attributeId
+                        ).toLowerCase()}`
+                    )
                 }
                 options={options}
                 value={selected.map(value => ({ value }))}
@@ -500,6 +572,7 @@ const ClinicalFacet: React.FunctionComponent<{
                     )
                 }
                 showControls={false}
+                reactSelectComponents={FACET_SELECT_COMPONENTS}
             />
         </div>
     );

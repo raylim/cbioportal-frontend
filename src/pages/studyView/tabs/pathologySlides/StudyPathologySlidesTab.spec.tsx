@@ -7,6 +7,7 @@ import { observable, runInAction } from 'mobx';
 import { StudyViewFilter } from 'cbioportal-ts-api-client';
 import { StudyPathologySlidesStore } from './StudyPathologySlidesStore';
 import { StudyPathologySlidesTab } from './StudyPathologySlidesTab';
+import { SelectedValues } from './StudySlidesFilters';
 import {
     StudySlideFacets,
     StudySlidePatient,
@@ -535,5 +536,26 @@ describe('StudyPathologySlidesTab', () => {
         expect(screen.getByTestId('study-slides-filters')).toBeTruthy();
         expect(window.localStorage.getItem('wsi.study.filtersOpen')).toBe('1');
         store.dispose();
+    });
+
+    it('summarizes several selected values on one line', () => {
+        render(
+            <SelectedValues
+                values={['Breast Cancer', 'Colorectal Cancer', 'Melanoma']}
+            />
+        );
+        const first = screen.getByText('Breast Cancer');
+        expect(first.parentElement!.title).toBe(
+            'Breast Cancer, Colorectal Cancer, Melanoma'
+        );
+        expect(screen.getByTestId('selected-values-more').textContent).toBe(
+            '+2'
+        );
+    });
+
+    it('shows a single selected value without a count', () => {
+        render(<SelectedValues values={['Melanoma']} />);
+        expect(screen.getByText('Melanoma')).toBeTruthy();
+        expect(screen.queryByTestId('selected-values-more')).toBeNull();
     });
 });
