@@ -672,10 +672,7 @@ export function tabs(
                 <PatientWsiSlidesTab
                     query={{
                         sampleId: urlWrapper.query.sampleId,
-                        stainFilter: urlWrapper.query.stainFilter,
-                        matchLevel: urlWrapper.query.matchLevel,
-                        specimenKey: urlWrapper.query.specimenKey,
-                        timepointDays: urlWrapper.query.timepointDays,
+                        ...urlWrapper.pathologySlideScope,
                     }}
                     patientId={pageComponent.patientViewPageStore.patientId}
                     studyId={pageComponent.patientViewPageStore.studyId}
