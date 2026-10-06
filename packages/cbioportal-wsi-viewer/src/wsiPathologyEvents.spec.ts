@@ -304,12 +304,17 @@ function details(event: PathologySlideClinicalEvent) {
     return event.pathologySlide;
 }
 
-function linkoutQuery(
-    event: PathologySlideClinicalEvent
-): Record<string, string> {
+/** The event link's query, with the `pathologySlideSettings` JSON parsed. */
+function linkoutQuery(event: PathologySlideClinicalEvent): Record<string, any> {
     const url = new URL(event.pathologySlide.openPath, 'http://localhost');
     expect(url.pathname).toBe('/patient/wsiHESlides');
-    return Object.fromEntries(url.searchParams.entries());
+    const query: Record<string, any> = Object.fromEntries(
+        url.searchParams.entries()
+    );
+    if (query.pathologySlideSettings !== undefined) {
+        query.pathologySlideSettings = JSON.parse(query.pathologySlideSettings);
+    }
+    return query;
 }
 
 const SAMPLE_24 = 'P-0000024-T01-IM3';
@@ -395,11 +400,20 @@ describe('buildPathologySlideEvents', () => {
         expect(linkoutQuery(event)).toEqual({
             studyId: 'mskimpact',
             caseId: 'P-0000024',
-            stainFilter: 'hne',
-            matchLevel: 'PART',
             sampleId: SAMPLE_24,
-            timepointDays: '-136',
+            pathologySlideSettings: {
+                stainFilter: 'hne',
+                matchLevel: 'PART',
+                timepointDays: '-136',
+            },
         });
+        // The tab scope is one JSON-encoded `pathologySlideSettings` param.
+        expect(details(event).openPath).toBe(
+            '/patient/wsiHESlides?studyId=mskimpact&caseId=P-0000024' +
+                '&sampleId=P-0000024-T01-IM3' +
+                '&pathologySlideSettings=%7B%22stainFilter%22%3A%22hne%22%2C' +
+                '%22matchLevel%22%3A%22PART%22%2C%22timepointDays%22%3A%22-136%22%7D'
+        );
     });
 
     it('keeps block-matched blocks, stains and days apart', () => {
@@ -469,13 +483,17 @@ describe('buildPathologySlideEvents', () => {
         expect(linkoutQuery(events[0])).toEqual({
             studyId: 'mskimpact',
             caseId: 'P-0000024',
-            stainFilter: 'hne',
-            matchLevel: 'BLOCK',
-            specimenKey: 'block::2-1',
             sampleId: 'S-1',
-            timepointDays: '-136',
+            pathologySlideSettings: {
+                stainFilter: 'hne',
+                matchLevel: 'BLOCK',
+                specimenKey: 'block::2-1',
+                timepointDays: '-136',
+            },
         });
-        expect(linkoutQuery(events[2]).stainFilter).toBe('ihc');
+        expect(linkoutQuery(events[2]).pathologySlideSettings.stainFilter).toBe(
+            'ihc'
+        );
     });
 
     it('builds unmatched events per part without a sample', () => {
@@ -521,10 +539,12 @@ describe('buildPathologySlideEvents', () => {
         expect(linkoutQuery(events[1])).toEqual({
             studyId: 'mskimpact',
             caseId: 'P-0000024',
-            stainFilter: 'hne',
-            matchLevel: 'UNMATCHED',
-            specimenKey: 'unmatched::part:3',
-            timepointDays: '-136',
+            pathologySlideSettings: {
+                stainFilter: 'hne',
+                matchLevel: 'UNMATCHED',
+                specimenKey: 'unmatched::part:3',
+                timepointDays: '-136',
+            },
         });
     });
 
@@ -626,7 +646,10 @@ describe('buildPathologySlideEvents', () => {
             SCOPE
         );
         expect(
-            events.map(e => [details(e).stain, linkoutQuery(e).stainFilter])
+            events.map(e => [
+                details(e).stain,
+                linkoutQuery(e).pathologySlideSettings.stainFilter,
+            ])
         ).toEqual([
             ['Other', 'other'],
             ['Unknown', 'unknown'],
