@@ -298,6 +298,14 @@ interface PathologySlideEventGroup {
 }
 
 /**
+ * Query param naming the Pathology Slides tab scope: a JSON object with
+ * `stainFilter`, `matchLevel`, `specimenKey` and `timepointDays` (the host
+ * patient view's nested `pathologySlideSettings` URL node). The sample is
+ * the patient view's own `sampleId` param.
+ */
+const PATHOLOGY_SLIDE_SETTINGS_PARAM = 'pathologySlideSettings';
+
+/**
  * Pathology Slides tab path for one event: its sample, match level, stain
  * and procedure day, plus the specimen key when all of its slides share one.
  */
@@ -305,19 +313,22 @@ function pathologySlideEventOpenPath(
     group: PathologySlideEventGroup,
     scope: PathologySlideEventScope
 ): string {
+    const settings: Record<string, string> = {
+        stainFilter: group.stain,
+        matchLevel: group.matchLevel,
+    };
+    if (group.specimenKeys.size === 1) {
+        settings.specimenKey = Array.from(group.specimenKeys)[0];
+    }
+    settings.timepointDays = String(group.days);
     const query = new URLSearchParams({
         studyId: scope.studyId,
         caseId: scope.patientId,
-        stainFilter: group.stain,
-        matchLevel: group.matchLevel,
     });
-    if (group.specimenKeys.size === 1) {
-        query.set('specimenKey', Array.from(group.specimenKeys)[0]);
-    }
     if (group.sampleId) {
         query.set('sampleId', group.sampleId);
     }
-    query.set('timepointDays', String(group.days));
+    query.set(PATHOLOGY_SLIDE_SETTINGS_PARAM, JSON.stringify(settings));
     return `${scope.slidesTabPath}?${query.toString()}`;
 }
 

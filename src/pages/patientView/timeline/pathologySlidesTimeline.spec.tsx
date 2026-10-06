@@ -437,8 +437,17 @@ describe('loadPathologySlideTimelineData', () => {
         ).toBeTruthy();
         fireEvent.click(screen.getByRole('link', { name: /Open H&E slides/ }));
         expect(location()?.pathname).toBe('/patient/wsiHESlides');
-        expect(location()?.search).toBe(
-            '?studyId=mskimpact&caseId=P-0000081&stainFilter=hne&matchLevel=PART&specimenKey=part%3A%3Apart%3A1&sampleId=P-0000081-T02-IM6&timepointDays=920'
-        );
+        const search = new URLSearchParams(location()?.search);
+        expect(Object.fromEntries(search.entries())).toEqual({
+            studyId: 'mskimpact',
+            caseId: 'P-0000081',
+            sampleId: 'P-0000081-T02-IM6',
+            pathologySlideSettings: JSON.stringify({
+                stainFilter: 'hne',
+                matchLevel: 'PART',
+                specimenKey: 'part::part:1',
+                timepointDays: '920',
+            }),
+        });
     });
 });
