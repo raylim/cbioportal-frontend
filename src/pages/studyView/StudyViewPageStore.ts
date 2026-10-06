@@ -1,5 +1,8 @@
 import _ from 'lodash';
-import { isWsiResourceId } from 'shared/lib/ResourcePolicy';
+import {
+    isWsiResourceId,
+    shouldHideLegacyHeResourceTab,
+} from 'shared/lib/ResourcePolicy';
 import { getClient } from 'shared/api/cbioportalClientInstance';
 import oncoKBClient from 'shared/api/oncokbClientInstance';
 import {
