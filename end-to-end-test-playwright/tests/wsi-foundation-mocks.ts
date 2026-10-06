@@ -20,6 +20,20 @@ export interface FoundationMockOptions {
     enableAnnotations?: boolean;
     /** Enables the research assistant, which implies annotations. */
     enableAgent?: boolean;
+    /**
+     * Replaces the default slide hierarchy (v2 payload); slide access is
+     * granted for the slides it publishes.
+     */
+    hierarchy?: FoundationHierarchy;
+}
+
+/** The parts of a v2 hierarchy payload the slide access mock reads. */
+export interface FoundationHierarchy {
+    sampleGroups: Array<{
+        parts: Array<{
+            blocks: Array<{ slides: Array<{ slideKey: string }> }>;
+        }>;
+    }>;
 }
 
 const tileMetadata = {
@@ -101,7 +115,8 @@ export async function installFoundationMocks(
     options: FoundationMockOptions = {}
 ): Promise<string[]> {
     const enrichmentRequests: string[] = [];
-    const hierarchy = makeHierarchy(!!options.includeSecondSlide);
+    const hierarchy: FoundationHierarchy =
+        options.hierarchy || makeHierarchy(!!options.includeSecondSlide);
     const annotationApiUrl =
         options.enableAnnotations || options.enableAgent ? '/wsi' : '';
     await page.addInitScript(() => {
