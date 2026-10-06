@@ -370,7 +370,6 @@ import {
     isSurvivalChart,
 } from './charts/survival/StudyViewSurvivalUtils';
 import { allowExpressionCrossStudy } from 'shared/lib/allowExpressionCrossStudy';
-import { shouldHideLegacyHeResourceTab } from 'shared/lib/ResourcePolicy';
 import {
     ExtendedClinicalAttribute,
     fetchPatients,
