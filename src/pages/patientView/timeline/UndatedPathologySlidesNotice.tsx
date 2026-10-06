@@ -10,7 +10,7 @@ export function undatedPathologySlidesPath(
     const query = new URLSearchParams({
         studyId,
         caseId: patientId,
-        timepointDays: 'undated',
+        pathologySlideSettings: JSON.stringify({ timepointDays: 'undated' }),
     });
     return `/patient/${PatientViewPageTabs.WSIHESlides}?${query.toString()}`;
 }

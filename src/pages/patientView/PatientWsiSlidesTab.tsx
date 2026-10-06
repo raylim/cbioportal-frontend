@@ -49,8 +49,9 @@ export function parseTimepointDays(
 }
 
 /**
- * Maps pathology slide link params (`sampleId`, `matchLevel`, `specimenKey`,
- * `stainFilter`, `timepointDays`) to viewer props. A slide named by a
+ * Maps pathology slide link params (`sampleId`, plus `matchLevel`,
+ * `specimenKey`, `stainFilter` and `timepointDays` from the
+ * `pathologySlideSettings` URL node) to viewer props. A slide named by a
  * `#wsi:slide=` hash wins: the link scope and the stain and time filters are
  * dropped so they cannot exclude or hide that slide.
  */
