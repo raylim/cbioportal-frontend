@@ -16,6 +16,20 @@ export interface FoundationMockOptions {
     accessRequests?: string[];
     /** Collects the request headers of every tile and thumbnail request. */
     tileRequestHeaders?: Array<Record<string, string>>;
+    /**
+     * Replaces the default slide hierarchy (v2 payload); slide access is
+     * granted for the slides it publishes.
+     */
+    hierarchy?: FoundationHierarchy;
+}
+
+/** The parts of a v2 hierarchy payload the slide access mock reads. */
+export interface FoundationHierarchy {
+    sampleGroups: Array<{
+        parts: Array<{
+            blocks: Array<{ slides: Array<{ slideKey: string }> }>;
+        }>;
+    }>;
 }
 
 const tileMetadata = {
@@ -97,7 +111,8 @@ export async function installFoundationMocks(
     options: FoundationMockOptions = {}
 ): Promise<string[]> {
     const enrichmentRequests: string[] = [];
-    const hierarchy = makeHierarchy(!!options.includeSecondSlide);
+    const hierarchy: FoundationHierarchy =
+        options.hierarchy || makeHierarchy(!!options.includeSecondSlide);
     await page.addInitScript(() => {
         window.localStorage.setItem(
             'frontendConfig',
