@@ -84,7 +84,7 @@ import {
     fetchOncoKbCnaAnnotationsReadOnly,
     fetchOncoKbMutationAnnotationsReadOnly,
     fetchOncoKbStructuralVariantAnnotationsReadOnly,
-} from './wsiAnnotationDataUtils';
+} from './wsiMolecularAnnotationDataUtils';
 import {
     applyClinicalDataRecords,
     applyCivicCnaAnnotations,

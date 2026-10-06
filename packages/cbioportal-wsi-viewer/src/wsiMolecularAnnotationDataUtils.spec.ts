@@ -2,7 +2,7 @@
  * @jest-environment jsdom
  */
 import {
-    clearWsiAnnotationRequestCaches,
+    clearWsiMolecularAnnotationRequestCaches,
     fetchCivicCnaAnnotations,
     fetchCivicMutationAnnotations,
     fetchCivicMutationAnnotationsReadOnly,
@@ -10,7 +10,7 @@ import {
     fetchOncoKbMutationAnnotations,
     fetchOncoKbMutationAnnotationsReadOnly,
     fetchOncoKbStructuralVariantAnnotations,
-} from './wsiAnnotationDataUtils';
+} from './wsiMolecularAnnotationDataUtils';
 import {
     configureWsiViewerRuntime,
     resetWsiViewerRuntime,
@@ -63,7 +63,7 @@ function configureRuntime() {
     });
 }
 
-describe('wsiAnnotationDataUtils request caching', () => {
+describe('wsiMolecularAnnotationDataUtils request caching', () => {
     let originalFetch: typeof globalThis.fetch;
     let getCivicGenesMock: jest.Mock;
     let getCivicVariantsMock: jest.Mock;
@@ -71,7 +71,7 @@ describe('wsiAnnotationDataUtils request caching', () => {
 
     beforeEach(() => {
         originalFetch = (global as any).fetch;
-        clearWsiAnnotationRequestCaches();
+        clearWsiMolecularAnnotationRequestCaches();
 
         const civicUtils = jest.requireMock('cbioportal-utils');
         getCivicGenesMock = civicUtils.getCivicGenes;
@@ -86,7 +86,7 @@ describe('wsiAnnotationDataUtils request caching', () => {
 
     afterEach(() => {
         (global as any).fetch = originalFetch;
-        clearWsiAnnotationRequestCaches();
+        clearWsiMolecularAnnotationRequestCaches();
         resetWsiViewerRuntime();
     });
 
