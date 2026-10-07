@@ -51,7 +51,9 @@ export function parseTimepointDays(
 /**
  * Maps pathology slide link params (`sampleId`, plus `matchLevel`,
  * `specimenKey`, `stainFilter` and `timepointDays` from the
- * `pathologySlideSettings` URL node) to viewer props. A slide named by a
+ * `pathologySlideSettings` URL node) to viewer props. A sample scopes the
+ * slide list to that sample, as sample view scopes the rest of the page; the
+ * viewer offers "Show all slides" to widen it. A slide named by a
  * `#wsi:slide=` hash wins: the link scope and the stain and time filters are
  * dropped so they cannot exclude or hide that slide.
  */
@@ -67,7 +69,7 @@ export function wsiSlidesTabScopeFromQuery(
     const specimenKey = queryValue(query.specimenKey);
     const stain = queryValue(query.stainFilter)?.toLowerCase();
     const pathologyFilter: PathologySlideFilter | undefined =
-        matchLevel || specimenKey
+        sampleId || matchLevel || specimenKey
             ? { sampleId, matchLevel, specimenKey }
             : undefined;
     const initialStainFilter = STAIN_FILTERS.find(filter => filter === stain);

@@ -34,10 +34,14 @@ describe('wsiSlidesTabScopeFromQuery', () => {
         });
     });
 
-    it('only prefers the sample when no link scope is given', () => {
+    it('scopes the slide list to a linked sample', () => {
         expect(wsiSlidesTabScopeFromQuery({ sampleId: 'P-1-T01' })).toEqual({
             preferredSampleId: 'P-1-T01',
-            pathologyFilter: undefined,
+            pathologyFilter: {
+                sampleId: 'P-1-T01',
+                matchLevel: undefined,
+                specimenKey: undefined,
+            },
             initialStainFilter: undefined,
         });
         expect(wsiSlidesTabScopeFromQuery({})).toEqual({
