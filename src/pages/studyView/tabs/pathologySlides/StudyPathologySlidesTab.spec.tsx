@@ -201,6 +201,52 @@ describe('StudyPathologySlidesTab', () => {
         store.dispose();
     });
 
+    it('switches between the viewer and the slide table, and opens a table slide', async () => {
+        const store = new StudyPathologySlidesStore({
+            getFilters: () => ({ studyIds: ['study'] } as StudyViewFilter),
+            getStudyIds: () => ['study'],
+            fetchPage: async r => pageFor(r),
+            fetchFacets: async () => FACETS,
+        });
+        render(
+            <StudyPathologySlidesTab
+                store={store}
+                tileServerUrl="https://tiles.example"
+                isActive={true}
+                height={600}
+                slideTable={
+                    <button
+                        data-testid="fake-slide-row"
+                        onClick={() =>
+                            store.openSlide(
+                                { studyId: 'study', patientId: 'P-2' },
+                                'slide-of-p2'
+                            )
+                        }
+                    />
+                }
+            />
+        );
+        await settle();
+        expect(screen.queryByTestId('study-slides-table')).toBeNull();
+        expect(screen.getByTestId('study-slides-tab')).toBeTruthy();
+
+        fireEvent.click(screen.getByTestId('study-slides-view-table'));
+        expect(screen.getByTestId('study-slides-table')).toBeTruthy();
+        expect(screen.queryByTestId('study-slides-tab')).toBeNull();
+
+        fireEvent.click(screen.getByTestId('fake-slide-row'));
+        await settle();
+        expect(screen.queryByTestId('study-slides-table')).toBeNull();
+        expect(mockViewer).toHaveBeenLastCalledWith(
+            expect.objectContaining({
+                patientId: 'P-2',
+                requestedSlideKey: 'slide-of-p2',
+            })
+        );
+        store.dispose();
+    });
+
     it('switches the viewer patient from the list, buttons and keys', async () => {
         const { store } = renderTab(async r => pageFor(r));
         await settle();

@@ -172,6 +172,67 @@ describe('StudyPathologySlidesStore', () => {
         expect(store.selectedIndex).toBe(1);
     });
 
+    it('opens a slide from the slide table in the viewer', async () => {
+        const views: string[] = [];
+        store = new StudyPathologySlidesStore({
+            getFilters: () => filters.get(),
+            getStudyIds: () => [STUDY],
+            onSelectionChange: p => selections.push(p),
+            onViewChange: view => views.push(view),
+            initialView: 'table',
+            fetchPage: server.fetchPage,
+            pageSize: 2,
+        });
+        stopObserving = autorun(() => void store.page.result);
+        await settle();
+        expect(store.view).toBe('table');
+
+        // P-2 is on the shown page.
+        store.openSlide({ studyId: STUDY, patientId: 'P-2' }, 'key-2');
+        expect(store.view).toBe('viewer');
+        expect(views).toEqual(['viewer']);
+        expect(store.selected?.patientId).toBe('P-2');
+        expect(store.selectedIndex).toBe(1);
+        expect(store.requestedSlideKey).toBe('key-2');
+
+        // Another slide of the same patient keeps the patient.
+        store.openSlide({ studyId: STUDY, patientId: 'P-2' }, 'key-2b');
+        expect(store.requestedSlideKey).toBe('key-2b');
+
+        // Choosing another patient from the list drops the requested slide.
+        store.selectPatient(patients[0]);
+        expect(store.requestedSlideKey).toBeUndefined();
+    });
+
+    it('locates a patient opened from the slide table on another list page', async () => {
+        makeStore();
+        await settle();
+
+        store.openSlide({ studyId: STUDY, patientId: 'P-5' }, 'key-5');
+        await settle();
+
+        expect(store.selected?.patientId).toBe('P-5');
+        expect(store.selectedIndex).toBe(4);
+        expect(store.pageNumber).toBe(2);
+        expect(store.requestedSlideKey).toBe('key-5');
+    });
+
+    it('clears list filters that hide a patient opened from the slide table', async () => {
+        patients[3] = patient('P-4', 'IHC');
+        makeStore();
+        await settle();
+        store.toggleStainGroup('H&E');
+        await settle();
+
+        store.openSlide({ studyId: STUDY, patientId: 'P-4' }, 'key-4');
+        await settle();
+
+        expect(store.stainGroups).toEqual([]);
+        expect(store.selected?.patientId).toBe('P-4');
+        expect(store.selectedIndex).toBe(3);
+        expect(store.requestedSlideKey).toBe('key-4');
+    });
+
     it('stops at either end of the list', async () => {
         makeStore({ studyId: STUDY, patientId: 'P-5' });
         await settle();

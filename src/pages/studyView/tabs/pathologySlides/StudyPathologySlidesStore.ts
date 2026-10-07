@@ -111,6 +111,9 @@ export function isSamePatient(
     return !!a && !!b && a.studyId === b.studyId && a.patientId === b.patientId;
 }
 
+/** The tab's two views: patients beside the viewer, or the cohort's slide table. */
+export type StudySlidesView = 'viewer' | 'table';
+
 export interface StudyPathologySlidesStoreOptions {
     /** The study-view cohort; the list reloads when it changes. */
     getFilters: () => StudyViewFilter;
@@ -120,6 +123,9 @@ export interface StudyPathologySlidesStoreOptions {
     onSelectionChange?: (patient: StudySlidePatientRef | undefined) => void;
     /** Patient to show first, such as one restored from the URL. */
     initialSelection?: StudySlidePatientRef;
+    initialView?: StudySlidesView;
+    /** Called when the user switches between the viewer and the slide table. */
+    onViewChange?: (view: StudySlidesView) => void;
     fetchPage?: (request: StudySlidesRequest) => Promise<StudySlidesPage>;
     fetchFacets?: (
         request: StudySlideFacetsRequest
@@ -149,6 +155,9 @@ export class StudyPathologySlidesStore {
     @observable private suggestionsWanted = false;
     @observable pageNumber = 0;
     @observable.ref selected: StudySlidePatientRef | undefined;
+    @observable view: StudySlidesView = 'viewer';
+    /** Slide the viewer opens for the selected patient, chosen from the slide table. */
+    @observable requestedSlideKey: string | undefined;
     /** Zero-based position of the selected patient in the full list. */
     @observable selectedIndex: number | undefined;
     @observable private reloadCount = 0;
@@ -159,6 +168,7 @@ export class StudyPathologySlidesStore {
     private readonly onSelectionChange?: (
         patient: StudySlidePatientRef | undefined
     ) => void;
+    private readonly onViewChange?: (view: StudySlidesView) => void;
     private readonly fetchPage: (
         request: StudySlidesRequest
     ) => Promise<StudySlidesPage>;
@@ -170,6 +180,8 @@ export class StudyPathologySlidesStore {
     private selectOnLoad: number | undefined;
     // After a cohort or list-filter change, move the list to the selected patient's page.
     private followSelection: boolean;
+    // A slide opened from the slide table whose patient the list has yet to locate.
+    private locatePending = false;
     private searchTimer: ReturnType<typeof setTimeout> | undefined;
     private readonly disposers: IReactionDisposer[] = [];
 
@@ -177,6 +189,8 @@ export class StudyPathologySlidesStore {
         this.getFilters = options.getFilters;
         this.getStudyIds = options.getStudyIds;
         this.onSelectionChange = options.onSelectionChange;
+        this.onViewChange = options.onViewChange;
+        this.view = options.initialView || 'viewer';
         this.fetchPage = options.fetchPage || fetchStudySlidePatients;
         this.fetchFacets = options.fetchFacets || fetchStudySlideFacets;
         this.clinical = options.clinical;
@@ -523,6 +537,28 @@ export class StudyPathologySlidesStore {
     }
 
     @action.bound
+    setView(view: StudySlidesView) {
+        if (view !== this.view) {
+            this.view = view;
+            this.onViewChange?.(view);
+        }
+    }
+
+    /** Shows one slide from the slide table in the viewer, with its patient selected. */
+    @action.bound
+    openSlide(patient: StudySlidePatientRef, slideKey: string | undefined) {
+        this.selectPatient(patient);
+        this.requestedSlideKey = slideKey;
+        if (this.selectedIndex === undefined) {
+            // Not on this list page: reload to locate the patient (see reconcile).
+            this.locatePending = true;
+            this.followSelection = true;
+            this.reloadCount += 1;
+        }
+        this.setView('viewer');
+    }
+
+    @action.bound
     selectNext() {
         if (this.hasNext) {
             this.selectAt(this.selectedIndex! + 1);
@@ -637,6 +673,7 @@ export class StudyPathologySlidesStore {
         this.selected = ref;
         this.selectedIndex = index;
         if (changed) {
+            this.requestedSlideKey = undefined;
             this.onSelectionChange?.(ref);
         }
     }
@@ -652,6 +689,26 @@ export class StudyPathologySlidesStore {
             this.selectOnLoad = undefined;
             if (offset >= 0) {
                 this.setSelection(page.patients[offset], pageStart + offset);
+                return;
+            }
+        }
+
+        if (this.locatePending) {
+            this.locatePending = false;
+            if (
+                this.selected &&
+                page.locatedIndex === null &&
+                (this.stainGroups.length > 0 ||
+                    this.matchLevels.length > 0 ||
+                    this.search !== '')
+            ) {
+                // The list's own filters hide the patient opened from the slide table: clear
+                // them rather than replace the patient.
+                this.stainGroups = [];
+                this.matchLevels = [];
+                this.search = '';
+                this.searchText = '';
+                this.restartList();
                 return;
             }
         }

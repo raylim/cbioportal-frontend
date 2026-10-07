@@ -17,6 +17,7 @@ import { AppWsiViewer } from 'shared/components/wsiViewer/wsiAppConfig';
 import {
     isSamePatient,
     StudyPathologySlidesStore,
+    StudySlidesView,
 } from './StudyPathologySlidesStore';
 import {
     STUDY_SLIDE_STAIN_GROUPS,
@@ -39,7 +40,11 @@ export interface StudyPathologySlidesTabProps {
     isActive: boolean;
     height: number;
     userName?: string;
+    /** The cohort's slide table, shown as the tab's second view. */
+    slideTable?: React.ReactNode;
 }
+
+const VIEW_SWITCH_HEIGHT = 38;
 
 /** Browser-stored hidden state of the patient list. */
 export const PATIENT_LIST_COLLAPSED_KEY = 'wsi.study.patientListCollapsed';
@@ -587,7 +592,62 @@ const ViewerToolbar: React.FunctionComponent<{
  * Study-view Pathology Slides tab: the cohort's patients with slides in a
  * hideable panel, and the selected patient's slides in the viewer.
  */
+/**
+ * The study's pathology slides, as patients beside the slide viewer or as the cohort's slide table
+ * (one row per slide, with column filters, sorting and download). A table row's View opens that
+ * slide in the viewer.
+ */
 export const StudyPathologySlidesTab: React.FunctionComponent<StudyPathologySlidesTabProps> = observer(
+    props => {
+        const { store, slideTable, height } = props;
+        if (!slideTable) {
+            return <StudySlidesViewerView {...props} />;
+        }
+        const views: { id: StudySlidesView; label: string; icon: string }[] = [
+            { id: 'viewer', label: 'Viewer', icon: 'fa-picture-o' },
+            { id: 'table', label: 'Slide table', icon: 'fa-table' },
+        ];
+        return (
+            <div data-testid="study-slides-views">
+                <div
+                    className="btn-group btn-group-sm"
+                    role="group"
+                    aria-label="Pathology slides view"
+                    style={{ marginBottom: 8 }}
+                >
+                    {views.map(view => (
+                        <button
+                            key={view.id}
+                            type="button"
+                            className={`btn btn-default${
+                                store.view === view.id ? ' active' : ''
+                            }`}
+                            aria-pressed={store.view === view.id}
+                            data-testid={`study-slides-view-${view.id}`}
+                            onClick={() => store.setView(view.id)}
+                        >
+                            <i
+                                className={`fa ${view.icon}`}
+                                style={{ marginRight: 5 }}
+                            />
+                            {view.label}
+                        </button>
+                    ))}
+                </div>
+                {store.view === 'table' ? (
+                    <div data-testid="study-slides-table">{slideTable}</div>
+                ) : (
+                    <StudySlidesViewerView
+                        {...props}
+                        height={height - VIEW_SWITCH_HEIGHT}
+                    />
+                )}
+            </div>
+        );
+    }
+);
+
+const StudySlidesViewerView: React.FunctionComponent<StudyPathologySlidesTabProps> = observer(
     ({ store, tileServerUrl, isActive, height, userName }) => {
         const [listCollapsed, setListCollapsed] = useStoredFlag(
             PATIENT_LIST_COLLAPSED_KEY
@@ -719,6 +779,7 @@ export const StudyPathologySlidesTab: React.FunctionComponent<StudyPathologySlid
                                 initialMatchFilter={viewerMatchFilter(
                                     store.matchLevels
                                 )}
+                                requestedSlideKey={store.requestedSlideKey}
                             />
                         </>
                     ) : (

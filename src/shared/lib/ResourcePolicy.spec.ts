@@ -6,6 +6,7 @@ import {
     isWsiResourceId,
     isWsiTileServerConfigured,
     patientViewPathForResource,
+    slideKeyFromSlideUrl,
     shouldHideLegacyHeResource,
     shouldHideLegacyHeResourceTab,
     slideStainFilterForColumnFilters,
@@ -64,12 +65,34 @@ describe('legacy H&E resource policy', () => {
     });
 
     it('lists the slide table in study view and no slide resources in the patient view', () => {
-        assert.isTrue(isStudyViewResourceTab('WSI_SAMPLE'));
+        // With the viewer configured, the Pathology Slides tab shows the slide table.
+        assert.isFalse(isStudyViewResourceTab('WSI_SAMPLE'));
         assert.isFalse(isStudyViewResourceTab('WSI_PATIENT'));
         assert.isTrue(isStudyViewResourceTab('OTHER'));
         assert.isFalse(isPatientViewResourceTab('WSI_SAMPLE'));
         assert.isFalse(isPatientViewResourceTab('WSI_PATIENT'));
         assert.isTrue(isPatientViewResourceTab('OTHER'));
+
+        (getServerConfig() as any).msk_wsi_tile_server_url = '';
+        assert.isTrue(isStudyViewResourceTab('WSI_SAMPLE'));
+        assert.isFalse(isStudyViewResourceTab('WSI_PATIENT'));
+    });
+
+    it('reads the slide key from a slide row link', () => {
+        const key = '0123456789abcdef0123456789abcdef';
+        assert.equal(
+            slideKeyFromSlideUrl(
+                `https://portal.example.org/wsi/patient/P-1?studyId=s&slideKey=${key}`
+            ),
+            key
+        );
+        assert.isUndefined(
+            slideKeyFromSlideUrl(
+                'https://portal.example.org/wsi/patient/P-1?studyId=s'
+            )
+        );
+        assert.isUndefined(slideKeyFromSlideUrl('?slideKey=short'));
+        assert.isUndefined(slideKeyFromSlideUrl(undefined));
     });
 
     it('links slide rows to Pathology Slides and other rows to Files & Links', () => {

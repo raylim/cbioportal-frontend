@@ -98,7 +98,13 @@ import { StudyPathologySlidesStore } from './tabs/pathologySlides/StudyPathology
 import { StudyPathologySlidesTab } from './tabs/pathologySlides/StudyPathologySlidesTab';
 import { studySlidesClinicalAccess } from './tabs/pathologySlides/studySlidesClinicalAccess';
 import { ResourceTableStore } from 'shared/components/resourceTable/ResourceTableStore';
-import { isStudyViewResourceTab } from 'shared/lib/ResourcePolicy';
+import {
+    isStudyViewResourceTab,
+    isWsiTileServerConfigured,
+    slideKeyFromSlideUrl,
+    STUDY_SLIDE_TABLE_RESOURCE_ID,
+} from 'shared/lib/ResourcePolicy';
+import { IResourceTableRow } from 'shared/lib/ResourceTableUtils';
 import ResourceDataTable from 'shared/components/resourceTable/ResourceDataTable';
 
 export interface IStudyViewPageProps {
@@ -190,7 +196,12 @@ export default class StudyViewPage extends React.Component<
         // Expose store to window for use in custom tabs.
         setWindowVariable('studyViewPageStore', this.store);
 
-        const { wsiStudyId, wsiPatientId } = this.urlWrapper.query;
+        const { wsiStudyId, wsiPatientId, wsiView } = this.urlWrapper.query;
+        // The slide table's own tab gives way to the Pathology Slides tab's table view.
+        const slideTableTabRequested =
+            this.urlWrapper.tabId ===
+                getStudyViewResourceTableTabId(STUDY_SLIDE_TABLE_RESOURCE_ID) &&
+            isWsiTileServerConfigured();
         this.pathologySlidesStore = new StudyPathologySlidesStore({
             getFilters: () => this.store.filters,
             clinical: studySlidesClinicalAccess(this.store),
@@ -207,7 +218,16 @@ export default class StudyViewPage extends React.Component<
                 hashUrlState.clear();
                 this.urlWrapper.setWsiPatient(patient);
             },
+            initialView:
+                wsiView === 'table' || slideTableTabRequested
+                    ? 'table'
+                    : 'viewer',
+            onViewChange: view => this.urlWrapper.setWsiView(view),
         });
+        if (slideTableTabRequested) {
+            this.urlWrapper.setTab(StudyViewPageTabKeyEnum.PATHOLOGY_SLIDES);
+            this.urlWrapper.setWsiView('table');
+        }
 
         const openResourceId =
             this.urlWrapper.tabId &&
@@ -384,7 +404,11 @@ export default class StudyViewPage extends React.Component<
     private getOrCreateResourceStore(resourceId: string): ResourceTableStore {
         let store = this.resourceTableStores.get(resourceId);
         if (!store) {
-            store = new ResourceTableStore(isStudyViewResourceTab);
+            store = new ResourceTableStore(
+                resourceId === STUDY_SLIDE_TABLE_RESOURCE_ID
+                    ? id => id === STUDY_SLIDE_TABLE_RESOURCE_ID
+                    : isStudyViewResourceTab
+            );
             store.setSelectedResourceId(resourceId);
             this.resourceTableStores.set(resourceId, store);
 
@@ -541,6 +565,20 @@ export default class StudyViewPage extends React.Component<
             return false;
         }
     }
+
+    /** Opens a slide table row in the Pathology Slides viewer. */
+    private openSlideTableRow = (row: IResourceTableRow) => {
+        // A #wsi: hash slide would win over the requested one.
+        hashUrlState.clear();
+        this.pathologySlidesStore.openSlide(
+            { studyId: row.resource.studyId, patientId: row.patientId },
+            slideKeyFromSlideUrl(row.url)
+        );
+    };
+
+    private canOpenSlideTableRow = (row: IResourceTableRow) =>
+        String(row.metadata.can_serve_tiles) === 'true' &&
+        !!slideKeyFromSlideUrl(row.url);
 
     @computed get shouldShowPathologySlides() {
         if (!getServerConfig().msk_wsi_tile_server_url) {
@@ -998,6 +1036,26 @@ export default class StudyViewPage extends React.Component<
                                                 )}
                                                 userName={
                                                     this.props.appStore.userName
+                                                }
+                                                slideTable={
+                                                    <ResourceDataTable
+                                                        store={this.getOrCreateResourceStore(
+                                                            STUDY_SLIDE_TABLE_RESOURCE_ID
+                                                        )}
+                                                        scopedResourceId={
+                                                            STUDY_SLIDE_TABLE_RESOURCE_ID
+                                                        }
+                                                        hideTabs={true}
+                                                        resourceLabel="slides"
+                                                        onViewRow={
+                                                            this
+                                                                .openSlideTableRow
+                                                        }
+                                                        canViewRow={
+                                                            this
+                                                                .canOpenSlideTableRow
+                                                        }
+                                                    />
                                                 }
                                             />
                                         ) : (

@@ -9,7 +9,7 @@ const LEGACY_HE_RESOURCE_IDS = new Set(['HE', 'MSK_HNE']);
 // Slides tab; study view lists WSI_SAMPLE as its slide table, which the
 // backend serves with only the allowlisted public slide fields.
 const WSI_RESOURCE_IDS = new Set(['WSI_SAMPLE', 'WSI_PATIENT']);
-const STUDY_SLIDE_TABLE_RESOURCE_ID = 'WSI_SAMPLE';
+export const STUDY_SLIDE_TABLE_RESOURCE_ID = 'WSI_SAMPLE';
 
 function isNonEmptyString(value: string | null | undefined): boolean {
     return (value?.trim().length ?? 0) > 0;
@@ -31,13 +31,26 @@ export function shouldHideLegacyHeResourceTab(
         : false;
 }
 
-/** Resource tabs study view's resource table offers: the slide table, not WSI_PATIENT. */
+/**
+ * Resource tabs study view's resource table offers. WSI_PATIENT never shows; the slide table
+ * (WSI_SAMPLE) shows as its own tab only without the slide viewer. With the viewer configured,
+ * the Pathology Slides tab shows the slide table as one of its views instead.
+ */
 export function isStudyViewResourceTab(resourceId: string): boolean {
     return (
         !shouldHideLegacyHeResourceTab(resourceId) &&
         (!isWsiResourceId(resourceId) ||
-            resourceId === STUDY_SLIDE_TABLE_RESOURCE_ID)
+            (resourceId === STUDY_SLIDE_TABLE_RESOURCE_ID &&
+                !isWsiTileServerConfigured()))
     );
+}
+
+/** The slide key a slide table row's viewer link names, if any. */
+export function slideKeyFromSlideUrl(
+    url: string | undefined
+): string | undefined {
+    const match = /[?&]slideKey=([0-9a-f]{32})(?:&|#|$)/.exec(url || '');
+    return match ? match[1] : undefined;
 }
 
 /** Resource tabs the patient view's resource table offers: no slide resources. */
