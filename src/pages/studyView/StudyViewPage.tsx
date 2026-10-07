@@ -576,8 +576,8 @@ export default class StudyViewPage extends React.Component<
         );
     };
 
+    // The slide table lists only slides the viewer can open.
     private canOpenSlideTableRow = (row: IResourceTableRow) =>
-        String(row.metadata.can_serve_tiles) === 'true' &&
         !!slideKeyFromSlideUrl(row.url);
 
     @computed get shouldShowPathologySlides() {
