@@ -154,7 +154,6 @@ export interface IServerConfig {
     user_display_name: string;
     sessionServiceEnabled: boolean;
     session_url_length_threshold: string;
-    mskWholeSlideViewerToken: string;
     query_product_limit: number;
     clinical_attribute_product_limit: number;
     dat_method: string;

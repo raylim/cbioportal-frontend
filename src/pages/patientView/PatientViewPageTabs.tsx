@@ -48,7 +48,6 @@ export enum PatientViewPageTabs {
     FilesAndLinks = 'filesAndLinks',
     PathologyReport = 'pathologyReport',
     TissueImage = 'tissueImage',
-    MSKTissueImage = 'MSKTissueImage',
     TrialMatchTab = 'trialMatchTab',
     MutationalSignatures = 'mutationalSignatures',
     PathwayMapper = 'pathways',
@@ -643,24 +642,6 @@ export function tabs(
         </MSKTab>
     );
 
-    pageComponent.showWholeSlideViewerTab &&
-        pageComponent.wholeSlideViewerUrl.result &&
-        tabs.push(
-            <MSKTab
-                key={6}
-                id={PatientViewPageTabs.MSKTissueImage}
-                linkText="Tissue Image"
-                unmountOnHide={false}
-            >
-                <div>
-                    <IFrameLoader
-                        height={WindowStore.size.height - 220}
-                        url={pageComponent.wholeSlideViewerUrl.result!}
-                    />
-                </div>
-            </MSKTab>
-        );
-
     pageComponent.shouldShowTrialMatch &&
         tabs.push(
             <MSKTab
@@ -744,8 +725,7 @@ export function tabs(
                 id={PatientViewPageTabs.MRNA}
                 linkText={
                     <span>
-                        mRNA{' '}
-                        <strong className={'beta-text'}>Beta!</strong>
+                        mRNA <strong className={'beta-text'}>Beta!</strong>
                     </span>
                 }
             >
@@ -761,8 +741,7 @@ export function tabs(
                 id={PatientViewPageTabs.Plots}
                 linkText={
                     <span>
-                        Plots{' '}
-                        <strong className={'beta-text'}>Beta!</strong>
+                        Plots <strong className={'beta-text'}>Beta!</strong>
                     </span>
                 }
             >
@@ -770,8 +749,8 @@ export function tabs(
                     .isComplete &&
                 pageComponent.patientViewPageStore.highlightedCancerTypes
                     .isComplete &&
-                pageComponent.patientViewPageStore.highlightedDetailedCancerTypes
-                    .isComplete ? (
+                pageComponent.patientViewPageStore
+                    .highlightedDetailedCancerTypes.isComplete ? (
                     <PatientViewPlotsTabWrapper
                         store={pageComponent.patientViewPageStore}
                         urlWrapper={urlWrapper}
