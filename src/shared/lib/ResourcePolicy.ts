@@ -48,6 +48,18 @@ export function isPatientViewResourceTab(resourceId: string): boolean {
     );
 }
 
+/**
+ * The patient view tab a resource row's patient or sample link opens: slides live in the Pathology
+ * Slides tab (the patient view's resource table leaves them out), everything else in Files & Links.
+ */
+export function patientViewPathForResource(
+    resourceId: string | undefined
+): string {
+    return isWsiResourceId(resourceId)
+        ? 'patient/wsiHESlides'
+        : 'patient/filesAndLinks';
+}
+
 export function shouldHideLegacyHeResource(
     resource?: Partial<ResourceData>
 ): boolean {

@@ -15,6 +15,7 @@ import ServerDrivenTable, {
     ServerDrivenTableNumericRange,
 } from 'shared/components/serverDrivenTable/ServerDrivenTable';
 import TabbedTableLayout from 'shared/components/tabbedTable/TabbedTableLayout';
+import { patientViewPathForResource } from 'shared/lib/ResourcePolicy';
 import {
     getPatientViewUrlWithPathname,
     getSampleViewUrlWithPathname,
@@ -464,7 +465,7 @@ export class ResourceDataTable extends React.Component<
                 ? getPatientViewUrlWithPathname(
                       row.resource.studyId,
                       row.patientId,
-                      'patient/filesAndLinks'
+                      patientViewPathForResource(row.resource.resourceId)
                   )
                 : undefined;
         return this.renderLinkOrText(row.patientId, href);
@@ -476,7 +477,7 @@ export class ResourceDataTable extends React.Component<
                 ? getSampleViewUrlWithPathname(
                       row.resource.studyId,
                       row.resource.sampleId,
-                      'patient/filesAndLinks'
+                      patientViewPathForResource(row.resource.resourceId)
                   )
                 : undefined;
         return this.renderLinkOrText(row.sampleId, href);

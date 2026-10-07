@@ -5,6 +5,7 @@ import {
     isStudyViewResourceTab,
     isWsiResourceId,
     isWsiTileServerConfigured,
+    patientViewPathForResource,
     shouldHideLegacyHeResource,
     shouldHideLegacyHeResourceTab,
 } from './ResourcePolicy';
@@ -67,6 +68,21 @@ describe('legacy H&E resource policy', () => {
         assert.isFalse(isPatientViewResourceTab('WSI_SAMPLE'));
         assert.isFalse(isPatientViewResourceTab('WSI_PATIENT'));
         assert.isTrue(isPatientViewResourceTab('OTHER'));
+    });
+
+    it('links slide rows to Pathology Slides and other rows to Files & Links', () => {
+        assert.equal(
+            patientViewPathForResource('WSI_SAMPLE'),
+            'patient/wsiHESlides'
+        );
+        assert.equal(
+            patientViewPathForResource('IDC_OHIF_V2'),
+            'patient/filesAndLinks'
+        );
+        assert.equal(
+            patientViewPathForResource(undefined),
+            'patient/filesAndLinks'
+        );
     });
 
     it('keeps legacy H&E resources out of both resource tables', () => {
