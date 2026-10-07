@@ -5,9 +5,11 @@ import { getServerConfig } from 'config/config';
 // the public and MSK portals uses one of these IDs.
 const LEGACY_HE_RESOURCE_IDS = new Set(['HE', 'MSK_HNE']);
 // Whole-slide images are stored as these resources, one row per slide (1.7M
-// for MSK-IMPACT). Files & Links and the resource tabs leave them out; slides
-// are reached through the Pathology Slides views.
+// for MSK-IMPACT). The patient view reaches slides through its Pathology
+// Slides tab; study view lists WSI_SAMPLE as its slide table, which the
+// backend serves with only the allowlisted public slide fields.
 const WSI_RESOURCE_IDS = new Set(['WSI_SAMPLE', 'WSI_PATIENT']);
+const STUDY_SLIDE_TABLE_RESOURCE_ID = 'WSI_SAMPLE';
 
 function isNonEmptyString(value: string | null | undefined): boolean {
     return (value?.trim().length ?? 0) > 0;
@@ -27,6 +29,23 @@ export function shouldHideLegacyHeResourceTab(
     return !!resourceId && isWsiTileServerConfigured()
         ? LEGACY_HE_RESOURCE_IDS.has(resourceId)
         : false;
+}
+
+/** Resource tabs study view's resource table offers: the slide table, not WSI_PATIENT. */
+export function isStudyViewResourceTab(resourceId: string): boolean {
+    return (
+        !shouldHideLegacyHeResourceTab(resourceId) &&
+        (!isWsiResourceId(resourceId) ||
+            resourceId === STUDY_SLIDE_TABLE_RESOURCE_ID)
+    );
+}
+
+/** Resource tabs the patient view's resource table offers: no slide resources. */
+export function isPatientViewResourceTab(resourceId: string): boolean {
+    return (
+        !shouldHideLegacyHeResourceTab(resourceId) &&
+        !isWsiResourceId(resourceId)
+    );
 }
 
 export function shouldHideLegacyHeResource(

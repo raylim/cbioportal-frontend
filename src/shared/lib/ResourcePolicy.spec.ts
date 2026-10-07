@@ -1,6 +1,8 @@
 import { assert } from 'chai';
 import { getServerConfig } from 'config/config';
 import {
+    isPatientViewResourceTab,
+    isStudyViewResourceTab,
     isWsiResourceId,
     isWsiTileServerConfigured,
     shouldHideLegacyHeResource,
@@ -56,6 +58,20 @@ describe('legacy H&E resource policy', () => {
         (getServerConfig() as any).msk_wsi_tile_server_url = '';
         assert.isFalse(shouldHideLegacyHeResourceTab('MSK_HNE'));
         assert.isFalse(shouldHideLegacyHeResource({ resourceId: 'MSK_HNE' }));
+    });
+
+    it('lists the slide table in study view and no slide resources in the patient view', () => {
+        assert.isTrue(isStudyViewResourceTab('WSI_SAMPLE'));
+        assert.isFalse(isStudyViewResourceTab('WSI_PATIENT'));
+        assert.isTrue(isStudyViewResourceTab('OTHER'));
+        assert.isFalse(isPatientViewResourceTab('WSI_SAMPLE'));
+        assert.isFalse(isPatientViewResourceTab('WSI_PATIENT'));
+        assert.isTrue(isPatientViewResourceTab('OTHER'));
+    });
+
+    it('keeps legacy H&E resources out of both resource tables', () => {
+        assert.isFalse(isStudyViewResourceTab('MSK_HNE'));
+        assert.isFalse(isPatientViewResourceTab('HE'));
     });
 
     it('recognises the whole-slide image resource ids', () => {

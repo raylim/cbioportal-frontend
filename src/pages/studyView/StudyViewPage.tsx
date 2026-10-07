@@ -3,7 +3,14 @@ import _ from 'lodash';
 import { inject, Observer, observer } from 'mobx-react';
 import { MSKTab, MSKTabs } from '../../shared/components/MSKTabs/MSKTabs';
 import 'react-toastify/dist/ReactToastify.css';
-import { action, computed, makeObservable, observable } from 'mobx';
+import {
+    action,
+    autorun,
+    computed,
+    IReactionDisposer,
+    makeObservable,
+    observable,
+} from 'mobx';
 import {
     StudyViewPageStore,
     StudyViewPageTabDescriptions,
@@ -12,6 +19,7 @@ import {
 import {
     extractResourceIdFromTabId,
     getStudyViewResourceTabId,
+    getStudyViewResourceTableTabId,
     StudyViewPageTabKeyEnum,
 } from 'pages/studyView/StudyViewPageTabs';
 import LoadingIndicator from 'shared/components/loadingIndicator/LoadingIndicator';
@@ -84,6 +92,9 @@ import {
 import { shouldHideLegacyHeResourceTab } from 'shared/lib/ResourcePolicy';
 import { VirtualStudyModal } from 'pages/studyView/virtualStudy/VirtualStudyModal';
 import { PlotsTabWrapper } from 'pages/studyView/StudyViewPlotsTabWrapper';
+import { ResourceTableStore } from 'shared/components/resourceTable/ResourceTableStore';
+import { isStudyViewResourceTab } from 'shared/lib/ResourcePolicy';
+import ResourceDataTable from 'shared/components/resourceTable/ResourceDataTable';
 
 export interface IStudyViewPageProps {
     routing: any;
@@ -140,6 +151,16 @@ export default class StudyViewPage extends React.Component<
     private toolbar: any;
     private toolbarLeftUpdater: any;
     @observable private toolbarLeft: number = 0;
+
+    private readonly resourceTableStore = new ResourceTableStore(
+        isStudyViewResourceTab
+    );
+    private readonly resourceTableStores = new Map<
+        string,
+        ResourceTableStore
+    >();
+    private resourceTableStoreDisposer: IReactionDisposer | null = null;
+    private legacyTabRedirectDisposer: IReactionDisposer | null = null;
 
     @observable showCustomSelectTooltip = false;
     @observable showAlterationFilterTooltip = false;
@@ -300,6 +321,56 @@ export default class StudyViewPage extends React.Component<
                 this.toolbarLeft = $(this.toolbar).position().left;
             }
         }, 500);
+
+        this.resourceTableStoreDisposer = autorun(() => {
+            const samples = this.store.selectedSamples.result;
+            if (!samples) return;
+            this.resourceTableStore.setContextFromSelection(
+                samples,
+                this.store.samples.result
+            );
+            this.resourceTableStores.forEach(store =>
+                store.setContextFromSelection(
+                    samples,
+                    this.store.samples.result
+                )
+            );
+        });
+
+        // Redirect from legacy filesAndLinks tab to first new resource table tab
+        // when the new API-backed resource tabs are available.
+        this.legacyTabRedirectDisposer = autorun(() => {
+            if (
+                this.hasNewResourceTabs &&
+                this.urlWrapper.tabId ===
+                    StudyViewPageTabKeyEnum.FILES_AND_LINKS
+            ) {
+                const firstTab = this.resourceTableStore.tabs.result?.[0];
+                if (firstTab) {
+                    this.urlWrapper.setTab(
+                        getStudyViewResourceTableTabId(firstTab.resourceId)
+                    );
+                }
+            }
+        });
+    }
+
+    private getOrCreateResourceStore(resourceId: string): ResourceTableStore {
+        let store = this.resourceTableStores.get(resourceId);
+        if (!store) {
+            store = new ResourceTableStore(isStudyViewResourceTab);
+            store.setSelectedResourceId(resourceId);
+            this.resourceTableStores.set(resourceId, store);
+
+            const samples = this.store.selectedSamples.result;
+            if (samples) {
+                store.setContextFromSelection(
+                    samples,
+                    this.store.samples.result
+                );
+            }
+        }
+        return store;
     }
 
     private getFilterJsonFromPostData(): string | undefined {
@@ -438,11 +509,8 @@ export default class StudyViewPage extends React.Component<
     }
 
     @computed get shouldShowResources() {
-        if (
-            this.store.resourceDefinitions.isComplete &&
-            this.store.resourceIdToResourceData.isComplete
-        ) {
-            return this.visibleResourceDefinitions.length > 0;
+        if (this.store.resourceDefinitions.isComplete) {
+            return this.store.resourceDefinitions.result.length > 0;
         } else {
             return false;
         }
@@ -608,47 +676,32 @@ export default class StudyViewPage extends React.Component<
     }
 
     readonly resourceTabs = MakeMobxView({
-        await: () => [
-            this.store.resourceDefinitions,
-            this.store.resourceIdToResourceData,
-        ],
+        await: () => [this.resourceTableStore.tabs],
         render: () => {
-            const openDefinitions = this.store.resourceDefinitions.result!.filter(
-                d =>
-                    this.store.isResourceTabOpen(d.resourceId) &&
-                    !shouldHideLegacyHeResourceTab(d.resourceId)
-            );
-            const sorted = _.sortBy(openDefinitions, d => d.priority);
-            const resourceDataById = this.store.resourceIdToResourceData
-                .result!;
-
-            const tabs: JSX.Element[] = sorted.reduce((list, def) => {
-                const data = resourceDataById[def.resourceId];
-                if (data && data.length > 0) {
-                    const config = getResourceConfig(def);
-                    const customDisplayName =
-                        config.customizedDisplayName || def.displayName;
-
-                    list.push(
-                        <MSKTab
-                            key={getStudyViewResourceTabId(def.resourceId)}
-                            id={getStudyViewResourceTabId(def.resourceId)}
-                            linkText={def.displayName}
-                            onClickClose={this.closeResourceTab}
-                        >
-                            <ResourceTab
-                                resourceData={resourceDataById[def.resourceId]}
-                                urlWrapper={this.urlWrapper}
-                                resourceDisplayName={customDisplayName}
-                            />
-                        </MSKTab>
-                    );
-                }
-                return list;
-            }, [] as JSX.Element[]);
-            return tabs;
+            const apiTabs = this.resourceTableStore.tabs.result || [];
+            if (apiTabs.length === 0) {
+                return [] as JSX.Element[];
+            }
+            return apiTabs.map(tab => (
+                <MSKTab
+                    key={getStudyViewResourceTableTabId(tab.resourceId)}
+                    id={getStudyViewResourceTableTabId(tab.resourceId)}
+                    linkText={tab.label}
+                >
+                    <ResourceDataTable
+                        store={this.getOrCreateResourceStore(tab.resourceId)}
+                        scopedResourceId={tab.resourceId}
+                        hideTabs={true}
+                    />
+                </MSKTab>
+            ));
         },
     });
+
+    @computed get hasNewResourceTabs(): boolean {
+        const tabs = this.resourceTableStore.tabs.result;
+        return !!tabs && tabs.length > 0;
+    }
 
     @computed get customTabs() {
         return buildCustomTabs(this.customTabsConfigs);
@@ -836,7 +889,10 @@ export default class StudyViewPage extends React.Component<
                                                       .displayName
                                                 : RESOURCES_TAB_NAME
                                         }
-                                        hide={!this.shouldShowResources}
+                                        hide={
+                                            !this.shouldShowResources ||
+                                            this.hasNewResourceTabs
+                                        }
                                     >
                                         <div>
                                             <ResourcesTab
@@ -1259,6 +1315,12 @@ export default class StudyViewPage extends React.Component<
     componentWillUnmount(): void {
         this.store.destroy();
         clearInterval(this.toolbarLeftUpdater);
+        if (this.resourceTableStoreDisposer) {
+            this.resourceTableStoreDisposer();
+        }
+        if (this.legacyTabRedirectDisposer) {
+            this.legacyTabRedirectDisposer();
+        }
     }
 
     render() {
