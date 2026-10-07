@@ -60,9 +60,14 @@ export enum PatientViewPageTabs {
 }
 
 export const PatientViewResourceTabPrefix = 'openResource_';
+export const PatientViewResourceTableTabPrefix = 'resourceTable_';
 
 export function getPatientViewResourceTabId(resourceId: string) {
     return `${PatientViewResourceTabPrefix}${resourceId}`;
+}
+
+export function getPatientViewResourceTableTabId(resourceId: string) {
+    return `${PatientViewResourceTableTabPrefix}${resourceId}`;
 }
 
 export function extractResourceIdFromTabId(tabId: string) {
@@ -119,6 +124,17 @@ export function wsiPatientClinicalData(
         patientData: clinicalDataPatient.result,
         sampleData: clinicalDataForSamples.result,
     };
+}
+
+export function extractResourceIdFromTableTabId(tabId: string) {
+    const match = new RegExp(`${PatientViewResourceTableTabPrefix}(.*)`).exec(
+        tabId
+    );
+    if (match) {
+        return match[1];
+    } else {
+        return undefined;
+    }
 }
 
 export function patientViewTabs(
@@ -660,7 +676,7 @@ export function tabs(
         );
     }
 
-    if (pageComponent.shouldShowResources)
+    if (pageComponent.shouldShowResources && !pageComponent.hasNewResourceTabs)
         tabs.push(
             <MSKTab
                 key={4}

@@ -1,5 +1,8 @@
 import _ from 'lodash';
-import { isWsiResourceId } from 'shared/lib/ResourcePolicy';
+import {
+    isWsiResourceId,
+    isPatientViewResourceTab,
+} from 'shared/lib/ResourcePolicy';
 import { fetchWsiPatientHierarchy } from 'cbioportal-wsi-viewer';
 import { wsiAuthScope } from 'shared/components/wsiViewer/wsiAppConfig';
 import {
@@ -119,6 +122,10 @@ import {
     IDataQueryFilter,
     generateDataQueryFilter,
 } from 'shared/lib/StoreUtils';
+import {
+    fetchResourceTableTabs,
+    ResourceTableTab,
+} from 'shared/api/resourceTableClient';
 import {
     computeGenePanelInformation,
     CoverageInformation,
@@ -1839,107 +1846,27 @@ export class PatientViewPageStore {
         },
     });
 
-    readonly studyResourceData = remoteData<ResourceData[]>({
-        await: () => [this.resourceDefinitions],
-        invoke: () => {
-            const ret: ResourceData[] = [];
-            const studyResourceDefinitions = this.resourceDefinitions.result!.filter(
-                d => d.resourceType === 'STUDY'
-            );
-            const promises = [];
-            for (const resource of studyResourceDefinitions) {
-                promises.push(
-                    internalClient
-                        .getAllStudyResourceDataInStudyUsingGET({
-                            studyId: this.studyId,
-                            resourceId: resource.resourceId,
-                            projection: 'DETAILED',
-                        })
-                        .then(data => ret.push(...data))
-                );
-            }
-            return Promise.all(promises).then(() => ret);
-        },
-    });
-
-    readonly sampleResourceData = remoteData<{
-        [sampleId: string]: ResourceData[];
-    }>({
-        await: () => [this.resourceDefinitions, this.samples],
-        invoke: () => {
-            const sampleResourceDefinitions = this.resourceDefinitions.result!.filter(
-                d => d.resourceType === 'SAMPLE'
-            );
-            if (!sampleResourceDefinitions.length) {
-                return Promise.resolve({});
-            }
-
-            const samples = this.samples.result!;
-            const ret: { [sampleId: string]: ResourceData[] } = {};
-            const promises = [];
-            for (const sample of samples) {
-                for (const resource of sampleResourceDefinitions) {
-                    promises.push(
-                        internalClient
-                            .getAllResourceDataOfSampleInStudyUsingGET({
-                                sampleId: sample.sampleId,
-                                studyId: this.studyId,
-                                resourceId: resource.resourceId,
-                                projection: 'DETAILED',
-                            })
-                            .then(data => {
-                                ret[sample.sampleId] =
-                                    ret[sample.sampleId] || [];
-                                ret[sample.sampleId].push(...data);
-                            })
-                    );
-                }
-            }
-            return Promise.all(promises).then(() => ret);
-        },
-    });
-
-    readonly patientResourceData = remoteData<ResourceData[]>({
-        await: () => [this.resourceDefinitions],
-        invoke: () => {
-            const ret: ResourceData[] = [];
-            const patientResourceDefinitions = this.resourceDefinitions.result!.filter(
-                d => d.resourceType === 'PATIENT'
-            );
-            const promises = [];
-            for (const resource of patientResourceDefinitions) {
-                promises.push(
-                    internalClient
-                        .getAllResourceDataOfPatientInStudyUsingGET({
-                            studyId: this.studyId,
-                            patientId: this.patientId,
-                            resourceId: resource.resourceId,
-                            projection: 'DETAILED',
-                        })
-                        .then(data => ret.push(...data))
-                );
-            }
-            return Promise.all(promises).then(() => ret);
-        },
-    });
-
-    readonly resourceIdToResourceData = remoteData<{
-        [resourceId: string]: ResourceData[];
-    }>({
-        await: () => [
-            this.sampleResourceData,
-            this.patientResourceData,
-            this.studyResourceData,
-        ],
-        invoke: () => {
-            const allData: ResourceData[] = _.flatMap(
-                this.sampleResourceData.result!,
-                v => v
-            )
-                .concat(this.patientResourceData.result!)
-                .concat(this.studyResourceData.result!);
-            return Promise.resolve(_.groupBy(allData, d => d.resourceId));
-        },
+    /**
+     * Per-resource row counts for this patient, used to decide whether the resource tabs are
+     * worth showing. The tabs endpoint answers that directly; the alternative is fetching every
+     * resource's data just to learn whether any exists.
+     */
+    readonly resourceTableTabs = remoteData<ResourceTableTab[]>({
+        await: () => [this.samples],
+        invoke: () =>
+            fetchResourceTableTabs({
+                studyIds: [this.studyId],
+                patientIdentifiers: [
+                    { studyId: this.studyId, patientId: this.patientId },
+                ],
+                sampleIdentifiers: this.samples.result!.map(s => ({
+                    studyId: this.studyId,
+                    sampleId: s.sampleId,
+                })),
+            }).then(tabs =>
+                tabs.filter(tab => isPatientViewResourceTab(tab.resourceId))
+            ),
+        default: [],
     });
 
     readonly pathologyReport = remoteData(

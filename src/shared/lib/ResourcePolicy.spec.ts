@@ -1,10 +1,15 @@
 import { assert } from 'chai';
 import { getServerConfig } from 'config/config';
 import {
+    isPatientViewResourceTab,
+    isStudyViewResourceTab,
     isWsiResourceId,
     isWsiTileServerConfigured,
+    patientViewPathForResource,
     shouldHideLegacyHeResource,
     shouldHideLegacyHeResourceTab,
+    slideStainFilterForColumnFilters,
+    withSlideStainFilter,
 } from './ResourcePolicy';
 
 describe('legacy H&E resource policy', () => {
@@ -56,6 +61,75 @@ describe('legacy H&E resource policy', () => {
         (getServerConfig() as any).msk_wsi_tile_server_url = '';
         assert.isFalse(shouldHideLegacyHeResourceTab('MSK_HNE'));
         assert.isFalse(shouldHideLegacyHeResource({ resourceId: 'MSK_HNE' }));
+    });
+
+    it('lists the slide table in study view and no slide resources in the patient view', () => {
+        assert.isTrue(isStudyViewResourceTab('WSI_SAMPLE'));
+        assert.isFalse(isStudyViewResourceTab('WSI_PATIENT'));
+        assert.isTrue(isStudyViewResourceTab('OTHER'));
+        assert.isFalse(isPatientViewResourceTab('WSI_SAMPLE'));
+        assert.isFalse(isPatientViewResourceTab('WSI_PATIENT'));
+        assert.isTrue(isPatientViewResourceTab('OTHER'));
+    });
+
+    it('links slide rows to Pathology Slides and other rows to Files & Links', () => {
+        assert.equal(
+            patientViewPathForResource('WSI_SAMPLE'),
+            'patient/wsiHESlides'
+        );
+        assert.equal(
+            patientViewPathForResource('IDC_OHIF_V2'),
+            'patient/filesAndLinks'
+        );
+        assert.equal(
+            patientViewPathForResource(undefined),
+            'patient/filesAndLinks'
+        );
+    });
+
+    it('carries a single stain group filter to the slide links', () => {
+        const stainGroup = (operator: string, values: string[]) => [
+            { columnId: 'metadata:stain_group', operator, values },
+        ];
+        assert.equal(
+            slideStainFilterForColumnFilters(stainGroup('in', ['IHC'])),
+            'ihc'
+        );
+        assert.equal(
+            slideStainFilterForColumnFilters(stainGroup('in', ['H&E'])),
+            'hne'
+        );
+        assert.isUndefined(
+            slideStainFilterForColumnFilters(stainGroup('in', ['H&E', 'IHC']))
+        );
+        assert.isUndefined(
+            slideStainFilterForColumnFilters(stainGroup('notIn', ['IHC']))
+        );
+        assert.isUndefined(
+            slideStainFilterForColumnFilters([
+                {
+                    columnId: 'metadata:magnification',
+                    operator: 'in',
+                    values: ['40x'],
+                },
+            ])
+        );
+        assert.equal(
+            withSlideStainFilter(
+                '/patient/wsiHESlides?studyId=s&caseId=P-1',
+                'ihc'
+            ),
+            '/patient/wsiHESlides?studyId=s&caseId=P-1&pathologySlideSettings=%7B%22stainFilter%22%3A%22ihc%22%7D'
+        );
+        assert.equal(
+            withSlideStainFilter('/patient/wsiHESlides?caseId=P-1', undefined),
+            '/patient/wsiHESlides?caseId=P-1'
+        );
+    });
+
+    it('keeps legacy H&E resources out of both resource tables', () => {
+        assert.isFalse(isStudyViewResourceTab('MSK_HNE'));
+        assert.isFalse(isPatientViewResourceTab('HE'));
     });
 
     it('recognises the whole-slide image resource ids', () => {
