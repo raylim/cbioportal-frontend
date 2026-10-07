@@ -60,6 +60,62 @@ export function patientViewPathForResource(
         : 'patient/filesAndLinks';
 }
 
+// The slide table's stain groups and the Pathology Slides stain filter they
+// correspond to.
+const STAIN_GROUP_TO_SLIDE_STAIN_FILTER: { [stainGroup: string]: string } = {
+    'H&E': 'hne',
+    IHC: 'ihc',
+    Other: 'other',
+    Unknown: 'unknown',
+};
+
+/**
+ * The Pathology Slides stain filter for a slide table narrowed to exactly one
+ * stain group, so a patient or sample link opens the slides filtered the same
+ * way. Any other filtering has no viewer equivalent and is not carried over.
+ */
+export function slideStainFilterForColumnFilters(
+    filters: ReadonlyArray<{
+        columnId: string;
+        operator: string;
+        values?: string[];
+    }>
+): string | undefined {
+    const stainGroup = filters.filter(
+        filter => filter.columnId === 'metadata:stain_group'
+    );
+    if (stainGroup.length !== 1) {
+        return undefined;
+    }
+    const { operator, values } = stainGroup[0];
+    if (
+        !['in', 'equals', 'equalsAny'].includes(operator) ||
+        !values ||
+        values.length !== 1
+    ) {
+        return undefined;
+    }
+    return STAIN_GROUP_TO_SLIDE_STAIN_FILTER[values[0]];
+}
+
+/** Adds the Pathology Slides stain filter to a patient view link. */
+export function withSlideStainFilter(
+    href: string,
+    stainFilter: string | undefined
+): string {
+    if (!stainFilter) {
+        return href;
+    }
+    const url = new URL(href, window.location.origin);
+    url.searchParams.set(
+        'pathologySlideSettings',
+        JSON.stringify({ stainFilter })
+    );
+    return /^[a-z]+:\/\//i.test(href)
+        ? url.toString()
+        : `${url.pathname}${url.search}${url.hash}`;
+}
+
 export function shouldHideLegacyHeResource(
     resource?: Partial<ResourceData>
 ): boolean {

@@ -8,6 +8,8 @@ import {
     patientViewPathForResource,
     shouldHideLegacyHeResource,
     shouldHideLegacyHeResourceTab,
+    slideStainFilterForColumnFilters,
+    withSlideStainFilter,
 } from './ResourcePolicy';
 
 describe('legacy H&E resource policy', () => {
@@ -82,6 +84,46 @@ describe('legacy H&E resource policy', () => {
         assert.equal(
             patientViewPathForResource(undefined),
             'patient/filesAndLinks'
+        );
+    });
+
+    it('carries a single stain group filter to the slide links', () => {
+        const stainGroup = (operator: string, values: string[]) => [
+            { columnId: 'metadata:stain_group', operator, values },
+        ];
+        assert.equal(
+            slideStainFilterForColumnFilters(stainGroup('in', ['IHC'])),
+            'ihc'
+        );
+        assert.equal(
+            slideStainFilterForColumnFilters(stainGroup('in', ['H&E'])),
+            'hne'
+        );
+        assert.isUndefined(
+            slideStainFilterForColumnFilters(stainGroup('in', ['H&E', 'IHC']))
+        );
+        assert.isUndefined(
+            slideStainFilterForColumnFilters(stainGroup('notIn', ['IHC']))
+        );
+        assert.isUndefined(
+            slideStainFilterForColumnFilters([
+                {
+                    columnId: 'metadata:magnification',
+                    operator: 'in',
+                    values: ['40x'],
+                },
+            ])
+        );
+        assert.equal(
+            withSlideStainFilter(
+                '/patient/wsiHESlides?studyId=s&caseId=P-1',
+                'ihc'
+            ),
+            '/patient/wsiHESlides?studyId=s&caseId=P-1&pathologySlideSettings=%7B%22stainFilter%22%3A%22ihc%22%7D'
+        );
+        assert.equal(
+            withSlideStainFilter('/patient/wsiHESlides?caseId=P-1', undefined),
+            '/patient/wsiHESlides?caseId=P-1'
         );
     });
 

@@ -15,7 +15,12 @@ import ServerDrivenTable, {
     ServerDrivenTableNumericRange,
 } from 'shared/components/serverDrivenTable/ServerDrivenTable';
 import TabbedTableLayout from 'shared/components/tabbedTable/TabbedTableLayout';
-import { patientViewPathForResource } from 'shared/lib/ResourcePolicy';
+import {
+    isWsiResourceId,
+    patientViewPathForResource,
+    slideStainFilterForColumnFilters,
+    withSlideStainFilter,
+} from 'shared/lib/ResourcePolicy';
 import {
     getPatientViewUrlWithPathname,
     getSampleViewUrlWithPathname,
@@ -459,13 +464,23 @@ export class ResourceDataTable extends React.Component<
         );
     }
 
+    /** Stain group filter carried to slide rows' Pathology Slides links. */
+    private slideLinkStainFilter(resourceId: string | undefined) {
+        return isWsiResourceId(resourceId)
+            ? slideStainFilterForColumnFilters(this.props.store.filters)
+            : undefined;
+    }
+
     private renderPatientId = (row: IResourceTableRow) => {
         const href =
             row.resource?.studyId && row.resource?.patientId
-                ? getPatientViewUrlWithPathname(
-                      row.resource.studyId,
-                      row.patientId,
-                      patientViewPathForResource(row.resource.resourceId)
+                ? withSlideStainFilter(
+                      getPatientViewUrlWithPathname(
+                          row.resource.studyId,
+                          row.patientId,
+                          patientViewPathForResource(row.resource.resourceId)
+                      ),
+                      this.slideLinkStainFilter(row.resource.resourceId)
                   )
                 : undefined;
         return this.renderLinkOrText(row.patientId, href);
@@ -474,10 +489,13 @@ export class ResourceDataTable extends React.Component<
     private renderSampleId = (row: IResourceTableRow) => {
         const href =
             row.resource?.studyId && row.resource?.sampleId
-                ? getSampleViewUrlWithPathname(
-                      row.resource.studyId,
-                      row.resource.sampleId,
-                      patientViewPathForResource(row.resource.resourceId)
+                ? withSlideStainFilter(
+                      getSampleViewUrlWithPathname(
+                          row.resource.studyId,
+                          row.resource.sampleId,
+                          patientViewPathForResource(row.resource.resourceId)
+                      ),
+                      this.slideLinkStainFilter(row.resource.resourceId)
                   )
                 : undefined;
         return this.renderLinkOrText(row.sampleId, href);
