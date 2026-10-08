@@ -74,6 +74,7 @@ jest.mock('openseadragon', () => {
         element: document.createElement('div'),
         destroy: jest.fn(),
         update: jest.fn(),
+        addTiledImage: jest.fn(),
     }));
     return OSD;
 });
@@ -333,6 +334,26 @@ function observeSidebarRows(inst: any): () => void {
 
 async function loadHierarchyFor(inst: any) {
     await controllerOf(inst).loadHierarchy();
+}
+
+/**
+ * Loads the hierarchy through the initial slide mount. Selection resolves
+ * when the first tile is ready, which the shared viewer mock never reports,
+ * so the pending mount is cancelled once it has created its viewer.
+ */
+async function loadHierarchyThroughInitialMount(inst: any) {
+    const controller = controllerOf(inst);
+    const viewersBefore = OSD.mock.calls.length;
+    const loading = controller.loadHierarchy();
+    for (
+        let attempt = 0;
+        attempt < 200 && OSD.mock.calls.length === viewersBefore;
+        attempt += 1
+    ) {
+        await new Promise(resolve => setTimeout(resolve, 0));
+    }
+    controller.cancelActiveMount();
+    await loading;
 }
 
 function renderViewer(url = 'https://tiles.example.com/patient/P-1') {
@@ -1534,6 +1555,8 @@ describe('WSIViewer — pathology filter updates', () => {
         };
         (controller as any).osdViewer = { destroy: jest.fn() };
         (controller as any).osdSlideMounted = true;
+        // The active slide's first tile is ready.
+        (controller as any).nativeTileReadySeq = (controller as any).mountSeq;
 
         const beginSpy = jest.spyOn(inst as any, 'beginSlideSelection');
         const mountSpy = jest
@@ -2110,7 +2133,7 @@ describe('WSIViewer — loadHierarchy', () => {
         };
 
         OSD.mockClear();
-        await loadHierarchyFor(inst);
+        await loadHierarchyThroughInitialMount(inst);
 
         // The loader memoizes the import, so the prime on hierarchy load and
         // the initial mount share one OpenSeadragon module.
@@ -2660,6 +2683,8 @@ describe('WSIViewer — open handler (mountOSD integration)', () => {
         mockViewer = {
             destroy: jest.fn(),
             viewport: mockViewport,
+            // The navigator mirrors the open main image.
+            world: { getItemAt: jest.fn(() => ({ source: {} })) },
             addOnceHandler: jest.fn(),
             addHandler: jest.fn(),
             removeHandler: jest.fn(),
@@ -3503,7 +3528,7 @@ describe('WSIViewer — open handler (mountOSD integration)', () => {
 
         try {
             const inst = makeInstance(hierarchyUrl);
-            await loadHierarchyFor(inst);
+            await loadHierarchyThroughInitialMount(inst);
 
             const trace = controllerOf(inst).initialSlideLoadTrace;
             expect(trace?.hierarchyCacheHit).toBe(false);
