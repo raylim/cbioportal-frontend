@@ -263,3 +263,37 @@ export function buildPathRows(
 
     return freezeMetaRows(rows);
 }
+
+export function buildSeqRows(sample: Sample, sampleUrl?: string): MetaRow[] {
+    const rows: MetaRow[] = [];
+    if (sample.tumor_purity) {
+        rows.push({
+            label: 'Tumor purity',
+            labelTip: 'Estimated fraction of tumor cells in this sample',
+            value: `${sample.tumor_purity}%`,
+        });
+    }
+    if (sample.tmb_score) {
+        rows.push({
+            label: 'TMB',
+            labelTip:
+                'Tumor mutational burden — click to view mutations in cBioPortal',
+            value: `${sample.tmb_score} mut/Mb`,
+            href: sampleUrl,
+        });
+    }
+    if (sample.msi_type) {
+        rows.push({
+            label: 'MSI',
+            labelTip: 'Microsatellite instability status',
+            value: sample.msi_type,
+        });
+    }
+    if (
+        sample.metastatic_site &&
+        sample.metastatic_site.toLowerCase() !== 'not applicable'
+    ) {
+        rows.push({ label: 'Metastatic site', value: sample.metastatic_site });
+    }
+    return freezeMetaRows(rows);
+}

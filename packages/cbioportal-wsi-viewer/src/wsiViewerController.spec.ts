@@ -143,6 +143,8 @@ function makeHarness() {
         setSpinnerVisible: jest.fn(),
         setTilesReady: jest.fn(),
         setThumbnailPreview: jest.fn(),
+        setMutationDataStatus: jest.fn(),
+        runSampleEnrichment: jest.fn(() => Promise.resolve()),
         getSelectedSlide: () => selected,
         getSelectedSample: () => ({ sample_id: 'S-1' } as Sample),
         getSelectedMeta: () => meta,
