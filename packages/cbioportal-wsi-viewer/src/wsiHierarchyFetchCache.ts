@@ -87,7 +87,25 @@ function normalizeSlideType(
     return 'Other';
 }
 
+const V2_SLIDE_TIMING_FIELDS: ReadonlyArray<keyof WsiV2Slide> = [
+    'procedureDateDays',
+    'timepointSource',
+    'procedureDateKind',
+    'procedureDateSource',
+    'procedureDateReason',
+    'procedureDateStatus',
+    'procedureCoordinateSystem',
+];
+
+/**
+ * Timing is optional: a slide imported without timing columns has none of the
+ * fields and simply has no timepoint. A slide with any of them must carry a
+ * complete, consistent set.
+ */
 function validateV2SlideTiming(slide: WsiV2Slide): void {
+    if (V2_SLIDE_TIMING_FIELDS.every(field => slide[field] == null)) {
+        return;
+    }
     const status = slide.procedureDateStatus;
     const kind = slide.procedureDateKind;
     if (

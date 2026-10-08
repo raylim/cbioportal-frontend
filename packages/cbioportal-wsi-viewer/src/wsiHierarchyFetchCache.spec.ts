@@ -229,6 +229,102 @@ describe('wsiHierarchyFetchCache read-only contract', () => {
         );
     });
 
+    function v2PayloadWithSlide(timing: Record<string, unknown>) {
+        return {
+            referenceSampleId: 'S-1',
+            sampleGroups: [
+                {
+                    sampleId: 'S-1',
+                    parts: [
+                        {
+                            partNumber: '1',
+                            partType: 'SPECIMEN',
+                            partDescription: 'Specimen 1',
+                            subspecialty: '',
+                            blocks: [
+                                {
+                                    blockNumber: '1',
+                                    blockLabel: 'Block 1',
+                                    slides: [
+                                        {
+                                            slideKey: 'slide-untimed',
+                                            stainName: 'H&E',
+                                            stainGroup: 'H&E',
+                                            isHne: true,
+                                            isIhc: false,
+                                            magnification: '20x',
+                                            fileSizeBytes: null,
+                                            canServeTiles: true,
+                                            slideType: 'H&E',
+                                            sampleId: 'S-1',
+                                            matchLevel: 'PART',
+                                            specimenKey: 'part::1',
+                                            ...timing,
+                                        },
+                                    ],
+                                },
+                            ],
+                        },
+                    ],
+                },
+            ],
+        };
+    }
+
+    it('accepts a slide imported without timing and gives it no timepoint', async () => {
+        (global as any).fetch = jest.fn().mockResolvedValue({
+            ok: true,
+            json: () =>
+                Promise.resolve(
+                    v2PayloadWithSlide({
+                        procedureDateDays: null,
+                        timepointSource: null,
+                        procedureDateKind: null,
+                        procedureDateSource: null,
+                        procedureDateReason: null,
+                        procedureDateStatus: null,
+                        procedureCoordinateSystem: null,
+                    })
+                ),
+        });
+
+        const hierarchy = await fetchPatientHierarchyReadOnly(
+            '/api/wsi/v2/hierarchy/study/P-untimed',
+            undefined,
+            undefined,
+            'study',
+            'P-untimed'
+        );
+
+        const slide = hierarchy.samples[0].parts[0].blocks[0].slides[0];
+        expect(slide.slide_key).toBe('slide-untimed');
+        expect(slide.slide_timepoint_days).toBeUndefined();
+        expect(slide.slide_timepoint_status).toBeUndefined();
+    });
+
+    it('rejects a slide with a partial timing set', async () => {
+        (global as any).fetch = jest.fn().mockResolvedValue({
+            ok: true,
+            json: () =>
+                Promise.resolve(
+                    v2PayloadWithSlide({
+                        procedureDateDays: -12,
+                        procedureDateStatus: 'AVAILABLE',
+                    })
+                ),
+        });
+
+        await expect(
+            fetchPatientHierarchyReadOnly(
+                '/api/wsi/v2/hierarchy/study/P-partial',
+                undefined,
+                undefined,
+                'study',
+                'P-partial'
+            )
+        ).rejects.toThrow(/incomplete v3 timing contract/);
+    });
+
     it('derives an IHC slide type from the authoritative flag when slideType is null', async () => {
         (global as any).fetch = jest.fn().mockResolvedValue({
             ok: true,

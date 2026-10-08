@@ -112,34 +112,6 @@ describe('PatientViewUrlWrapper pathologySlideSettings', () => {
         );
         expect(urlWrapper.pathologySlideScope.stainFilter).toBe('ihc');
     });
-});
-
-describe('pathologySlideSettingsBackwardsCompatibility', () => {
-    it('folds legacy params into the node', () => {
-        const mapped = pathologySlideSettingsBackwardsCompatibility({
-            studyId: 's',
-            stainFilter: 'hne',
-            matchLevel: '',
-            timepointDays: '5',
-        });
-        expect(mapped.studyId).toBe('s');
-        expect(JSON.parse(mapped.pathologySlideSettings!)).toEqual({
-            stainFilter: 'hne',
-            timepointDays: '5',
-        });
-    });
-
-    it('leaves a query with the node, or without legacy params, alone', () => {
-        const nested = {
-            pathologySlideSettings: '{}',
-            stainFilter: 'hne',
-        };
-        expect(pathologySlideSettingsBackwardsCompatibility(nested)).toBe(
-            nested
-        );
-        const plain = { studyId: 's' };
-        expect(pathologySlideSettingsBackwardsCompatibility(plain)).toBe(plain);
-    });
 
     it('reads the stain filter from a study view slide table link', () => {
         // The link the study view slide table builds (withSlideStainFilter):
@@ -173,5 +145,33 @@ describe('pathologySlideSettingsBackwardsCompatibility', () => {
         expect(urlWrapper.pathologySlideScope).toEqual({
             stainFilter: 'hne',
         });
+    });
+});
+
+describe('pathologySlideSettingsBackwardsCompatibility', () => {
+    it('folds legacy params into the node', () => {
+        const mapped = pathologySlideSettingsBackwardsCompatibility({
+            studyId: 's',
+            stainFilter: 'hne',
+            matchLevel: '',
+            timepointDays: '5',
+        });
+        expect(mapped.studyId).toBe('s');
+        expect(JSON.parse(mapped.pathologySlideSettings!)).toEqual({
+            stainFilter: 'hne',
+            timepointDays: '5',
+        });
+    });
+
+    it('leaves a query with the node, or without legacy params, alone', () => {
+        const nested = {
+            pathologySlideSettings: '{}',
+            stainFilter: 'hne',
+        };
+        expect(pathologySlideSettingsBackwardsCompatibility(nested)).toBe(
+            nested
+        );
+        const plain = { studyId: 's' };
+        expect(pathologySlideSettingsBackwardsCompatibility(plain)).toBe(plain);
     });
 });
