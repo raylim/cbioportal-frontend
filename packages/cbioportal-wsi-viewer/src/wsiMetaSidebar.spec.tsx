@@ -138,6 +138,9 @@ describe('WsiMetaSidebar clinical show more', () => {
                 wsiRows={[]}
                 showPathology={false}
                 pathRows={[]}
+                seqRows={[]}
+                sample={null}
+                mutationDataStatus="idle"
                 clinicalRows={clinicalRows}
             />
         );
