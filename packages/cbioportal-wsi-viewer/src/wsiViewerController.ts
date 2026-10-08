@@ -988,6 +988,7 @@ export class WsiViewerController {
         }
 
         const slide = this.host.getSelectedSlide()!;
+        const meta = this.host.getSelectedMeta()!;
         const expectedMountSeq = this.mountSeq;
         const runNavigatorSetup = async () => {
             this.navigatorIdleHandle = null;
@@ -1020,6 +1021,8 @@ export class WsiViewerController {
                 ensureNavigator({
                     osdViewer: this.osdViewer,
                     openSeadragon: this.openSeadragon,
+                    meta,
+                    baseUrl: this.host.getTileServerBase(),
                     accessToken: access.accessToken,
                 });
             } catch (_) {
