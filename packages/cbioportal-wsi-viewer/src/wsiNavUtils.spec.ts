@@ -1,6 +1,7 @@
 import {
     compareSamplesByTimepoint,
     DAY_ZERO_TOOLTIP,
+    procedureSequencingOffset,
     procedureSlideTimepointText,
     procedureTooltip,
     timepointText,
@@ -326,10 +327,41 @@ describe('day tooltips', () => {
         expect(DAY_ZERO_TOOLTIP).toContain('first tumor sequencing (d0)');
     });
 
-    it('describes the procedure day', () => {
-        expect(procedureTooltip(-242)).toBe(
+    it('relates the procedure to the sample sequencing in words', () => {
+        expect(procedureTooltip(-242, 7)).toBe(
+            `Procedure on d-242, 249 days before this sample was sequenced (d+7). ${DAY_ZERO_TOOLTIP}`
+        );
+        expect(procedureTooltip(20, 7)).toContain(
+            '13 days after this sample was sequenced (d+7)'
+        );
+        expect(procedureTooltip(7, 7)).toContain(
+            'the same day this sample was sequenced'
+        );
+        expect(procedureTooltip(-242, undefined)).toBe(
             `Procedure on d-242. ${DAY_ZERO_TOOLTIP}`
         );
-        expect(procedureTooltip(undefined)).toBeUndefined();
+        expect(procedureTooltip(undefined, 7)).toBeUndefined();
+    });
+});
+
+describe('procedureSequencingOffset', () => {
+    it('measures the procedure against sequencing', () => {
+        expect(procedureSequencingOffset(-42, 0)).toEqual({
+            days: 42,
+            relation: 'before',
+        });
+        expect(procedureSequencingOffset(10, 3)).toEqual({
+            days: 7,
+            relation: 'after',
+        });
+        expect(procedureSequencingOffset(5, 5)).toEqual({
+            days: 0,
+            relation: 'same',
+        });
+    });
+
+    it('is undefined when either day is unknown', () => {
+        expect(procedureSequencingOffset(undefined, 5)).toBeUndefined();
+        expect(procedureSequencingOffset(5, null)).toBeUndefined();
     });
 });

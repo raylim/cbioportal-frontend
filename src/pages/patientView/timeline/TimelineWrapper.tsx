@@ -24,6 +24,7 @@ import {
     sortTracks,
 } from 'pages/patientView/timeline/timeline_helpers';
 import { downloadZippedTracks } from './timelineDataUtils';
+import { PathologySlidesTimeline } from './pathologySlidesTimelineLoader';
 
 export interface ISampleMetaDeta {
     color: { [sampleId: string]: string };
@@ -40,6 +41,8 @@ export interface ITimelineProps {
     samples: Sample[];
     mutationProfileId: string;
     headerWidth?: number;
+    /** Renderer of the PATHOLOGY SLIDES events included in `data`. */
+    pathologySlidesTrackConfig?: PathologySlidesTimeline['trackConfig'];
 }
 
 const TimelineWrapper: React.FunctionComponent<ITimelineProps> = observer(
@@ -49,6 +52,7 @@ const TimelineWrapper: React.FunctionComponent<ITimelineProps> = observer(
         sampleManager,
         width,
         headerWidth,
+        pathologySlidesTrackConfig,
     }: ITimelineProps) {
         const [events, setEvents] = useState<
             TimelineTrackSpecification[] | null
@@ -72,7 +76,10 @@ const TimelineWrapper: React.FunctionComponent<ITimelineProps> = observer(
 
             const baseConfig: ITimelineConfig = buildBaseConfig(
                 sampleManager,
-                caseMetaData
+                caseMetaData,
+                pathologySlidesTrackConfig
+                    ? [pathologySlidesTrackConfig(caseMetaData, data)]
+                    : []
             );
 
             if (isGenieBpcStudy) {

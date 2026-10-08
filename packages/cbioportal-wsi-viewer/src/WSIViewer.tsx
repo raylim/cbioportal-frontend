@@ -30,6 +30,7 @@ import { buildPathRows, buildWsiRows } from './wsiMetaUtils';
 import { getWsiViewerRuntime } from './wsiViewerConfig';
 import { BLOCK_LABEL_TIP, compareSamplesByTimepoint } from './wsiNavUtils';
 import { WsiNavPanel } from './wsiNavPanel';
+import { WsiSampleTimelineMap } from './wsiSampleTimeline';
 import {
     WsiInitialSlideLoadPerformance,
     WsiViewerController,
@@ -94,6 +95,8 @@ interface Props {
      * back to the default slide without any backend lookup.
      */
     requestedSlideKey?: string;
+    /** Sample acquisition/sequencing days from the patient timeline. */
+    sampleTimelines?: WsiSampleTimelineMap;
     /**
      * Clinical rows for the sidebar, in display order. Rows with a `sampleId`
      * show only for that sample's slides; unset hides the section.
@@ -1012,7 +1015,8 @@ export default class WSIViewer extends React.Component<Props, {}> {
                 ? getServableSlideAssociationsBySlideKeyReadOnly(
                       this.hierarchy.slide_associations
                   ).get(this.selectedSlide.slide_key)
-                : undefined
+                : undefined,
+            this.props.sampleTimelines?.get(this.selectedSample.sample_id)
         );
     }
 
@@ -1129,6 +1133,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
                         tileServerBase={this.tileServerBase}
                         studyId={this.props.studyId}
                         authScope={this.controllerProps.authScope}
+                        sampleTimelines={this.props.sampleTimelines}
                         theme={C}
                         navWidth={NAV_W}
                         sectionTitleStyle={sectionTitleStyle}
