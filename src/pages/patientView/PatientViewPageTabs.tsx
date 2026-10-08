@@ -40,44 +40,22 @@ import MutationTableWrapper from './mutation/MutationTableWrapper';
 import { PatientViewPageInner } from 'pages/patientView/PatientViewPage';
 import { Else, If } from 'react-if';
 import { PatientViewPlotsTabWrapper } from './PatientViewPlotsTabWrapper';
-import { AppWsiViewer } from 'shared/components/wsiViewer/wsiAppConfig';
+import PatientWsiSlidesTab from 'pages/patientView/PatientWsiSlidesTab';
+import {
+    PatientViewPageTabs,
+    PatientViewResourceTableTabPrefix,
+} from './PatientViewPageTabIds';
 import { WsiPatientClinicalData } from 'shared/components/wsiViewer/wsiClinicalRows';
 import { PatientViewPageStore } from './clinicalInformation/PatientViewPageStore';
 
-export enum PatientViewPageTabs {
-    Summary = 'summary',
-    genomicEvolution = 'genomicEvolution',
-    ClinicalData = 'clinicalData',
-    FilesAndLinks = 'filesAndLinks',
-    PathologyReport = 'pathologyReport',
-    TissueImage = 'tissueImage',
-    WSIHESlides = 'wsiHESlides',
-    TrialMatchTab = 'trialMatchTab',
-    MutationalSignatures = 'mutationalSignatures',
-    PathwayMapper = 'pathways',
-    MRNA = 'mrna',
-    Plots = 'plots',
-}
-
-export const PatientViewResourceTabPrefix = 'openResource_';
-export const PatientViewResourceTableTabPrefix = 'resourceTable_';
-
-export function getPatientViewResourceTabId(resourceId: string) {
-    return `${PatientViewResourceTabPrefix}${resourceId}`;
-}
-
-export function getPatientViewResourceTableTabId(resourceId: string) {
-    return `${PatientViewResourceTableTabPrefix}${resourceId}`;
-}
-
-export function extractResourceIdFromTabId(tabId: string) {
-    const match = new RegExp(`${PatientViewResourceTabPrefix}(.*)`).exec(tabId);
-    if (match) {
-        return match[1];
-    } else {
-        return undefined;
-    }
-}
+export {
+    PatientViewPageTabs,
+    PatientViewResourceTabPrefix,
+    PatientViewResourceTableTabPrefix,
+    getPatientViewResourceTabId,
+    getPatientViewResourceTableTabId,
+    extractResourceIdFromTabId,
+} from './PatientViewPageTabIds';
 
 /**
  * The page's clinical data for the slide viewer sidebar: `null` while it
@@ -658,7 +636,11 @@ export function tabs(
                 linkText="Pathology Slides"
                 unmountOnHide={false}
             >
-                <AppWsiViewer
+                <PatientWsiSlidesTab
+                    query={{
+                        sampleId: urlWrapper.query.sampleId,
+                        ...urlWrapper.pathologySlideScope,
+                    }}
                     patientId={pageComponent.patientViewPageStore.patientId}
                     studyId={pageComponent.patientViewPageStore.studyId}
                     tileServerUrl={tileServerUrl}
