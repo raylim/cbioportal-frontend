@@ -3,7 +3,14 @@ import _ from 'lodash';
 import { inject, Observer, observer } from 'mobx-react';
 import { MSKTab, MSKTabs } from '../../shared/components/MSKTabs/MSKTabs';
 import 'react-toastify/dist/ReactToastify.css';
-import { action, computed, makeObservable, observable } from 'mobx';
+import {
+    action,
+    autorun,
+    computed,
+    IReactionDisposer,
+    makeObservable,
+    observable,
+} from 'mobx';
 import {
     StudyViewPageStore,
     StudyViewPageTabDescriptions,
@@ -12,6 +19,7 @@ import {
 import {
     extractResourceIdFromTabId,
     getStudyViewResourceTabId,
+    getStudyViewResourceTableTabId,
     StudyViewPageTabKeyEnum,
 } from 'pages/studyView/StudyViewPageTabs';
 import LoadingIndicator from 'shared/components/loadingIndicator/LoadingIndicator';
@@ -84,6 +92,20 @@ import {
 import { shouldHideLegacyHeResourceTab } from 'shared/lib/ResourcePolicy';
 import { VirtualStudyModal } from 'pages/studyView/virtualStudy/VirtualStudyModal';
 import { PlotsTabWrapper } from 'pages/studyView/StudyViewPlotsTabWrapper';
+import { hashUrlState } from 'cbioportal-wsi-viewer';
+import WindowStore from 'shared/components/window/WindowStore';
+import { StudyPathologySlidesStore } from './tabs/pathologySlides/StudyPathologySlidesStore';
+import { StudyPathologySlidesTab } from './tabs/pathologySlides/StudyPathologySlidesTab';
+import { studySlidesClinicalAccess } from './tabs/pathologySlides/studySlidesClinicalAccess';
+import { ResourceTableStore } from 'shared/components/resourceTable/ResourceTableStore';
+import {
+    isStudyViewResourceTab,
+    isWsiTileServerConfigured,
+    slideKeyFromSlideUrl,
+    STUDY_SLIDE_TABLE_RESOURCE_ID,
+} from 'shared/lib/ResourcePolicy';
+import { IResourceTableRow } from 'shared/lib/ResourceTableUtils';
+import ResourceDataTable from 'shared/components/resourceTable/ResourceDataTable';
 
 export interface IStudyViewPageProps {
     routing: any;
@@ -123,6 +145,7 @@ export default class StudyViewPage extends React.Component<
     {}
 > {
     private urlWrapper: StudyViewURLWrapper;
+    private pathologySlidesStore: StudyPathologySlidesStore;
     private store: StudyViewPageStore;
     private enableCustomSelectionInTabs = [
         StudyViewPageTabKeyEnum.SUMMARY,
@@ -131,6 +154,7 @@ export default class StudyViewPage extends React.Component<
         StudyViewPageTabKeyEnum.FILES_AND_LINKS,
         StudyViewPageTabKeyEnum.PLOTS,
         StudyViewPageTabKeyEnum.EMBEDDINGS,
+        StudyViewPageTabKeyEnum.PATHOLOGY_SLIDES,
     ];
     private enableAddChartInTabs = [
         StudyViewPageTabKeyEnum.SUMMARY,
@@ -140,6 +164,16 @@ export default class StudyViewPage extends React.Component<
     private toolbar: any;
     private toolbarLeftUpdater: any;
     @observable private toolbarLeft: number = 0;
+
+    private readonly resourceTableStore = new ResourceTableStore(
+        isStudyViewResourceTab
+    );
+    private readonly resourceTableStores = new Map<
+        string,
+        ResourceTableStore
+    >();
+    private resourceTableStoreDisposer: IReactionDisposer | null = null;
+    private legacyTabRedirectDisposer: IReactionDisposer | null = null;
 
     @observable showCustomSelectTooltip = false;
     @observable showAlterationFilterTooltip = false;
@@ -161,6 +195,39 @@ export default class StudyViewPage extends React.Component<
 
         // Expose store to window for use in custom tabs.
         setWindowVariable('studyViewPageStore', this.store);
+
+        const { wsiStudyId, wsiPatientId, wsiView } = this.urlWrapper.query;
+        // The slide table's own tab gives way to the Pathology Slides tab's table view.
+        const slideTableTabRequested =
+            this.urlWrapper.tabId ===
+                getStudyViewResourceTableTabId(STUDY_SLIDE_TABLE_RESOURCE_ID) &&
+            isWsiTileServerConfigured();
+        this.pathologySlidesStore = new StudyPathologySlidesStore({
+            getFilters: () => this.store.filters,
+            clinical: studySlidesClinicalAccess(this.store),
+            getStudyIds: () =>
+                getServerConfig().msk_wsi_tile_server_url
+                    ? this.store.queriedPhysicalStudyIds.result
+                    : [],
+            initialSelection:
+                wsiStudyId && wsiPatientId
+                    ? { studyId: wsiStudyId, patientId: wsiPatientId }
+                    : undefined,
+            onSelectionChange: patient => {
+                // The viewer's #wsi: hash names the previous patient's slide.
+                hashUrlState.clear();
+                this.urlWrapper.setWsiPatient(patient);
+            },
+            initialView:
+                wsiView === 'table' || slideTableTabRequested
+                    ? 'table'
+                    : 'viewer',
+            onViewChange: view => this.urlWrapper.setWsiView(view),
+        });
+        if (slideTableTabRequested) {
+            this.urlWrapper.setTab(StudyViewPageTabKeyEnum.PATHOLOGY_SLIDES);
+            this.urlWrapper.setWsiView('table');
+        }
 
         const openResourceId =
             this.urlWrapper.tabId &&
@@ -300,6 +367,58 @@ export default class StudyViewPage extends React.Component<
                 this.toolbarLeft = $(this.toolbar).position().left;
             }
         }, 500);
+
+        this.resourceTableStoreDisposer = autorun(() => {
+            const samples = this.store.selectedSamples.result;
+            if (!samples) return;
+            const allSamples = this.store.samples.result;
+            this.resourceTableStore.setContextFromSelection(
+                samples,
+                allSamples
+            );
+            this.resourceTableStores.forEach(store =>
+                store.setContextFromSelection(samples, allSamples)
+            );
+        });
+
+        // Redirect from legacy filesAndLinks tab to first new resource table tab
+        // when the new API-backed resource tabs are available.
+        this.legacyTabRedirectDisposer = autorun(() => {
+            if (
+                this.hasNewResourceTabs &&
+                this.urlWrapper.tabId ===
+                    StudyViewPageTabKeyEnum.FILES_AND_LINKS
+            ) {
+                const firstTab = this.resourceTableStore.tabs.result?.[0];
+                if (firstTab) {
+                    this.urlWrapper.setTab(
+                        getStudyViewResourceTableTabId(firstTab.resourceId)
+                    );
+                }
+            }
+        });
+    }
+
+    private getOrCreateResourceStore(resourceId: string): ResourceTableStore {
+        let store = this.resourceTableStores.get(resourceId);
+        if (!store) {
+            store = new ResourceTableStore(
+                resourceId === STUDY_SLIDE_TABLE_RESOURCE_ID
+                    ? id => id === STUDY_SLIDE_TABLE_RESOURCE_ID
+                    : isStudyViewResourceTab
+            );
+            store.setSelectedResourceId(resourceId);
+            this.resourceTableStores.set(resourceId, store);
+
+            const samples = this.store.selectedSamples.result;
+            if (samples) {
+                store.setContextFromSelection(
+                    samples,
+                    this.store.samples.result
+                );
+            }
+        }
+        return store;
     }
 
     private getFilterJsonFromPostData(): string | undefined {
@@ -438,14 +557,39 @@ export default class StudyViewPage extends React.Component<
     }
 
     @computed get shouldShowResources() {
-        if (
-            this.store.resourceDefinitions.isComplete &&
-            this.store.resourceIdToResourceData.isComplete
-        ) {
-            return this.visibleResourceDefinitions.length > 0;
+        if (this.store.resourceDefinitions.isComplete) {
+            return this.store.resourceDefinitions.result.length > 0;
         } else {
             return false;
         }
+    }
+
+    /** Opens a slide table row in the Pathology Slides viewer. */
+    private openSlideTableRow = (row: IResourceTableRow) => {
+        // A #wsi: hash slide would win over the requested one.
+        hashUrlState.clear();
+        this.pathologySlidesStore.openSlide(
+            {
+                studyId: row.studyId,
+                patientId: row.patientStableId || row.patientId,
+            },
+            slideKeyFromSlideUrl(row.url)
+        );
+    };
+
+    // The slide table lists only slides the viewer can open.
+    private canOpenSlideTableRow = (row: IResourceTableRow) =>
+        !!slideKeyFromSlideUrl(row.url);
+
+    @computed get shouldShowPathologySlides() {
+        if (!getServerConfig().msk_wsi_tile_server_url) {
+            return false;
+        }
+        return (
+            (this.store.currentTab as string) ===
+                StudyViewPageTabKeyEnum.PATHOLOGY_SLIDES ||
+            this.pathologySlidesStore.studyHasSlides.result
+        );
     }
 
     @computed get hasEmbeddingSupport() {
@@ -608,47 +752,32 @@ export default class StudyViewPage extends React.Component<
     }
 
     readonly resourceTabs = MakeMobxView({
-        await: () => [
-            this.store.resourceDefinitions,
-            this.store.resourceIdToResourceData,
-        ],
+        await: () => [this.resourceTableStore.tabs],
         render: () => {
-            const openDefinitions = this.store.resourceDefinitions.result!.filter(
-                d =>
-                    this.store.isResourceTabOpen(d.resourceId) &&
-                    !shouldHideLegacyHeResourceTab(d.resourceId)
-            );
-            const sorted = _.sortBy(openDefinitions, d => d.priority);
-            const resourceDataById = this.store.resourceIdToResourceData
-                .result!;
-
-            const tabs: JSX.Element[] = sorted.reduce((list, def) => {
-                const data = resourceDataById[def.resourceId];
-                if (data && data.length > 0) {
-                    const config = getResourceConfig(def);
-                    const customDisplayName =
-                        config.customizedDisplayName || def.displayName;
-
-                    list.push(
-                        <MSKTab
-                            key={getStudyViewResourceTabId(def.resourceId)}
-                            id={getStudyViewResourceTabId(def.resourceId)}
-                            linkText={def.displayName}
-                            onClickClose={this.closeResourceTab}
-                        >
-                            <ResourceTab
-                                resourceData={resourceDataById[def.resourceId]}
-                                urlWrapper={this.urlWrapper}
-                                resourceDisplayName={customDisplayName}
-                            />
-                        </MSKTab>
-                    );
-                }
-                return list;
-            }, [] as JSX.Element[]);
-            return tabs;
+            const apiTabs = this.resourceTableStore.tabs.result || [];
+            if (apiTabs.length === 0) {
+                return [] as JSX.Element[];
+            }
+            return apiTabs.map(tab => (
+                <MSKTab
+                    key={getStudyViewResourceTableTabId(tab.resourceId)}
+                    id={getStudyViewResourceTableTabId(tab.resourceId)}
+                    linkText={tab.label}
+                >
+                    <ResourceDataTable
+                        store={this.getOrCreateResourceStore(tab.resourceId)}
+                        scopedResourceId={tab.resourceId}
+                        hideTabs={true}
+                    />
+                </MSKTab>
+            ));
         },
     });
+
+    @computed get hasNewResourceTabs(): boolean {
+        const tabs = this.resourceTableStore.tabs.result;
+        return !!tabs && tabs.length > 0;
+    }
 
     @computed get customTabs() {
         return buildCustomTabs(this.customTabsConfigs);
@@ -836,7 +965,10 @@ export default class StudyViewPage extends React.Component<
                                                       .displayName
                                                 : RESOURCES_TAB_NAME
                                         }
-                                        hide={!this.shouldShowResources}
+                                        hide={
+                                            !this.shouldShowResources ||
+                                            this.hasNewResourceTabs
+                                        }
                                     >
                                         <div>
                                             <ResourcesTab
@@ -873,6 +1005,66 @@ export default class StudyViewPage extends React.Component<
                                         hide={!this.hasEmbeddingSupport}
                                     >
                                         <EmbeddingsTab store={this.store} />
+                                    </MSKTab>
+                                    <MSKTab
+                                        key={7}
+                                        id={
+                                            StudyViewPageTabKeyEnum.PATHOLOGY_SLIDES
+                                        }
+                                        linkText={
+                                            StudyViewPageTabDescriptions.PATHOLOGY_SLIDES
+                                        }
+                                        hide={!this.shouldShowPathologySlides}
+                                    >
+                                        {this.store.filters ? (
+                                            <StudyPathologySlidesTab
+                                                store={
+                                                    this.pathologySlidesStore
+                                                }
+                                                tileServerUrl={
+                                                    getServerConfig()
+                                                        .msk_wsi_tile_server_url!
+                                                }
+                                                isActive={
+                                                    (this.store
+                                                        .currentTab as string) ===
+                                                    StudyViewPageTabKeyEnum.PATHOLOGY_SLIDES
+                                                }
+                                                height={Math.max(
+                                                    480,
+                                                    WindowStore.size.height -
+                                                        300
+                                                )}
+                                                userName={
+                                                    this.props.appStore.userName
+                                                }
+                                                slideTable={
+                                                    <ResourceDataTable
+                                                        store={this.getOrCreateResourceStore(
+                                                            STUDY_SLIDE_TABLE_RESOURCE_ID
+                                                        )}
+                                                        scopedResourceId={
+                                                            STUDY_SLIDE_TABLE_RESOURCE_ID
+                                                        }
+                                                        hideTabs={true}
+                                                        resourceLabel="slides"
+                                                        onViewRow={
+                                                            this
+                                                                .openSlideTableRow
+                                                        }
+                                                        canViewRow={
+                                                            this
+                                                                .canOpenSlideTableRow
+                                                        }
+                                                    />
+                                                }
+                                            />
+                                        ) : (
+                                            <LoadingIndicator
+                                                isLoading={true}
+                                                center={true}
+                                            />
+                                        )}
                                     </MSKTab>
 
                                     {this.resourceTabs.component}
@@ -1258,7 +1450,14 @@ export default class StudyViewPage extends React.Component<
 
     componentWillUnmount(): void {
         this.store.destroy();
+        this.pathologySlidesStore.dispose();
         clearInterval(this.toolbarLeftUpdater);
+        if (this.resourceTableStoreDisposer) {
+            this.resourceTableStoreDisposer();
+        }
+        if (this.legacyTabRedirectDisposer) {
+            this.legacyTabRedirectDisposer();
+        }
     }
 
     render() {
