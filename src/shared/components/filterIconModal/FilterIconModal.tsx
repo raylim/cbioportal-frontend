@@ -1,6 +1,9 @@
 import * as React from 'react';
 import _ from 'lodash';
 import classNames from 'classnames';
+// react-overlays' root export types RootCloseWrapper as a value with no call signature, so
+// using it as JSX fails to compile. The module's own export is typed. Nothing type-checked
+// this file until it gained a spec, which is why the root import stood for so long.
 import RootCloseWrapper from 'react-overlays/lib/RootCloseWrapper';
 import { Dropdown } from 'react-bootstrap';
 import { observer } from 'mobx-react';

@@ -232,7 +232,7 @@ export class ResourceDataTable extends React.Component<
     }
 
     @computed get shouldShowSampleIdColumn() {
-        return this.rows.some(row => !!row.resource?.sampleId);
+        return this.rows.some(row => !!row.sampleStableId);
     }
 
     @computed get tabs() {
@@ -348,8 +348,8 @@ export class ResourceDataTable extends React.Component<
 
     /**
      * What to call the rows. The resource's own display name reads far better than a generic
-     * "resources" — "3,074 Slide Microscopies" rather than "3,074 resources" — so use it when the
-     * tab has loaded and fall back to the caller's label otherwise.
+     * "resources" — "Slide Microscopies" rather than "resources" — so use it when the tab has
+     * loaded and fall back to the caller's label otherwise.
      */
     @computed get itemsLabel(): string {
         const resourceName = this.props.store.activeResourceLabel;
@@ -473,14 +473,14 @@ export class ResourceDataTable extends React.Component<
 
     private renderPatientId = (row: IResourceTableRow) => {
         const href =
-            row.resource?.studyId && row.resource?.patientId
+            row.studyId && row.patientStableId
                 ? withSlideStainFilter(
                       getPatientViewUrlWithPathname(
-                          row.resource.studyId,
-                          row.patientId,
-                          patientViewPathForResource(row.resource.resourceId)
+                          row.studyId,
+                          row.patientStableId,
+                          patientViewPathForResource(row.resourceId)
                       ),
-                      this.slideLinkStainFilter(row.resource.resourceId)
+                      this.slideLinkStainFilter(row.resourceId)
                   )
                 : undefined;
         return this.renderLinkOrText(row.patientId, href);
@@ -488,14 +488,14 @@ export class ResourceDataTable extends React.Component<
 
     private renderSampleId = (row: IResourceTableRow) => {
         const href =
-            row.resource?.studyId && row.resource?.sampleId
+            row.studyId && row.sampleStableId
                 ? withSlideStainFilter(
                       getSampleViewUrlWithPathname(
-                          row.resource.studyId,
-                          row.resource.sampleId,
-                          patientViewPathForResource(row.resource.resourceId)
+                          row.studyId,
+                          row.sampleStableId,
+                          patientViewPathForResource(row.resourceId)
                       ),
-                      this.slideLinkStainFilter(row.resource.resourceId)
+                      this.slideLinkStainFilter(row.resourceId)
                   )
                 : undefined;
         return this.renderLinkOrText(row.sampleId, href);
