@@ -115,24 +115,6 @@ export class ResourceTableStore {
      * The patient view builds its context explicitly instead, because a patient with no samples
      * still has patient-level resources to show.
      */
-    /**
-     * The study-view cohort: the selected samples, or just their studies when the selection is
-     * every sample of them. The backend treats a request without ids as the whole study, and for a
-     * large study (172K samples in MSK-IMPACT) the full id list costs far more to send and match than
-     * it narrows anything.
-     */
-    @action
-    setContextFromSelection(
-        selected: Pick<Sample, 'studyId' | 'patientId' | 'sampleId'>[],
-        all: Pick<Sample, 'studyId'>[] | undefined
-    ) {
-        if (all !== undefined && selected.length === all.length) {
-            this.setContext(_.uniq(selected.map(s => s.studyId)));
-        } else {
-            this.setContextFromSamples(selected);
-        }
-    }
-
     @action
     setContextFromSamples(
         samples: Pick<Sample, 'studyId' | 'patientId' | 'sampleId'>[]
