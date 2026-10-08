@@ -37,15 +37,6 @@ const molecularHierarchy = {
                                     sampleId: SAMPLE_ID,
                                     matchLevel: 'BLOCK',
                                     specimenKey: 'block::1::A1',
-                                    procedureDateDays: -10,
-                                    timepointSource: 'Procedure date',
-                                    procedureDateKind: 'RECORDED',
-                                    procedureDateSource:
-                                        'Recorded procedure date',
-                                    procedureDateReason: null,
-                                    procedureDateStatus: 'AVAILABLE',
-                                    procedureCoordinateSystem:
-                                        'patient_first_tumor_sequencing_day_zero',
                                 },
                             ],
                         },

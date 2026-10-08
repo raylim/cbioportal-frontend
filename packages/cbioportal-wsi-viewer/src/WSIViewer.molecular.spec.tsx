@@ -201,25 +201,6 @@ function makeWireHierarchy(slides: Slide[], patientId = 'P-123'): any {
                                     matchLevel: slide.match_level || 'BLOCK',
                                     specimenKey:
                                         slide.specimen_key || 'specimen-1',
-                                    procedureDateDays:
-                                        slide.slide_timepoint_days ?? null,
-                                    timepointSource:
-                                        slide.slide_timepoint_source ||
-                                        'Procedure date unavailable',
-                                    procedureDateKind:
-                                        slide.slide_timepoint_kind || 'UNDATED',
-                                    procedureDateSource:
-                                        slide.slide_timepoint_date_source ||
-                                        'missing_procedure_date',
-                                    procedureDateReason:
-                                        slide.slide_timepoint_reason ||
-                                        'unavailable',
-                                    procedureDateStatus:
-                                        slide.slide_timepoint_status ||
-                                        'MISSING_PROCEDURE_DATE',
-                                    procedureCoordinateSystem:
-                                        slide.slide_timepoint_coordinate_system ||
-                                        'patient_first_tumor_sequencing_day_zero',
                                 })),
                             },
                         ],
@@ -390,7 +371,7 @@ describe('WSIViewer — cached sidebar data', () => {
         act(() => {
             (inst as any).applyHierarchyMutation((samples: any[]) => {
                 samples[0].tmb_score = '12.3';
-                samples[0].sequencing_date = '2021-03-04';
+                samples[0].sample_type = 'Metastasis';
             });
         });
 
@@ -404,8 +385,8 @@ describe('WSIViewer — cached sidebar data', () => {
         );
         expect(nextPathRows).toContainEqual(
             expect.objectContaining({
-                label: 'Timeline',
-                value: 'sequenced 2021-03-04',
+                label: 'Sample',
+                valueTip: expect.stringContaining('Type: Metastasis'),
             })
         );
         expect((inst as any).hierarchyDataVersion).toBe(1);
