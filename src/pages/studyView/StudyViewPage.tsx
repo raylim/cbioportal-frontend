@@ -371,15 +371,13 @@ export default class StudyViewPage extends React.Component<
         this.resourceTableStoreDisposer = autorun(() => {
             const samples = this.store.selectedSamples.result;
             if (!samples) return;
+            const allSamples = this.store.samples.result;
             this.resourceTableStore.setContextFromSelection(
                 samples,
-                this.store.samples.result
+                allSamples
             );
             this.resourceTableStores.forEach(store =>
-                store.setContextFromSelection(
-                    samples,
-                    this.store.samples.result
-                )
+                store.setContextFromSelection(samples, allSamples)
             );
         });
 
