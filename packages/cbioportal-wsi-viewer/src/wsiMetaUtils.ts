@@ -5,15 +5,7 @@ import {
     SlideAssociation,
     TileMetadata,
 } from './wsiViewerTypes';
-import {
-    cleanStain,
-    DAY_ZERO_TOOLTIP,
-    fmtMB,
-    formatDaysSinceDiagnosis,
-    getSlideTimepointDays,
-    normalizeBlockLabel,
-    procedureSlideTimepointText,
-} from './wsiNavUtils';
+import { cleanStain, fmtMB, normalizeBlockLabel } from './wsiNavUtils';
 import { blockName, formatSpecimenLabel } from './wsiSpecimenUtils';
 import { wsiStainKind } from './wsiSlideUtils';
 
@@ -62,6 +54,20 @@ export function getStainBadge(
         : kind === 'other'
         ? 'Other'
         : 'Unknown';
+}
+
+function stainKey(name: string): string {
+    return name.toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+/**
+ * The stain group, followed by the stain name when it adds to the group
+ * (`IHC — Ki-67`); a name that only repeats the group (`H&E`) is left out.
+ */
+export function stainValue(stainBadge: string, stainName: string): string {
+    return !stainName || stainKey(stainName) === stainKey(stainBadge)
+        ? stainBadge
+        : `${stainBadge} — ${stainName}`;
 }
 
 export function getStainDotColor(
@@ -177,6 +183,7 @@ export function buildPathRows(
 ): MetaRow[] {
     const isUnmatchedSample = sample.sample_id === 'UNMATCHED';
     const stainBadge = getStainBadge(slide);
+    const stainName = cleanStain(slide.stain_name);
     const sampleUrl =
         studyId && sample.sample_id && !isUnmatchedSample
             ? buildSampleUrl(studyId, sample.sample_id, patientId)
@@ -204,14 +211,8 @@ export function buildPathRows(
         {
             label: 'Stain',
             labelTip: 'Staining protocol used for this slide',
-            value: stainBadge
-                ? `${stainBadge} — ${cleanStain(slide.stain_name)}`
-                : cleanStain(slide.stain_name),
-            valueTip: stainBadge
-                ? `Stain group: ${stainBadge}. Stain: ${cleanStain(
-                      slide.stain_name
-                  )}`
-                : undefined,
+            value: stainValue(stainBadge, stainName),
+            valueTip: `Stain group: ${stainBadge}. Stain: ${stainName || '—'}`,
         },
         {
             label: 'Sample',
@@ -225,10 +226,6 @@ export function buildPathRows(
             valueTip: sampleTip,
         },
     ];
-    const timeline = buildTimelineRow(slide, sample);
-    if (timeline) {
-        rows.push(timeline);
-    }
     if (association && hasSpecimenDetails) {
         rows.push({
             label: 'Specimen',
@@ -265,34 +262,4 @@ export function buildPathRows(
     }
 
     return freezeMetaRows(rows);
-}
-
-/**
- * One row for the slide's timing: the procedure day (or other recorded
- * timepoint), then the sample's sequencing date when known. Days count from
- * the patient's first tumor sequencing.
- */
-function buildTimelineRow(slide: Slide, sample: Sample): MetaRow | undefined {
-    const timepoint = procedureSlideTimepointText(slide);
-    const procedureDays = timepoint ? getSlideTimepointDays(slide) : undefined;
-    const parts: string[] = [];
-    if (procedureDays != null) {
-        parts.push(`Procedure ${formatDaysSinceDiagnosis(procedureDays)}`);
-    } else if (timepoint) {
-        parts.push(timepoint);
-    }
-    if (sample.sequencing_date) {
-        parts.push(`sequenced ${sample.sequencing_date}`);
-    }
-    if (parts.length === 0) {
-        return undefined;
-    }
-    return {
-        label: 'Timeline',
-        labelTip: 'Procedure day and sample sequencing date for this slide',
-        value: parts.join(' · '),
-        valueTip: slide.slide_timepoint_source
-            ? `${slide.slide_timepoint_source}. ${DAY_ZERO_TOOLTIP}`
-            : DAY_ZERO_TOOLTIP,
-    };
 }
