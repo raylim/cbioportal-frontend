@@ -569,7 +569,10 @@ export default class StudyViewPage extends React.Component<
         // A #wsi: hash slide would win over the requested one.
         hashUrlState.clear();
         this.pathologySlidesStore.openSlide(
-            { studyId: row.resource.studyId, patientId: row.patientId },
+            {
+                studyId: row.studyId,
+                patientId: row.patientStableId || row.patientId,
+            },
             slideKeyFromSlideUrl(row.url)
         );
     };
