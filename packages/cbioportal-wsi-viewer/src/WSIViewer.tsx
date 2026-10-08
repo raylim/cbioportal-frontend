@@ -753,7 +753,6 @@ export default class WSIViewer extends React.Component<Props, {}> {
             filters: {
                 stain: this.stainFilter,
                 match: this.matchFilter,
-                timepoint_days: this.timepointDays,
             },
             slide_metadata: buildWsiAgentSlideMetadata(this.selectedMeta),
             patient_context: {},
@@ -819,15 +818,6 @@ export default class WSIViewer extends React.Component<Props, {}> {
         const associations = getServableSlideAssociationsBySlideKeyReadOnly(
             this.hierarchy.slide_associations
         );
-        if (
-            !matchesWsiTimepointFilter(
-                entry.slide,
-                associations.get(entry.slide.slide_key),
-                this.timepointDays
-            )
-        ) {
-            return false;
-        }
         return (
             this.matchFilter === 'all' ||
             associations.get(entry.slide.slide_key)?.match_level ===
@@ -882,11 +872,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
         }
 
         if (actionType === 'set_filters') {
-            const allowedKeys = new Set([
-                'stain_filter',
-                'match_filter',
-                'timepoint_days',
-            ]);
+            const allowedKeys = new Set(['stain_filter', 'match_filter']);
             if (Object.keys(parameters).some(key => !allowedKeys.has(key))) {
                 return {
                     success: false,
@@ -895,7 +881,6 @@ export default class WSIViewer extends React.Component<Props, {}> {
             }
             const nextStain = parameters.stain_filter;
             const nextMatch = parameters.match_filter;
-            const nextTimepoint = parameters.timepoint_days;
             if (
                 nextStain !== undefined &&
                 !['all', 'hne', 'ihc', 'other', 'unknown'].includes(
@@ -918,18 +903,6 @@ export default class WSIViewer extends React.Component<Props, {}> {
                     detail: 'The match filter is invalid.',
                 };
             }
-            if (
-                nextTimepoint !== undefined &&
-                nextTimepoint !== null &&
-                nextTimepoint !== 'undated' &&
-                (typeof nextTimepoint !== 'number' ||
-                    !Number.isFinite(nextTimepoint))
-            ) {
-                return {
-                    success: false,
-                    detail: 'The timepoint filter is invalid.',
-                };
-            }
             this.releaseLinkoutScope();
             action(() => {
                 if (nextStain !== undefined) {
@@ -938,21 +911,12 @@ export default class WSIViewer extends React.Component<Props, {}> {
                 if (nextMatch !== undefined) {
                     this.matchFilter = nextMatch as PathologySlideMatchFilter;
                 }
-                if (nextTimepoint !== undefined) {
-                    this.timepointDays =
-                        nextTimepoint === null
-                            ? undefined
-                            : (nextTimepoint as WsiTimepointSelection);
-                }
             })();
             if (nextStain !== undefined) {
                 this.props.onStainFilterChange?.(this.stainFilter);
             }
             if (nextMatch !== undefined) {
                 this.props.onMatchFilterChange?.(this.matchFilter);
-            }
-            if (nextTimepoint !== undefined) {
-                this.props.onTimepointChange?.(this.timepointDays);
             }
             const selection = await this.reselectSlideForCurrentFilters();
             return selection?.status === 'ready'
