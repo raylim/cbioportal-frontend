@@ -150,23 +150,27 @@ export function promoteOsdImageLoaderLimit(osdViewer: any): void {
 export function ensureNavigator({
     osdViewer,
     openSeadragon,
+    meta,
+    baseUrl,
     accessToken,
 }: {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     osdViewer: any;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     openSeadragon: any;
+    meta: TileMetadata;
+    baseUrl: string;
     accessToken?: string;
 }) {
     if (!osdViewer || osdViewer.navigator) {
         return osdViewer?.navigator ?? null;
     }
 
-    const originalTiledImage = osdViewer.world?.getItemAt?.(0);
-    if (!originalTiledImage) {
-        return null;
-    }
-
+    // OpenSeadragon's navigator mirrors the viewer's images: each one it shows must be added with
+    // its original (`originalTiledImage`), whose bounds it then follows. The viewer adds images to
+    // a navigator that exists when they open; this one is created later, so the image already on
+    // screen is added here. Passing it as `tileSources` instead opens it without an original, and
+    // the navigator fails ("Unable to open ... getBoundsNoRotate").
     const navigator = new openSeadragon.Navigator({
         viewer: osdViewer,
         position: 'BOTTOM_RIGHT',
@@ -181,10 +185,14 @@ export function ensureNavigator({
         loadTilesWithAjax: Boolean(accessToken),
     });
     osdViewer.navigator = navigator;
-    navigator.addTiledImage({
-        tileSource: originalTiledImage.source,
-        originalTiledImage,
-    });
+    const world = osdViewer.world;
+    const itemCount = world?.getItemCount?.() ?? 0;
+    for (let i = 0; i < itemCount; i++) {
+        navigator.addTiledImage({
+            tileSource: buildOsdTileSource(meta, baseUrl),
+            originalTiledImage: world.getItemAt(i),
+        });
+    }
     offsetNavigatorElement(osdViewer);
     return navigator;
 }

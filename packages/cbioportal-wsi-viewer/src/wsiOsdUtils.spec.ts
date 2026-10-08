@@ -1,7 +1,3 @@
-/**
- * @jest-environment jsdom
- */
-
 import {
     buildOsdOptions,
     ensureNavigator,
@@ -13,43 +9,6 @@ import {
     promoteOsdImageLoaderLimit,
     restoreOrHomeViewport,
 } from './wsiOsdUtils';
-
-describe('ensureNavigator', () => {
-    it('mirrors the already-open main image instead of opening a second source', () => {
-        const originalTiledImage = { source: { getTileUrl: jest.fn() } };
-        const addTiledImage = jest.fn();
-        const navigator = { addTiledImage };
-        let navigatorOptions: Record<string, unknown> | undefined;
-        const Navigator = jest.fn((options: Record<string, unknown>) => {
-            navigatorOptions = options;
-            return navigator;
-        });
-        const osdViewer = {
-            world: { getItemAt: jest.fn(() => originalTiledImage) },
-        };
-
-        expect(
-            ensureNavigator({
-                osdViewer,
-                openSeadragon: { Navigator },
-                accessToken: 'slide-token',
-            })
-        ).toBe(navigator);
-
-        expect(Navigator).toHaveBeenCalledWith(
-            expect.objectContaining({
-                viewer: osdViewer,
-                ajaxHeaders: { Authorization: 'Bearer slide-token' },
-                loadTilesWithAjax: true,
-            })
-        );
-        expect(navigatorOptions).not.toHaveProperty('tileSources');
-        expect(addTiledImage).toHaveBeenCalledWith({
-            tileSource: originalTiledImage.source,
-            originalTiledImage,
-        });
-    });
-});
 
 describe('buildOsdOptions', () => {
     it('defers navigator creation until the main tile is drawn', () => {
@@ -196,5 +155,76 @@ describe('buildOsdOptions', () => {
 
         expect(viewport.goHome).toHaveBeenCalledWith(true);
         expect(viewport.panTo).not.toHaveBeenCalled();
+    });
+});
+
+describe('ensureNavigator', () => {
+    const meta = {
+        dimensions: { width: 1000, height: 800 },
+        levels: 2,
+        level_dimensions: [
+            { width: 1000, height: 800 },
+            { width: 500, height: 400 },
+        ],
+        max_zoom: 6,
+        tile_size: 256,
+    } as any;
+
+    function fakeOsd() {
+        const created: any[] = [];
+        class Navigator {
+            options: any;
+            added: any[] = [];
+            element = { style: {} as any };
+            constructor(options: any) {
+                this.options = options;
+                created.push(this);
+            }
+            addTiledImage(options: any) {
+                this.added.push(options);
+            }
+        }
+        return { openSeadragon: { Navigator }, created };
+    }
+
+    it('mirrors the image already open in the viewer, with its original', () => {
+        const { openSeadragon, created } = fakeOsd();
+        const shown = { id: 'main-image' };
+        const osdViewer: any = {
+            world: { getItemCount: () => 1, getItemAt: () => shown },
+        };
+
+        const navigator = ensureNavigator({
+            osdViewer,
+            openSeadragon,
+            meta,
+            baseUrl: 'https://tiles.example/wsi/tiles/k',
+            accessToken: 'token',
+        });
+
+        expect(created).toHaveLength(1);
+        expect(osdViewer.navigator).toBe(navigator);
+        // Opening its own tileSources would add an image with no original.
+        expect(created[0].options.tileSources).toBeUndefined();
+        expect(created[0].options.loadTilesWithAjax).toBe(true);
+        expect(created[0].added).toHaveLength(1);
+        expect(created[0].added[0].originalTiledImage).toBe(shown);
+        expect(created[0].added[0].tileSource).toBeDefined();
+    });
+
+    it('creates the navigator only once', () => {
+        const { openSeadragon, created } = fakeOsd();
+        const osdViewer: any = {
+            world: { getItemCount: () => 0, getItemAt: () => undefined },
+        };
+        const args = {
+            osdViewer,
+            openSeadragon,
+            meta,
+            baseUrl: 'https://tiles.example/wsi/tiles/k',
+        };
+        const first = ensureNavigator(args);
+        expect(ensureNavigator(args)).toBe(first);
+        expect(created).toHaveLength(1);
     });
 });
