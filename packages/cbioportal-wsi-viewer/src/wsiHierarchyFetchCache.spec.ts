@@ -178,6 +178,19 @@ describe('wsiHierarchyFetchCache read-only contract', () => {
                                                     matchLevel: 'UNMATCHED',
                                                     specimenKey:
                                                         'unmatched::1::A',
+                                                    procedureDateDays: null,
+                                                    timepointSource:
+                                                        'Procedure date unavailable',
+                                                    procedureDateKind:
+                                                        'UNDATED',
+                                                    procedureDateSource:
+                                                        'missing_procedure_date',
+                                                    procedureDateReason:
+                                                        'unavailable',
+                                                    procedureDateStatus:
+                                                        'MISSING_PROCEDURE_DATE',
+                                                    procedureCoordinateSystem:
+                                                        'patient_first_tumor_sequencing_day_zero',
                                                 },
                                             ],
                                         },
@@ -249,6 +262,19 @@ describe('wsiHierarchyFetchCache read-only contract', () => {
                                                     sampleId: 'S-1',
                                                     matchLevel: 'BLOCK',
                                                     specimenKey: 'block::1',
+                                                    procedureDateDays: null,
+                                                    timepointSource:
+                                                        'Procedure date unavailable',
+                                                    procedureDateKind:
+                                                        'UNDATED',
+                                                    procedureDateSource:
+                                                        'missing_procedure_date',
+                                                    procedureDateReason:
+                                                        'unavailable',
+                                                    procedureDateStatus:
+                                                        'MISSING_PROCEDURE_DATE',
+                                                    procedureCoordinateSystem:
+                                                        'patient_first_tumor_sequencing_day_zero',
                                                 },
                                             ],
                                         },
@@ -299,6 +325,17 @@ describe('wsiHierarchyFetchCache read-only contract', () => {
                                             sampleId: null,
                                             matchLevel: 'UNMATCHED',
                                             specimenKey: 'unmatched::other',
+                                            procedureDateDays: null,
+                                            timepointSource:
+                                                'Procedure date unavailable',
+                                            procedureDateKind: 'UNDATED',
+                                            procedureDateSource:
+                                                'missing_procedure_date',
+                                            procedureDateReason: 'unavailable',
+                                            procedureDateStatus:
+                                                'MISSING_PROCEDURE_DATE',
+                                            procedureCoordinateSystem:
+                                                'patient_first_tumor_sequencing_day_zero',
                                         },
                                     ],
                                 },
@@ -466,6 +503,14 @@ describe('wsiHierarchyFetchCache resource access registration', () => {
             sampleId: 'S-1',
             matchLevel: 'BLOCK',
             specimenKey: 'block::1::A',
+            procedureDateDays: 3,
+            timepointSource: 'Procedure date',
+            procedureDateKind: 'RECORDED',
+            procedureDateSource: 'Recorded procedure date',
+            procedureDateReason: null,
+            procedureDateStatus: 'AVAILABLE',
+            procedureCoordinateSystem:
+                'patient_first_tumor_sequencing_day_zero',
         };
     }
 
