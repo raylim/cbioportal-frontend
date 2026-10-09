@@ -264,6 +264,9 @@ function WsiMetaSidebarComponent({
     wsiRows,
     showPathology,
     pathRows,
+    annotationLayersPanel,
+    annotationPanel,
+    annotationPanelTitle,
     clinicalRows,
     onHide,
 }: {
@@ -272,6 +275,9 @@ function WsiMetaSidebarComponent({
     wsiRows: MetaRow[];
     showPathology: boolean;
     pathRows: MetaRow[];
+    annotationLayersPanel?: React.ReactNode;
+    annotationPanel?: React.ReactNode;
+    annotationPanelTitle?: string;
     /** Patient clinical rows; unset (e.g. still loading) hides the section. */
     clinicalRows?: ReadonlyArray<MetaRow>;
     /** Shows a header button that hides the sidebar. */
@@ -325,6 +331,19 @@ function WsiMetaSidebarComponent({
                     ) : (
                         <EmptyState />
                     )}
+                </SbSection>
+            )}
+            {annotationLayersPanel && (
+                <SbSection id="annotationLayers" title="Layers">
+                    {annotationLayersPanel}
+                </SbSection>
+            )}
+            {annotationPanel && (
+                <SbSection
+                    id="annotations"
+                    title={annotationPanelTitle || 'Annotations'}
+                >
+                    {annotationPanel}
                 </SbSection>
             )}
         </div>

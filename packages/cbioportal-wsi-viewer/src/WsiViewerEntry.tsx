@@ -1,5 +1,6 @@
 import * as React from 'react';
 import WSIViewer from './WSIViewer';
+import { getWsiViewerRuntime } from './wsiViewerConfig';
 import {
     PathologySlideFilter,
     PathologySlideMatchFilter,
@@ -53,5 +54,10 @@ export interface WsiViewerProps {
  * contract used by the viewer itself.
  */
 export default function WsiViewer(props: WsiViewerProps) {
-    return <WSIViewer {...props} />;
+    return (
+        <WSIViewer
+            {...props}
+            annotationApiUrl={getWsiViewerRuntime().annotations?.apiUrl}
+        />
+    );
 }

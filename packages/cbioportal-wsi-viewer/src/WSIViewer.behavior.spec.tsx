@@ -76,6 +76,7 @@ jest.mock('openseadragon', () => {
         element: document.createElement('div'),
         destroy: jest.fn(),
         update: jest.fn(),
+        addTiledImage: jest.fn(),
     }));
     return OSD;
 });
@@ -2551,6 +2552,8 @@ describe('WSIViewer — open handler (mountOSD integration)', () => {
         mockViewer = {
             destroy: jest.fn(),
             viewport: mockViewport,
+            // The navigator mirrors the open main image.
+            world: { getItemAt: jest.fn(() => ({ source: {} })) },
             addOnceHandler: jest.fn(),
             addHandler: jest.fn(),
             removeHandler: jest.fn(),

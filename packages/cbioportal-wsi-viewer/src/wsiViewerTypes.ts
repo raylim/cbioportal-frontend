@@ -147,6 +147,31 @@ export interface WsiSlideAccess {
     expiresAt: number;
 }
 
+export interface WsiAnnotation {
+    '@context': 'http://www.w3.org/ns/anno.jsonld';
+    type: 'Annotation';
+    id: string;
+    body: Array<{
+        type: 'TextualBody';
+        value: string;
+        purpose: 'commenting' | 'tagging' | string;
+    }>;
+    target: {
+        source: string;
+        selector: {
+            type: 'FragmentSelector' | 'SvgSelector';
+            conformsTo?: string;
+            value: string;
+        };
+    };
+    created?: string;
+    creator?: string;
+    version?: number;
+    color?: string;
+    colorName?: string;
+    layerName?: string;
+}
+
 /** A label/value row for the sidebar's Clinical section, built by the host. */
 export interface WsiClinicalRow {
     label: string;
