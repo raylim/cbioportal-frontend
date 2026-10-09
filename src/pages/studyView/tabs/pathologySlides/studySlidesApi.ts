@@ -1,6 +1,7 @@
 import { StudyViewFilter } from 'cbioportal-ts-api-client';
 import { WsiStainFilter } from 'cbioportal-wsi-viewer';
 import { buildCBioPortalAPIUrl } from 'shared/api/urls';
+import { STAIN_GROUP_TO_SLIDE_STAIN_FILTER } from 'shared/lib/ResourcePolicy';
 
 export type StudySlideStainGroup = 'H&E' | 'IHC' | 'Other' | 'Unknown';
 
@@ -104,17 +105,7 @@ export function viewerMatchFilter(
 export function viewerStainFilter(
     stainGroups: StudySlideStainGroup[]
 ): WsiStainFilter {
-    if (stainGroups.length !== 1) {
-        return 'all';
-    }
-    switch (stainGroups[0]) {
-        case 'H&E':
-            return 'hne';
-        case 'IHC':
-            return 'ihc';
-        case 'Other':
-            return 'other';
-        default:
-            return 'unknown';
-    }
+    return stainGroups.length === 1
+        ? STAIN_GROUP_TO_SLIDE_STAIN_FILTER[stainGroups[0]]
+        : 'all';
 }

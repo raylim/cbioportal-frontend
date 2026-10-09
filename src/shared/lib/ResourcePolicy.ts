@@ -1,4 +1,5 @@
 import { ResourceData } from 'cbioportal-ts-api-client';
+import { WsiStainFilter } from 'cbioportal-wsi-viewer';
 import { getServerConfig } from 'config/config';
 import { PatientViewPageTabs } from 'pages/patientView/PatientViewPageTabIds';
 
@@ -88,9 +89,10 @@ export function patientViewPathForResource(
     }`;
 }
 
-// The slide table's stain groups and the Pathology Slides stain filter they
-// correspond to.
-const STAIN_GROUP_TO_SLIDE_STAIN_FILTER: { [stainGroup: string]: string } = {
+/** The slide stain groups and the Pathology Slides stain filter each corresponds to. */
+export const STAIN_GROUP_TO_SLIDE_STAIN_FILTER: {
+    [stainGroup: string]: Exclude<WsiStainFilter, 'all'>;
+} = {
     'H&E': 'hne',
     IHC: 'ihc',
     Other: 'other',
