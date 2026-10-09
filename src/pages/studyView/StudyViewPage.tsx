@@ -98,6 +98,7 @@ import {
     studySlidesViewFromUrl,
 } from './tabs/pathologySlides/StudyPathologySlidesStore';
 import { StudyPathologySlidesTab } from './tabs/pathologySlides/StudyPathologySlidesTab';
+import { studySlidesClinicalAccess } from './tabs/pathologySlides/studySlidesClinicalAccess';
 import { ResourceTableStore } from 'shared/components/resourceTable/ResourceTableStore';
 import {
     isStudyViewResourceTab,
@@ -205,6 +206,7 @@ export default class StudyViewPage extends React.Component<
         );
         this.pathologySlidesStore = new StudyPathologySlidesStore({
             getFilters: () => this.store.filters,
+            clinical: studySlidesClinicalAccess(this.store),
             getStudyIds: () => this.store.queriedPhysicalStudyIds.result,
             initialSelection:
                 wsiStudyId && wsiPatientId
