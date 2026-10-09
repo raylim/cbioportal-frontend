@@ -41,10 +41,9 @@ export interface IResourceDataTableProps {
     scopedResourceId?: string;
     /**
      * Opens a row in the page instead of a new window, e.g. a slide in an embedded viewer. The
-     * Link column then shows a "View" button for rows it accepts.
+     * Link column then shows a "View" button.
      */
     onViewRow?: (row: IResourceTableRow) => void;
-    canViewRow?: (row: IResourceTableRow) => boolean;
 }
 
 // Matches the study view's Clinical Data tab, so a wide or long resource table
@@ -334,8 +333,7 @@ export class ResourceDataTable extends React.Component<
                 'link',
                 'Link',
                 row =>
-                    this.props.onViewRow &&
-                    (!this.props.canViewRow || this.props.canViewRow(row)) ? (
+                    this.props.onViewRow ? (
                         <button
                             className="btn btn-default btn-xs"
                             data-testid="resource-row-view"

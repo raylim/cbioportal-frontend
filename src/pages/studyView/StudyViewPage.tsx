@@ -203,10 +203,7 @@ export default class StudyViewPage extends React.Component<
             isWsiTileServerConfigured();
         this.pathologySlidesStore = new StudyPathologySlidesStore({
             getFilters: () => this.store.filters,
-            getStudyIds: () =>
-                getServerConfig().msk_wsi_tile_server_url
-                    ? this.store.queriedPhysicalStudyIds.result
-                    : [],
+            getStudyIds: () => this.store.queriedPhysicalStudyIds.result,
             initialSelection:
                 wsiStudyId && wsiPatientId
                     ? { studyId: wsiStudyId, patientId: wsiPatientId }
@@ -575,12 +572,8 @@ export default class StudyViewPage extends React.Component<
         );
     };
 
-    // The slide table lists only slides the viewer can open.
-    private canOpenSlideTableRow = (row: IResourceTableRow) =>
-        !!slideKeyFromSlideUrl(row.url);
-
     @computed get shouldShowPathologySlides() {
-        if (!getServerConfig().msk_wsi_tile_server_url) {
+        if (!isWsiTileServerConfigured()) {
             return false;
         }
         return (
@@ -1049,10 +1042,6 @@ export default class StudyViewPage extends React.Component<
                                                         onViewRow={
                                                             this
                                                                 .openSlideTableRow
-                                                        }
-                                                        canViewRow={
-                                                            this
-                                                                .canOpenSlideTableRow
                                                         }
                                                     />
                                                 }
