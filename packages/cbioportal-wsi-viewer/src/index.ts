@@ -3,6 +3,8 @@
 export * from './wsiViewerTypes';
 export {
     configureWsiViewerRuntime,
+    WsiAgentConfig,
+    WsiAnnotationsConfig,
     WsiMolecularServices,
     WsiOncoKbClient,
     WsiViewerConfig,

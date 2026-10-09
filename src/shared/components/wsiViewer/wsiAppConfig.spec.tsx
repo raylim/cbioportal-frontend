@@ -62,6 +62,27 @@ describe('buildWsiViewerConfig', () => {
         delete mockServerConfig.user_display_name;
         expect(wsiAuthScope()).toBe('anonymousUser');
     });
+
+    it('enables annotations only when an annotation service is configured', () => {
+        expect(buildWsiViewerConfig().annotations).toBeUndefined();
+        mockServerConfig.msk_wsi_annotation_api_url = '  ';
+        expect(buildWsiViewerConfig().annotations).toBeUndefined();
+        mockServerConfig.msk_wsi_annotation_api_url =
+            'https://annotations.example/wsi/';
+        expect(buildWsiViewerConfig().annotations).toEqual({
+            apiUrl: 'https://annotations.example/wsi',
+        });
+    });
+
+    it('enables the research assistant from the frontend property', () => {
+        expect(buildWsiViewerConfig().agent).toBeUndefined();
+        mockServerConfig.msk_wsi_agent_enabled = false;
+        expect(buildWsiViewerConfig().agent).toBeUndefined();
+        mockServerConfig.msk_wsi_agent_enabled = true;
+        expect(buildWsiViewerConfig().agent).toEqual({ enabled: true });
+        mockServerConfig.msk_wsi_agent_enabled = 'true';
+        expect(buildWsiViewerConfig().agent).toEqual({ enabled: true });
+    });
 });
 
 describe('buildWsiMolecularServices', () => {
