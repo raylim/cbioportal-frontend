@@ -1,15 +1,12 @@
 import * as React from 'react';
 import { observer } from 'mobx-react';
 import {
-    readWsiPanelFlag,
     WSI_FONT_FAMILY,
     WSI_SECTION_TITLE_STYLE,
-    WSI_STAIN_COLORS,
     WSI_THEME,
     WsiCollapsedRail,
     WsiPanelHideButton,
     wsiListItemStyle,
-    writeWsiPanelFlag,
 } from 'cbioportal-wsi-viewer';
 import { getPatientViewUrlWithPathname } from 'shared/api/urls';
 import LoadingIndicator from 'shared/components/loadingIndicator/LoadingIndicator';
@@ -23,14 +20,15 @@ import {
     STUDY_SLIDE_STAIN_GROUPS,
     StudySlidePatient,
     StudySlidesRequestError,
-    StudySlideStainGroup,
     viewerMatchFilter,
     viewerStainFilter,
 } from './studySlidesApi';
 import {
+    StainDot,
     StudySlidesFilterChips,
     StudySlidesFilterSection,
     StudySlidesSearch,
+    useStoredFlag,
 } from './StudySlidesFilters';
 
 export interface StudyPathologySlidesTabProps {
@@ -52,7 +50,6 @@ export const PATIENT_LIST_COLLAPSED_KEY = 'wsi.study.patientListCollapsed';
 const C = WSI_THEME;
 const PANEL_WIDTH = 280;
 const TOOLBAR_HEIGHT = 34;
-const STAIN_GROUPS = STUDY_SLIDE_STAIN_GROUPS as StudySlideStainGroup[];
 
 const iconButtonStyle: React.CSSProperties = {
     border: 'none',
@@ -83,21 +80,6 @@ function isTypingTarget(target: EventTarget | null): boolean {
 
 function patientOptionId(patient: { studyId: string; patientId: string }) {
     return `study-slides-patient-${patient.studyId}-${patient.patientId}`;
-}
-
-function StainDot({ group }: { group: StudySlideStainGroup }) {
-    return (
-        <i
-            className="fa fa-circle"
-            aria-hidden="true"
-            style={{
-                fontSize: 7,
-                marginRight: 3,
-                color: WSI_STAIN_COLORS[group],
-                verticalAlign: 'middle',
-            }}
-        />
-    );
 }
 
 function IconButton({
@@ -150,19 +132,6 @@ function Key({ children }: { children: React.ReactNode }) {
     );
 }
 
-/** Remembers a panel's hidden state per browser. */
-function useStoredFlag(key: string): [boolean, (value: boolean) => void] {
-    const [value, setValue] = React.useState(() => readWsiPanelFlag(key));
-    const update = React.useCallback(
-        (next: boolean) => {
-            setValue(next);
-            writeWsiPanelFlag(key, next);
-        },
-        [key]
-    );
-    return [value, update];
-}
-
 const PatientRow: React.FunctionComponent<{
     patient: StudySlidePatient;
     selected: boolean;
@@ -198,7 +167,7 @@ const PatientRow: React.FunctionComponent<{
                     {patient.patientId}
                 </span>
                 <span style={{ fontSize: 10, whiteSpace: 'nowrap' }}>
-                    {STAIN_GROUPS.filter(
+                    {STUDY_SLIDE_STAIN_GROUPS.filter(
                         group => patient.stainGroupCounts[group] > 0
                     ).map(group => (
                         <span
@@ -587,10 +556,6 @@ const ViewerToolbar: React.FunctionComponent<{
     );
 });
 
-/**
- * Study-view Pathology Slides tab: the cohort's patients with slides in a
- * hideable panel, and the selected patient's slides in the viewer.
- */
 /**
  * The study's pathology slides, as patients beside the slide viewer or as the cohort's slide table
  * (one row per slide, with column filters, sorting and download). A table row's View opens that

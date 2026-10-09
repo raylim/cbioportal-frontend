@@ -2,10 +2,15 @@ import { StudyViewFilter } from 'cbioportal-ts-api-client';
 import { WsiStainFilter } from 'cbioportal-wsi-viewer';
 import { buildCBioPortalAPIUrl } from 'shared/api/urls';
 
-/** Stain groups the study-slides endpoint counts and filters by. */
-export const STUDY_SLIDE_STAIN_GROUPS = ['H&E', 'IHC', 'Other', 'Unknown'];
-
 export type StudySlideStainGroup = 'H&E' | 'IHC' | 'Other' | 'Unknown';
+
+/** Stain groups the study-slides endpoint counts and filters by. */
+export const STUDY_SLIDE_STAIN_GROUPS: StudySlideStainGroup[] = [
+    'H&E',
+    'IHC',
+    'Other',
+    'Unknown',
+];
 
 /** How a slide's specimen is matched to a sequenced sample. */
 export type StudySlideMatchLevel = 'PART' | 'BLOCK' | 'UNMATCHED';

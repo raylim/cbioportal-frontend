@@ -16,7 +16,6 @@ import {
 } from './studySlidesApi';
 
 const C = WSI_THEME;
-const STAIN_GROUPS = STUDY_SLIDE_STAIN_GROUPS as StudySlideStainGroup[];
 /** Browser-stored open state of the filters section, which starts closed. */
 export const FILTERS_OPEN_KEY = 'wsi.study.filtersOpen';
 
@@ -26,13 +25,28 @@ const MATCH_BUTTON_LABELS = {
     UNMATCHED: 'Unmatched',
 };
 
+/** Remembers a panel flag, such as its hidden or open state, per browser. */
+export function useStoredFlag(
+    key: string
+): [boolean, (value: boolean) => void] {
+    const [value, setValue] = React.useState(() => readWsiPanelFlag(key));
+    const update = React.useCallback(
+        (next: boolean) => {
+            setValue(next);
+            writeWsiPanelFlag(key, next);
+        },
+        [key]
+    );
+    return [value, update];
+}
+
 const labelStyle: React.CSSProperties = {
     fontSize: 10,
     color: C.muted,
     marginBottom: 2,
 };
 
-function StainDot({ group }: { group: StudySlideStainGroup }) {
+export function StainDot({ group }: { group: StudySlideStainGroup }) {
     return (
         <i
             className="fa fa-circle"
@@ -245,14 +259,9 @@ export const StudySlidesFilterSection: React.FunctionComponent<{
     store: StudyPathologySlidesStore;
     stainGroupTotals: Record<StudySlideStainGroup, number>;
 }> = observer(({ store, stainGroupTotals }) => {
-    const [open, setOpen] = React.useState(() =>
-        readWsiPanelFlag(FILTERS_OPEN_KEY)
-    );
+    const [open, setOpen] = useStoredFlag(FILTERS_OPEN_KEY);
     const collapsed = !open;
-    const toggle = () => {
-        writeWsiPanelFlag(FILTERS_OPEN_KEY, !open);
-        setOpen(!open);
-    };
+    const toggle = () => setOpen(!open);
     const activeCount = store.matchLevels.length + store.stainGroups.length;
     return (
         <div style={{ marginTop: 8 }}>
@@ -325,7 +334,7 @@ export const StudySlidesFilterSection: React.FunctionComponent<{
                             className="btn-group btn-group-xs"
                             style={{ display: 'flex', flexWrap: 'wrap' }}
                         >
-                            {STAIN_GROUPS.map(group => {
+                            {STUDY_SLIDE_STAIN_GROUPS.map(group => {
                                 const active = store.stainGroups.includes(
                                     group
                                 );

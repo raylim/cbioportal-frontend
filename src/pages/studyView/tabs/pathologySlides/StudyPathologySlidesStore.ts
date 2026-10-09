@@ -301,14 +301,6 @@ export class StudyPathologySlidesStore {
         this.restartList();
     }
 
-    @action.bound
-    clearStainGroups() {
-        if (this.stainGroups.length > 0) {
-            this.stainGroups = [];
-            this.restartList();
-        }
-    }
-
     /** Updates the typed ID search, which narrows the list after a pause. */
     @action.bound
     setSearchText(text: string) {
