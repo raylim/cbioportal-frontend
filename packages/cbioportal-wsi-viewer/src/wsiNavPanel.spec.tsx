@@ -988,6 +988,337 @@ describe('WsiNavPanel', () => {
         ]);
     });
 
+    it('does not render a legacy sample-level timepoint', () => {
+        const sample = makeSample('S-1', [
+            makeSlide({
+                slide_key: 'slide-1',
+                slide_timepoint_days: -1744,
+                slide_timepoint_source: 'Sequencing',
+            }),
+        ]);
+        const renderer = TestRenderer.create(
+            <WsiNavPanel
+                hierarchy={makeHierarchy([sample])}
+                selectedSlide={null}
+                stainFilter="all"
+                onFilterChange={() => {}}
+                onSelectSlide={() => {}}
+                {...navContext}
+            />
+        );
+
+        expect(JSON.stringify(renderer.toJSON())).not.toContain('Seq d-1744');
+    });
+
+    it('renders procedure dates normalized to tumor sequencing', () => {
+        const renderer = TestRenderer.create(
+            <WsiNavPanel
+                hierarchy={makeHierarchy([
+                    makeSample('S-1', [
+                        makeSlide({
+                            slide_key: 'slide-1',
+                            slide_timepoint_days: -63,
+                            slide_timepoint_source:
+                                'Procedure date relative to tumor sequencing',
+                        }),
+                    ]),
+                ])}
+                selectedSlide={null}
+                stainFilter="all"
+                onFilterChange={() => {}}
+                onSelectSlide={() => {}}
+                {...navContext}
+            />
+        );
+
+        expect(JSON.stringify(renderer.toJSON())).toContain('Proc d-63');
+    });
+
+    it('shows slide-level timepoints on individual slide rows', () => {
+        const sample = makeSample('S-1', [
+            makeSlide({
+                slide_key: 'slide-1',
+                slide_timepoint_days: -20,
+                slide_timepoint_source: 'Procedure date',
+            }),
+            makeSlide({
+                slide_key: 'slide-2',
+                slide_timepoint_days: -5,
+                slide_timepoint_source: 'Procedure date',
+            }),
+        ]);
+        const renderer = TestRenderer.create(
+            <WsiNavPanel
+                hierarchy={makeHierarchy([sample])}
+                selectedSlide={null}
+                stainFilter="all"
+                onFilterChange={() => {}}
+                onSelectSlide={() => {}}
+                {...navContext}
+            />
+        );
+
+        const text = JSON.stringify(renderer.toJSON());
+        expect(text).toContain('Proc d-20');
+        expect(text).toContain('Proc d-5');
+    });
+
+    describe('sample sequencing context', () => {
+        function renderWithTimelines(
+            samples: Sample[],
+            sampleTimelines?: Map<
+                string,
+                { acquisitionDays?: number; sequencingDays?: number }
+            >
+        ) {
+            return TestRenderer.create(
+                <WsiNavPanel
+                    hierarchy={makeHierarchy(samples)}
+                    selectedSlide={null}
+                    stainFilter="all"
+                    onFilterChange={() => {}}
+                    onSelectSlide={() => {}}
+                    sampleTimelines={sampleTimelines}
+                    {...navContext}
+                />
+            );
+        }
+
+        function procSlide(slideKey: string, days: number): Slide {
+            return makeSlide({
+                slide_key: slideKey,
+                slide_timepoint_days: days,
+                slide_timepoint_source: 'Procedure date',
+            });
+        }
+
+        it('relates slide procedures to the sample sequencing day', () => {
+            const renderer = renderWithTimelines(
+                [
+                    makeSample('S-1', [
+                        procSlide('slide-before', -242),
+                        procSlide('slide-after', 20),
+                        procSlide('slide-same', 7),
+                    ]),
+                ],
+                new Map([['S-1', { sequencingDays: 7 }]])
+            );
+
+            expect(
+                findButtonText(renderer, 'wsi-slide-item-slide-before')
+            ).toContain('Proc 249 d before sequencing');
+            expect(
+                findButtonText(renderer, 'wsi-slide-item-slide-after')
+            ).toContain('Proc 13 d after sequencing');
+            expect(
+                findButtonText(renderer, 'wsi-slide-item-slide-same')
+            ).toContain('Proc same day as sequencing');
+            expect(findButtonText(renderer, 'wsi-sample-sequenced-S-1')).toBe(
+                'sequenced d+7'
+            );
+            expect(
+                renderer.root.findByProps({
+                    'data-testid': 'wsi-sample-sequenced-S-1',
+                }).props.title
+            ).toContain('first tumor sequencing (d0)');
+            expect(
+                renderer.root.findByProps({
+                    'data-testid': 'wsi-slide-timepoint-slide-before',
+                }).props.title
+            ).toContain(
+                'Procedure on d-242, 249 days before this sample was sequenced (d+7)'
+            );
+        });
+
+        it('keeps patient-level procedure text without a sequencing day', () => {
+            const renderer = renderWithTimelines(
+                [makeSample('S-1', [procSlide('slide-1', -242)])],
+                new Map([['S-1', { acquisitionDays: -242 }]])
+            );
+
+            expect(
+                findButtonText(renderer, 'wsi-slide-item-slide-1')
+            ).toContain('Proc d-242');
+            expect(
+                renderer.root.findAllByProps({
+                    'data-testid': 'wsi-sample-sequenced-S-1',
+                })
+            ).toHaveLength(0);
+        });
+
+        it('keeps patient-level procedure text without timeline data', () => {
+            const renderer = renderWithTimelines([
+                makeSample('S-1', [procSlide('slide-1', -242)]),
+            ]);
+
+            expect(
+                findButtonText(renderer, 'wsi-slide-item-slide-1')
+            ).toContain('Proc d-242');
+        });
+
+        it('keeps patient-level procedure text for unmatched slides', () => {
+            const renderer = renderWithTimelines(
+                [makeSample('UNMATCHED', [procSlide('slide-u', -30)])],
+                new Map([['UNMATCHED', { sequencingDays: 7 }]])
+            );
+
+            expect(
+                findButtonText(renderer, 'wsi-slide-item-slide-u')
+            ).toContain('Proc d-30');
+            expect(
+                renderer.root.findAllByProps({
+                    'data-testid': 'wsi-sample-sequenced-UNMATCHED',
+                })
+            ).toHaveLength(0);
+        });
+    });
+
+    it('renders a discrete time slider and filters slides by the selected date', () => {
+        const sample = makeSample('S-1', [
+            makeSlide({
+                slide_key: 'slide-early',
+                slide_timepoint_days: -20,
+                slide_timepoint_source: 'Procedure date',
+            }),
+            makeSlide({
+                slide_key: 'slide-late',
+                slide_timepoint_days: -5,
+                slide_timepoint_source: 'Procedure date',
+            }),
+        ]);
+        const onTimepointChange = jest.fn();
+        const renderer = TestRenderer.create(
+            <WsiNavPanel
+                hierarchy={makeHierarchy([sample])}
+                selectedSlide={null}
+                stainFilter="all"
+                timepointDays={undefined}
+                onFilterChange={() => {}}
+                onTimepointChange={onTimepointChange}
+                onSelectSlide={() => {}}
+                {...navContext}
+            />
+        );
+
+        const slider = renderer.root.findByProps({
+            'data-testid': 'wsi-timepoint-filter-slider',
+        });
+        expect(slider.props.max).toBe(2);
+        expect(findButtonText(renderer, 'wsi-timepoint-filter-all')).toBe(
+            'All'
+        );
+
+        act(() => {
+            slider.props.onChange({ target: { value: '1' } });
+        });
+        expect(onTimepointChange).toHaveBeenCalledWith(-20);
+
+        act(() => {
+            renderer.update(
+                <WsiNavPanel
+                    hierarchy={makeHierarchy([sample])}
+                    selectedSlide={null}
+                    stainFilter="all"
+                    timepointDays={-20}
+                    onFilterChange={() => {}}
+                    onTimepointChange={onTimepointChange}
+                    onSelectSlide={() => {}}
+                    {...navContext}
+                />
+            );
+        });
+        expect(
+            renderer.root.findAllByProps({
+                'data-testid': 'wsi-slide-item-slide-early',
+            })
+        ).toHaveLength(1);
+        expect(
+            renderer.root.findAllByProps({
+                'data-testid': 'wsi-slide-item-slide-late',
+            })
+        ).toHaveLength(0);
+
+        act(() => {
+            renderer.root
+                .findByProps({ 'data-testid': 'wsi-timepoint-filter-all' })
+                .props.onClick();
+        });
+        expect(onTimepointChange).toHaveBeenLastCalledWith(undefined);
+    });
+
+    it('offers an undated option when one dated value and undated slides are available', () => {
+        const renderer = TestRenderer.create(
+            <WsiNavPanel
+                hierarchy={makeHierarchy([
+                    makeSample('S-1', [
+                        makeSlide({
+                            slide_key: 'dated',
+                            slide_timepoint_days: -20,
+                            slide_timepoint_source: 'Procedure date',
+                        }),
+                        makeSlide({ slide_key: 'undated' }),
+                    ]),
+                ])}
+                selectedSlide={null}
+                stainFilter="all"
+                onFilterChange={() => {}}
+                onSelectSlide={() => {}}
+                {...navContext}
+            />
+        );
+
+        expect(
+            renderer.root.findAllByProps({
+                'data-testid': 'wsi-timepoint-filter',
+            })
+        ).toHaveLength(1);
+        expect(
+            renderer.root.findByProps({
+                'data-testid': 'wsi-timepoint-filter-value',
+            }).props.title
+        ).toContain('All slide dates');
+    });
+
+    it('shows an unavailable selected timepoint with an all-dates action', () => {
+        const onTimepointChange = jest.fn();
+        const renderer = TestRenderer.create(
+            <WsiNavPanel
+                hierarchy={makeHierarchy([
+                    makeSample('S-1', [
+                        makeSlide({
+                            slide_key: 'dated',
+                            slide_timepoint_days: -5,
+                            slide_timepoint_source: 'Procedure date',
+                        }),
+                    ]),
+                ])}
+                selectedSlide={null}
+                stainFilter="all"
+                timepointDays={-20}
+                onFilterChange={() => {}}
+                onTimepointChange={onTimepointChange}
+                onSelectSlide={() => {}}
+                {...navContext}
+            />
+        );
+
+        expect(JSON.stringify(renderer.toJSON())).toContain(
+            'd-20 (unavailable)'
+        );
+        expect(
+            renderer.root.findAllByProps({
+                'data-testid': 'wsi-timepoint-filter-slider',
+            })
+        ).toHaveLength(0);
+
+        act(() => {
+            renderer.root
+                .findByProps({ 'data-testid': 'wsi-timepoint-filter-all' })
+                .props.onClick();
+        });
+        expect(onTimepointChange).toHaveBeenCalledWith(undefined);
+    });
+
     it('offers an explicit show-all action when route filters are active', () => {
         const onClearFilters = jest.fn();
         const renderer = TestRenderer.create(

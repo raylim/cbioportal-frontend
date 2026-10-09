@@ -4,6 +4,8 @@ import {
     getOrderedServableSlidesForSampleReadOnly,
     getServableSlideAssociationsBySlideKeyReadOnly,
     getServableSlideIdsForPathologyFilterReadOnly,
+    getWsiTimepointOptions,
+    matchesWsiTimepointFilter,
     sampleHasMultiplePartDescriptions,
     sampleHasServableSlide,
     selectMetadataPrefetchSlides,
@@ -18,6 +20,57 @@ import {
 } from './wsiViewerTypes';
 
 describe('wsiSlideUtils read-only slide derivation', () => {
+    it('builds ordered unique timepoint options and keeps undated slides in All', () => {
+        const slides = [
+            makeSlide({
+                slide_key: 'late',
+                slide_timepoint_days: 10,
+                slide_timepoint_source: 'Procedure date',
+            }),
+            makeSlide({
+                slide_key: 'early',
+                slide_timepoint_days: -10,
+                slide_timepoint_source: 'Procedure date',
+            }),
+            makeSlide({ slide_key: 'undated' }),
+        ];
+        const options = getWsiTimepointOptions(
+            slides.map(slide => ({ slide }))
+        );
+
+        expect(options).toEqual([
+            { days: -10, label: 'Proc d-10' },
+            { days: 10, label: 'Proc d+10' },
+            { days: 'undated', label: 'Undated' },
+        ]);
+        expect(matchesWsiTimepointFilter(slides[2], undefined, 'undated')).toBe(
+            true
+        );
+        expect(matchesWsiTimepointFilter(slides[2], undefined, -10)).toBe(
+            false
+        );
+        expect(matchesWsiTimepointFilter(slides[2], undefined)).toBe(true);
+    });
+
+    it('uses only the slide timing contract', () => {
+        const slide = makeSlide({ slide_key: 'legacy' });
+        const association: SlideAssociation = {
+            slide_key: 'legacy',
+            sample_id: 'S-1',
+            match_level: 'BLOCK',
+            specimen_key: 'block::1',
+            slide_type: 'H&E',
+            procedure_date_days: -4,
+            timepoint_source: 'Procedure date',
+            can_serve_tiles: true,
+        };
+
+        expect(getWsiTimepointOptions([{ slide, association }])).toEqual([
+            { days: 'undated', label: 'Undated' },
+        ]);
+        expect(matchesWsiTimepointFilter(slide, association, -4)).toBe(false);
+    });
+
     it('selects the preferred association for an image', () => {
         const associations: SlideAssociation[] = [
             {
@@ -131,6 +184,19 @@ describe('wsiSlideUtils read-only slide derivation', () => {
                 entry => entry.slide.slide_key
             )
         ).toEqual(['p2-b2-he', 'p2-b2-ihc', 'p2-b10-he', 'p10-b1-he']);
+    });
+
+    it('orders slides by slide-level timepoint', () => {
+        const sample = makeSample('S-1', [
+            makeSlide({ slide_key: 'late', slide_timepoint_days: 10 }),
+            makeSlide({ slide_key: 'early', slide_timepoint_days: -10 }),
+        ]);
+
+        expect(
+            getOrderedServableSlidesForSampleReadOnly(sample).map(
+                entry => entry.slide.slide_key
+            )
+        ).toEqual(['early', 'late']);
     });
 
     it('keeps hierarchy order for slides with the same part, block and stain', () => {

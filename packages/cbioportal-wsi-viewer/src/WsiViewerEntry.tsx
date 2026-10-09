@@ -1,10 +1,13 @@
 import * as React from 'react';
+import { ClinicalEvent } from 'cbioportal-ts-api-client';
+import { buildWsiSampleTimelineMap } from './wsiSampleTimeline';
 import WSIViewer from './WSIViewer';
 import {
     PathologySlideFilter,
     PathologySlideMatchFilter,
     WsiStainFilter,
     WsiClinicalRow,
+    WsiTimepointSelection,
 } from './wsiViewerTypes';
 
 export interface WsiViewerProps {
@@ -20,6 +23,8 @@ export interface WsiViewerProps {
     height: number;
     initialStainFilter?: WsiStainFilter;
     initialMatchFilter?: PathologySlideMatchFilter;
+    initialTimepointDays?: WsiTimepointSelection;
+    onTimepointChange?: (days: WsiTimepointSelection) => void;
     onStainFilterChange?: (filter: WsiStainFilter) => void;
     onMatchFilterChange?: (filter: PathologySlideMatchFilter) => void;
     onClearFilters?: () => void;
@@ -27,6 +32,11 @@ export interface WsiViewerProps {
     pathologyFilter?: PathologySlideFilter;
     /** Slide named by a `slideKey` viewer link. */
     requestedSlideKey?: string;
+    /**
+     * Patient clinical events; sample acquisition and sequencing days are
+     * read from them to relate each slide's procedure to its sample.
+     */
+    clinicalEvents?: ClinicalEvent[];
     /**
      * Rows for the sidebar's Clinical section, in display order. Rows with a
      * `sampleId` show only for that sample's slides. Unset hides the section;
@@ -52,6 +62,17 @@ export interface WsiViewerProps {
  * linkout handling around it without changing the hierarchy or serving
  * contract used by the viewer itself.
  */
-export default function WsiViewer(props: WsiViewerProps) {
-    return <WSIViewer {...props} />;
+export default function WsiViewer({
+    clinicalEvents,
+    ...viewerProps
+}: WsiViewerProps) {
+    const sampleTimelines = React.useMemo(
+        () =>
+            clinicalEvents && clinicalEvents.length > 0
+                ? buildWsiSampleTimelineMap(clinicalEvents)
+                : undefined,
+        [clinicalEvents]
+    );
+
+    return <WSIViewer {...viewerProps} sampleTimelines={sampleTimelines} />;
 }

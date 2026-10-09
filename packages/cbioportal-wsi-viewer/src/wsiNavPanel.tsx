@@ -7,25 +7,40 @@ import {
     Slide,
     SlideAssociation,
     WsiStainFilter,
+    WsiTimepointSelection,
 } from './wsiViewerTypes';
 import {
     countServableSlidesForSample,
     getOrderedServableSlidesForSampleReadOnly,
     getServableSlideAssociationsBySlideKeyReadOnly,
+    getWsiTimepointOptions,
     matchesMatchFilter,
     matchesWsiStainFilter,
+    matchesWsiTimepointFilter,
     sampleHasMultiplePartDescriptions,
     wsiStainKind,
 } from './wsiSlideUtils';
 import {
     abbreviatePartDesc,
     cleanStain,
-    compareSamplesForNavigation,
+    compareSamplesByTimepoint,
     decodeBlockCode,
     fmtMB,
+    DAY_ZERO_TOOLTIP,
+    formatDaysSinceDiagnosis,
+    getSlideTimepointDays,
+    procedureSlideTimepointText,
+    procedureTooltip,
     stainQualifier,
 } from './wsiNavUtils';
 import { getStainDotColor } from './wsiMetaUtils';
+import {
+    procedureRelativeToSequencingText,
+    sampleSequencedText,
+    sampleSequencedTooltip,
+    WsiSampleTimeline,
+    WsiSampleTimelineMap,
+} from './wsiSampleTimeline';
 import { scheduleThumbnailRequest } from './thumbnailRequestLimiter';
 import { getWsiSlideAccess } from './wsiAuth';
 import {
@@ -49,15 +64,19 @@ export interface WsiNavPanelProps {
     slideIdFilter?: Set<string>;
     linkoutScopeActive?: boolean;
     matchFilter?: PathologySlideMatchFilter;
+    timepointDays?: WsiTimepointSelection;
     showClearFilters?: boolean;
     deferOffscreenSamples?: boolean;
     onFilterChange: (f: WsiStainFilter) => void;
     onMatchFilterChange?: (f: PathologySlideMatchFilter) => void;
+    onTimepointChange?: (days?: WsiTimepointSelection) => void;
     onClearFilters?: () => void;
     onSelectSlide: (slide: Slide, sample: Sample) => void;
     tileServerBase: string;
     studyId: string;
     authScope: string;
+    /** Sample acquisition/sequencing days from the patient timeline. */
+    sampleTimelines?: WsiSampleTimelineMap;
     /** Shows a header button that hides the panel. */
     onHide?: () => void;
 }
@@ -136,11 +155,13 @@ function matchesSlideFilters(
     slide: Slide,
     association: SlideAssociation | undefined,
     stainFilter: WsiStainFilter,
-    matchFilter: PathologySlideMatchFilter
+    matchFilter: PathologySlideMatchFilter,
+    timepointDays?: WsiTimepointSelection
 ): boolean {
     return (
         matchesWsiStainFilter(slide, stainFilter) &&
-        matchesMatchFilter(association, matchFilter)
+        matchesMatchFilter(association, matchFilter) &&
+        matchesWsiTimepointFilter(slide, association, timepointDays)
     );
 }
 
@@ -172,15 +193,18 @@ function WsiNavPanelComponent({
     slideIdFilter,
     linkoutScopeActive = false,
     matchFilter = 'all',
+    timepointDays,
     showClearFilters = false,
     deferOffscreenSamples = false,
     onFilterChange,
     onMatchFilterChange,
+    onTimepointChange,
     onClearFilters,
     onSelectSlide,
     tileServerBase,
     studyId,
     authScope,
+    sampleTimelines,
     onHide,
 }: WsiNavPanelProps) {
     const associationsBySlideKey = React.useMemo(
@@ -255,7 +279,8 @@ function WsiNavPanelComponent({
                             slide,
                             associationsBySlideKey.get(slide.slide_key),
                             stainFilter,
-                            matchFilter
+                            matchFilter,
+                            timepointDays
                         )
                 );
                 if (filteredSlides.length) {
@@ -269,11 +294,17 @@ function WsiNavPanelComponent({
                 }
                 return entries;
             }, []),
-        [allSampleEntries, associationsBySlideKey, matchFilter, stainFilter]
+        [
+            allSampleEntries,
+            associationsBySlideKey,
+            matchFilter,
+            stainFilter,
+            timepointDays,
+        ]
     );
     const sampleEntries = React.useMemo(() => {
         const sorted = [...filteredSampleEntries].sort((left, right) =>
-            compareSamplesForNavigation(left.sample, right.sample)
+            compareSamplesByTimepoint(left.sample, right.sample)
         );
         if (
             !deferOffscreenSamples ||
@@ -341,6 +372,27 @@ function WsiNavPanelComponent({
             ),
         [associationsBySlideKey, unscopedSampleEntries]
     );
+    const timepointOptions = React.useMemo(
+        () => getWsiTimepointOptions(facetSlideEntries),
+        [facetSlideEntries]
+    );
+    const selectedTimepointOption =
+        timepointDays == null
+            ? undefined
+            : timepointOptions.find(option => option.days === timepointDays);
+    const hasUnavailableTimepoint =
+        timepointDays != null && !selectedTimepointOption;
+    const showTimepointFilter =
+        timepointOptions.length > 0 || hasUnavailableTimepoint;
+    const timepointSliderIndex =
+        timepointDays == null
+            ? 0
+            : Math.max(
+                  0,
+                  timepointOptions.findIndex(
+                      option => option.days === timepointDays
+                  ) + 1
+              );
     const chips: Array<{
         key: WsiStainFilter;
         label: string;
@@ -373,6 +425,9 @@ function WsiNavPanelComponent({
             if (!matchesMatchFilter(association, matchFilter)) {
                 return;
             }
+            if (!matchesWsiTimepointFilter(slide, association, timepointDays)) {
+                return;
+            }
             filteredCounts.all += 1;
             const stainType = wsiStainKind(slide);
             if (stainType === 'hne') {
@@ -386,12 +441,16 @@ function WsiNavPanelComponent({
         });
 
         return filteredCounts;
-    }, [facetSlideEntries, matchFilter]);
+    }, [facetSlideEntries, matchFilter, timepointDays]);
     const matchCounts = React.useMemo(() => {
         const filteredCounts = { part: 0, block: 0, unmatched: 0 };
         facetSlideEntries.forEach(({ slide, association }) => {
             const matchesStain = matchesWsiStainFilter(slide, stainFilter);
-            if (!matchesStain || !association) {
+            if (
+                !matchesStain ||
+                !association ||
+                !matchesWsiTimepointFilter(slide, association, timepointDays)
+            ) {
                 return;
             }
             if (association.match_level === 'PART') filteredCounts.part += 1;
@@ -401,7 +460,7 @@ function WsiNavPanelComponent({
             }
         });
         return filteredCounts;
-    }, [facetSlideEntries, stainFilter]);
+    }, [facetSlideEntries, stainFilter, timepointDays]);
 
     return (
         <div
@@ -549,6 +608,122 @@ function WsiNavPanelComponent({
                             );
                         })}
                 </div>
+                {showTimepointFilter && (
+                    <div
+                        style={{ marginTop: 8 }}
+                        data-testid="wsi-timepoint-filter"
+                    >
+                        <div
+                            style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                gap: 6,
+                                fontSize: 10,
+                                color: theme.muted,
+                            }}
+                        >
+                            <span>Time</span>
+                            <button
+                                type="button"
+                                className={`btn btn-xs ${
+                                    timepointDays == null
+                                        ? 'btn-primary'
+                                        : 'btn-default'
+                                }`}
+                                data-testid="wsi-timepoint-filter-all"
+                                onClick={() => onTimepointChange?.(undefined)}
+                            >
+                                All
+                            </button>
+                            <span
+                                data-testid="wsi-timepoint-filter-value"
+                                title={
+                                    timepointDays == null
+                                        ? `All slide dates. ${DAY_ZERO_TOOLTIP}`
+                                        : `${selectedTimepointOption?.label ||
+                                              `${
+                                                  timepointDays === 'undated'
+                                                      ? 'Undated'
+                                                      : formatDaysSinceDiagnosis(
+                                                            timepointDays
+                                                        )
+                                              } (unavailable)`}. ${DAY_ZERO_TOOLTIP}`
+                                }
+                                style={{
+                                    flex: 1,
+                                    textAlign: 'right',
+                                    fontWeight: 600,
+                                    color: theme.text,
+                                }}
+                            >
+                                {timepointDays == null
+                                    ? 'All'
+                                    : selectedTimepointOption?.label ||
+                                      `${
+                                          timepointDays === 'undated'
+                                              ? 'Undated'
+                                              : formatDaysSinceDiagnosis(
+                                                    timepointDays
+                                                )
+                                      } (unavailable)`}
+                            </span>
+                        </div>
+                        {!hasUnavailableTimepoint && (
+                            <input
+                                type="range"
+                                min={0}
+                                max={timepointOptions.length}
+                                step={1}
+                                value={timepointSliderIndex}
+                                aria-label="Filter slides by time"
+                                aria-valuetext={
+                                    timepointDays == null
+                                        ? 'All dates'
+                                        : timepointOptions.find(
+                                              option =>
+                                                  option.days === timepointDays
+                                          )?.label || 'All dates'
+                                }
+                                data-testid="wsi-timepoint-filter-slider"
+                                style={{ width: '100%', margin: '4px 0 0' }}
+                                onChange={event => {
+                                    const index = Number(event.target.value);
+                                    onTimepointChange?.(
+                                        index === 0
+                                            ? undefined
+                                            : timepointOptions[index - 1]?.days
+                                    );
+                                }}
+                            />
+                        )}
+                        {!hasUnavailableTimepoint && (
+                            <div
+                                style={{
+                                    display: 'flex',
+                                    justifyContent: 'space-between',
+                                    gap: 4,
+                                    fontSize: 9,
+                                    color: theme.muted,
+                                }}
+                            >
+                                <span>All</span>
+                                {timepointOptions.map(option => (
+                                    <span
+                                        key={option.days}
+                                        title={
+                                            option.days === 'undated'
+                                                ? 'Slides without a recorded procedure date'
+                                                : DAY_ZERO_TOOLTIP
+                                        }
+                                    >
+                                        {option.label}
+                                    </span>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                )}
                 {sampleIdFilter && linkoutScopeActive && (
                     <div
                         data-testid="wsi-sample-scope"
@@ -623,6 +798,11 @@ function WsiNavPanelComponent({
                             sampleIndex={index}
                             selectedSlide={selectedSlide}
                             associationsBySlideKey={associationsBySlideKey}
+                            sampleTimeline={
+                                sample.sample_id === 'UNMATCHED'
+                                    ? undefined
+                                    : sampleTimelines?.get(sample.sample_id)
+                            }
                             onSelectSlide={onSelectSlide}
                             tileServerBase={tileServerBase}
                             studyId={studyId}
@@ -656,6 +836,7 @@ function SampleNode({
     selectedSlide,
     filteredSlides,
     associationsBySlideKey,
+    sampleTimeline,
     onSelectSlide,
     tileServerBase,
     studyId,
@@ -667,6 +848,7 @@ function SampleNode({
     sampleIndex: number;
     selectedSlide: Slide | null;
     associationsBySlideKey: Map<string, SlideAssociation>;
+    sampleTimeline?: WsiSampleTimeline;
     onSelectSlide: (slide: Slide, sample: Sample) => void;
     tileServerBase: string;
     studyId: string;
@@ -698,6 +880,9 @@ function SampleNode({
             ? '#fef0e8'
             : '#f0f0f0';
 
+    const sequencedText = sampleSequencedText(sampleTimeline);
+    const sequencedTooltip = sampleSequencedTooltip(sampleTimeline);
+
     const multiPart = React.useMemo(
         () =>
             open || containsSelectedSlide
@@ -725,7 +910,9 @@ function SampleNode({
                 role="button"
                 tabIndex={0}
                 aria-expanded={open}
-                aria-label={`${sample.sample_id || 'Sample'} slides`}
+                aria-label={`${sample.sample_id || 'Sample'} slides${
+                    sequencedText ? `, ${sequencedText}` : ''
+                }`}
                 style={{
                     display: 'flex',
                     alignItems: 'flex-start',
@@ -756,6 +943,19 @@ function SampleNode({
                         }}
                     >
                         {sample.sample_id || '—'}
+                        {sequencedText && (
+                            <span
+                                data-testid={`wsi-sample-sequenced-${sample.sample_id}`}
+                                title={sequencedTooltip}
+                                style={{
+                                    fontWeight: 400,
+                                    color: theme.muted,
+                                    marginLeft: 6,
+                                }}
+                            >
+                                {sequencedText}
+                            </span>
+                        )}
                     </div>
                     <div
                         style={{
@@ -847,6 +1047,7 @@ function SampleNode({
                                 slide.slide_key
                             )}
                             multiPart={multiPart}
+                            sequencingDays={sampleTimeline?.sequencingDays}
                             selected={
                                 selectedSlide?.slide_key === slide.slide_key
                             }
@@ -869,6 +1070,7 @@ const MemoSampleNode = React.memo(SampleNode, (prev, next) => {
         prev.sampleIndex !== next.sampleIndex ||
         prev.filteredSlides !== next.filteredSlides ||
         prev.associationsBySlideKey !== next.associationsBySlideKey ||
+        prev.sampleTimeline !== next.sampleTimeline ||
         prev.onSelectSlide !== next.onSelectSlide ||
         prev.tileServerBase !== next.tileServerBase ||
         prev.studyId !== next.studyId ||
@@ -893,6 +1095,7 @@ function SlideItem({
     blockLabel,
     association,
     multiPart,
+    sequencingDays,
     selected,
     onSelectSlide,
     tileServerBase,
@@ -904,6 +1107,7 @@ function SlideItem({
     blockLabel: string | null;
     association: SlideAssociation | undefined;
     multiPart: boolean;
+    sequencingDays?: number;
     selected: boolean;
     onSelectSlide: (slide: Slide, sample: Sample) => void;
     tileServerBase: string;
@@ -929,6 +1133,16 @@ function SlideItem({
         isHE && (rawGroup === '' || rawGroup.startsWith('h&e'))
             ? stainQualifier(slide.stain_group)
             : null;
+    const procedureTimepoint = procedureSlideTimepointText(slide);
+    const timepoint = procedureTimepoint
+        ? procedureRelativeToSequencingText(
+              getSlideTimepointDays(slide),
+              sequencingDays
+          ) || procedureTimepoint
+        : null;
+    const timepointTooltip = procedureTimepoint
+        ? procedureTooltip(getSlideTimepointDays(slide), sequencingDays)
+        : undefined;
     const matchBadge =
         association?.match_level === 'BLOCK'
             ? { label: 'Block', color: '#2f7d32' }
@@ -944,6 +1158,7 @@ function SlideItem({
     }
     if (mag) tooltipLines.push(`Magnification: ${mag}`);
     if (sz !== '—') tooltipLines.push(`Size: ${sz}`);
+    if (timepointTooltip) tooltipLines.push(timepointTooltip);
 
     const bg = selected
         ? theme.blueLight
@@ -1048,6 +1263,19 @@ function SlideItem({
                         }}
                     >
                         {subTokens.join(' · ')}
+                    </div>
+                )}
+                {timepoint && (
+                    <div
+                        data-testid={`wsi-slide-timepoint-${slide.slide_key}`}
+                        title={timepointTooltip}
+                        style={{
+                            fontSize: 10,
+                            color: '#888',
+                            whiteSpace: 'nowrap',
+                        }}
+                    >
+                        {timepoint}
                     </div>
                 )}
             </div>

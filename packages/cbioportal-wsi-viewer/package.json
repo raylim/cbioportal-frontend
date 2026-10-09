@@ -18,12 +18,20 @@
       "import": "./dist/es/viewer.js",
       "require": "./dist/viewer.js"
     },
+    "./events": {
+      "types": "./dist/events.d.ts",
+      "import": "./dist/es/events.js",
+      "require": "./dist/events.js"
+    },
     "./package.json": "./package.json"
   },
   "typesVersions": {
     "*": {
       "viewer": [
         "dist/viewer.d.ts"
+      ],
+      "events": [
+        "dist/events.d.ts"
       ]
     }
   },
@@ -32,7 +40,8 @@
   },
   "files": [
     "dist",
-    "viewer.js"
+    "viewer.js",
+    "events.js"
   ],
   "author": "cBioPortal",
   "license": "AGPL-3.0-or-later",
@@ -50,6 +59,7 @@
   },
   "peerDependencies": {
     "cbioportal-frontend-commons": "workspace:*",
+    "cbioportal-ts-api-client": "workspace:*",
     "mobx": "^6.0.0",
     "mobx-react": "^6.0.0 || ^7.0.0",
     "react": "^16.8.0 || ^17.0.0 || ^18.0.0",

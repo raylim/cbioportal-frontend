@@ -16,6 +16,20 @@ export interface FoundationMockOptions {
     accessRequests?: string[];
     /** Collects the request headers of every tile and thumbnail request. */
     tileRequestHeaders?: Array<Record<string, string>>;
+    /**
+     * Replaces the default slide hierarchy (v2 payload); slide access is
+     * granted for the slides it publishes.
+     */
+    hierarchy?: FoundationHierarchy;
+}
+
+/** The parts of a v2 hierarchy payload the slide access mock reads. */
+export interface FoundationHierarchy {
+    sampleGroups: Array<{
+        parts: Array<{
+            blocks: Array<{ slides: Array<{ slideKey: string }> }>;
+        }>;
+    }>;
 }
 
 /** Schema-2 tile metadata the viewer accepts, for slide access mocks. */
@@ -48,6 +62,13 @@ function makeSlide(slideKey: string, stainName: string, stainGroup: string) {
         sampleId: 'wsi-foundation-smoke-sample',
         matchLevel: 'BLOCK',
         specimenKey: 'block::1::A1',
+        procedureDateDays: -10,
+        timepointSource: 'Procedure date',
+        procedureDateKind: 'RECORDED',
+        procedureDateSource: 'Recorded procedure date',
+        procedureDateReason: null,
+        procedureDateStatus: 'AVAILABLE',
+        procedureCoordinateSystem: 'patient_first_tumor_sequencing_day_zero',
     };
 }
 
@@ -92,7 +113,8 @@ export async function installFoundationMocks(
     options: FoundationMockOptions = {}
 ): Promise<string[]> {
     const enrichmentRequests: string[] = [];
-    const hierarchy = makeHierarchy(!!options.includeSecondSlide);
+    const hierarchy: FoundationHierarchy =
+        options.hierarchy || makeHierarchy(!!options.includeSecondSlide);
     await page.addInitScript(() => {
         window.localStorage.setItem(
             'frontendConfig',
@@ -126,6 +148,17 @@ export async function installFoundationMocks(
                 status: 200,
                 contentType: 'application/json',
                 body: JSON.stringify(hierarchy),
+            })
+    );
+    // The viewer route loads the patient's clinical events to relate slides
+    // to sequencing; the smoke patient has none.
+    await page.route(
+        `**/api/studies/${STUDY_ID}/patients/${PATIENT_ID}/clinical-events**`,
+        route =>
+            route.fulfill({
+                status: 200,
+                contentType: 'application/json',
+                body: JSON.stringify([]),
             })
     );
     await page.route(`**/api/studies/${STUDY_ID}/molecular-profiles**`, route =>

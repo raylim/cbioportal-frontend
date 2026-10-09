@@ -1,33 +1,367 @@
-import { compareSamplesForNavigation } from './wsiNavUtils';
-import { makeSample } from './wsiTestFixtures';
+import {
+    compareSamplesByTimepoint,
+    DAY_ZERO_TOOLTIP,
+    procedureSequencingOffset,
+    procedureSlideTimepointText,
+    procedureTooltip,
+    timepointText,
+} from './wsiNavUtils';
+import { Sample } from './wsiViewerTypes';
+
+function makeSample(
+    overrides: Partial<Sample> & Record<string, unknown> = {}
+): Sample {
+    return {
+        sample_id: 'S-1',
+        cancer_type: '',
+        cancer_type_detailed: '',
+        oncotree_code: '',
+        primary_site: '',
+        sample_type: '',
+        parts: [],
+        ...overrides,
+    };
+}
 
 describe('wsiNavUtils', () => {
-    describe('compareSamplesForNavigation', () => {
-        it('places unmatched slides after matched samples', () => {
-            const unmatched = makeSample('UNMATCHED');
-            const matched = makeSample('S-1');
+    describe('timepoint text helpers', () => {
+        it('suppresses sequencing-only timepoints from the displayed text', () => {
+            expect(timepointText(-12, 'Sequencing date')).toBeNull();
+        });
+
+        it('shows only procedure-based slide timepoints in the procedure-specific helper', () => {
+            expect(
+                procedureSlideTimepointText({
+                    slide_timepoint_days: -9,
+                    slide_timepoint_source: 'Procedure date',
+                })
+            ).toBe('Proc d-9');
 
             expect(
-                compareSamplesForNavigation(unmatched, matched)
-            ).toBeGreaterThan(0);
+                procedureSlideTimepointText({
+                    slide_timepoint_days: -9,
+                    slide_timepoint_source: 'Tumor sequencing date',
+                })
+            ).toBeNull();
+        });
+
+        it('reflects the slide timepoint fields it is given', () => {
+            const slide = {
+                slide_timepoint_days: -9,
+                slide_timepoint_source: 'Procedure date',
+            };
+
+            expect(procedureSlideTimepointText(slide)).toBe('Proc d-9');
+
+            slide.slide_timepoint_days = -2;
+            expect(procedureSlideTimepointText(slide)).toBe('Proc d-2');
+
+            slide.slide_timepoint_source = 'Tumor sequencing date';
+            expect(procedureSlideTimepointText(slide)).toBeNull();
+        });
+    });
+
+    describe('compareSamplesByTimepoint', () => {
+        it('sorts by earliest servable diagnostic slide timepoint before sample-level timepoint', () => {
+            const earlierSlideSample = makeSample({
+                sample_id: 'S-early',
+                sample_timepoint_days: 20,
+                sample_timepoint_source: 'Procedure date',
+                parts: [
+                    {
+                        part_number: '1',
+                        part_type: '',
+                        part_description: '',
+                        subspecialty: '',
+                        blocks: [
+                            {
+                                block_number: '1',
+                                block_label: 'A1',
+                                slides: [
+                                    {
+                                        slide_key: 'img-1',
+                                        stain_name: 'H&E',
+                                        stain_group: 'H&E (Initial)',
+                                        is_hne: true,
+                                        is_ihc: false,
+                                        magnification: '',
+                                        file_size_bytes: '',
+                                        can_serve_tiles: true,
+                                        block_label: 'A1',
+                                        block_number: '1',
+                                        slide_timepoint_days: -25,
+                                        slide_timepoint_source:
+                                            'Procedure date',
+                                    },
+                                ],
+                            },
+                        ],
+                    },
+                ],
+            });
+            const laterSample = makeSample({
+                sample_id: 'S-late',
+                sample_timepoint_days: -10,
+                sample_timepoint_source: 'Procedure date',
+            });
+
             expect(
-                compareSamplesForNavigation(matched, unmatched)
+                compareSamplesByTimepoint(earlierSlideSample, laterSample)
             ).toBeLessThan(0);
         });
 
-        it('keeps the hierarchy order of matched samples', () => {
-            const samples = [
-                makeSample('S-2', [], { sample_type: 'Primary' }),
-                makeSample('UNMATCHED'),
-                makeSample('S-10', [], { sample_type: 'Metastasis' }),
-                makeSample('S-1', [], { sample_type: 'Primary' }),
-            ];
+        it('places unmatched slides after matched samples regardless of timepoint', () => {
+            const unmatchedSample = makeSample({
+                sample_id: 'UNMATCHED',
+                parts: [
+                    {
+                        part_number: '1',
+                        part_type: '',
+                        part_description: '',
+                        subspecialty: '',
+                        blocks: [
+                            {
+                                block_number: '1',
+                                block_label: 'A1',
+                                slides: [
+                                    {
+                                        slide_key: 'unmatched-slide',
+                                        stain_name: 'H&E',
+                                        stain_group: 'H&E (Initial)',
+                                        is_hne: true,
+                                        is_ihc: false,
+                                        magnification: '',
+                                        file_size_bytes: '',
+                                        can_serve_tiles: true,
+                                        block_label: 'A1',
+                                        block_number: '1',
+                                        slide_timepoint_days: -100,
+                                        slide_timepoint_source:
+                                            'Procedure date',
+                                    },
+                                ],
+                            },
+                        ],
+                    },
+                ],
+            });
+            const matchedSample = makeSample({
+                sample_id: 'S-1',
+                parts: [
+                    {
+                        part_number: '1',
+                        part_type: '',
+                        part_description: '',
+                        subspecialty: '',
+                        blocks: [
+                            {
+                                block_number: '1',
+                                block_label: 'A1',
+                                slides: [
+                                    {
+                                        slide_key: 'matched-slide',
+                                        stain_name: 'H&E',
+                                        stain_group: 'H&E (Initial)',
+                                        is_hne: true,
+                                        is_ihc: false,
+                                        magnification: '',
+                                        file_size_bytes: '',
+                                        can_serve_tiles: true,
+                                        block_label: 'A1',
+                                        block_number: '1',
+                                        slide_timepoint_days: 10,
+                                        slide_timepoint_source:
+                                            'Procedure date',
+                                    },
+                                ],
+                            },
+                        ],
+                    },
+                ],
+            });
 
             expect(
-                [...samples]
-                    .sort(compareSamplesForNavigation)
-                    .map(sample => sample.sample_id)
-            ).toEqual(['S-2', 'S-10', 'S-1', 'UNMATCHED']);
+                compareSamplesByTimepoint(unmatchedSample, matchedSample)
+            ).toBeGreaterThan(0);
         });
+
+        it('ignores non-viewable and unclassified slides when deriving sample sort order', () => {
+            const sampleWithIgnoredSlides = makeSample({
+                sample_id: 'S-a',
+                sample_timepoint_days: -5,
+                sample_timepoint_source: 'Procedure date',
+                parts: [
+                    {
+                        part_number: '1',
+                        part_type: '',
+                        part_description: '',
+                        subspecialty: '',
+                        blocks: [
+                            {
+                                block_number: '1',
+                                block_label: 'A1',
+                                slides: [
+                                    {
+                                        slide_key: 'img-ns',
+                                        stain_name: 'H&E',
+                                        stain_group: 'H&E (Initial)',
+                                        is_hne: true,
+                                        is_ihc: false,
+                                        magnification: '',
+                                        file_size_bytes: '',
+                                        can_serve_tiles: false,
+                                        block_label: 'A1',
+                                        block_number: '1',
+                                        slide_timepoint_days: -30,
+                                        slide_timepoint_source:
+                                            'Procedure date',
+                                    },
+                                    {
+                                        slide_key: 'img-other',
+                                        stain_name: 'Slides submitted',
+                                        stain_group: 'Slides submitted',
+                                        is_hne: false,
+                                        is_ihc: false,
+                                        magnification: '',
+                                        file_size_bytes: '',
+                                        can_serve_tiles: true,
+                                        block_label: 'A2',
+                                        block_number: '2',
+                                        slide_timepoint_days: -40,
+                                        slide_timepoint_source:
+                                            'Procedure date',
+                                    },
+                                ],
+                            },
+                        ],
+                    },
+                ],
+            });
+            const sampleWithEarlierSampleTime = makeSample({
+                sample_id: 'S-b',
+                sample_timepoint_days: -10,
+                sample_timepoint_source: 'Procedure date',
+            });
+
+            expect(
+                compareSamplesByTimepoint(
+                    sampleWithIgnoredSlides,
+                    sampleWithEarlierSampleTime
+                )
+            ).toBeLessThan(0);
+        });
+
+        it('recomputes the cached earliest servable slide timepoint when the sample parts array changes', () => {
+            const sample = makeSample({
+                sample_id: 'S-cache',
+                sample_timepoint_days: -5,
+                sample_timepoint_source: 'Procedure date',
+                parts: [
+                    {
+                        part_number: '1',
+                        part_type: '',
+                        part_description: '',
+                        subspecialty: '',
+                        blocks: [
+                            {
+                                block_number: '1',
+                                block_label: 'A1',
+                                slides: [
+                                    {
+                                        slide_key: 'img-1',
+                                        stain_name: 'H&E',
+                                        stain_group: 'H&E (Initial)',
+                                        is_hne: true,
+                                        is_ihc: false,
+                                        magnification: '',
+                                        file_size_bytes: '',
+                                        can_serve_tiles: true,
+                                        block_label: 'A1',
+                                        block_number: '1',
+                                        slide_timepoint_days: -20,
+                                        slide_timepoint_source:
+                                            'Procedure date',
+                                    },
+                                ],
+                            },
+                        ],
+                    },
+                ],
+            });
+            const comparator = makeSample({
+                sample_id: 'S-compare',
+                sample_timepoint_days: -10,
+                sample_timepoint_source: 'Procedure date',
+            });
+
+            expect(compareSamplesByTimepoint(sample, comparator)).toBeLessThan(
+                0
+            );
+
+            sample.parts = [
+                {
+                    ...sample.parts[0],
+                    blocks: [
+                        {
+                            ...sample.parts[0].blocks[0],
+                            slides: [
+                                {
+                                    ...sample.parts[0].blocks[0].slides[0],
+                                    slide_timepoint_days: 5,
+                                },
+                            ],
+                        },
+                    ],
+                },
+            ];
+
+            expect(compareSamplesByTimepoint(sample, comparator)).toBeLessThan(
+                0
+            );
+        });
+    });
+});
+
+describe('day tooltips', () => {
+    it('explains d0 as the first tumor sequencing', () => {
+        expect(DAY_ZERO_TOOLTIP).toContain('first tumor sequencing (d0)');
+    });
+
+    it('relates the procedure to the sample sequencing in words', () => {
+        expect(procedureTooltip(-242, 7)).toBe(
+            `Procedure on d-242, 249 days before this sample was sequenced (d+7). ${DAY_ZERO_TOOLTIP}`
+        );
+        expect(procedureTooltip(20, 7)).toContain(
+            '13 days after this sample was sequenced (d+7)'
+        );
+        expect(procedureTooltip(7, 7)).toContain(
+            'the same day this sample was sequenced'
+        );
+        expect(procedureTooltip(-242, undefined)).toBe(
+            `Procedure on d-242. ${DAY_ZERO_TOOLTIP}`
+        );
+        expect(procedureTooltip(undefined, 7)).toBeUndefined();
+    });
+});
+
+describe('procedureSequencingOffset', () => {
+    it('measures the procedure against sequencing', () => {
+        expect(procedureSequencingOffset(-42, 0)).toEqual({
+            days: 42,
+            relation: 'before',
+        });
+        expect(procedureSequencingOffset(10, 3)).toEqual({
+            days: 7,
+            relation: 'after',
+        });
+        expect(procedureSequencingOffset(5, 5)).toEqual({
+            days: 0,
+            relation: 'same',
+        });
+    });
+
+    it('is undefined when either day is unknown', () => {
+        expect(procedureSequencingOffset(undefined, 5)).toBeUndefined();
+        expect(procedureSequencingOffset(5, null)).toBeUndefined();
     });
 });

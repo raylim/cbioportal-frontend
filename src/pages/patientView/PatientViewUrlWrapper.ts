@@ -16,12 +16,15 @@ export type PathologySlideSettings = {
     stainFilter?: string;
     matchLevel?: string;
     specimenKey?: string;
+    /** A procedure day, or "undated". */
+    timepointDays?: string;
 };
 
 const PATHOLOGY_SLIDE_SETTINGS_KEYS: (keyof PathologySlideSettings)[] = [
     'stainFilter',
     'matchLevel',
     'specimenKey',
+    'timepointDays',
 ];
 
 /**
@@ -92,6 +95,7 @@ export default class PatientViewUrlWrapper extends URLWrapper<
                         stainFilter: '',
                         matchLevel: '',
                         specimenKey: '',
+                        timepointDays: '',
                     },
                 },
                 genomicEvolutionSettings: {

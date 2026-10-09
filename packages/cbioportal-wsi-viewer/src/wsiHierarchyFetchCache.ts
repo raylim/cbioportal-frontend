@@ -45,6 +45,14 @@ function deriveSlideAssociations(
                     // Boolean stain flags are the canonical classification.
                     slide_type: slide.slide_type ?? 'Unknown',
                     stain_name: slide.stain_name,
+                    procedure_date_days: slide.slide_timepoint_days,
+                    timepoint_source: slide.slide_timepoint_source,
+                    timepoint_kind: slide.slide_timepoint_kind,
+                    timepoint_date_source: slide.slide_timepoint_date_source,
+                    timepoint_reason: slide.slide_timepoint_reason,
+                    timepoint_status: slide.slide_timepoint_status ?? null,
+                    timepoint_coordinate_system:
+                        slide.slide_timepoint_coordinate_system ?? null,
                     can_serve_tiles: slide.can_serve_tiles,
                 }))
             )
@@ -69,10 +77,83 @@ function normalizeSlideType(
     return 'Other';
 }
 
+const V2_SLIDE_TIMING_FIELDS: ReadonlyArray<keyof WsiV2Slide> = [
+    'procedureDateDays',
+    'timepointSource',
+    'procedureDateKind',
+    'procedureDateSource',
+    'procedureDateReason',
+    'procedureDateStatus',
+    'procedureCoordinateSystem',
+];
+
+/**
+ * Timing is optional: a slide imported without timing columns has none of the
+ * fields and simply has no timepoint. A slide with any of them must carry a
+ * complete, consistent set.
+ */
+function validateV2SlideTiming(slide: WsiV2Slide): void {
+    if (V2_SLIDE_TIMING_FIELDS.every(field => slide[field] == null)) {
+        return;
+    }
+    const status = slide.procedureDateStatus;
+    const kind = slide.procedureDateKind;
+    if (
+        !status ||
+        !kind ||
+        !slide.timepointSource ||
+        !slide.procedureDateSource ||
+        slide.procedureCoordinateSystem !==
+            'patient_first_tumor_sequencing_day_zero'
+    ) {
+        throw new Error('Invalid WSI hierarchy: incomplete v3 timing contract');
+    }
+    if (
+        ![
+            'AVAILABLE',
+            'MISSING_PROCEDURE_DATE',
+            'MISSING_REFERENCE_SEQUENCING_DATE',
+        ].includes(status) ||
+        !['RECORDED', 'ESTIMATED', 'UNDATED'].includes(kind)
+    ) {
+        throw new Error('Invalid WSI hierarchy: unsupported v3 timing value');
+    }
+    if (status === 'AVAILABLE') {
+        if (
+            slide.procedureDateDays == null ||
+            kind === 'UNDATED' ||
+            slide.procedureDateReason
+        ) {
+            throw new Error(
+                'Invalid WSI hierarchy: inconsistent available timing'
+            );
+        }
+    } else if (slide.procedureDateDays != null) {
+        throw new Error('Invalid WSI hierarchy: undated timing has a day');
+    }
+    if (status === 'MISSING_PROCEDURE_DATE' && kind !== 'UNDATED') {
+        throw new Error(
+            'Invalid WSI hierarchy: missing procedure date is not undated'
+        );
+    }
+    if (status === 'MISSING_REFERENCE_SEQUENCING_DATE' && kind === 'UNDATED') {
+        throw new Error(
+            'Invalid WSI hierarchy: missing reference date is undated'
+        );
+    }
+}
+
 function normalizeV2Hierarchy(
     payload: WsiV2Hierarchy,
     patientId: string
 ): PatientHierarchy {
+    payload.sampleGroups.forEach(group =>
+        group.parts.forEach(part =>
+            part.blocks.forEach(block =>
+                block.slides.forEach(validateV2SlideTiming)
+            )
+        )
+    );
     const hierarchy: PatientHierarchy = {
         patient_id: patientId,
         reference_sample_id: payload.referenceSampleId,
@@ -110,6 +191,20 @@ function normalizeV2Hierarchy(
                         match_level: slide.matchLevel,
                         specimen_key: slide.specimenKey,
                         slide_type: normalizeSlideType(slide),
+                        slide_timepoint_days:
+                            slide.procedureDateDays ?? undefined,
+                        slide_timepoint_source:
+                            slide.timepointSource ?? undefined,
+                        slide_timepoint_kind:
+                            slide.procedureDateKind ?? undefined,
+                        slide_timepoint_date_source:
+                            slide.procedureDateSource ?? undefined,
+                        slide_timepoint_reason:
+                            slide.procedureDateReason ?? undefined,
+                        slide_timepoint_status:
+                            slide.procedureDateStatus ?? undefined,
+                        slide_timepoint_coordinate_system:
+                            slide.procedureCoordinateSystem ?? undefined,
                     })),
                 })),
             })),

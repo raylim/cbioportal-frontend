@@ -204,6 +204,97 @@ describe('buildPathRows', () => {
     });
 });
 
+describe('buildPathRows timeline row', () => {
+    const procedureSlide: Slide = {
+        ...slide,
+        slide_key: 'slide-timeline',
+        slide_timepoint_days: -242,
+        slide_timepoint_source: 'Procedure date',
+    };
+
+    function timeline(rows: ReturnType<typeof buildPathRows>) {
+        return rows.find(row => row.label === 'Timeline')?.value;
+    }
+
+    it('shows procedure, acquisition and sequencing days in one row', () => {
+        const rows = buildPathRows(
+            { ...procedureSlide },
+            sample,
+            'P-1',
+            'study-1',
+            undefined,
+            { acquisitionDays: -242, sequencingDays: 7 }
+        );
+
+        expect(timeline(rows)).toBe(
+            'Procedure d-242 · acquired d-242 · sequenced d+7 (249 d later)'
+        );
+        const labels = rows.map(row => row.label);
+        ['Procedure', 'Timepoint', 'Acquired', 'Sequenced'].forEach(label =>
+            expect(labels).not.toContain(label)
+        );
+    });
+
+    it('shows only the procedure day when the sample timeline is unknown', () => {
+        expect(
+            timeline(
+                buildPathRows({ ...procedureSlide }, sample, 'P-1', 'study-1')
+            )
+        ).toBe('Procedure d-242');
+    });
+
+    it('shows sequencing without an offset for an undated slide', () => {
+        expect(
+            timeline(
+                buildPathRows(
+                    { ...slide },
+                    sample,
+                    'P-1',
+                    'study-1',
+                    undefined,
+                    {
+                        sequencingDays: 7,
+                    }
+                )
+            )
+        ).toBe('sequenced d+7');
+    });
+
+    it('falls back to the sequencing report date', () => {
+        expect(
+            timeline(
+                buildPathRows(
+                    { ...slide },
+                    { ...sample, sequencing_date: '2021-03-04' },
+                    'P-1',
+                    'study-1'
+                )
+            )
+        ).toBe('sequenced 2021-03-04');
+    });
+
+    it('keeps only the procedure day for unmatched slides', () => {
+        expect(
+            timeline(
+                buildPathRows(
+                    { ...procedureSlide },
+                    { ...sample, sample_id: 'UNMATCHED' },
+                    'P-1',
+                    'study-1',
+                    undefined,
+                    { acquisitionDays: 1, sequencingDays: 7 }
+                )
+            )
+        ).toBe('Procedure d-242');
+    });
+
+    it('has no timeline row without any timing', () => {
+        expect(
+            timeline(buildPathRows({ ...slide }, sample, 'P-1', 'study-1'))
+        ).toBe(undefined);
+    });
+});
+
 describe('buildWsiRows', () => {
     it('shows dimensions, magnification and scanner', () => {
         expect(buildWsiRows(slide, metadata)).toEqual([

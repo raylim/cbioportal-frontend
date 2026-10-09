@@ -8,8 +8,9 @@ The package holds the viewer only. It never imports cBioPortal app code: the hos
 
 | Import | Contents | Load |
 | --- | --- | --- |
-| `cbioportal-wsi-viewer` | Types, `configureWsiViewerRuntime`, `fetchWsiPatientHierarchy` (loads a patient's hierarchy through the viewer's cache, e.g. to decide whether to show a slides tab), `#wsi:` URL-state helpers, the theme (`WSI_THEME`, widths, section-title and list styles) and the panel chrome (`WsiPanelHideButton`, `WsiCollapsedRail`, stored panel flags) | Static, and small |
+| `cbioportal-wsi-viewer` | Types, `configureWsiViewerRuntime`, `fetchWsiPatientHierarchy` (loads a patient's hierarchy through the viewer's cache, e.g. to decide whether to show a slides tab), sample-timeline helpers, `#wsi:` URL-state helpers, the theme (`WSI_THEME`, widths, section-title and list styles) and the panel chrome (`WsiPanelHideButton`, `WsiCollapsedRail`, stored panel flags) | Static, and small |
 | `cbioportal-wsi-viewer/viewer` | The React viewer (default export, also `WsiViewer`) | Lazily, e.g. with `React.lazy` |
+| `cbioportal-wsi-viewer/events` | PATHOLOGY SLIDES timeline events built from the hierarchy (`fetchPathologySlideTimelineData`, row and tooltip builders), for the patient timeline, without the viewer | Lazily, in the timeline's own chunk |
 
 OpenSeadragon is not in either entry. The viewer loads it on the first slide open as its own async chunk (`wsi-openseadragon`), so pages without slides never download it. In the app, `scripts/assert_wsi_osd_bundle.js` checks this after a production build.
 
@@ -54,8 +55,9 @@ The cBioPortal app does both in `src/shared/components/wsiViewer/wsiAppConfig.ts
 | `authScope` | Subject used to isolate protected in-memory caches, normally the user name |
 | `height` | Viewer height in pixels |
 | `requestedSlideKey` | Slide to open, as from a `slideKey` viewer link. A `#wsi:` hash with a viewport takes precedence |
-| `initialStainFilter`, `initialMatchFilter`, `preferredSampleId`, `pathologyFilter` | Initial slide-list filters and selection, e.g. from a table link |
+| `initialStainFilter`, `initialMatchFilter`, `initialTimepointDays`, `preferredSampleId`, `pathologyFilter` | Initial slide-list filters and selection, e.g. from a timeline or table link |
 | `on…Change`, `onClearFilters` | Report filter changes back to the host, e.g. to keep them in the page URL |
+| `clinicalEvents` | Patient clinical events, used to relate each slide's procedure day to its sample's acquisition and sequencing |
 | `clinicalRows` | Rows for the sidebar's Clinical section, in display order. A row with a `sampleId` shows only for that sample's slides. Unset hides the section |
 | `navCollapsed` / `metadataCollapsed` (+ change callbacks) | Control the hideable slide list and details sidebar. Unset, the viewer remembers the user's choice in `localStorage` |
 | `showDownload`, `renderLoading` | Show the download-view control; a custom loading indicator |
