@@ -124,7 +124,6 @@ export class StudyPathologySlidesStore {
             try {
                 const page = await this.fetchPage({
                     studyViewFilter: { studyIds } as StudyViewFilter,
-                    viewableOnly: true,
                     pageSize: 1,
                 });
                 return page.totalSlides > 0;
@@ -140,7 +139,6 @@ export class StudyPathologySlidesStore {
             // Tracked: a change to any of these reloads the page.
             const request: StudySlidesRequest = {
                 studyViewFilter: this.getFilters(),
-                viewableOnly: true,
                 stainGroups: this.stainGroups.slice(),
                 matchLevels: this.matchLevels.slice(),
                 search: this.search || undefined,

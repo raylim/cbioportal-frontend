@@ -84,7 +84,6 @@ function studySlidesPage(request: StudySlidesRequestBody) {
                 studyId: STUDY_ID,
                 patientId,
                 slideCount,
-                viewableSlideCount: slideCount,
                 stainGroupCounts: counts,
             };
         });
@@ -96,7 +95,6 @@ function studySlidesPage(request: StudySlidesRequestBody) {
     return {
         totalPatients: listed.length,
         totalSlides: slides,
-        totalViewableSlides: slides,
         stainGroupTotals: {
             'H&E': PATIENT_COUNT,
             IHC: patientIds.filter(p => stainCounts(p).IHC > 0).length,

@@ -25,7 +25,6 @@ function patient(patientId: string, stain = 'H&E'): StudySlidePatient {
         studyId: STUDY,
         patientId,
         slideCount: 1,
-        viewableSlideCount: 1,
         stainGroupCounts: {
             'H&E': stain === 'H&E' ? 1 : 0,
             IHC: stain === 'IHC' ? 1 : 0,
@@ -62,7 +61,6 @@ function fakeServer(allPatients: () => StudySlidePatient[]) {
             return {
                 totalPatients: listed.length,
                 totalSlides: listed.length,
-                totalViewableSlides: listed.length,
                 stainGroupTotals: { 'H&E': 0, IHC: 0, Other: 0, Unknown: 0 },
                 locatedIndex: located >= 0 ? located : null,
                 pageNumber,
@@ -127,7 +125,6 @@ describe('StudyPathologySlidesStore', () => {
         expect(server.requests[0]).toEqual(
             expect.objectContaining({
                 studyViewFilter: { studyIds: [STUDY] },
-                viewableOnly: true,
                 pageNumber: 0,
                 pageSize: 2,
             })

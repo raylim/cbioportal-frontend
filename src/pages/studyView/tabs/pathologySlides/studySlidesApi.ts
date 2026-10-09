@@ -28,14 +28,12 @@ export interface StudySlidePatient {
     studyId: string;
     patientId: string;
     slideCount: number;
-    viewableSlideCount: number;
     stainGroupCounts: StudySlideStainCounts;
 }
 
 export interface StudySlidesPage {
     totalPatients: number;
     totalSlides: number;
-    totalViewableSlides: number;
     /** Counts for every stain group, ignoring the stain-group filter. */
     stainGroupTotals: StudySlideStainCounts;
     /** Position of the requested patient in the full list, when it is in it. */
@@ -47,8 +45,6 @@ export interface StudySlidesPage {
 
 export interface StudySlidesRequest {
     studyViewFilter: StudyViewFilter;
-    /** Counts and lists only slides the tile server can serve. */
-    viewableOnly?: boolean;
     stainGroups?: StudySlideStainGroup[];
     matchLevels?: StudySlideMatchLevel[];
     /** Keeps slides whose patient or sample ID contains this, ignoring case. */
@@ -67,7 +63,7 @@ export class StudySlidesRequestError extends Error {
     }
 }
 
-/** Lists the patients with pathology slides in a study-view cohort. */
+/** Lists the patients with viewable pathology slides in a study-view cohort. */
 export function fetchStudySlidePatients(
     request: StudySlidesRequest
 ): Promise<StudySlidesPage> {

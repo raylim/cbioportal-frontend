@@ -39,7 +39,6 @@ const PATIENTS: StudySlidePatient[] = ['P-1', 'P-2', 'P-3'].map(id => ({
     studyId: 'study',
     patientId: id,
     slideCount: 2,
-    viewableSlideCount: id === 'P-2' ? 1 : 2,
     stainGroupCounts: { 'H&E': 1, IHC: 1, Other: 0, Unknown: 0 },
 }));
 
@@ -53,7 +52,6 @@ function pageFor(
     return {
         totalPatients: patients.length,
         totalSlides: patients.length * 2,
-        totalViewableSlides: patients.length * 2 - 1,
         stainGroupTotals: { 'H&E': 3, IHC: 3, Other: 0, Unknown: 0 },
         locatedIndex: located >= 0 ? located : null,
         pageNumber: request.pageNumber ?? 0,
