@@ -1,3 +1,5 @@
+import { ICivicEntry } from 'cbioportal-utils';
+
 export interface Slide {
     /** Opaque 32-hex de-identified slide key (never the source image id). */
     slide_key: string;
@@ -24,6 +26,8 @@ export type WsiSlideType = 'H&E' | 'IHC' | 'Other' | 'Unknown';
 
 export type WsiStainFilter = 'all' | 'hne' | 'ihc' | 'other' | 'unknown';
 export type PathologySlideMatchFilter = 'all' | 'part' | 'block' | 'unmatched';
+export type WsiMutationDataStatus = 'idle' | 'loading' | 'ready' | 'error';
+
 export interface SlideAssociation {
     slide_key: string;
     sample_id: string | null;
@@ -52,6 +56,79 @@ export interface Part {
     blocks: Block[];
 }
 
+export interface MutationDetail {
+    token: string;
+    type?: string; // human-readable mutation type, e.g. "Missense"
+    vaf?: number; // 0–100 percent
+    annotation?: string; // driverFilterAnnotation, e.g. "KRAS G13D is a hotspot"
+    cohortFrequency?: number; // fraction 0–1: how often this position mutated in study cohort
+    // OncoKB annotation fields (populated by fetchAndMergeOncoKbAnnotations)
+    oncogenic?: string; // "Oncogenic" | "Likely Oncogenic" | "Likely Neutral" | "Unknown"
+    mutationEffect?: string; // "Gain-of-function" | "Loss-of-function" | "Unknown"
+    hotspot?: boolean;
+    hasCivic?: boolean; // true when OncoKB variantExist=true (CIViC DB has an entry)
+    civicEntry?: ICivicEntry | null;
+    geneSummary?: string;
+    variantSummary?: string;
+    // Fields used internally to build the OncoKB batch request (not displayed)
+    entrezGeneId?: number;
+    consequence?: string; // e.g. "Missense_Mutation"
+    proteinStart?: number;
+    proteinEnd?: number;
+}
+
+/** Single discrete copy-number alteration event from MSK-IMPACT. */
+export interface CNADetail {
+    gene: string;
+    entrezGeneId?: number;
+    /** GISTIC value: -2=DeepDel, -1=ShallowDel, 1=Gain, 2=Amp */
+    cnaValue: number;
+    cytoband?: string;
+    cohortAlteredCount?: number;
+    cohortProfiledCount?: number;
+    cohortFrequency?: number;
+    oncogenic?: string;
+    mutationEffect?: string;
+    civicEntry?: ICivicEntry | null;
+    hasCivicVariants?: boolean;
+    geneSummary?: string;
+    variantSummary?: string;
+}
+
+export interface StructuralVariantDetail {
+    gene1: string;
+    gene2: string;
+    site1EntrezGeneId?: number;
+    site2EntrezGeneId?: number;
+    variantClass: string;
+    annotation?: string;
+    breakpointType?: string;
+    connectionType?: string;
+    eventInfo?: string;
+    length?: number;
+    comments?: string;
+    svStatus?: string;
+    dnaSupport?: string;
+    rnaSupport?: string;
+    tumorVariantCount?: number;
+    normalVariantCount?: number;
+    tumorReadCount?: number;
+    normalReadCount?: number;
+    tumorPairedEndReadCount?: number;
+    tumorSplitReadCount?: number;
+    site1Description?: string;
+    site2Description?: string;
+    site1Chromosome?: string;
+    site1Position?: number;
+    site2Chromosome?: string;
+    site2Position?: number;
+    ncbiBuild?: string;
+    oncogenic?: string;
+    mutationEffect?: string;
+    geneSummary?: string;
+    variantSummary?: string;
+}
+
 export interface Sample {
     sample_id: string;
     cancer_type: string;
@@ -60,6 +137,16 @@ export interface Sample {
     primary_site: string;
     sample_type: string;
     metastatic_site?: string;
+    tumor_purity?: string;
+    oncogenic_mutations?: string;
+    oncogenic_mutation_details?: MutationDetail[];
+    num_oncogenic_mutations?: string;
+    tmb_score?: string;
+    msi_type?: string;
+    /** Significant CNA events (value ≠ 0) from the study's GISTIC/CNA profile. */
+    cna_alterations?: CNADetail[];
+    /** Structural variants with tumor evidence from the study's SV profile. */
+    structural_variants?: StructuralVariantDetail[];
     parts: Part[];
 }
 
@@ -145,6 +232,31 @@ export interface WsiSlideAccess {
     expiresIn: number;
     /** When the access token expires (ms since the epoch). */
     expiresAt: number;
+}
+
+export interface WsiAnnotation {
+    '@context': 'http://www.w3.org/ns/anno.jsonld';
+    type: 'Annotation';
+    id: string;
+    body: Array<{
+        type: 'TextualBody';
+        value: string;
+        purpose: 'commenting' | 'tagging' | string;
+    }>;
+    target: {
+        source: string;
+        selector: {
+            type: 'FragmentSelector' | 'SvgSelector';
+            conformsTo?: string;
+            value: string;
+        };
+    };
+    created?: string;
+    creator?: string;
+    version?: number;
+    color?: string;
+    colorName?: string;
+    layerName?: string;
 }
 
 /** A label/value row for the sidebar's Clinical section, built by the host. */

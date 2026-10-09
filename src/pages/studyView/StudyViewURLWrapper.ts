@@ -14,6 +14,9 @@ export default class StudyViewURLWrapper extends URLWrapper<
         StudyViewURLQuery,
         | 'tab'
         | 'resourceUrl'
+        | 'wsiStudyId'
+        | 'wsiPatientId'
+        | 'wsiView'
         | 'plots_horz_selection'
         | 'plots_vert_selection'
         | 'plots_coloring_selection'
@@ -38,6 +41,9 @@ export default class StudyViewURLWrapper extends URLWrapper<
         super(routing, {
             tab: { isSessionProp: false },
             resourceUrl: { isSessionProp: false },
+            wsiStudyId: { isSessionProp: false },
+            wsiPatientId: { isSessionProp: false },
+            wsiView: { isSessionProp: false },
             ...PLOTS_TAB_URL_PARAMS,
             embeddings_coloring_selection: {
                 isSessionProp: false,
@@ -86,5 +92,28 @@ export default class StudyViewURLWrapper extends URLWrapper<
 
     public setResourceUrl(resourceUrl: string) {
         this.updateURL({ resourceUrl });
+    }
+
+    /** Records the Pathology Slides tab's view; the viewer is the default. */
+    public setWsiView(view: 'viewer' | 'table') {
+        this.updateURL(
+            { wsiView: view === 'table' ? 'table' : undefined },
+            undefined,
+            false,
+            true
+        );
+    }
+
+    /** Records the Pathology Slides tab's patient, replacing the history entry. */
+    public setWsiPatient(patient?: { studyId: string; patientId: string }) {
+        this.updateURL(
+            {
+                wsiStudyId: patient?.studyId,
+                wsiPatientId: patient?.patientId,
+            },
+            undefined,
+            false,
+            true
+        );
     }
 }

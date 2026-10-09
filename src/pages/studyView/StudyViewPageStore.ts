@@ -411,7 +411,9 @@ export type StudyViewPageTabKey =
     | StudyViewPageTabKeyEnum.CLINICAL_DATA
     | StudyViewPageTabKeyEnum.SUMMARY
     | StudyViewPageTabKeyEnum.HEATMAPS
-    | StudyViewPageTabKeyEnum.CN_SEGMENTS;
+    | StudyViewPageTabKeyEnum.CN_SEGMENTS
+    | StudyViewPageTabKeyEnum.FILES_AND_LINKS
+    | StudyViewPageTabKeyEnum.PLOTS;
 
 export enum StudyViewPageTabDescriptions {
     SUMMARY = 'Summary',
@@ -420,6 +422,7 @@ export enum StudyViewPageTabDescriptions {
     CN_SEGMENTS = 'CN Segments',
     PLOTS = 'Plots',
     EMBEDDINGS = 'Similarity Maps',
+    PATHOLOGY_SLIDES = 'Pathology Slides',
 }
 
 const DEFAULT_CHART_NAME = 'Custom Data';
@@ -471,6 +474,9 @@ export type StudyViewURLQuery = {
     id?: string;
     studyId?: string;
     resourceUrl?: string; // for open resource tabs
+    wsiStudyId?: string; // patient shown in the Pathology Slides tab
+    wsiPatientId?: string;
+    wsiView?: string; // 'table' when the Pathology Slides tab shows its slide table
     cancer_study_id?: string;
     filterJson?: string;
     filterAttributeId?: string;
@@ -6876,78 +6882,6 @@ export class StudyViewPageStore
         },
     });
 
-    readonly studyResourceData = remoteData<ResourceData[]>({
-        await: () => [this.resourceDefinitions],
-        invoke: () => {
-            const ret: ResourceData[] = [];
-            const studyResourceDefinitions = this.resourceDefinitions.result!.filter(
-                d => d.resourceType === 'STUDY'
-            );
-            const promises = [];
-            for (const resource of studyResourceDefinitions) {
-                promises.push(
-                    this.internalClient
-                        .getAllStudyResourceDataInStudyUsingGET({
-                            studyId: resource.studyId,
-                            resourceId: resource.resourceId,
-                            projection: 'DETAILED',
-                        })
-                        .then(data => ret.push(...data))
-                );
-            }
-            return Promise.all(promises).then(() => ret);
-        },
-    });
-
-    readonly sampleResourceData = remoteData<{
-        [sampleId: string]: ResourceData[];
-    }>({
-        await: () => [this.resourceDefinitions, this.samples],
-        invoke: () => {
-            const sampleResourceDefinitions = this.resourceDefinitions.result!.filter(
-                d => d.resourceType === 'SAMPLE'
-            );
-            if (!sampleResourceDefinitions.length) {
-                return Promise.resolve({});
-            }
-
-            const res = _(this.samples.result!)
-                .map(sample =>
-                    sampleResourceDefinitions.map(resource =>
-                        this.internalClient.getAllResourceDataOfSampleInStudyUsingGET(
-                            {
-                                sampleId: sample.sampleId,
-                                studyId: sample.studyId,
-                                resourceId: resource.resourceId,
-                                projection: 'DETAILED',
-                            }
-                        )
-                    )
-                )
-                .flatten()
-                .value();
-
-            return Promise.all(res).then(resData =>
-                _(resData)
-                    .flatMap()
-                    .groupBy('sampleId')
-                    .mapValues(data => data)
-                    .value()
-            );
-        },
-    });
-
-    readonly resourceIdToResourceData = remoteData<{
-        [resourceId: string]: ResourceData[];
-    }>({
-        await: () => [this.studyResourceData],
-        invoke: () => {
-            return Promise.resolve(
-                _.groupBy(this.studyResourceData.result!, d => d.resourceId)
-            );
-        },
-    });
-
     readonly chartClinicalAttributes = remoteData({
         await: () => [
             this.clinicalAttributes,
@@ -9382,7 +9316,33 @@ export class StudyViewPageStore
                     );
                 }
             }
-            return _.uniq(filterAttributes);
+
+            const linkedAttributeGroups = [
+                ['WSI_SLIDE_COUNT', 'WSI_HNE_SLIDE', 'WSI_IHC_SLIDE'],
+            ];
+            const selectedAttributeIds = new Set(
+                filterAttributes.map(attr => attr.clinicalAttributeId)
+            );
+
+            linkedAttributeGroups.forEach(group => {
+                if (
+                    group.some(attributeId =>
+                        selectedAttributeIds.has(attributeId)
+                    )
+                ) {
+                    queriedAttributes.forEach(attr => {
+                        if (
+                            group.includes(attr.clinicalAttributeId) &&
+                            !selectedAttributeIds.has(attr.clinicalAttributeId)
+                        ) {
+                            filterAttributes.push(attr);
+                            selectedAttributeIds.add(attr.clinicalAttributeId);
+                        }
+                    });
+                }
+            });
+
+            return _.uniqBy(filterAttributes, attr => attr.clinicalAttributeId);
         },
         onError: () => {},
         default: [],

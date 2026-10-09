@@ -76,6 +76,7 @@ jest.mock('openseadragon', () => {
         element: document.createElement('div'),
         destroy: jest.fn(),
         update: jest.fn(),
+        addTiledImage: jest.fn(),
     }));
     return OSD;
 });
@@ -1482,6 +1483,8 @@ describe('WSIViewer — pathology filter updates', () => {
         });
         (controller as any).osdViewer = { destroy: jest.fn() };
         (controller as any).osdSlideMounted = true;
+        // The active slide's first tile is ready.
+        (controller as any).nativeTileReadySeq = (controller as any).mountSeq;
 
         const beginSpy = jest.spyOn(inst as any, 'beginSlideSelection');
         const mountSpy = jest
@@ -2551,6 +2554,8 @@ describe('WSIViewer — open handler (mountOSD integration)', () => {
         mockViewer = {
             destroy: jest.fn(),
             viewport: mockViewport,
+            // The navigator mirrors the open main image.
+            world: { getItemAt: jest.fn(() => ({ source: {} })) },
             addOnceHandler: jest.fn(),
             addHandler: jest.fn(),
             removeHandler: jest.fn(),

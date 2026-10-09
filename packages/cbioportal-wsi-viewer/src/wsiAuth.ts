@@ -235,8 +235,125 @@ export function clearWsiSlideAccess(studyId?: string): void {
     if (studyId) {
         slideAccess.clear(key => key.includes(`::${studyId}::`));
         clearWsiResourceAccessTargets(studyId);
+        clearWsiPurposeAccessTokens(studyId);
         return;
     }
     slideAccess.clear();
     clearWsiResourceAccessTargets();
+    clearWsiPurposeAccessTokens();
+}
+
+/**
+ * Identifies the pixels a slide access serves, so that an agent proposal made
+ * against one capture is not applied to another: the opaque slide key and the
+ * tile pyramid's shape. The capability's source is encrypted and the browser
+ * never sees it, so it is not part of the fingerprint.
+ */
+export function getWsiSourceFingerprint(access: WsiSlideAccess): string {
+    const meta = access.tileMetadata;
+    return `wsi-v3:${access.slideKey}:${meta.dimensions.width}x${meta.dimensions.height}:${meta.levels}:${meta.tile_size}`;
+}
+
+/** Services that accept a study-scoped portal access token. */
+export type WsiAccessTokenPurpose = 'annotations' | 'agent';
+
+type WsiAccessTokenResponse = {
+    access_token: string;
+    expires_in: number;
+};
+
+type WsiPurposeAccessToken = {
+    value: string;
+    expiresAt: number;
+};
+
+// A purpose token is reused until 30 s before it expires.
+const purposeTokens = createPromiseCache<WsiPurposeAccessToken>(
+    token => token.expiresAt - 30_000
+);
+
+function purposeTokenKey(
+    studyId: string,
+    purpose: WsiAccessTokenPurpose,
+    authScope: string
+): string {
+    return `${normalizeWsiAuthScope(authScope)}::${purpose}::${studyId}`;
+}
+
+async function requestPurposeAccessToken(
+    studyId: string,
+    purpose: WsiAccessTokenPurpose
+): Promise<WsiPurposeAccessToken> {
+    const { buildApiUrl, fetchImpl } = getWsiViewerRuntime();
+    const url = new URL(
+        buildApiUrl('api/wsi/access-token'),
+        typeof window === 'undefined'
+            ? 'http://localhost'
+            : window.location.origin
+    );
+    url.searchParams.set('studyId', studyId);
+    url.searchParams.set('purpose', purpose);
+    const response = await fetchImpl(url.toString(), {
+        credentials: 'same-origin',
+        cache: 'no-store',
+    });
+    if (!response.ok) {
+        throw new Error(`WSI authorization failed (${response.status})`);
+    }
+    const payload = (await response.json()) as WsiAccessTokenResponse;
+    if (
+        !payload.access_token ||
+        !Number.isFinite(payload.expires_in) ||
+        payload.expires_in <= 0
+    ) {
+        throw new Error('Invalid WSI authorization response');
+    }
+    return {
+        value: payload.access_token,
+        expiresAt: Date.now() + payload.expires_in * 1000,
+    };
+}
+
+/**
+ * Study-scoped portal token for a WSI companion service, cached per subject,
+ * purpose and study until 30 seconds before it expires.
+ */
+export function getWsiPurposeAccessToken(
+    studyId: string,
+    purpose: WsiAccessTokenPurpose,
+    authScope = 'anonymousUser'
+): Promise<string> {
+    if (!studyId) {
+        return Promise.reject(new Error('WSI study scope is required'));
+    }
+    return purposeTokens
+        .get(purposeTokenKey(studyId, purpose, authScope), () =>
+            requestPurposeAccessToken(studyId, purpose)
+        )
+        .then(token => token.value);
+}
+
+export function getAnnotationAccessToken(
+    studyId: string,
+    authScope = 'anonymousUser'
+): Promise<string> {
+    return getWsiPurposeAccessToken(studyId, 'annotations', authScope);
+}
+
+export function getAgentAccessToken(
+    studyId: string,
+    authScope = 'anonymousUser'
+): Promise<string> {
+    return getWsiPurposeAccessToken(studyId, 'agent', authScope);
+}
+
+/** Forgets purpose tokens for one study, or for every study. */
+export function clearWsiPurposeAccessTokens(studyId?: string): void {
+    purposeTokens.clear(
+        studyId === undefined ? undefined : key => key.endsWith(`::${studyId}`)
+    );
+}
+
+export function clearAnnotationAccessToken(studyId?: string): void {
+    clearWsiPurposeAccessTokens(studyId);
 }

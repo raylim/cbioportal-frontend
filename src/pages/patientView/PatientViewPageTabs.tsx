@@ -41,14 +41,19 @@ import { PatientViewPageInner } from 'pages/patientView/PatientViewPage';
 import { Else, If } from 'react-if';
 import { PatientViewPlotsTabWrapper } from './PatientViewPlotsTabWrapper';
 import PatientWsiSlidesTab from 'pages/patientView/PatientWsiSlidesTab';
-import { PatientViewPageTabs } from './PatientViewPageTabIds';
+import {
+    PatientViewPageTabs,
+    PatientViewResourceTableTabPrefix,
+} from './PatientViewPageTabIds';
 import { WsiPatientClinicalData } from 'shared/components/wsiViewer/wsiClinicalRows';
 import { PatientViewPageStore } from './clinicalInformation/PatientViewPageStore';
 
 export {
     PatientViewPageTabs,
     PatientViewResourceTabPrefix,
+    PatientViewResourceTableTabPrefix,
     getPatientViewResourceTabId,
+    getPatientViewResourceTableTabId,
     extractResourceIdFromTabId,
 } from './PatientViewPageTabIds';
 
@@ -97,6 +102,17 @@ export function wsiPatientClinicalData(
         patientData: clinicalDataPatient.result,
         sampleData: clinicalDataForSamples.result,
     };
+}
+
+export function extractResourceIdFromTableTabId(tabId: string) {
+    const match = new RegExp(`${PatientViewResourceTableTabPrefix}(.*)`).exec(
+        tabId
+    );
+    if (match) {
+        return match[1];
+    } else {
+        return undefined;
+    }
 }
 
 export function patientViewTabs(
@@ -642,7 +658,7 @@ export function tabs(
         );
     }
 
-    if (pageComponent.shouldShowResources)
+    if (pageComponent.shouldShowResources && !pageComponent.hasNewResourceTabs)
         tabs.push(
             <MSKTab
                 key={4}
