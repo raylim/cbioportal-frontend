@@ -1,40 +1,9 @@
-import {
-    chooseInitialMatchingServableSlide,
-    chooseInitialServableSlide,
-} from './wsiInitialSlideUtils';
-import { Sample, Slide } from './wsiViewerTypes';
-
-function makeSlide(overrides: Partial<Slide> = {}): Slide {
-    return {
-        slide_key: '1000',
-        stain_name: 'H&E',
-        stain_group: 'Histology',
-        is_hne: true,
-        is_ihc: false,
-        magnification: '20x',
-        file_size_bytes: '100000000',
-        can_serve_tiles: true,
-        block_label: 'A1',
-        block_number: '1',
-        ...overrides,
-    };
-}
-
-function makeSample(sampleId: string): Sample {
-    return {
-        sample_id: sampleId,
-        cancer_type: '',
-        cancer_type_detailed: '',
-        oncotree_code: '',
-        primary_site: '',
-        sample_type: 'Primary',
-        parts: [],
-    };
-}
+import { chooseInitialServableSlide } from './wsiInitialSlideUtils';
+import { makeSample, makeSlide } from './wsiTestFixtures';
 
 describe('chooseInitialServableSlide', () => {
     it('prefers an explicit preferred slide id', () => {
-        const sample = makeSample('S-1');
+        const sample = makeSample('S-1', [], { parts: [] });
         const first = { slide: makeSlide({ slide_key: 'A' }), sample };
         const second = { slide: makeSlide({ slide_key: 'B' }), sample };
 
@@ -47,8 +16,8 @@ describe('chooseInitialServableSlide', () => {
     });
 
     it('prefers a matching-stain slide from the preferred sample', () => {
-        const preferred = makeSample('S-preferred');
-        const other = makeSample('S-other');
+        const preferred = makeSample('S-preferred', [], { parts: [] });
+        const other = makeSample('S-other', [], { parts: [] });
         const entries = [
             { slide: makeSlide({ slide_key: 'A' }), sample: other },
             {
@@ -71,7 +40,7 @@ describe('chooseInitialServableSlide', () => {
     });
 
     it('falls back to a global H&E slide when the requested stain is unavailable', () => {
-        const sample = makeSample('S-1');
+        const sample = makeSample('S-1', [], { parts: [] });
         const entries = [
             {
                 slide: makeSlide({
@@ -93,8 +62,8 @@ describe('chooseInitialServableSlide', () => {
     });
 
     it('falls back to an H&E slide from the preferred sample before leaving that sample', () => {
-        const preferred = makeSample('S-preferred');
-        const other = makeSample('S-other');
+        const preferred = makeSample('S-preferred', [], { parts: [] });
+        const other = makeSample('S-other', [], { parts: [] });
         const entries = [
             {
                 slide: makeSlide({
@@ -120,7 +89,7 @@ describe('chooseInitialServableSlide', () => {
     });
 
     it('does not return a preferred slide id when that entry is filtered out', () => {
-        const sample = makeSample('S-1');
+        const sample = makeSample('S-1', [], { parts: [] });
         const entries = [
             { slide: makeSlide({ slide_key: 'hidden' }), sample },
             { slide: makeSlide({ slide_key: 'visible-1' }), sample },
@@ -128,7 +97,7 @@ describe('chooseInitialServableSlide', () => {
         ];
 
         expect(
-            chooseInitialMatchingServableSlide(entries, {
+            chooseInitialServableSlide(entries, {
                 preferredSlideId: 'hidden',
                 stainFilter: 'all',
                 matchesEntry: entry => entry.slide.slide_key !== 'hidden',
@@ -137,14 +106,14 @@ describe('chooseInitialServableSlide', () => {
     });
 
     it('returns undefined when every entry fails the matching predicate', () => {
-        const sample = makeSample('S-1');
+        const sample = makeSample('S-1', [], { parts: [] });
         const entries = [
             { slide: makeSlide({ slide_key: 'A' }), sample },
             { slide: makeSlide({ slide_key: 'B' }), sample },
         ];
 
         expect(
-            chooseInitialMatchingServableSlide(entries, {
+            chooseInitialServableSlide(entries, {
                 stainFilter: 'all',
                 matchesEntry: () => false,
             })
@@ -152,7 +121,7 @@ describe('chooseInitialServableSlide', () => {
     });
 
     it('does not return a rejected preferred slide during stain fallback', () => {
-        const sample = makeSample('S-1');
+        const sample = makeSample('S-1', [], { parts: [] });
         const rejectedPreferred = {
             slide: makeSlide({ slide_key: 'rejected-preferred' }),
             sample,
@@ -168,7 +137,7 @@ describe('chooseInitialServableSlide', () => {
         };
 
         expect(
-            chooseInitialMatchingServableSlide([rejectedPreferred, accepted], {
+            chooseInitialServableSlide([rejectedPreferred, accepted], {
                 preferredSlideId: 'rejected-preferred',
                 stainFilter: 'hne',
                 matchesEntry: entry => entry === accepted,
@@ -178,8 +147,8 @@ describe('chooseInitialServableSlide', () => {
 });
 
 describe('chooseInitialServableSlide requested image', () => {
-    const preferred = makeSample('S-preferred');
-    const other = makeSample('S-other');
+    const preferred = makeSample('S-preferred', [], { parts: [] });
+    const other = makeSample('S-other', [], { parts: [] });
     const hne = { slide: makeSlide({ slide_key: 'A' }), sample: preferred };
     const encoded = {
         slide: makeSlide({
@@ -234,7 +203,7 @@ describe('chooseInitialServableSlide requested image', () => {
 
     it('ignores a requested image excluded by the entry filter', () => {
         expect(
-            chooseInitialMatchingServableSlide([hne, encoded, third], {
+            chooseInitialServableSlide([hne, encoded, third], {
                 requestedSlideKey: 'slide id/2 #x',
                 stainFilter: 'all',
                 matchesEntry: entry => entry.sample === preferred,

@@ -3,62 +3,19 @@ import {
     countServableSlidesForSample,
     getOrderedServableSlidesForSampleReadOnly,
     getServableSlideAssociationsBySlideKeyReadOnly,
-    getServableSlideEntriesForHierarchyReadOnly,
     getServableSlideIdsForPathologyFilterReadOnly,
-    getServableSlidesForSampleReadOnly,
     sampleHasMultiplePartDescriptions,
     sampleHasServableSlide,
     selectMetadataPrefetchSlides,
     wsiStainKind,
 } from './wsiSlideUtils';
+import { makeSample, makeSlide } from './wsiTestFixtures';
 import {
     PatientHierarchy,
     Sample,
     Slide,
     SlideAssociation,
 } from './wsiViewerTypes';
-
-function makeSlide(overrides: Partial<Slide> = {}): Slide {
-    return {
-        slide_key: '1000',
-        stain_name: 'H&E',
-        stain_group: 'Histology',
-        is_hne: true,
-        is_ihc: false,
-        magnification: '20x',
-        file_size_bytes: '100000000',
-        can_serve_tiles: true,
-        block_label: 'A1',
-        block_number: '1',
-        ...overrides,
-    };
-}
-
-function makeSample(sampleId: string, slides: Slide[]): Sample {
-    return {
-        sample_id: sampleId,
-        cancer_type: '',
-        cancer_type_detailed: '',
-        oncotree_code: '',
-        primary_site: '',
-        sample_type: 'Primary',
-        parts: [
-            {
-                part_number: '1',
-                part_type: 'Resection',
-                part_description: 'Test part',
-                subspecialty: 'GI',
-                blocks: [
-                    {
-                        block_number: '1',
-                        block_label: 'A1',
-                        slides,
-                    },
-                ],
-            },
-        ],
-    };
-}
 
 describe('wsiSlideUtils read-only slide derivation', () => {
     it('selects the preferred association for an image', () => {
@@ -112,11 +69,11 @@ describe('wsiSlideUtils read-only slide derivation', () => {
 
     it('memoizes servable slides by sample identity', () => {
         const sample = makeSample('S-1', [makeSlide({ slide_key: 'slide-1' })]);
-        const first = getServableSlidesForSampleReadOnly(sample);
+        const first = getOrderedServableSlidesForSampleReadOnly(sample);
 
-        expect(getServableSlidesForSampleReadOnly(sample)).toBe(first);
+        expect(getOrderedServableSlidesForSampleReadOnly(sample)).toBe(first);
         expect(
-            getServableSlidesForSampleReadOnly(
+            getOrderedServableSlidesForSampleReadOnly(
                 makeSample('S-1', [
                     makeSlide({ slide_key: 'slide-1', can_serve_tiles: false }),
                 ])
@@ -140,35 +97,6 @@ describe('wsiSlideUtils read-only slide derivation', () => {
         expect(countServableSlidesForSample(sample, 'all')).toBe(3);
         expect(countServableSlidesForSample(sample, 'hne')).toBe(2);
         expect(countServableSlidesForSample(sample, 'ihc')).toBe(1);
-    });
-
-    it('aggregates hierarchy entries from samples', () => {
-        const hierarchy: PatientHierarchy = {
-            patient_id: 'P-1',
-            samples: [
-                makeSample('S-1', [makeSlide({ slide_key: 'slide-1' })]),
-                makeSample('S-2', [makeSlide({ slide_key: 'slide-2' })]),
-            ],
-        };
-
-        expect(
-            getServableSlideEntriesForHierarchyReadOnly(hierarchy)
-        ).toHaveLength(2);
-    });
-
-    it('memoizes hierarchy entries by hierarchy identity', () => {
-        const hierarchy: PatientHierarchy = {
-            patient_id: 'P-1',
-            samples: [makeSample('S-1', [makeSlide({ slide_key: 'slide-1' })])],
-        };
-        const first = getServableSlideEntriesForHierarchyReadOnly(hierarchy);
-
-        expect(getServableSlideEntriesForHierarchyReadOnly(hierarchy)).toBe(
-            first
-        );
-        expect(
-            getServableSlideEntriesForHierarchyReadOnly({ ...hierarchy })
-        ).not.toBe(first);
     });
 
     it('orders slides by part, then block, then H&E first', () => {
@@ -405,8 +333,8 @@ describe('selectMetadataPrefetchSlides', () => {
         ]);
     });
 
-    it('skips the given image, already-cached slides and duplicates', () => {
-        const sample = makeSample('S1', [hne('h1'), hne('h2'), hne('h3')]);
+    it('skips the given image and duplicates', () => {
+        const sample = makeSample('S1', [hne('h1'), hne('h2')]);
 
         const picked = selectMetadataPrefetchSlides(
             [...entries(sample), ...entries(sample)],
@@ -415,7 +343,6 @@ describe('selectMetadataPrefetchSlides', () => {
                 stainFilter: 'all',
                 limit: 10,
                 skipSlideKey: 'h1',
-                isCached: slideKey => slideKey === 'h3',
             }
         );
 

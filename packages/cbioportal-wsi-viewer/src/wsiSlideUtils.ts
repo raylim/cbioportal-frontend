@@ -1,13 +1,14 @@
 import { normalizeBlockLabel } from './wsiNavUtils';
 import {
+    MatchLevel,
     PathologySlideFilter,
+    PathologySlideMatchFilter,
     PatientHierarchy,
     Sample,
     Slide,
     SlideAssociation,
+    WsiStainFilter,
 } from './wsiViewerTypes';
-
-export type WsiStainFilter = 'all' | 'hne' | 'ihc' | 'other' | 'unknown';
 
 export interface ServableSlideEntry {
     slide: Slide;
@@ -28,7 +29,6 @@ export interface OrderedServableSlideEntry {
 }
 
 type SampleSlideData = {
-    slides: Slide[];
     orderedSlides: OrderedServableSlideEntry[];
     slideCounts: ServableSlideCounts;
     partDescriptionCount: number;
@@ -38,10 +38,6 @@ type SampleSlideData = {
 // A normalized hierarchy is never mutated, so everything derived from it is
 // memoized by object identity.
 const sampleSlideDataCache = new WeakMap<Sample, SampleSlideData>();
-const hierarchySlideEntriesCache = new WeakMap<
-    PatientHierarchy,
-    ServableSlideEntry[]
->();
 const servableAssociationsBySlideKeyCache = new WeakMap<
     SlideAssociation[],
     Map<string, SlideAssociation>
@@ -162,7 +158,6 @@ export function selectMetadataPrefetchSlides(
         stainFilter: WsiStainFilter;
         limit: number;
         skipSlideKey?: string;
-        isCached?: (slideKey: string) => boolean;
     }
 ): Slide[] {
     const matching: Slide[] = [];
@@ -173,8 +168,7 @@ export function selectMetadataPrefetchSlides(
         if (
             sample.sample_id !== options.selectedSampleId ||
             slideKey === options.skipSlideKey ||
-            seen.has(slideKey) ||
-            options.isCached?.(slideKey)
+            seen.has(slideKey)
         ) {
             continue;
         }
@@ -244,7 +238,6 @@ export function compareSlidesInSample(
 
 function buildSampleSlideData(sample: Sample): SampleSlideData {
     const seen = new Set<string>();
-    const deduped: Slide[] = [];
     const unorderedSlides: Array<{
         entry: OrderedServableSlideEntry;
         partNumber: string;
@@ -272,7 +265,6 @@ function buildSampleSlideData(sample: Sample): SampleSlideData {
                 const key = uniqueSlideKey(sample.sample_id, slide);
                 if (seen.has(key)) continue;
                 seen.add(key);
-                deduped.push(slide);
                 unorderedSlides.push({
                     entry: { slide, blockLabel },
                     partNumber: part.part_number,
@@ -315,7 +307,6 @@ function buildSampleSlideData(sample: Sample): SampleSlideData {
         )
         .map(({ entry }) => entry);
     return {
-        slides: deduped,
         orderedSlides,
         slideCounts,
         partDescriptionCount: partDescriptions.size,
@@ -330,26 +321,6 @@ function getCachedServableSlideData(sample: Sample): SampleSlideData {
         sampleSlideDataCache.set(sample, data);
     }
     return data;
-}
-
-export function getServableSlidesForSampleReadOnly(sample: Sample): Slide[] {
-    return getCachedServableSlideData(sample).slides;
-}
-
-export function getServableSlideEntriesForHierarchyReadOnly(
-    hierarchy: PatientHierarchy
-): ServableSlideEntry[] {
-    let entries = hierarchySlideEntriesCache.get(hierarchy);
-    if (!entries) {
-        entries = hierarchy.samples.flatMap(sample =>
-            getCachedServableSlideData(sample).slides.map(slide => ({
-                slide,
-                sample,
-            }))
-        );
-        hierarchySlideEntriesCache.set(hierarchy, entries);
-    }
-    return entries;
 }
 
 export function countServableSlidesForSample(
@@ -378,20 +349,26 @@ export function sampleHasServableSlide(
     );
 }
 
-function normalizeMatchLevel(
+/** The match level a filter or linkout names, in the hierarchy's casing. */
+export function normalizeMatchLevel(
     value: string | null | undefined
-): string | undefined {
-    if (!value) {
-        return undefined;
-    }
-    const normalized = value.toUpperCase();
-    if (normalized === 'UNMATCHED') {
-        return 'UNMATCHED';
-    }
-    if (normalized === 'PART' || normalized === 'BLOCK') {
-        return normalized;
-    }
-    return undefined;
+): MatchLevel | undefined {
+    const normalized = value?.toUpperCase();
+    return normalized === 'PART' ||
+        normalized === 'BLOCK' ||
+        normalized === 'UNMATCHED'
+        ? normalized
+        : undefined;
+}
+
+export function matchesMatchFilter(
+    association: Pick<SlideAssociation, 'match_level'> | undefined,
+    matchFilter: PathologySlideMatchFilter
+): boolean {
+    return (
+        matchFilter === 'all' ||
+        association?.match_level === normalizeMatchLevel(matchFilter)
+    );
 }
 
 function buildPathologyFilterCacheKey(
