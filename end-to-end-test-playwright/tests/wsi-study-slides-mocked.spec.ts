@@ -511,5 +511,37 @@ if (process.env.PW_SUITE === 'wsi') {
                     .matchLevels
             ).toEqual(['UNMATCHED']);
         });
+
+        test('restores the slide table view and redirects the old slide table tab', async ({
+            page,
+        }) => {
+            await installStudySlidesMocks(page);
+            await page.goto(`/study/resourceTable_WSI_SAMPLE?id=${STUDY_ID}`);
+            await expect(
+                page.getByTestId('study-slides-view-table')
+            ).toHaveAttribute('aria-pressed', 'true', { timeout: 30000 });
+            await expect(page.getByTestId('study-slides-table')).toBeVisible();
+            await expect
+                .poll(() => {
+                    const url = new URL(page.url());
+                    return `${url.pathname} ${url.searchParams.get('wsiView')}`;
+                })
+                .toBe('/study/pathologySlides table');
+
+            await page.reload();
+            await expect(
+                page.getByTestId('study-slides-view-table')
+            ).toHaveAttribute('aria-pressed', 'true', { timeout: 30000 });
+
+            await page.getByTestId('study-slides-view-viewer').click();
+            await expect(
+                patientPosition(page)
+            ).toHaveText(`${patientIds[0]} · 1 of ${PATIENT_COUNT}`, {
+                timeout: 30000,
+            });
+            await expect
+                .poll(() => new URL(page.url()).searchParams.get('wsiView'))
+                .toBeNull();
+        });
     });
 }

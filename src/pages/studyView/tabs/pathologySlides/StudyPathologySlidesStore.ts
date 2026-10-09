@@ -18,6 +18,12 @@ import {
     StudySlideStainGroup,
 } from './studySlidesApi';
 
+import { getStudyViewResourceTableTabId } from 'pages/studyView/StudyViewPageTabs';
+import {
+    isWsiTileServerConfigured,
+    STUDY_SLIDE_TABLE_RESOURCE_ID,
+} from 'shared/lib/ResourcePolicy';
+
 export const STUDY_SLIDES_PAGE_SIZE = 50;
 export const STUDY_SLIDES_SEARCH_DEBOUNCE_MS = 300;
 
@@ -35,6 +41,24 @@ export function isSamePatient(
 
 /** The tab's two views: patients beside the viewer, or the cohort's slide table. */
 export type StudySlidesView = 'viewer' | 'table';
+
+/**
+ * The Pathology Slides view a study-view URL asks for: `wsiView=table`, or an old link to the
+ * slide table's own resource tab, which then redirects to the Pathology Slides table view.
+ */
+export function studySlidesViewFromUrl(
+    tabId: string | undefined,
+    wsiView: string | undefined
+): { view: StudySlidesView; redirectToSlidesTab: boolean } {
+    const redirectToSlidesTab =
+        tabId ===
+            getStudyViewResourceTableTabId(STUDY_SLIDE_TABLE_RESOURCE_ID) &&
+        isWsiTileServerConfigured();
+    return {
+        view: wsiView === 'table' || redirectToSlidesTab ? 'table' : 'viewer',
+        redirectToSlidesTab,
+    };
+}
 
 export interface StudyPathologySlidesStoreOptions {
     /** The study-view cohort; the list reloads when it changes. */

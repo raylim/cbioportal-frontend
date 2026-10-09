@@ -93,7 +93,10 @@ import { VirtualStudyModal } from 'pages/studyView/virtualStudy/VirtualStudyModa
 import { PlotsTabWrapper } from 'pages/studyView/StudyViewPlotsTabWrapper';
 import { hashUrlState } from 'cbioportal-wsi-viewer';
 import WindowStore from 'shared/components/window/WindowStore';
-import { StudyPathologySlidesStore } from './tabs/pathologySlides/StudyPathologySlidesStore';
+import {
+    StudyPathologySlidesStore,
+    studySlidesViewFromUrl,
+} from './tabs/pathologySlides/StudyPathologySlidesStore';
 import { StudyPathologySlidesTab } from './tabs/pathologySlides/StudyPathologySlidesTab';
 import { ResourceTableStore } from 'shared/components/resourceTable/ResourceTableStore';
 import {
@@ -196,11 +199,10 @@ export default class StudyViewPage extends React.Component<
         setWindowVariable('studyViewPageStore', this.store);
 
         const { wsiStudyId, wsiPatientId, wsiView } = this.urlWrapper.query;
-        // The slide table's own tab gives way to the Pathology Slides tab's table view.
-        const slideTableTabRequested =
-            this.urlWrapper.tabId ===
-                getStudyViewResourceTableTabId(STUDY_SLIDE_TABLE_RESOURCE_ID) &&
-            isWsiTileServerConfigured();
+        const initialSlidesView = studySlidesViewFromUrl(
+            this.urlWrapper.tabId,
+            wsiView
+        );
         this.pathologySlidesStore = new StudyPathologySlidesStore({
             getFilters: () => this.store.filters,
             getStudyIds: () => this.store.queriedPhysicalStudyIds.result,
@@ -213,13 +215,10 @@ export default class StudyViewPage extends React.Component<
                 hashUrlState.clear();
                 this.urlWrapper.setWsiPatient(patient);
             },
-            initialView:
-                wsiView === 'table' || slideTableTabRequested
-                    ? 'table'
-                    : 'viewer',
+            initialView: initialSlidesView.view,
             onViewChange: view => this.urlWrapper.setWsiView(view),
         });
-        if (slideTableTabRequested) {
+        if (initialSlidesView.redirectToSlidesTab) {
             this.urlWrapper.setTab(StudyViewPageTabKeyEnum.PATHOLOGY_SLIDES);
             this.urlWrapper.setWsiView('table');
         }

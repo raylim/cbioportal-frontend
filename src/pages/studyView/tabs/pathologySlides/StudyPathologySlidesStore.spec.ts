@@ -2,11 +2,13 @@
  * @jest-environment jsdom
  */
 import { autorun, observable, runInAction } from 'mobx';
+import { getServerConfig } from 'config/config';
 import { StudyViewFilter } from 'cbioportal-ts-api-client';
 import {
     STUDY_SLIDES_SEARCH_DEBOUNCE_MS,
     StudyPathologySlidesStore,
     StudySlidePatientRef,
+    studySlidesViewFromUrl,
 } from './StudyPathologySlidesStore';
 import {
     StudySlidePatient,
@@ -357,5 +359,46 @@ describe('StudyPathologySlidesStore', () => {
         store.clearSlideFilters();
         expect(store.hasSlideFilters).toBe(false);
         expect(store.searchText).toBe('');
+    });
+});
+
+describe('studySlidesViewFromUrl', () => {
+    let savedTileServerUrl: unknown;
+
+    beforeEach(() => {
+        savedTileServerUrl = (getServerConfig() as any).msk_wsi_tile_server_url;
+        (getServerConfig() as any).msk_wsi_tile_server_url =
+            'https://slides.example.com';
+    });
+
+    afterEach(() => {
+        (getServerConfig() as any).msk_wsi_tile_server_url = savedTileServerUrl;
+    });
+
+    it('restores the slide table view from wsiView=table', () => {
+        expect(studySlidesViewFromUrl('pathologySlides', 'table')).toEqual({
+            view: 'table',
+            redirectToSlidesTab: false,
+        });
+        expect(studySlidesViewFromUrl('pathologySlides', undefined)).toEqual({
+            view: 'viewer',
+            redirectToSlidesTab: false,
+        });
+    });
+
+    it("redirects the slide table's old resource tab to the table view", () => {
+        expect(
+            studySlidesViewFromUrl('resourceTable_WSI_SAMPLE', undefined)
+        ).toEqual({ view: 'table', redirectToSlidesTab: true });
+        expect(
+            studySlidesViewFromUrl('resourceTable_OTHER', undefined)
+        ).toEqual({ view: 'viewer', redirectToSlidesTab: false });
+    });
+
+    it('keeps the old slide table tab without a slide viewer', () => {
+        (getServerConfig() as any).msk_wsi_tile_server_url = '';
+        expect(
+            studySlidesViewFromUrl('resourceTable_WSI_SAMPLE', undefined)
+        ).toEqual({ view: 'viewer', redirectToSlidesTab: false });
     });
 });
