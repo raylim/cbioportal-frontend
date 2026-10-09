@@ -15,7 +15,6 @@ import {
 function configureRuntime(molecular?: WsiMolecularServices) {
     configureWsiViewerRuntime({
         buildApiUrl: (path: string) => `/${path}`,
-        authEnabled: false,
         molecular,
     });
 }

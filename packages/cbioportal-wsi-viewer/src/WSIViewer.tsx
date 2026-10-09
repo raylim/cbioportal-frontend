@@ -18,13 +18,12 @@ import {
     getServableSlideAssociationsBySlideKeyReadOnly,
     getOrderedServableSlidesForSampleReadOnly,
     getServableSlideIdsForPathologyFilterReadOnly,
+    matchesMatchFilter,
     matchesWsiStainFilter,
+    normalizeMatchLevel,
     sampleHasServableSlide,
 } from './wsiSlideUtils';
-import {
-    chooseInitialMatchingServableSlide,
-    chooseInitialServableSlide,
-} from './wsiInitialSlideUtils';
+import { chooseInitialServableSlide } from './wsiInitialSlideUtils';
 import { MetaRow, WsiMetaSidebar } from './wsiMetaSidebar';
 import {
     buildPathRows,
@@ -32,9 +31,9 @@ import {
     buildSeqRows,
     buildWsiRows,
 } from './wsiMetaUtils';
-import { getWsiViewerRuntime } from './wsiViewerConfig';
+import { hashUrlState } from './wsiViewStateUtils';
 import { SampleIdentifier } from './wsiDataMergeUtils';
-import { BLOCK_LABEL_TIP, compareSamplesForNavigation } from './wsiNavUtils';
+import { compareSamplesForNavigation } from './wsiNavUtils';
 import { WsiNavPanel } from './wsiNavPanel';
 import {
     WsiInitialSlideLoadPerformance,
@@ -45,7 +44,6 @@ import { loadOpenSeadragon } from './wsiOpenSeadragonLoader';
 import { clearPatientHierarchyCache } from './wsiHierarchyFetchCache';
 import { clearWsiSlideAccess } from './wsiAuth';
 import { clearWsiThumbnailFetchCache } from './wsiThumbnailFetchCache';
-import { clearSlideMetadataCache } from './wsiMetadataFetchCache';
 import {
     fetchClinicalDataRecordsReadOnly,
     fetchCnaDataReadOnly,
@@ -78,13 +76,11 @@ import {
     isWsiOncoKbEnabled,
 } from './wsiMolecularServices';
 import {
-    WSI_NAV_WIDTH,
     WSI_FONT_FAMILY,
-    WSI_SECTION_TITLE_STYLE,
     WSI_SIDEBAR_MAX_WIDTH,
     WSI_SIDEBAR_MIN_WIDTH,
     WSI_SIDEBAR_WIDTH,
-    WSI_THEME,
+    WSI_THEME as C,
 } from './wsiTheme';
 import {
     readWsiPanelFlag,
@@ -92,15 +88,9 @@ import {
     writeWsiPanelFlag,
 } from './wsiPanelChrome';
 
-const C = WSI_THEME;
-const NAV_W = WSI_NAV_WIDTH;
-const SIDEBAR_W = WSI_SIDEBAR_WIDTH;
-const SIDEBAR_MIN_W = WSI_SIDEBAR_MIN_WIDTH;
-const SIDEBAR_MAX_W = WSI_SIDEBAR_MAX_WIDTH;
 const SIDEBAR_HANDLE_W = 8;
 const SLIDE_SELECTION_DEBOUNCE_MS = 120;
 const MUTATION_RETRY_DELAY_MS = 250;
-const sectionTitleStyle = WSI_SECTION_TITLE_STYLE;
 
 /** Browser-stored hidden state of the slide list and the details sidebar. */
 export const WSI_NAV_COLLAPSED_KEY = 'wsi.viewer.navCollapsed';
@@ -109,12 +99,9 @@ export const WSI_METADATA_COLLAPSED_KEY = 'wsi.viewer.metadataCollapsed';
 interface Props {
     /** Tile-server base URL (never a patient-scoped or resource URL). */
     tileServerUrl: string;
-    /** Backend-owned hierarchy endpoint for this patient. */
-    hierarchyUrl: string;
     patientId: string;
     height: number;
-    /** cBioPortal study ID — used to build sample links in the sidebar */
-    studyId?: string;
+    studyId: string;
     initialStainFilter?: WsiStainFilter;
     initialMatchFilter?: PathologySlideMatchFilter;
     onStainFilterChange?: (filter: WsiStainFilter) => void;
@@ -123,7 +110,7 @@ interface Props {
     preferredSampleId?: string;
     pathologyFilter?: PathologySlideFilter;
     /** Authenticated subject scope used to isolate protected in-memory caches. */
-    authScope?: string;
+    authScope: string;
     /**
      * Slide named by a `slideKey` viewer link. A URL hash selection wins over
      * it; an ID absent from the loaded hierarchy shows a notice and falls
@@ -169,27 +156,21 @@ function DefaultLoadingIndicator() {
     );
 }
 
+/** What the coordinate bar reads from the viewer. */
 interface CoordBarViewerState {
-    coordBarInputX: string;
-    coordBarInputY: string;
-    coordBarCursorPos: { x: number; y: number } | null;
-    coordBarMpp?: { x: number; y: number };
+    coordInputX: string;
+    coordInputY: string;
+    cursorPos: { x: number; y: number } | null;
+    readonly selectedMpp?: { x: number; y: number };
 }
 
 function getInitialMatchFilter(
     pathologyFilter?: PathologySlideFilter
 ): PathologySlideMatchFilter {
-    const normalizedMatchLevel = pathologyFilter?.matchLevel?.toUpperCase();
-    if (normalizedMatchLevel === 'PART') {
-        return 'part';
-    }
-    if (normalizedMatchLevel === 'BLOCK') {
-        return 'block';
-    }
-    if (normalizedMatchLevel === 'UNMATCHED') {
-        return 'unmatched';
-    }
-    return 'all';
+    const matchLevel = normalizeMatchLevel(pathologyFilter?.matchLevel);
+    return matchLevel
+        ? (matchLevel.toLowerCase() as PathologySlideMatchFilter)
+        : 'all';
 }
 
 function getPathologyPreferredSlideKeys(
@@ -227,7 +208,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
     @observable private stainFilter: WsiStainFilter = 'all';
     @observable private matchFilter: PathologySlideMatchFilter = 'all';
     @observable private linkoutScopeActive = false;
-    @observable private sidebarWidth = SIDEBAR_W;
+    @observable private sidebarWidth = WSI_SIDEBAR_WIDTH;
     @observable private storedNavCollapsed = readWsiPanelFlag(
         WSI_NAV_COLLAPSED_KEY
     );
@@ -409,7 +390,10 @@ export default class WSIViewer extends React.Component<Props, {}> {
 
     @action.bound
     private setSidebarWidth(width: number) {
-        const clamped = Math.max(SIDEBAR_MIN_W, Math.min(SIDEBAR_MAX_W, width));
+        const clamped = Math.max(
+            WSI_SIDEBAR_MIN_WIDTH,
+            Math.min(WSI_SIDEBAR_MAX_WIDTH, width)
+        );
         this.sidebarWidth = clamped;
         this.controller.forceResize();
     }
@@ -447,7 +431,6 @@ export default class WSIViewer extends React.Component<Props, {}> {
             getServableSlides: () => this.servableSlides,
             getStainFilter: () => this.stainFilter,
             getTileServerBase: () => this.tileServerBase,
-            getTileServerOrigin: () => this.tileServerOrigin,
             getViewerContainerElement: () => this.viewerContainerRef.current,
             chooseInitialServableSlide: allSlides =>
                 this.chooseInitialServableSlide(allSlides),
@@ -508,33 +491,15 @@ export default class WSIViewer extends React.Component<Props, {}> {
         };
     }
 
+    /** Announces how the first slide loaded, for browser-side monitoring. */
     private reportInitialSlideLoadPerformance(
         metric: WsiInitialSlideLoadPerformance
     ) {
-        const {
-            slideId: _slideId,
-            patientId: _patientId,
-            studyId: _studyId,
-            ...browserEventDetail
-        } = metric;
-        if (
-            typeof window !== 'undefined' &&
-            typeof window.dispatchEvent === 'function'
-        ) {
-            try {
-                window.dispatchEvent(
-                    new CustomEvent('wsi-initial-slide-performance', {
-                        detail: browserEventDetail,
-                    })
-                );
-            } catch (_) {
-                // Ignore environments without CustomEvent support.
-            }
-        }
-    }
-
-    selectSlide(slide: Slide, sample: Sample): Promise<void> {
-        return this.controller.selectSlide(slide, sample);
+        window.dispatchEvent(
+            new CustomEvent('wsi-initial-slide-performance', {
+                detail: metric,
+            })
+        );
     }
 
     goToCoordinates() {
@@ -550,7 +515,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
     }
 
     componentDidMount() {
-        this.unsubscribeUrlState = getWsiViewerRuntime().urlState.subscribe(
+        this.unsubscribeUrlState = hashUrlState.subscribe(
             this.handleHashChange
         );
         if (typeof document !== 'undefined') {
@@ -571,13 +536,10 @@ export default class WSIViewer extends React.Component<Props, {}> {
     };
 
     private async selectSlideFromHash(): Promise<void> {
-        const hashState = getWsiViewerRuntime().urlState.read();
+        const hashState = hashUrlState.read();
         if (!hashState || !this.hierarchy) return;
 
-        const preferredSlideKeys = getPathologyPreferredSlideKeys(
-            this.hierarchy,
-            this.activePathologyFilter
-        );
+        const preferredSlideKeys = this.preferredSlideKeys;
         const matching = this.servableSlides.find(
             entry =>
                 entry.slide.slide_key === hashState.slideId &&
@@ -616,7 +578,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
             prev.initialMatchFilter !== this.props.initialMatchFilter;
         const requiresHierarchyReload =
             authScopeChanged ||
-            prev.hierarchyUrl !== this.props.hierarchyUrl ||
+            prev.studyId !== this.props.studyId ||
             prev.tileServerUrl !== this.props.tileServerUrl ||
             prev.patientId !== this.props.patientId ||
             (pathologyFilterChanged && !this.canReusePathologyFilterLocally());
@@ -634,7 +596,6 @@ export default class WSIViewer extends React.Component<Props, {}> {
         if (authScopeChanged) {
             clearPatientHierarchyCache();
             clearWsiSlideAccess();
-            clearSlideMetadataCache();
             clearWsiThumbnailFetchCache();
         }
 
@@ -706,16 +667,23 @@ export default class WSIViewer extends React.Component<Props, {}> {
 
     private get controllerProps() {
         return {
-            hierarchyUrl: this.props.hierarchyUrl,
             studyId: this.props.studyId,
             patientId: this.props.patientId,
             pathologyFilter: this.activePathologyFilter,
-            authScope: this.props.authScope || 'anonymousUser',
+            authScope: this.props.authScope,
         };
     }
 
     private get activePathologyFilter(): PathologySlideFilter | undefined {
         return this.linkoutScopeActive ? this.props.pathologyFilter : undefined;
+    }
+
+    /** Slides the active linkout scope allows; undefined when unscoped. */
+    @computed private get preferredSlideKeys(): Set<string> | undefined {
+        return getPathologyPreferredSlideKeys(
+            this.hierarchy,
+            this.activePathologyFilter
+        );
     }
 
     /**
@@ -742,10 +710,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
             return;
         }
 
-        const preferredSlideKeys = getPathologyPreferredSlideKeys(
-            hierarchy,
-            this.activePathologyFilter
-        );
+        const preferredSlideKeys = this.preferredSlideKeys;
         if (preferredSlideKeys) {
             const currentSlideKey = this.selectedSlide?.slide_key;
             const currentSampleId = this.selectedSample?.sample_id;
@@ -806,7 +771,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
             return;
         }
 
-        const next = chooseInitialMatchingServableSlide(servableSlides, {
+        const next = chooseInitialServableSlide(servableSlides, {
             preferredSampleId: this.props.preferredSampleId,
             stainFilter: this.stainFilter,
             matchesEntry: entry =>
@@ -831,13 +796,10 @@ export default class WSIViewer extends React.Component<Props, {}> {
     private chooseInitialServableSlide(
         allSlides: Array<{ slide: Slide; sample: Sample }>
     ) {
-        const hashState = getWsiViewerRuntime().urlState.read();
-        const preferredSlideKeys = getPathologyPreferredSlideKeys(
-            this.hierarchy,
-            this.activePathologyFilter
-        );
+        const hashState = hashUrlState.read();
+        const preferredSlideKeys = this.preferredSlideKeys;
 
-        return chooseInitialMatchingServableSlide(allSlides, {
+        return chooseInitialServableSlide(allSlides, {
             preferredSampleId: this.props.preferredSampleId,
             preferredSlideId: hashState?.slideId,
             requestedSlideKey: this.props.requestedSlideKey,
@@ -895,10 +857,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
             return;
         }
 
-        const preferredSlideKeys = getPathologyPreferredSlideKeys(
-            this.hierarchy,
-            this.activePathologyFilter
-        );
+        const preferredSlideKeys = this.preferredSlideKeys;
         const associationsBySlideKey = getServableSlideAssociationsBySlideKeyReadOnly(
             this.hierarchy.slide_associations
         );
@@ -912,10 +871,9 @@ export default class WSIViewer extends React.Component<Props, {}> {
             if (!matchesWsiStainFilter(slide, this.stainFilter)) {
                 return false;
             }
-            return (
-                this.matchFilter === 'all' ||
-                associationsBySlideKey.get(slide.slide_key)?.match_level ===
-                    this.matchFilter.toUpperCase()
+            return matchesMatchFilter(
+                associationsBySlideKey.get(slide.slide_key),
+                this.matchFilter
             );
         });
         if (!matchingSlides.length) {
@@ -1023,29 +981,8 @@ export default class WSIViewer extends React.Component<Props, {}> {
         return this.props.tileServerUrl.replace(/\/$/, '');
     }
 
-    @computed
-    get coordBarInputX(): string {
-        return this.coordInputX;
-    }
-
-    @computed
-    get coordBarInputY(): string {
-        return this.coordInputY;
-    }
-
-    @computed
-    get coordBarCursorPos(): { x: number; y: number } | null {
-        return this.cursorPos;
-    }
-
-    @computed
-    get coordBarMpp(): { x: number; y: number } | undefined {
+    get selectedMpp(): { x: number; y: number } | undefined {
         return this.selectedMeta?.mpp;
-    }
-
-    @computed
-    private get viewerPatientId(): string {
-        return this.props.patientId;
     }
 
     @computed
@@ -1070,7 +1007,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
         const studyId = this.props.studyId;
         const sampleId = this.sidebarMolecularSample?.sample_id;
         return studyId && sampleId && sampleId !== 'UNMATCHED'
-            ? buildSampleUrl(studyId, sampleId, this.viewerPatientId)
+            ? buildSampleUrl(studyId, sampleId, this.props.patientId)
             : undefined;
     }
 
@@ -1109,7 +1046,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
         return buildPathRows(
             this.selectedSlide,
             this.selectedSample,
-            this.viewerPatientId,
+            this.props.patientId,
             this.props.studyId,
             this.hierarchy
                 ? getServableSlideAssociationsBySlideKeyReadOnly(
@@ -1117,15 +1054,6 @@ export default class WSIViewer extends React.Component<Props, {}> {
                   ).get(this.selectedSlide.slide_key)
                 : undefined
         );
-    }
-
-    @computed
-    private get tileServerOrigin(): string {
-        try {
-            return new URL(this.tileServerBase, window.location.href).origin;
-        } catch {
-            return this.tileServerBase;
-        }
     }
 
     @action.bound
@@ -1702,10 +1630,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
                         hierarchy={hierarchy}
                         selectedSlide={selectedSlide}
                         sampleIdFilter={this.scopedSampleId}
-                        slideIdFilter={getPathologyPreferredSlideKeys(
-                            hierarchy,
-                            this.activePathologyFilter
-                        )}
+                        slideIdFilter={this.preferredSlideKeys}
                         linkoutScopeActive={this.linkoutScopeActive}
                         stainFilter={stainFilter}
                         matchFilter={matchFilter}
@@ -1717,10 +1642,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
                         onSelectSlide={this.handleSelectSlide}
                         tileServerBase={this.tileServerBase}
                         studyId={this.props.studyId}
-                        authScope={this.controllerProps.authScope}
-                        theme={C}
-                        navWidth={NAV_W}
-                        sectionTitleStyle={sectionTitleStyle}
+                        authScope={this.props.authScope}
                         onHide={this.hideNav}
                     />
                 )}
@@ -2040,10 +1962,10 @@ const ObservedCoordBar = observer(function ObservedCoordBar({
 }) {
     return (
         <CoordBar
-            inputX={viewer.coordBarInputX}
-            inputY={viewer.coordBarInputY}
-            cursorPos={viewer.coordBarCursorPos}
-            mpp={viewer.coordBarMpp}
+            inputX={viewer.coordInputX}
+            inputY={viewer.coordInputY}
+            cursorPos={viewer.cursorPos}
+            mpp={viewer.selectedMpp}
             onChangeX={onChangeX}
             onChangeY={onChangeY}
             onGo={onGo}

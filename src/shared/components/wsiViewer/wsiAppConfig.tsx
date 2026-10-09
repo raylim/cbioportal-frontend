@@ -20,21 +20,6 @@ function renderWsiLoading() {
     return <LoadingIndicator isLoading={true} center={true} size="big" />;
 }
 
-/** SAML portals, or portals that opt in, authenticate WSI users. */
-export function isPortalWsiAuthEnabled(): boolean {
-    const config = getServerConfig();
-    // Portals without authentication report `authenticate=false` as a boolean.
-    const authenticationMethod =
-        typeof config.authenticationMethod === 'string'
-            ? config.authenticationMethod.toLowerCase()
-            : undefined;
-    return (
-        authenticationMethod === 'saml' ||
-        authenticationMethod === 'saml_plus_basic' ||
-        config.msk_wsi_authentication_enabled === true
-    );
-}
-
 /** OncoKB and CIViC annotation services, as configured for the portal. */
 export function buildWsiMolecularServices(): WsiMolecularServices {
     const serverConfig = getServerConfig();
@@ -57,7 +42,6 @@ export function buildWsiMolecularServices(): WsiMolecularServices {
 export function buildWsiViewerConfig(): WsiViewerConfig {
     return {
         buildApiUrl: (path: string) => buildCBioPortalAPIUrl(path),
-        authEnabled: isPortalWsiAuthEnabled(),
         osdPrefixUrl: WSI_OSD_PREFIX_URL,
         molecular: buildWsiMolecularServices(),
     };

@@ -9,17 +9,12 @@ import * as wsiMetaUtils from './wsiMetaUtils';
 import * as wsiSlideUtils from './wsiSlideUtils';
 import * as wsiMolecularAnnotationDataUtils from './wsiMolecularAnnotationDataUtils';
 import * as wsiCbioportalDataUtils from './wsiCbioportalDataUtils';
-import {
-    clearPatientHierarchyCache,
-    fetchPatientHierarchyReadOnly,
-    hasCachedPatientHierarchy,
-} from './wsiHierarchyFetchCache';
+import { clearPatientHierarchyCache } from './wsiHierarchyFetchCache';
 import {
     clearMolecularProfileIdCache,
     clearWsiCbioportalRequestCaches,
 } from './wsiCbioportalDataUtils';
 import { clearWsiSlideAccess } from './wsiAuth';
-import { clearSlideMetadataCache } from './wsiMetadataFetchCache';
 import { clearWsiThumbnailFetchCache } from './wsiThumbnailFetchCache';
 import { PatientHierarchy, Block, Part, Sample, Slide } from './wsiViewerTypes';
 import {
@@ -43,7 +38,6 @@ const testMolecularServices: WsiMolecularServices = {
 function configureTestRuntime(overrides: Partial<WsiViewerConfig> = {}) {
     configureWsiViewerRuntime({
         buildApiUrl: (path: string) => `/${path}`,
-        authEnabled: false,
         molecular: testMolecularServices,
         ...overrides,
     });
@@ -96,16 +90,13 @@ jest.mock('openseadragon', () => {
 
 jest.mock('./wsiOpenSeadragonLoader', () => ({
     loadOpenSeadragon: () => mockLoadOpenSeadragon(),
-    hasPreloadedOpenSeadragon: () => false,
 }));
 
 jest.mock('./wsiHierarchyFetchCache', () => ({
     clearPatientHierarchyCache: jest.requireActual('./wsiHierarchyFetchCache')
         .clearPatientHierarchyCache,
-    fetchPatientHierarchyReadOnly: (...args: unknown[]) =>
+    fetchWsiPatientHierarchy: (...args: unknown[]) =>
         mockFetchPatientHierarchy(...args),
-    hasCachedPatientHierarchy: jest.requireActual('./wsiHierarchyFetchCache')
-        .hasCachedPatientHierarchy,
 }));
 
 const OSD = jest.requireMock('openseadragon') as jest.MockedFunction<any>;
@@ -224,7 +215,6 @@ function viewerPropsForUrl(url: string) {
             /\/patient\/[^/]+\/?$/,
             ''
         )}`.replace(/\/$/, ''),
-        hierarchyUrl: url,
         patientId,
     };
 }
@@ -237,6 +227,7 @@ function makeInstance(url: string, props: Record<string, unknown> = {}): any {
         url,
         height: 500,
         studyId: 'study',
+        authScope: 'anonymousUser',
         ...props,
     });
 }
@@ -281,11 +272,10 @@ beforeEach(() => {
     mockFetchPatientHierarchy.mockImplementation((...args: unknown[]) =>
         jest
             .requireActual('./wsiHierarchyFetchCache')
-            .fetchPatientHierarchyReadOnly(...args)
+            .fetchWsiPatientHierarchy(...args)
     );
     clearPatientHierarchyCache();
     clearMolecularProfileIdCache();
-    clearSlideMetadataCache();
     clearWsiThumbnailFetchCache();
     clearWsiSlideAccess();
 });
@@ -626,6 +616,7 @@ describe('WSIViewer — loadHierarchy enrichment', () => {
                 url: 'https://tiles.example.com/patient/P-XYZ',
                 height: 500,
                 studyId: 'study-1',
+                authScope: 'anonymousUser',
             });
             const controller = controllerOf(inst);
             jest.spyOn(controller, 'selectSlide').mockResolvedValue(undefined);

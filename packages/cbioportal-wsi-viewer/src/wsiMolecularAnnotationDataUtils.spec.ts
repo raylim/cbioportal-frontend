@@ -51,7 +51,6 @@ const mockGetCivicCnaVariants = jest.fn();
 function configureRuntime() {
     configureWsiViewerRuntime({
         buildApiUrl: (path: string) => `/${path}`,
-        authEnabled: false,
         molecular: {
             showOncoKb: true,
             showCivic: true,

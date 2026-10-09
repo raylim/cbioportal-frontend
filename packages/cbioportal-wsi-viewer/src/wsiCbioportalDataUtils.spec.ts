@@ -30,7 +30,6 @@ describe('wsiCbioportalDataUtils molecular profile caching', () => {
         clearWsiCbioportalRequestCaches();
         configureWsiViewerRuntime({
             buildApiUrl: (path: string) => `/${path}`,
-            authEnabled: false,
         });
     });
 
@@ -50,7 +49,6 @@ describe('wsiCbioportalDataUtils molecular profile caching', () => {
         configureWsiViewerRuntime({
             buildApiUrl: (path: string) =>
                 `https://portal.example/beta/${path}`,
-            authEnabled: false,
             fetchImpl: fetchImpl as typeof fetch,
         });
 
