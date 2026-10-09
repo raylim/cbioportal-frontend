@@ -534,11 +534,12 @@ if (process.env.PW_SUITE === 'wsi') {
             ).toHaveAttribute('aria-pressed', 'true', { timeout: 30000 });
 
             await page.getByTestId('study-slides-view-viewer').click();
-            await expect(
-                patientPosition(page)
-            ).toHaveText(`${patientIds[0]} · 1 of ${PATIENT_COUNT}`, {
-                timeout: 30000,
-            });
+            await expect(patientPosition(page)).toHaveText(
+                `${patientIds[0]} · 1 of ${PATIENT_COUNT}`,
+                {
+                    timeout: 30000,
+                }
+            );
             await expect
                 .poll(() => new URL(page.url()).searchParams.get('wsiView'))
                 .toBeNull();
