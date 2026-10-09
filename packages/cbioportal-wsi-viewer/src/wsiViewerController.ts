@@ -1,5 +1,5 @@
 import { selectMetadataPrefetchSlides } from './wsiSlideUtils';
-import { WsiStainFilter } from './wsiViewerTypes';
+import { WsiMutationDataStatus, WsiStainFilter } from './wsiViewerTypes';
 import { fetchWsiPatientHierarchy } from './wsiHierarchyFetchCache';
 import {
     buildWsiDownloadFilename,
@@ -83,6 +83,7 @@ export interface WsiViewerControllerHost {
     setSpinnerVisible(spinnerVisible: boolean): void;
     setTilesReady(tilesReady: boolean): void;
     setThumbnailPreview(objectUrl: string | null): void;
+    setMutationDataStatus(status: WsiMutationDataStatus): void;
     getSelectedSlide(): Slide | null;
     getSelectedSample(): Sample | null;
     getSelectedMeta(): TileMetadata | null;
@@ -92,6 +93,13 @@ export interface WsiViewerControllerHost {
     getCoordInputs(): { x: string; y: string };
     updateCursorPos(x: number, y: number): void;
     clearCursorPos(): void;
+    runSampleEnrichment(
+        base: string,
+        studyId: string,
+        patientId: string,
+        sampleIds: string[],
+        shouldContinue: () => boolean
+    ): Promise<void>;
     reportInitialSlideLoadPerformance(
         metric: WsiInitialSlideLoadPerformance
     ): void;
@@ -150,6 +158,10 @@ export class WsiViewerController {
     private backgroundWorkScheduled = false;
     private backgroundWorkIdleHandle: number | null = null;
     private backgroundWorkTimer: ReturnType<typeof setTimeout> | null = null;
+    private sampleEnrichmentStarted = false;
+    private sampleEnrichmentScheduled = false;
+    private sampleEnrichmentIdleHandle: number | null = null;
+    private sampleEnrichmentTimer: ReturnType<typeof setTimeout> | null = null;
     private navigatorScheduled = false;
     private navigatorIdleHandle: number | null = null;
     private navigatorTimer: ReturnType<typeof setTimeout> | null = null;
@@ -230,9 +242,13 @@ export class WsiViewerController {
     dispose() {
         this.resetMount();
         this.clearTimer('writeHashTimer');
+        // Retire the current load, so enrichment already in flight (and its
+        // retries) stops once its shouldContinue check runs.
+        this.hierarchyLoadSeq++;
         this.hierarchyAbortController?.abort();
         this.hierarchyAbortController = null;
         this.cancelBackgroundWorkSchedule();
+        this.cancelSampleEnrichmentSchedule();
         this.cancelNavigatorSchedule();
         this.destroyViewer();
         hashUrlState.clear();
@@ -252,6 +268,22 @@ export class WsiViewerController {
             this.backgroundWorkTimer = null;
         }
         this.backgroundWorkScheduled = false;
+    }
+
+    private cancelSampleEnrichmentSchedule() {
+        if (
+            this.sampleEnrichmentIdleHandle !== null &&
+            typeof window !== 'undefined' &&
+            typeof window.cancelIdleCallback === 'function'
+        ) {
+            window.cancelIdleCallback(this.sampleEnrichmentIdleHandle);
+        }
+        this.sampleEnrichmentIdleHandle = null;
+        if (this.sampleEnrichmentTimer !== null) {
+            clearTimeout(this.sampleEnrichmentTimer);
+            this.sampleEnrichmentTimer = null;
+        }
+        this.sampleEnrichmentScheduled = false;
     }
 
     private cancelNavigatorSchedule() {
@@ -573,8 +605,11 @@ export class WsiViewerController {
         this.resetMount();
         this.backgroundWorkStarted = false;
         this.backgroundWorkScheduled = false;
+        this.sampleEnrichmentStarted = false;
+        this.sampleEnrichmentScheduled = false;
         this.initialSlideKey = undefined;
         this.cancelBackgroundWorkSchedule();
+        this.cancelSampleEnrichmentSchedule();
         this.cancelNavigatorSchedule();
         this.initialSlideLoadStartedAt = Date.now();
         this.host.resetHierarchyLoadState();
@@ -597,6 +632,10 @@ export class WsiViewerController {
 
             this.host.setHierarchy(data);
             this.host.setLoading(false);
+            // Start IMPACT enrichment as soon as the hierarchy is available.
+            // It is independent of OSD tile readiness and must not be delayed
+            // behind a slow first-slide load.
+            this.scheduleSampleEnrichment(loadSeq);
 
             const allSlides = this.host.getServableSlides();
             const first = this.host.chooseInitialServableSlide(allSlides);
@@ -645,6 +684,39 @@ export class WsiViewerController {
             hierarchy !== null &&
             (!expectedHierarchy || hierarchy === expectedHierarchy)
         );
+    }
+
+    private scheduleSampleEnrichment(expectedLoadSeq: number) {
+        if (
+            this.sampleEnrichmentStarted ||
+            this.sampleEnrichmentScheduled ||
+            !this.host.getProps().studyId
+        ) {
+            return;
+        }
+
+        const runSampleEnrichment = () => {
+            this.sampleEnrichmentIdleHandle = null;
+            this.sampleEnrichmentTimer = null;
+            this.sampleEnrichmentScheduled = false;
+            if (
+                this.sampleEnrichmentStarted ||
+                !this.shouldContinueBackgroundWork(expectedLoadSeq) ||
+                !this.host.getProps().studyId
+            ) {
+                return;
+            }
+
+            this.sampleEnrichmentStarted = true;
+            void this.enrichSamplesFromCbioportal(expectedLoadSeq);
+        };
+
+        this.sampleEnrichmentScheduled = true;
+        // Mutation data is part of the initial sidebar contract. Schedule it on
+        // the next task instead of waiting for requestIdleCallback or the first
+        // tile; a slow/failed tile load must not prevent the variant table from
+        // hydrating.
+        this.sampleEnrichmentTimer = setTimeout(runSampleEnrichment, 0);
     }
 
     private startBackgroundWorkIfReady(seq: number) {
@@ -822,6 +894,45 @@ export class WsiViewerController {
                     )
                 );
             }
+        }
+    }
+
+    private async enrichSamplesFromCbioportal(
+        expectedLoadSeq = this.hierarchyLoadSeq
+    ) {
+        const hierarchy = this.host.getHierarchy();
+        if (
+            !hierarchy ||
+            !this.shouldContinueBackgroundWork(expectedLoadSeq, hierarchy)
+        ) {
+            return;
+        }
+        const { studyId } = this.host.getProps();
+        if (!studyId || !hierarchy.samples.length) return;
+
+        const shouldContinue = () =>
+            this.shouldContinueBackgroundWork(expectedLoadSeq, hierarchy);
+
+        const base = '';
+        const sampleIds: string[] = [];
+        for (let index = 0; index < hierarchy.samples.length; index += 1) {
+            const sampleId = hierarchy.samples[index].sample_id;
+            if (sampleId && sampleId !== 'UNMATCHED') {
+                sampleIds.push(sampleId);
+            }
+        }
+        if (!sampleIds.length) return;
+
+        try {
+            await this.host.runSampleEnrichment(
+                base,
+                studyId,
+                hierarchy.patient_id,
+                sampleIds,
+                shouldContinue
+            );
+        } catch {
+            // Silently fall back to tile-server data
         }
     }
 
