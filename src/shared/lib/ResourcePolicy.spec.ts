@@ -10,7 +10,8 @@ import {
     shouldHideLegacyHeResource,
     shouldHideLegacyHeResourceTab,
     slideStainFilterForColumnFilters,
-    withSlideStainFilter,
+    slideStainFilterQuery,
+    visibleStudyResourceDefinitions,
 } from './ResourcePolicy';
 
 describe('legacy H&E resource policy', () => {
@@ -55,6 +56,23 @@ describe('legacy H&E resource policy', () => {
                     displayName: 'H&E Slides',
                 } as any,
             })
+        );
+    });
+
+    it('leaves Files & Links empty for a study whose only resource is legacy H&E', () => {
+        const definitions = [{ resourceId: 'MSK_HNE' }];
+        assert.deepEqual(visibleStudyResourceDefinitions(definitions), []);
+        assert.deepEqual(
+            visibleStudyResourceDefinitions([
+                ...definitions,
+                { resourceId: 'PATHOLOGY_REPORT' },
+            ]),
+            [{ resourceId: 'PATHOLOGY_REPORT' }]
+        );
+        (getServerConfig() as any).msk_wsi_tile_server_url = '';
+        assert.deepEqual(
+            visibleStudyResourceDefinitions(definitions),
+            definitions
         );
     });
 
@@ -137,17 +155,10 @@ describe('legacy H&E resource policy', () => {
                 },
             ])
         );
-        assert.equal(
-            withSlideStainFilter(
-                '/patient/wsiHESlides?studyId=s&caseId=P-1',
-                'ihc'
-            ),
-            '/patient/wsiHESlides?studyId=s&caseId=P-1&pathologySlideSettings=%7B%22stainFilter%22%3A%22ihc%22%7D'
-        );
-        assert.equal(
-            withSlideStainFilter('/patient/wsiHESlides?caseId=P-1', undefined),
-            '/patient/wsiHESlides?caseId=P-1'
-        );
+        assert.deepEqual(slideStainFilterQuery('ihc'), {
+            pathologySlideSettings: '{"stainFilter":"ihc"}',
+        });
+        assert.deepEqual(slideStainFilterQuery(undefined), {});
     });
 
     it('keeps legacy H&E resources out of both resource tables', () => {

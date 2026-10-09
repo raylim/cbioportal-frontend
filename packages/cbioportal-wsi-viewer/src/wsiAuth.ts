@@ -1,6 +1,6 @@
 import { getWsiViewerRuntime } from './wsiViewerConfig';
 import { PatientHierarchy, WsiSlideAccess } from './wsiViewerTypes';
-import { deleteExpiredEntries } from './wsiCacheUtils';
+import { createPromiseCache } from './wsiCacheUtils';
 
 const CURRENT_WSI_DECODE_POLICY =
     'geometry-v2;tile-max=16777216;thumbnail-max=16777216';
@@ -36,9 +36,7 @@ export function validateWsiTileMetadata(
         throw new Error('Invalid WSI tile metadata');
     }
 
-    const schema = metadata.tile_metadata_schema_version;
-    if (schema == null) return;
-    if (!Number.isInteger(schema) || schema !== 2) {
+    if (metadata.tile_metadata_schema_version !== 2) {
         throw new Error('Invalid WSI tile metadata schema');
     }
     const safeMinLevel = metadata.safe_min_level;
@@ -72,54 +70,15 @@ export function validateWsiTileMetadata(
     }
 }
 
-const WSI_SESSION_CACHE_PREFIXES = [
-    'wsi-hierarchy-cache-',
-    'wsi-metadata-cache-',
-    'wsi-bootstrap-cache-',
-];
-let protectedSessionCachePurged = false;
-
 export function normalizeWsiAuthScope(scope?: string): string {
     const normalized = scope?.trim();
     return normalized || 'anonymousUser';
 }
 
-export function isWsiAuthConfigured(): boolean {
-    return getWsiViewerRuntime().authEnabled;
-}
-
-export function getWsiSessionStorage(): Storage | null {
-    if (typeof window === 'undefined') {
-        return null;
-    }
-
-    try {
-        const storage = window.sessionStorage;
-        if (!isWsiAuthConfigured()) {
-            return storage;
-        }
-        if (!protectedSessionCachePurged) {
-            for (let index = storage.length - 1; index >= 0; index -= 1) {
-                const key = storage.key(index);
-                if (
-                    key &&
-                    WSI_SESSION_CACHE_PREFIXES.some(prefix =>
-                        key.startsWith(prefix)
-                    )
-                ) {
-                    storage.removeItem(key);
-                }
-            }
-            protectedSessionCachePurged = true;
-        }
-        return null;
-    } catch (_) {
-        return null;
-    }
-}
-
-const slideAccess = new Map<string, WsiSlideAccess>();
-const pendingSlideAccess = new Map<string, Promise<WsiSlideAccess>>();
+// An access is reused until 30 s before its token expires.
+const slideAccess = createPromiseCache<WsiSlideAccess>(
+    access => access.expiresAt - 30_000
+);
 /**
  * Patient of every slide a loaded hierarchy published, keyed by study and
  * slide key. Access is only ever requested for these slides.
@@ -225,9 +184,6 @@ async function requestSlideAccess(
         payload.slideKey !== slideKey ||
         !payload.accessToken ||
         !payload.tileMetadata ||
-        !payload.thumbnail ||
-        !Number.isFinite(payload.thumbnail.width) ||
-        !Number.isFinite(payload.thumbnail.height) ||
         !Number.isFinite(payload.expiresIn) ||
         payload.expiresIn <= 0
     ) {
@@ -239,13 +195,7 @@ async function requestSlideAccess(
     return {
         slideKey,
         tileMetadata: payload.tileMetadata,
-        thumbnail: {
-            width: payload.thumbnail.width,
-            height: payload.thumbnail.height,
-            contentType: payload.thumbnail.contentType,
-        },
         accessToken: payload.accessToken,
-        tokenType: payload.tokenType,
         expiresIn: payload.expiresIn,
         expiresAt: Date.now() + payload.expiresIn * 1000,
     };
@@ -274,45 +224,19 @@ export function getWsiSlideAccess(
         patientId,
         slideKey,
     ].join('::');
-    if (!forceRefresh) {
-        const cached = slideAccess.get(key);
-        if (
-            cached &&
-            cached.expiresAt &&
-            cached.expiresAt > Date.now() + 30_000
-        ) {
-            return Promise.resolve(cached);
-        }
-    }
-    slideAccess.delete(key);
-    let request = pendingSlideAccess.get(key);
-    if (!request) {
-        request = requestSlideAccess(studyId, patientId, slideKey)
-            .then(access => {
-                deleteExpiredEntries(slideAccess);
-                slideAccess.set(key, access);
-                return access;
-            })
-            .finally(() => {
-                pendingSlideAccess.delete(key);
-            });
-        pendingSlideAccess.set(key, request);
-    }
-    return request;
+    return slideAccess.get(
+        key,
+        () => requestSlideAccess(studyId, patientId, slideKey),
+        forceRefresh
+    );
 }
 
 export function clearWsiSlideAccess(studyId?: string): void {
     if (studyId) {
-        for (const key of slideAccess.keys()) {
-            if (key.includes(`::${studyId}::`)) slideAccess.delete(key);
-        }
-        for (const key of pendingSlideAccess.keys()) {
-            if (key.includes(`::${studyId}::`)) pendingSlideAccess.delete(key);
-        }
+        slideAccess.clear(key => key.includes(`::${studyId}::`));
         clearWsiResourceAccessTargets(studyId);
         return;
     }
     slideAccess.clear();
-    pendingSlideAccess.clear();
     clearWsiResourceAccessTargets();
 }

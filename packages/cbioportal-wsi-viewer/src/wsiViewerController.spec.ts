@@ -12,30 +12,12 @@ import { Sample, Slide, TileMetadata } from './wsiViewerTypes';
 jest.mock('./wsiAuth', () => ({
     getWsiSlideAccess: jest.fn(),
 }));
-jest.mock('./wsiMetadataFetchCache', () => ({
-    evictSlideMetadataCache: jest.fn(),
-    fetchSlideMetadataCachedReadOnly: jest.fn(() =>
-        Promise.resolve({
-            dimensions: { width: 1000, height: 800 },
-            levels: 3,
-            level_dimensions: [],
-            max_zoom: 10,
-            tile_size: 256,
-        })
-    ),
-    hasCachedSlideMetadata: jest.fn(() => false),
-}));
 jest.mock('./wsiThumbnailFetchCache', () => ({
     fetchWsiThumbnailBlob: jest.fn(() =>
         Promise.reject(new Error('no preview'))
     ),
 }));
-jest.mock('./wsiOpenSeadragonLoader', () => ({
-    hasPreloadedOpenSeadragon: () => false,
-}));
-jest.mock('./wsiNetworkWarmup', () => ({
-    ensureWsiPreconnect: jest.fn(),
-}));
+jest.mock('./wsiOpenSeadragonLoader', () => ({}));
 
 const getWsiSlideAccessMock = getWsiSlideAccess as jest.Mock;
 
@@ -103,6 +85,13 @@ function makeSlide(slideKey: string): Slide {
 function makeAccess(slideKey: string, token: string) {
     return {
         slideKey,
+        tileMetadata: {
+            dimensions: { width: 1000, height: 800 },
+            levels: 3,
+            level_dimensions: [],
+            max_zoom: 10,
+            tile_size: 256,
+        },
         accessToken: token,
         tokenType: 'Bearer',
         expiresIn: 600,
@@ -116,7 +105,6 @@ function makeHarness() {
     let meta: TileMetadata | null = null;
     const host: WsiViewerControllerHost = {
         getProps: () => ({
-            hierarchyUrl: '/api/wsi/v2/hierarchy/study/P-1',
             studyId: 'study',
             patientId: 'P-1',
             authScope: 'user',
@@ -129,7 +117,6 @@ function makeHarness() {
         getServableSlides: () => [],
         getStainFilter: () => 'all' as any,
         getTileServerBase: () => 'https://tiles.example.com',
-        getTileServerOrigin: () => 'https://tiles.example.com',
         getViewerContainerElement: () => container,
         chooseInitialServableSlide: () => undefined,
         beginSlideSelection: slide => {
@@ -181,7 +168,6 @@ describe('WsiViewerController viewer lifecycle', () => {
     beforeAll(() => {
         configureWsiViewerRuntime({
             buildApiUrl: path => `/${path}`,
-            authEnabled: false,
         });
     });
 

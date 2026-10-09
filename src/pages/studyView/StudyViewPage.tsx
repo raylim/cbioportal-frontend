@@ -89,7 +89,6 @@ import {
     buildCustomTabs,
     prepareCustomTabConfigurations,
 } from 'shared/lib/customTabs/customTabHelpers';
-import { shouldHideLegacyHeResourceTab } from 'shared/lib/ResourcePolicy';
 import { VirtualStudyModal } from 'pages/studyView/virtualStudy/VirtualStudyModal';
 import { PlotsTabWrapper } from 'pages/studyView/StudyViewPlotsTabWrapper';
 import { hashUrlState } from 'cbioportal-wsi-viewer';
@@ -103,6 +102,7 @@ import {
     isWsiTileServerConfigured,
     slideKeyFromSlideUrl,
     STUDY_SLIDE_TABLE_RESOURCE_ID,
+    visibleStudyResourceDefinitions,
 } from 'shared/lib/ResourcePolicy';
 import { IResourceTableRow } from 'shared/lib/ResourceTableUtils';
 import ResourceDataTable from 'shared/components/resourceTable/ResourceDataTable';
@@ -551,14 +551,14 @@ export default class StudyViewPage extends React.Component<
     }
 
     @computed get visibleResourceDefinitions() {
-        return (this.store.resourceDefinitions.result || []).filter(
-            d => !shouldHideLegacyHeResourceTab(d.resourceId)
+        return visibleStudyResourceDefinitions(
+            this.store.resourceDefinitions.result || []
         );
     }
 
     @computed get shouldShowResources() {
         if (this.store.resourceDefinitions.isComplete) {
-            return this.store.resourceDefinitions.result.length > 0;
+            return this.visibleResourceDefinitions.length > 0;
         } else {
             return false;
         }

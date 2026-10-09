@@ -19,12 +19,9 @@ import {
     isWsiResourceId,
     patientViewPathForResource,
     slideStainFilterForColumnFilters,
-    withSlideStainFilter,
+    slideStainFilterQuery,
 } from 'shared/lib/ResourcePolicy';
-import {
-    getPatientViewUrlWithPathname,
-    getSampleViewUrlWithPathname,
-} from 'shared/api/urls';
+import { buildCBioPortalPageUrl } from 'shared/api/urls';
 import {
     ResourceColumnFilter,
     ResourceColumnInfo,
@@ -488,24 +485,31 @@ export class ResourceDataTable extends React.Component<
         );
     }
 
-    /** Stain group filter carried to slide rows' Pathology Slides links. */
-    private slideLinkStainFilter(resourceId: string | undefined) {
-        return isWsiResourceId(resourceId)
+    /**
+     * The patient view link of a row's patient or sample; slide rows open Pathology Slides with the
+     * table's stain group filter.
+     */
+    private rowCaseUrl(
+        row: IResourceTableRow,
+        caseQuery: { caseId: string } | { sampleId: string }
+    ) {
+        const stainFilter = isWsiResourceId(row.resourceId)
             ? slideStainFilterForColumnFilters(this.props.store.filters)
             : undefined;
+        return buildCBioPortalPageUrl(
+            patientViewPathForResource(row.resourceId),
+            {
+                studyId: row.studyId,
+                ...caseQuery,
+                ...slideStainFilterQuery(stainFilter),
+            }
+        );
     }
 
     private renderPatientId = (row: IResourceTableRow) => {
         const href =
             row.studyId && row.patientStableId
-                ? withSlideStainFilter(
-                      getPatientViewUrlWithPathname(
-                          row.studyId,
-                          row.patientStableId,
-                          patientViewPathForResource(row.resourceId)
-                      ),
-                      this.slideLinkStainFilter(row.resourceId)
-                  )
+                ? this.rowCaseUrl(row, { caseId: row.patientStableId })
                 : undefined;
         return this.renderLinkOrText(row.patientId, href);
     };
@@ -513,14 +517,7 @@ export class ResourceDataTable extends React.Component<
     private renderSampleId = (row: IResourceTableRow) => {
         const href =
             row.studyId && row.sampleStableId
-                ? withSlideStainFilter(
-                      getSampleViewUrlWithPathname(
-                          row.studyId,
-                          row.sampleStableId,
-                          patientViewPathForResource(row.resourceId)
-                      ),
-                      this.slideLinkStainFilter(row.resourceId)
-                  )
+                ? this.rowCaseUrl(row, { sampleId: row.sampleStableId })
                 : undefined;
         return this.renderLinkOrText(row.sampleId, href);
     };
