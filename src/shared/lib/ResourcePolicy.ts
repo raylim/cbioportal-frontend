@@ -31,6 +31,18 @@ export function shouldHideLegacyHeResourceTab(
         : false;
 }
 
+/**
+ * The study's resource definitions Files & Links lists: legacy H&E ones give way to the slide
+ * viewer, so a study with only those has no Files & Links tab.
+ */
+export function visibleStudyResourceDefinitions<
+    T extends { resourceId: string }
+>(definitions: T[]): T[] {
+    return definitions.filter(
+        d => !shouldHideLegacyHeResourceTab(d.resourceId)
+    );
+}
+
 /** Resource tabs study view's resource table offers: the slide table, not WSI_PATIENT. */
 export function isStudyViewResourceTab(resourceId: string): boolean {
     return (

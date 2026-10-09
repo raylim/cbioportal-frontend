@@ -89,11 +89,13 @@ import {
     buildCustomTabs,
     prepareCustomTabConfigurations,
 } from 'shared/lib/customTabs/customTabHelpers';
-import { shouldHideLegacyHeResourceTab } from 'shared/lib/ResourcePolicy';
+import {
+    isStudyViewResourceTab,
+    visibleStudyResourceDefinitions,
+} from 'shared/lib/ResourcePolicy';
 import { VirtualStudyModal } from 'pages/studyView/virtualStudy/VirtualStudyModal';
 import { PlotsTabWrapper } from 'pages/studyView/StudyViewPlotsTabWrapper';
 import { ResourceTableStore } from 'shared/components/resourceTable/ResourceTableStore';
-import { isStudyViewResourceTab } from 'shared/lib/ResourcePolicy';
 import ResourceDataTable from 'shared/components/resourceTable/ResourceDataTable';
 
 export interface IStudyViewPageProps {
@@ -501,14 +503,14 @@ export default class StudyViewPage extends React.Component<
     }
 
     @computed get visibleResourceDefinitions() {
-        return (this.store.resourceDefinitions.result || []).filter(
-            d => !shouldHideLegacyHeResourceTab(d.resourceId)
+        return visibleStudyResourceDefinitions(
+            this.store.resourceDefinitions.result || []
         );
     }
 
     @computed get shouldShowResources() {
         if (this.store.resourceDefinitions.isComplete) {
-            return this.store.resourceDefinitions.result.length > 0;
+            return this.visibleResourceDefinitions.length > 0;
         } else {
             return false;
         }
