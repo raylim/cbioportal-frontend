@@ -7,7 +7,7 @@ import {
 } from './wsi-foundation-mocks';
 
 // Mocked like wsi-foundation-mocked.spec.ts: runs in the WSI suite only.
-if (process.env.PW_SUITE === 'wsi' && process.env.WSI_CHILD_CONTRACT !== '1') {
+if (process.env.PW_SUITE === 'wsi') {
     test.describe('WSI annotation and research assistant contract', () => {
         test('loads annotation layers and commits an agent proposal in the viewer', async ({
             page,

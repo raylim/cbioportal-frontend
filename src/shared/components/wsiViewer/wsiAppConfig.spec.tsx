@@ -6,7 +6,6 @@ import { act, render, screen } from '@testing-library/react';
 import {
     AppWsiViewer,
     buildWsiViewerConfig,
-    isPortalWsiAuthEnabled,
     wsiAuthScope,
 } from './wsiAppConfig';
 
@@ -45,12 +44,7 @@ describe('buildWsiViewerConfig', () => {
         expect(config.buildApiUrl('api/wsi/v2/hierarchy/s/p')).toBe(
             'https://portal.example/beta/api/wsi/v2/hierarchy/s/p'
         );
-        expect(config).toEqual(
-            expect.objectContaining({
-                authEnabled: false,
-                osdPrefixUrl: '/reactapp/osd-images/',
-            })
-        );
+        expect(config.osdPrefixUrl).toBe('/reactapp/osd-images/');
     });
 
     it('scopes caches by the user, the display name or the anonymous user', () => {
@@ -81,22 +75,6 @@ describe('buildWsiViewerConfig', () => {
         expect(buildWsiViewerConfig().agent).toEqual({ enabled: true });
         mockServerConfig.msk_wsi_agent_enabled = 'true';
         expect(buildWsiViewerConfig().agent).toEqual({ enabled: true });
-    });
-
-    it('enables WSI auth for SAML portals and the explicit opt-in', () => {
-        mockServerConfig.authenticationMethod = 'SAML';
-        expect(isPortalWsiAuthEnabled()).toBe(true);
-        mockServerConfig.authenticationMethod = 'saml_plus_basic';
-        expect(isPortalWsiAuthEnabled()).toBe(true);
-        mockServerConfig.authenticationMethod = 'false';
-        expect(isPortalWsiAuthEnabled()).toBe(false);
-        // authenticate=false reaches the frontend as a boolean.
-        mockServerConfig.authenticationMethod = false;
-        expect(isPortalWsiAuthEnabled()).toBe(false);
-        mockServerConfig.authenticationMethod = undefined;
-        expect(isPortalWsiAuthEnabled()).toBe(false);
-        mockServerConfig.msk_wsi_authentication_enabled = true;
-        expect(isPortalWsiAuthEnabled()).toBe(true);
     });
 });
 

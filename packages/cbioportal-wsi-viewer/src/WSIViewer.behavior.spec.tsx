@@ -11,26 +11,28 @@ import { readWsiHashState } from './wsiViewStateUtils';
 import * as wsiSlideUtils from './wsiSlideUtils';
 import {
     clearPatientHierarchyCache,
-    fetchPatientHierarchyReadOnly,
-    hasCachedPatientHierarchy,
+    fetchWsiPatientHierarchy,
 } from './wsiHierarchyFetchCache';
 import {
     clearWsiSlideAccess,
+    getWsiSlideAccess,
     registerWsiResourceAccessTarget,
 } from './wsiAuth';
-import {
-    clearSlideMetadataCache,
-    fetchSlideMetadataCachedReadOnly,
-} from './wsiMetadataFetchCache';
 import { clearWsiThumbnailFetchCache } from './wsiThumbnailFetchCache';
-import { PatientHierarchy, Block, Part, Sample, Slide } from './wsiViewerTypes';
+import { PatientHierarchy, Part, Sample, Slide } from './wsiViewerTypes';
+import {
+    makeBlock,
+    makePart,
+    makeSample as fixtureSample,
+    makeSlide,
+    makeTileMetadata,
+} from './wsiTestFixtures';
 import { configureWsiViewerRuntime, WsiViewerConfig } from './wsiViewerConfig';
 
 // Component tests use a synthetic origin, so keep portal API URLs relative.
 function configureTestRuntime(overrides: Partial<WsiViewerConfig> = {}) {
     configureWsiViewerRuntime({
         buildApiUrl: (path: string) => `/${path}`,
-        authEnabled: false,
         ...overrides,
     });
 }
@@ -81,16 +83,13 @@ jest.mock('openseadragon', () => {
 
 jest.mock('./wsiOpenSeadragonLoader', () => ({
     loadOpenSeadragon: () => mockLoadOpenSeadragon(),
-    hasPreloadedOpenSeadragon: () => false,
 }));
 
 jest.mock('./wsiHierarchyFetchCache', () => ({
     clearPatientHierarchyCache: jest.requireActual('./wsiHierarchyFetchCache')
         .clearPatientHierarchyCache,
-    fetchPatientHierarchyReadOnly: (...args: unknown[]) =>
+    fetchWsiPatientHierarchy: (...args: unknown[]) =>
         mockFetchPatientHierarchy(...args),
-    hasCachedPatientHierarchy: jest.requireActual('./wsiHierarchyFetchCache')
-        .hasCachedPatientHierarchy,
 }));
 
 // Keep a reference to the original shared mockViewer so integration tests can
@@ -102,57 +101,15 @@ mockLoadOpenSeadragon.mockResolvedValue(OSD);
 
 // ---- test data factories ----
 
-function makeSlide(overrides: Partial<Slide> = {}): Slide {
-    return {
-        slide_key: '1000',
-        stain_name: 'H&E',
-        stain_group: 'Histology',
-        is_hne: true,
-        is_ihc: false,
-        magnification: '20x',
-        file_size_bytes: '100000000',
-        can_serve_tiles: true,
-        block_label: 'A1',
-        block_number: '1',
-        ...overrides,
-    };
-}
-
-function makeBlock(slides: Slide[], blockNumber = '1'): Block {
-    return {
-        block_number: blockNumber,
-        block_label: `A${blockNumber}`,
-        slides,
-    };
-}
-
-function makePart(blocks: Block[]): Part {
-    return {
-        part_number: '1',
-        part_type: 'Resection',
-        part_description: 'Test part',
-        subspecialty: 'GI',
-        blocks,
-    };
-}
-
 function makeSample(sampleId: string, parts: Part[]): Sample {
-    return {
-        sample_id: sampleId,
-        cancer_type: 'Colorectal Cancer',
-        cancer_type_detailed: 'Colon Adenocarcinoma',
-        oncotree_code: 'COAD',
-        primary_site: 'Colon',
-        sample_type: 'Primary',
-        parts,
-    };
+    return fixtureSample(sampleId, [], { parts });
 }
 
 function makeHierarchy(slides: Slide[], patientId = 'P-123'): PatientHierarchy {
-    const block = makeBlock(slides);
-    const part = makePart([block]);
-    const sample = makeSample('S-123456-T01', [part]);
-    return { patient_id: patientId, samples: [sample] };
+    return {
+        patient_id: patientId,
+        samples: [makeSample('S-123456-T01', [makePart([makeBlock(slides)])])],
+    };
 }
 
 function makeWireHierarchy(slides: Slide[], patientId = 'P-123'): any {
@@ -268,7 +225,6 @@ function viewerPropsForUrl(url: string) {
             /\/patient\/[^/]+\/?$/,
             ''
         )}`.replace(/\/$/, ''),
-        hierarchyUrl: url,
         patientId,
     };
 }
@@ -295,9 +251,8 @@ function setFetchMock(mockImpl: unknown) {
 
 /** Loads a hierarchy into the shared cache as an earlier viewer would. */
 async function warmHierarchyCache(
-    url: string,
     hierarchy: PatientHierarchy,
-    studyId?: string
+    studyId = 'study'
 ) {
     const previousFetch = (global as any).fetch;
     setFetchMock(
@@ -309,12 +264,10 @@ async function warmHierarchyCache(
     try {
         await jest
             .requireActual('./wsiHierarchyFetchCache')
-            .fetchPatientHierarchyReadOnly(
-                url,
-                undefined,
-                'anonymousUser',
+            .fetchWsiPatientHierarchy(
                 studyId,
-                hierarchy.patient_id
+                hierarchy.patient_id,
+                'anonymousUser'
             );
     } finally {
         setFetchMock(previousFetch);
@@ -336,26 +289,6 @@ async function loadHierarchyFor(inst: any) {
     await controllerOf(inst).loadHierarchy();
 }
 
-/**
- * Loads the hierarchy through the initial slide mount. Selection resolves
- * when the first tile is ready, which the shared viewer mock never reports,
- * so the pending mount is cancelled once it has created its viewer.
- */
-async function loadHierarchyThroughInitialMount(inst: any) {
-    const controller = controllerOf(inst);
-    const viewersBefore = OSD.mock.calls.length;
-    const loading = controller.loadHierarchy();
-    for (
-        let attempt = 0;
-        attempt < 200 && OSD.mock.calls.length === viewersBefore;
-        attempt += 1
-    ) {
-        await new Promise(resolve => setTimeout(resolve, 0));
-    }
-    controller.cancelActiveMount();
-    await loading;
-}
-
 function renderViewer(url = 'https://tiles.example.com/patient/P-1') {
     const parsed = new URL(url);
     const patientId = decodeURIComponent(
@@ -373,7 +306,8 @@ function renderViewer(url = 'https://tiles.example.com/patient/P-1') {
         renderer = TestRenderer.create(
             <WSIViewer
                 tileServerUrl={tileServerUrl}
-                hierarchyUrl={`/api/wsi/v2/hierarchy/study/${patientId}`}
+                studyId="study"
+                authScope="anonymousUser"
                 patientId={patientId}
                 height={500}
             />
@@ -399,10 +333,9 @@ beforeEach(() => {
     mockFetchPatientHierarchy.mockImplementation((...args: unknown[]) =>
         jest
             .requireActual('./wsiHierarchyFetchCache')
-            .fetchPatientHierarchyReadOnly(...args)
+            .fetchWsiPatientHierarchy(...args)
     );
     clearPatientHierarchyCache();
-    clearSlideMetadataCache();
     clearWsiThumbnailFetchCache();
     clearWsiSlideAccess();
 });
@@ -430,7 +363,7 @@ describe('WSIViewer — tileServerBase', () => {
             'https://tiles.example.com',
         ],
         [
-            'handles numeric-only patient IDs (legacy IMPACT format)',
+            'handles numeric-only patient IDs',
             'http://localhost:8081/patient/12345',
             'http://localhost:8081',
         ],
@@ -670,14 +603,14 @@ describe('WSIViewer — componentWillUnmount', () => {
                 inst.hierarchy = hierarchy;
                 inst.selectedSample = sample;
                 inst.selectedSlide = slide;
-                inst.selectedMeta = {
+                inst.selectedMeta = makeTileMetadata({
                     dimensions: { width: 1000, height: 800 },
                     levels: 1,
                     level_dimensions: [{ width: 1000, height: 800 }],
                     max_zoom: 6,
                     tile_size: 256,
                     mpp: { x: 0.25, y: 0.25 },
-                };
+                });
                 inst.tilesReady = true;
             })();
         });
@@ -1082,10 +1015,6 @@ describe('WSIViewer — pathology filter updates', () => {
         inst.selectedSample = sample;
         inst.selectedSlide = sample.parts[0].blocks[0].slides[0];
 
-        const getEntriesSpy = jest.spyOn(
-            wsiSlideUtils,
-            'getServableSlideEntriesForHierarchyReadOnly'
-        );
         const getOrderedSlidesSpy = jest.spyOn(
             wsiSlideUtils,
             'getOrderedServableSlidesForSampleReadOnly'
@@ -1102,7 +1031,6 @@ describe('WSIViewer — pathology filter updates', () => {
 
         (inst as any).applyPathologyFilterFromSourceHierarchy();
 
-        expect(getEntriesSpy).not.toHaveBeenCalled();
         expect(getOrderedSlidesSpy).toHaveBeenCalledTimes(1);
         expect(inst.selectedSlide?.slide_key).toBe('block-slide');
         expect(inst.selectedSample?.sample_id).toBe('S-1');
@@ -1546,13 +1474,13 @@ describe('WSIViewer — pathology filter updates', () => {
 
         inst.selectedSample = sample;
         inst.selectedSlide = slide;
-        inst.selectedMeta = {
+        inst.selectedMeta = makeTileMetadata({
             dimensions: { width: 1000, height: 800 },
             levels: 1,
             level_dimensions: [{ width: 1000, height: 800 }],
             max_zoom: 6,
             tile_size: 256,
-        };
+        });
         (controller as any).osdViewer = { destroy: jest.fn() };
         (controller as any).osdSlideMounted = true;
         // The active slide's first tile is ready.
@@ -1592,14 +1520,14 @@ describe('WSIViewer — sidebar row caching', () => {
                 inst.hierarchy = hierarchy;
                 inst.selectedSample = sample;
                 inst.selectedSlide = slide;
-                inst.selectedMeta = {
+                inst.selectedMeta = makeTileMetadata({
                     dimensions: { width: 1000, height: 800 },
                     levels: 1,
                     level_dimensions: [{ width: 1000, height: 800 }],
                     max_zoom: 6,
                     tile_size: 256,
                     mpp: { x: 0.25, y: 0.25 },
-                };
+                });
                 inst.spinnerVisible = false;
             })();
         });
@@ -1745,13 +1673,13 @@ describe('WSIViewer — loadHierarchy', () => {
             .spyOn(controller as any, 'fetchSlideMetadata')
             .mockImplementation(async () => {
                 releaseMetadata();
-                return {
+                return makeTileMetadata({
                     dimensions: { width: 1000, height: 800 },
                     levels: 1,
                     level_dimensions: [{ width: 1000, height: 800 }],
                     max_zoom: 6,
                     tile_size: 256,
-                };
+                });
             });
         const selectSlideSpy = jest
             .spyOn(controller, 'selectSlide')
@@ -1873,28 +1801,10 @@ describe('WSIViewer — loadHierarchy', () => {
         setFetchMock(
             jest.fn(async (input: RequestInfo | URL) => {
                 const url = String(input);
-                if (
-                    url ===
-                    'https://tiles.example.com/patient/P-XYZ?studyId=study'
-                ) {
+                if (url === '/api/wsi/v2/hierarchy/study/P-XYZ') {
                     return {
                         ok: true,
                         json: async () => hierarchy,
-                    } as Response;
-                }
-                if (
-                    url ===
-                    'https://tiles.example.com/tiles/bootstrap-slide/metadata?studyId=study'
-                ) {
-                    return {
-                        ok: true,
-                        json: async () => ({
-                            dimensions: { width: 1000, height: 800 },
-                            levels: 1,
-                            level_dimensions: [{ width: 1000, height: 800 }],
-                            max_zoom: 6,
-                            tile_size: 256,
-                        }),
                     } as Response;
                 }
                 throw new Error(`Unexpected fetch ${url}`);
@@ -1919,13 +1829,13 @@ describe('WSIViewer — loadHierarchy', () => {
         expect(
             (global as any).fetch.mock.calls.filter(
                 ([url]: [string]) =>
-                    url.includes('/patient/P-XYZ') ||
+                    url.includes('/hierarchy/study/P-XYZ') ||
                     url === testAccessUrl('study', 'P-XYZ', 'bootstrap-slide')
             )
         ).toHaveLength(2);
         expect((global as any).fetch).toHaveBeenNthCalledWith(
             1,
-            'https://tiles.example.com/patient/P-XYZ?studyId=study',
+            '/api/wsi/v2/hierarchy/study/P-XYZ',
             { credentials: 'include' }
         );
         expect((global as any).fetch).toHaveBeenNthCalledWith(
@@ -1944,28 +1854,10 @@ describe('WSIViewer — loadHierarchy', () => {
             [makeSlide({ slide_key: 'cached-slide', can_serve_tiles: true })],
             'P-1'
         );
-        await warmHierarchyCache(
-            'https://tiles.example.com/patient/P-1',
-            hierarchy
-        );
+        await warmHierarchyCache(hierarchy);
         setFetchMock(
             jest.fn(async (input: RequestInfo | URL) => {
                 const url = String(input);
-                if (
-                    url ===
-                    'https://tiles.example.com/tiles/cached-slide/metadata'
-                ) {
-                    return {
-                        ok: true,
-                        json: async () => ({
-                            dimensions: { width: 1000, height: 1000 },
-                            levels: 1,
-                            level_dimensions: [{ width: 1000, height: 1000 }],
-                            max_zoom: 4,
-                            tile_size: 256,
-                        }),
-                    } as Response;
-                }
                 throw new Error(`Unexpected fetch ${url}`);
             }) as any
         );
@@ -1974,6 +1866,7 @@ describe('WSIViewer — loadHierarchy', () => {
             ...viewerPropsForUrl('https://tiles.example.com/patient/P-1'),
             url: 'https://tiles.example.com/patient/P-1',
             height: 500,
+            studyId: 'study',
         });
         const controller = controllerOf(inst);
         const selectSlideSpy = jest
@@ -2034,28 +1927,10 @@ describe('WSIViewer — loadHierarchy', () => {
         setFetchMock(
             jest.fn(async (input: RequestInfo | URL) => {
                 const url = String(input);
-                if (
-                    url ===
-                    'https://tiles.example.com/patient/P-XYZ?studyId=study'
-                ) {
+                if (url === '/api/wsi/v2/hierarchy/study/P-XYZ') {
                     return {
                         ok: true,
                         json: async () => toWireHierarchy(mockHierarchy),
-                    } as Response;
-                }
-                if (
-                    url ===
-                    'https://tiles.example.com/tiles/unmatched-1/metadata?studyId=study'
-                ) {
-                    return {
-                        ok: true,
-                        json: async () => ({
-                            dimensions: { width: 1000, height: 800 },
-                            levels: 1,
-                            level_dimensions: [{ width: 1000, height: 800 }],
-                            max_zoom: 6,
-                            tile_size: 256,
-                        }),
                     } as Response;
                 }
                 throw new Error(`Unexpected fetch ${url}`);
@@ -2068,6 +1943,7 @@ describe('WSIViewer — loadHierarchy', () => {
             ),
             url: 'https://tiles.example.com/patient/P-XYZ?studyId=study',
             height: 500,
+            studyId: 'study',
             pathologyFilter: {
                 matchLevel: 'Unmatched',
                 specimenKey: 'unmatched::1::B1',
@@ -2078,14 +1954,7 @@ describe('WSIViewer — loadHierarchy', () => {
 
         await loadHierarchyFor(inst);
 
-        expect(controller.initialSlideLoadTrace).toEqual(
-            expect.objectContaining({
-                hierarchySource: 'network',
-                metadataSource: 'network',
-                metadataCacheHit: false,
-                slideId: 'unmatched-1',
-            })
-        );
+        expect(controller.initialSlideKey).toBe('unmatched-1');
     });
 
     it('primes OpenSeadragon on hierarchy load and mounts the initial slide with it', async () => {
@@ -2097,20 +1966,20 @@ describe('WSIViewer — loadHierarchy', () => {
             [makeSlide({ slide_key: 'A', can_serve_tiles: true })],
             'P-XYZ'
         );
-        const metadata = {
+        const metadata = makeTileMetadata({
             dimensions: { width: 1000, height: 800 },
             levels: 1,
             level_dimensions: [{ width: 1000, height: 800 }],
             max_zoom: 6,
             tile_size: 256,
-        };
+        });
         setFetchMock(
             jest.fn().mockImplementation((url: string) =>
                 Promise.resolve({
                     ok: true,
                     json: () =>
                         Promise.resolve(
-                            url.includes('/patient/')
+                            url.includes('/hierarchy/')
                                 ? mockHierarchy
                                 : {
                                       accessToken: 'test-token',
@@ -2133,7 +2002,7 @@ describe('WSIViewer — loadHierarchy', () => {
         };
 
         OSD.mockClear();
-        await loadHierarchyThroughInitialMount(inst);
+        await loadHierarchyFor(inst);
 
         // The loader memoizes the import, so the prime on hierarchy load and
         // the initial mount share one OpenSeadragon module.
@@ -2151,20 +2020,20 @@ describe('WSIViewer — loadHierarchy', () => {
             [makeSlide({ slide_key: 'A', can_serve_tiles: true })],
             'P-XYZ'
         );
-        const metadata = {
+        const metadata = makeTileMetadata({
             dimensions: { width: 1000, height: 800 },
             levels: 1,
             level_dimensions: [{ width: 1000, height: 800 }],
             max_zoom: 6,
             tile_size: 256,
-        };
+        });
         setFetchMock(
             jest.fn().mockImplementation((url: string) =>
                 Promise.resolve({
                     ok: true,
                     json: () =>
                         Promise.resolve(
-                            url.includes('/patient/')
+                            url.includes('/hierarchy/')
                                 ? mockHierarchy
                                 : {
                                       accessToken: 'test-token',
@@ -2248,13 +2117,13 @@ describe('WSIViewer — prefetchSlideMetadata cancellation', () => {
                     Promise.resolve({
                         accessToken: 'test-token',
                         slideKey: 'AAA',
-                        tileMetadata: {
+                        tileMetadata: makeTileMetadata({
                             dimensions: { width: 1000, height: 800 },
                             levels: 1,
                             level_dimensions: [{ width: 1000, height: 800 }],
                             max_zoom: 6,
                             tile_size: 256,
-                        },
+                        }),
                         thumbnail: {
                             width: 256,
                             height: 256,
@@ -2364,13 +2233,13 @@ describe('WSIViewer — prefetchSlideMetadata cancellation', () => {
         jest.spyOn(controller, 'fetchSlideMetadata').mockImplementation(
             async (slideKey: string) => {
                 order.push(slideKey);
-                return {
+                return makeTileMetadata({
                     dimensions: { width: 1000, height: 800 },
                     levels: 1,
                     level_dimensions: [{ width: 1000, height: 800 }],
                     max_zoom: 6,
                     tile_size: 256,
-                };
+                });
             }
         );
 
@@ -2429,13 +2298,15 @@ describe('WSIViewer — prefetchSlideMetadata cancellation', () => {
         jest.spyOn(controller, 'fetchSlideMetadata').mockImplementation(
             (slideKey: string) => {
                 order.push(slideKey);
-                return deferred.get(slideKey)!.promise.then(() => ({
-                    dimensions: { width: 1000, height: 800 },
-                    levels: 1,
-                    level_dimensions: [{ width: 1000, height: 800 }],
-                    max_zoom: 6,
-                    tile_size: 256,
-                }));
+                return deferred.get(slideKey)!.promise.then(() =>
+                    makeTileMetadata({
+                        dimensions: { width: 1000, height: 800 },
+                        levels: 1,
+                        level_dimensions: [{ width: 1000, height: 800 }],
+                        max_zoom: 6,
+                        tile_size: 256,
+                    })
+                );
             }
         );
 
@@ -2618,13 +2489,13 @@ describe('WSIViewer — open handler (mountOSD integration)', () => {
         | null;
     let idleCallbacks: Array<() => void>;
 
-    const metaMock = {
+    const metaMock = makeTileMetadata({
         dimensions: { width: 40000, height: 30000 },
         levels: 1,
         level_dimensions: [{ width: 40000, height: 30000 }],
         max_zoom: 8,
         tile_size: 256,
-    };
+    });
 
     beforeEach(() => {
         origFetch = (global as any).fetch;
@@ -3101,7 +2972,7 @@ describe('WSIViewer — open handler (mountOSD integration)', () => {
         expect(prefetchSpy).not.toHaveBeenCalled();
     });
 
-    it('reports staged initial-slide timings after the first tile is ready', async () => {
+    it('reports the outcome and first-tile time once the first tile is ready', async () => {
         window.location.hash = '';
         const slide = makeSlide({ slide_key: '42' });
         const inst = await runMount(slide, { studyId: 'study-1' });
@@ -3111,288 +2982,43 @@ describe('WSIViewer — open handler (mountOSD integration)', () => {
             .mockImplementation(() => undefined);
 
         controller.initialSlideKey = '42';
-        controller.initialSlideLoadTrace = {
-            loadSeq: 7,
-            startedAt: 10,
-            slideId: '42',
-            openSeadragonWarmHit: false,
-            hierarchyCacheHit: false,
-            metadataCacheHit: false,
-            hierarchySource: 'network',
-            metadataSource: 'network',
-            hierarchyLoadedAt: 20,
-            metadataLoadedAt: 40,
-            reported: false,
-        };
+        controller.initialSlideLoadStartedAt = Date.now() - 50;
         controller.loadingStart = Date.now() - 1000;
 
         capturedOpenCb!();
         capturedTileDrawnCb!();
+        capturedTileDrawnCb!();
 
         expect(reportSpy).toHaveBeenCalledTimes(1);
-        expect(reportSpy).toHaveBeenCalledWith(
-            expect.objectContaining({
-                loadSeq: 7,
-                slideId: '42',
-                studyId: 'study-1',
-                openSeadragonWarmHit: false,
-                hierarchyCacheHit: false,
-                metadataCacheHit: false,
-                hierarchySource: 'network',
-                metadataSource: 'network',
-                hierarchyMs: 10,
-                metadataMs: 30,
-            })
-        );
         const reportedMetric = reportSpy.mock.calls[0][0] as any;
-        expect(reportedMetric.osdOpenMs).toBeGreaterThanOrEqual(30);
-        expect(reportedMetric.firstTileReadyMs).toBeGreaterThanOrEqual(
-            reportedMetric.osdOpenMs
-        );
+        expect(Object.keys(reportedMetric).sort()).toEqual([
+            'firstTileReadyMs',
+            'outcome',
+        ]);
+        expect(reportedMetric.outcome).toBe('success');
+        expect(reportedMetric.firstTileReadyMs).toBeGreaterThanOrEqual(50);
     });
 
-    it('dispatches a non-PHI browser performance event payload', () => {
+    it('dispatches the browser performance event', () => {
         const inst = makeInstance('https://tiles.example.com/patient/P-1');
         const dispatchSpy = jest
             .spyOn(window, 'dispatchEvent')
             .mockReturnValue(true);
 
         (inst as any).reportInitialSlideLoadPerformance({
-            loadSeq: 7,
-            slideId: 'slide-42',
-            patientId: 'P-1',
-            studyId: 'study-1',
-            openSeadragonWarmHit: true,
-            hierarchyCacheHit: false,
-            metadataCacheHit: true,
-            hierarchySource: 'network',
-            metadataSource: 'viewer-cache',
-            hierarchyMs: 15,
-            metadataMs: 23,
-            osdOpenMs: 40,
+            outcome: 'success',
             firstTileReadyMs: 67,
         });
 
         expect(dispatchSpy).toHaveBeenCalledTimes(1);
         const event = dispatchSpy.mock.calls[0][0] as CustomEvent;
         expect(event.type).toBe('wsi-initial-slide-performance');
-        expect(event.detail).toEqual(
-            expect.objectContaining({
-                loadSeq: 7,
-                hierarchySource: 'network',
-                metadataSource: 'viewer-cache',
-                openSeadragonWarmHit: true,
-                hierarchyCacheHit: false,
-                metadataCacheHit: true,
-                hierarchyMs: 15,
-                metadataMs: 23,
-                osdOpenMs: 40,
-                firstTileReadyMs: 67,
-            })
-        );
-        expect(event.detail).not.toHaveProperty('slideId');
-        expect(event.detail).not.toHaveProperty('patientId');
-        expect(event.detail).not.toHaveProperty('studyId');
+        expect(event.detail).toEqual({
+            outcome: 'success',
+            firstTileReadyMs: 67,
+        });
 
         dispatchSpy.mockRestore();
-    });
-
-    it('reports cache-hit flags when initial hierarchy and metadata were warmed', async () => {
-        const hierarchy = makeHierarchy(
-            [makeSlide({ slide_key: '42' })],
-            'P-1'
-        );
-        setFetchMock(
-            jest.fn().mockImplementation((url: string) => {
-                if (url.includes('/wsi/v2/resources/')) {
-                    return Promise.resolve({
-                        ok: true,
-                        json: () =>
-                            Promise.resolve({
-                                accessToken: 'test-token',
-                                slideKey: '42',
-                                tileMetadata: {
-                                    dimensions: { width: 1000, height: 800 },
-                                    levels: 1,
-                                    level_dimensions: [
-                                        { width: 1000, height: 800 },
-                                    ],
-                                    max_zoom: 6,
-                                    tile_size: 256,
-                                },
-                                thumbnail: {
-                                    width: 256,
-                                    height: 256,
-                                },
-                                expiresIn: 300,
-                            }),
-                    });
-                }
-                return Promise.resolve({
-                    ok: true,
-                    json: () => Promise.resolve(toWireHierarchy(hierarchy)),
-                });
-            })
-        );
-
-        await fetchPatientHierarchyReadOnly(
-            'https://tiles.example.com/patient/P-1',
-            undefined,
-            undefined,
-            'study',
-            'P-1'
-        );
-        await fetchSlideMetadataCachedReadOnly(
-            'https://tiles.example.com',
-            '42',
-            undefined,
-            'study',
-            'anonymousUser'
-        );
-
-        window.location.hash = '';
-        const inst = await runMount(makeSlide({ slide_key: '42' }));
-        const controller = controllerOf(inst);
-        const reportSpy = jest
-            .spyOn(inst as any, 'reportInitialSlideLoadPerformance')
-            .mockImplementation(() => undefined);
-
-        controller.initialSlideKey = '42';
-        controller.initialSlideLoadTrace = {
-            loadSeq: 8,
-            startedAt: 10,
-            slideId: '42',
-            openSeadragonWarmHit: true,
-            hierarchyCacheHit: true,
-            metadataCacheHit: true,
-            hierarchySource: 'shared-cache',
-            metadataSource: 'shared-cache',
-            hierarchyLoadedAt: 20,
-            metadataLoadedAt: 40,
-            reported: false,
-        };
-        controller.loadingStart = Date.now() - 1000;
-
-        capturedOpenCb!();
-        capturedTileDrawnCb!();
-
-        expect(reportSpy).toHaveBeenCalledWith(
-            expect.objectContaining({
-                openSeadragonWarmHit: true,
-                hierarchyCacheHit: true,
-                metadataCacheHit: true,
-                hierarchySource: 'shared-cache',
-                metadataSource: 'shared-cache',
-            })
-        );
-    });
-
-    it('attributes initial slide metadata to the shared cache when it is warm', async () => {
-        const metadata = {
-            dimensions: { width: 1000, height: 800 },
-            levels: 1,
-            level_dimensions: [{ width: 1000, height: 800 }],
-            max_zoom: 6,
-            tile_size: 256,
-        };
-        const inst = makeInstance('https://tiles.example.com/patient/P-1');
-        const controller = controllerOf(inst);
-
-        controller.initialSlideKey = '42';
-        controller.initialSlideLoadTrace = {
-            loadSeq: 9,
-            startedAt: 10,
-            slideId: '42',
-            openSeadragonWarmHit: false,
-            hierarchyCacheHit: false,
-            metadataCacheHit: false,
-            hierarchySource: 'network',
-            metadataSource: 'network',
-            reported: false,
-        };
-
-        registerTestSlideAccess('study', 'P-1', '42');
-        setFetchMock(
-            jest.fn().mockResolvedValue({
-                ok: true,
-                json: async () => ({
-                    accessToken: 'test-token',
-                    slideKey: '42',
-                    tileMetadata: metadata,
-                    thumbnail: {
-                        width: 256,
-                        height: 256,
-                    },
-                    expiresIn: 300,
-                }),
-            })
-        );
-        await fetchSlideMetadataCachedReadOnly(
-            'https://tiles.example.com',
-            '42',
-            undefined,
-            'study',
-            'anonymousUser'
-        );
-
-        await (controller as any).fetchSlideMetadata('42');
-
-        expect(controller.initialSlideLoadTrace).toEqual(
-            expect.objectContaining({
-                metadataCacheHit: true,
-                metadataSource: 'shared-cache',
-            })
-        );
-    });
-
-    it('treats a warm shared hierarchy cache reuse as a hierarchy cache hit', async () => {
-        const hierarchy = makeHierarchy(
-            [
-                makeSlide({
-                    slide_key: 'bootstrap-slide',
-                    can_serve_tiles: true,
-                }),
-            ],
-            'P-XYZ'
-        );
-        await warmHierarchyCache(
-            'https://tiles.example.com/patient/P-XYZ?studyId=study',
-            hierarchy,
-            'study'
-        );
-        setFetchMock(
-            jest.fn().mockResolvedValue({
-                ok: true,
-                json: () =>
-                    Promise.resolve({
-                        dimensions: { width: 1000, height: 800 },
-                        levels: 1,
-                        level_dimensions: [{ width: 1000, height: 800 }],
-                        max_zoom: 6,
-                        tile_size: 256,
-                    }),
-            })
-        );
-
-        const inst = new (WSIViewer as any)({
-            ...viewerPropsForUrl(
-                'https://tiles.example.com/patient/P-XYZ?studyId=study'
-            ),
-            url: 'https://tiles.example.com/patient/P-XYZ?studyId=study',
-            height: 500,
-            studyId: 'study',
-        });
-        const controller = controllerOf(inst);
-        jest.spyOn(controller, 'selectSlide').mockResolvedValue(undefined);
-
-        await loadHierarchyFor(inst);
-
-        expect(controller.initialSlideLoadTrace).toEqual(
-            expect.objectContaining({
-                hierarchyCacheHit: true,
-                hierarchySource: 'shared-cache',
-            })
-        );
     });
 
     it('reloads the initial slide from the published hierarchy after cache clear', async () => {
@@ -3442,7 +3068,7 @@ describe('WSIViewer — open handler (mountOSD integration)', () => {
                         Promise.resolve({
                             accessToken: 'test-token',
                             slideKey: '42',
-                            tileMetadata: {
+                            tileMetadata: makeTileMetadata({
                                 dimensions: { width: 1000, height: 800 },
                                 levels: 1,
                                 level_dimensions: [
@@ -3450,7 +3076,7 @@ describe('WSIViewer — open handler (mountOSD integration)', () => {
                                 ],
                                 max_zoom: 6,
                                 tile_size: 256,
-                            },
+                            }),
                             thumbnail: {
                                 width: 256,
                                 height: 256,
@@ -3466,24 +3092,12 @@ describe('WSIViewer — open handler (mountOSD integration)', () => {
         });
         setFetchMock(preloadFetchMock);
 
-        const hierarchyUrl = 'https://tiles.example.com/patient/P-1';
-        await fetchPatientHierarchyReadOnly(
-            hierarchyUrl,
-            undefined,
-            undefined,
-            'study',
-            'P-1'
-        );
-        await fetchSlideMetadataCachedReadOnly(
-            'https://tiles.example.com',
-            '42',
-            undefined,
-            'study',
-            'anonymousUser'
-        );
+        const hierarchyUrl = '/api/wsi/v2/hierarchy/study/P-1';
+        await fetchWsiPatientHierarchy('study', 'P-1');
+        await getWsiSlideAccess('study', '42', false, 'anonymousUser');
 
         clearPatientHierarchyCache();
-        clearSlideMetadataCache();
+        clearWsiSlideAccess();
 
         const networkFetchMock = jest.fn().mockImplementation((url: string) => {
             if (url === hierarchyUrl) {
@@ -3499,7 +3113,7 @@ describe('WSIViewer — open handler (mountOSD integration)', () => {
                         Promise.resolve({
                             accessToken: 'test-token',
                             slideKey: '42',
-                            tileMetadata: {
+                            tileMetadata: makeTileMetadata({
                                 dimensions: { width: 1000, height: 800 },
                                 levels: 1,
                                 level_dimensions: [
@@ -3507,7 +3121,7 @@ describe('WSIViewer — open handler (mountOSD integration)', () => {
                                 ],
                                 max_zoom: 6,
                                 tile_size: 256,
-                            },
+                            }),
                             thumbnail: {
                                 width: 256,
                                 height: 256,
@@ -3527,26 +3141,20 @@ describe('WSIViewer — open handler (mountOSD integration)', () => {
         };
 
         try {
-            const inst = makeInstance(hierarchyUrl);
-            await loadHierarchyThroughInitialMount(inst);
+            const inst = makeInstance('https://tiles.example.com/patient/P-1');
+            await loadHierarchyFor(inst);
 
-            const trace = controllerOf(inst).initialSlideLoadTrace;
-            expect(trace?.hierarchyCacheHit).toBe(false);
-            expect(trace?.hierarchySource).toBe('network');
             expect(inst.selectedMeta).toMatchObject({
                 max_zoom: 6,
                 tile_size: 256,
             });
-            // Count only slide server requests; hosts may add their own
-            // requests alongside the mount.
-            const slideRequests = networkFetchMock.mock.calls
-                .map(([url]: [string]) => url)
-                .filter((url: string) =>
-                    url.startsWith('https://tiles.example.com/')
-                );
-            expect(slideRequests).toHaveLength(2);
-            expect(slideRequests[0]).toBe(hierarchyUrl);
-            expect(slideRequests[1]).toContain('/thumbnails');
+            const requests = networkFetchMock.mock.calls.map(
+                ([url]: [string]) => url
+            );
+            expect(requests[0]).toBe(hierarchyUrl);
+            expect(
+                requests.filter((url: string) => url.includes('/thumbnails'))
+            ).toHaveLength(1);
         } finally {
             (global as any).requestAnimationFrame = origRaf;
         }

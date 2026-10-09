@@ -22,7 +22,8 @@ export interface FoundationMockOptions {
     enableAgent?: boolean;
 }
 
-const tileMetadata = {
+/** Schema-2 tile metadata the viewer accepts, for slide access mocks. */
+export const tileMetadata = {
     dimensions: { width: 512, height: 512 },
     levels: 1,
     level_dimensions: [{ width: 512, height: 512 }],
@@ -84,7 +85,8 @@ function makeHierarchy(includeSecondSlide: boolean) {
     };
 }
 
-const pixel = Buffer.from(
+/** A 1×1 PNG, for tile and thumbnail mocks. */
+export const pixel = Buffer.from(
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
     'base64'
 );
@@ -103,7 +105,6 @@ export async function installFoundationMocks(
             JSON.stringify({
                 serverConfig: {
                     msk_wsi_tile_server_url: '/wsi',
-                    msk_wsi_authentication_enabled: false,
                 },
             })
         );
@@ -121,7 +122,6 @@ export async function installFoundationMocks(
                 app_name: 'wsi-foundation-smoke',
                 authenticationMethod: 'none',
                 msk_wsi_tile_server_url: '/wsi',
-                msk_wsi_authentication_enabled: false,
                 msk_wsi_annotation_api_url: annotationApiUrl,
                 msk_wsi_agent_enabled: Boolean(options.enableAgent),
             }),

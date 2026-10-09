@@ -13,30 +13,12 @@ jest.mock('./wsiAuth', () => ({
     ...jest.requireActual('./wsiAuth'),
     getWsiSlideAccess: jest.fn(),
 }));
-jest.mock('./wsiMetadataFetchCache', () => ({
-    evictSlideMetadataCache: jest.fn(),
-    fetchSlideMetadataCachedReadOnly: jest.fn(() =>
-        Promise.resolve({
-            dimensions: { width: 1000, height: 800 },
-            levels: 3,
-            level_dimensions: [],
-            max_zoom: 10,
-            tile_size: 256,
-        })
-    ),
-    hasCachedSlideMetadata: jest.fn(() => false),
-}));
 jest.mock('./wsiThumbnailFetchCache', () => ({
     fetchWsiThumbnailBlob: jest.fn(() =>
         Promise.reject(new Error('no preview'))
     ),
 }));
-jest.mock('./wsiOpenSeadragonLoader', () => ({
-    hasPreloadedOpenSeadragon: () => false,
-}));
-jest.mock('./wsiNetworkWarmup', () => ({
-    ensureWsiPreconnect: jest.fn(),
-}));
+jest.mock('./wsiOpenSeadragonLoader', () => ({}));
 
 const getWsiSlideAccessMock = getWsiSlideAccess as jest.Mock;
 
@@ -104,11 +86,17 @@ function makeSlide(slideKey: string): Slide {
 function makeAccess(slideKey: string, token: string) {
     return {
         slideKey,
+        tileMetadata: {
+            dimensions: { width: 1000, height: 800 },
+            levels: 3,
+            level_dimensions: [],
+            max_zoom: 10,
+            tile_size: 256,
+        },
         accessToken: token,
         tokenType: 'Bearer',
         expiresIn: 600,
         expiresAt: Date.now() + 600_000,
-        tileMetadata: { dimensions: { width: 1000, height: 800 } },
     };
 }
 
@@ -118,7 +106,6 @@ function makeHarness() {
     let meta: TileMetadata | null = null;
     const host: WsiViewerControllerHost = {
         getProps: () => ({
-            hierarchyUrl: '/api/wsi/v2/hierarchy/study/P-1',
             studyId: 'study',
             patientId: 'P-1',
             authScope: 'user',
@@ -131,7 +118,6 @@ function makeHarness() {
         getServableSlides: () => [],
         getStainFilter: () => 'all' as any,
         getTileServerBase: () => 'https://tiles.example.com',
-        getTileServerOrigin: () => 'https://tiles.example.com',
         getViewerContainerElement: () => container,
         chooseInitialServableSlide: () => undefined,
         beginSlideSelection: slide => {
@@ -177,23 +163,12 @@ function makeHarness() {
 
 const sample = { sample_id: 'S-1' } as Sample;
 
-/**
- * Starts a slide selection and lets its mount run. In this child
- * selectSlide resolves only once the slide is ready, which these fakes
- * never signal, so the selection is not awaited.
- */
-async function mountSelection(controller: WsiViewerController, slide: Slide) {
-    void controller.selectSlide(slide, sample);
-    for (let i = 0; i < 20; i++) await Promise.resolve();
-}
-
 describe('WsiViewerController viewer lifecycle', () => {
     let rafSpy: jest.SpyInstance;
 
     beforeAll(() => {
         configureWsiViewerRuntime({
             buildApiUrl: path => `/${path}`,
-            authEnabled: false,
         });
     });
 
@@ -218,7 +193,7 @@ describe('WsiViewerController viewer lifecycle', () => {
     it('opens later slides in the same viewer with their own headers', async () => {
         const { controller, openSeadragon, viewers } = makeHarness();
 
-        await mountSelection(controller, makeSlide('slide-a'));
+        await controller.selectSlide(makeSlide('slide-a'), sample);
         expect(openSeadragon).toHaveBeenCalledTimes(1);
         const viewer = viewers[0];
         expect(viewer.options.ajaxHeaders.Authorization).toBe(
@@ -227,7 +202,7 @@ describe('WsiViewerController viewer lifecycle', () => {
         viewer.raise('open');
         expect(viewer.handlerCount('animation-finish')).toBe(1);
 
-        await mountSelection(controller, makeSlide('slide-b'));
+        await controller.selectSlide(makeSlide('slide-b'), sample);
 
         expect(openSeadragon).toHaveBeenCalledTimes(1);
         expect(viewer.destroy).not.toHaveBeenCalled();
@@ -258,9 +233,9 @@ describe('WsiViewerController viewer lifecycle', () => {
     it('rebuilds the viewer while the previous slide still has tile requests', async () => {
         const { controller, openSeadragon, viewers } = makeHarness();
 
-        await mountSelection(controller, makeSlide('slide-a'));
+        await controller.selectSlide(makeSlide('slide-a'), sample);
         viewers[0].imageLoader.jobsInProgress = 2;
-        await mountSelection(controller, makeSlide('slide-b'));
+        await controller.selectSlide(makeSlide('slide-b'), sample);
 
         expect(openSeadragon).toHaveBeenCalledTimes(2);
         expect(viewers[0].destroy).toHaveBeenCalledTimes(1);
@@ -274,9 +249,9 @@ describe('WsiViewerController viewer lifecycle', () => {
     it("ignores a closed slide's tile events on the reused viewer", async () => {
         const { controller, viewers } = makeHarness();
 
-        await mountSelection(controller, makeSlide('slide-a'));
+        await controller.selectSlide(makeSlide('slide-a'), sample);
         const viewer = viewers[0];
-        await mountSelection(controller, makeSlide('slide-b'));
+        await controller.selectSlide(makeSlide('slide-b'), sample);
         const imageB = {};
         viewer.items = [imageB];
         viewer.raise('open');
@@ -299,9 +274,9 @@ describe('WsiViewerController viewer lifecycle', () => {
             replaceContainer,
         } = makeHarness();
 
-        await mountSelection(controller, makeSlide('slide-a'));
+        await controller.selectSlide(makeSlide('slide-a'), sample);
         replaceContainer();
-        await mountSelection(controller, makeSlide('slide-b'));
+        await controller.selectSlide(makeSlide('slide-b'), sample);
 
         expect(openSeadragon).toHaveBeenCalledTimes(2);
         expect(viewers[0].destroy).toHaveBeenCalledTimes(1);
@@ -314,9 +289,9 @@ describe('WsiViewerController viewer lifecycle', () => {
     it('reopens the same slide after its selection was cancelled', async () => {
         const { controller, viewers } = makeHarness();
 
-        await mountSelection(controller, makeSlide('slide-a'));
+        await controller.selectSlide(makeSlide('slide-a'), sample);
         controller.cancelSlideSelection();
-        await mountSelection(controller, makeSlide('slide-a'));
+        await controller.selectSlide(makeSlide('slide-a'), sample);
 
         expect(viewers).toHaveLength(1);
         expect(viewers[0].open).toHaveBeenCalledTimes(1);
@@ -364,7 +339,7 @@ describe('WsiViewerController token refresh', () => {
 
     it('refreshes the token before it expires', async () => {
         const { controller, viewers } = makeHarness();
-        await mountSelection(controller, makeSlide('slide-a'));
+        await controller.selectSlide(makeSlide('slide-a'), sample);
 
         jest.advanceTimersByTime(10_000);
         await flushPromises();
@@ -379,7 +354,7 @@ describe('WsiViewerController token refresh', () => {
 
     it('pauses refresh while hidden and refreshes a due token when shown', async () => {
         const { controller, viewers } = makeHarness();
-        await mountSelection(controller, makeSlide('slide-a'));
+        await controller.selectSlide(makeSlide('slide-a'), sample);
 
         controller.setVisible(false);
         jest.advanceTimersByTime(60_000);
@@ -399,7 +374,7 @@ describe('WsiViewerController token refresh', () => {
 
     it('resumes the refresh schedule when shown before the token is due', async () => {
         const { controller } = makeHarness();
-        await mountSelection(controller, makeSlide('slide-a'));
+        await controller.selectSlide(makeSlide('slide-a'), sample);
 
         controller.setVisible(false);
         jest.advanceTimersByTime(5_000);

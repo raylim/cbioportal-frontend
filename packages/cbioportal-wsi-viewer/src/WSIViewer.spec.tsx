@@ -8,13 +8,11 @@ import { action as mobxAction } from 'mobx';
 
 jest.mock('./wsiOpenSeadragonLoader', () => ({
     loadOpenSeadragon: jest.fn(),
-    hasPreloadedOpenSeadragon: () => false,
 }));
 
 function makeInstance() {
     return new (WSIViewer as any)({
         tileServerUrl: 'https://tiles.example.com',
-        hierarchyUrl: '/api/wsi/v2/hierarchy/study/P-1',
         patientId: 'P-1',
         height: 500,
     });
@@ -52,7 +50,6 @@ describe('WSIViewer clinical rows', () => {
     function makeClinicalInstance(rows?: typeof clinicalRows) {
         return new (WSIViewer as any)({
             tileServerUrl: 'https://tiles.example.com',
-            hierarchyUrl: '/api/wsi/v2/hierarchy/study/P-1',
             patientId: 'P-1',
             height: 500,
             clinicalRows: rows,
