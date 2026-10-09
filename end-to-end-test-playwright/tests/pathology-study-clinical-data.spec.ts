@@ -454,47 +454,43 @@ test.describe('private MSK-IMPACT clinical data sorting', () => {
                     response.url().includes('/api/clinical-data-table/fetch')
             );
 
-        const descendingResponse = waitForSortedTable();
-        await sortButton.click();
-        await descendingResponse;
-        await expect(sortButton).toHaveClass(/sort-des/);
-        await expect
-            .poll(async () => {
-                const values = parseLeadingIntegers(
-                    await getColumnValuesByHeader(
-                        page,
-                        'WSI Slides per Patient'
-                    )
-                );
-                return values.length > 0 && isNonIncreasing(values);
-            })
-            .toBe(true);
-        await expect(resultCount).toHaveText(filteredResultText);
-        await expect(
-            page.getByRole('button', { name: 'View Next Page' })
-        ).toBeEnabled();
-        await expect(
-            page.getByText("You've reached the maximum viewable records.")
-        ).toHaveCount(0);
-
-        const ascendingResponse = waitForSortedTable();
-        await sortButton.click();
-        await ascendingResponse;
-        await expect(sortButton).toHaveClass(/sort-asc/);
-        await expect
-            .poll(async () => {
-                const values = parseLeadingIntegers(
-                    await getColumnValuesByHeader(
-                        page,
-                        'WSI Slides per Patient'
-                    )
-                );
-                return values.length > 0 && isNonDecreasing(values);
-            })
-            .toBe(true);
-        await expect(resultCount).toHaveText(filteredResultText);
-        await expect(
-            page.getByText("You've reached the maximum viewable records.")
-        ).toHaveCount(0);
+        // The first click's direction depends on the table's default sort
+        // direction, so check whichever direction each click produces and
+        // require both to be seen.
+        const directionsSeen = new Set<string>();
+        for (let click = 0; click < 2; click++) {
+            const sortedResponse = waitForSortedTable();
+            await sortButton.click();
+            await sortedResponse;
+            await expect(sortButton).toHaveClass(/sort-(des|asc)/);
+            const descending = /sort-des/.test(
+                (await sortButton.getAttribute('class')) || ''
+            );
+            directionsSeen.add(descending ? 'desc' : 'asc');
+            await expect
+                .poll(async () => {
+                    const values = parseLeadingIntegers(
+                        await getColumnValuesByHeader(
+                            page,
+                            'WSI Slides per Patient'
+                        )
+                    );
+                    return (
+                        values.length > 0 &&
+                        (descending
+                            ? isNonIncreasing(values)
+                            : isNonDecreasing(values))
+                    );
+                })
+                .toBe(true);
+            await expect(resultCount).toHaveText(filteredResultText);
+            await expect(
+                page.getByRole('button', { name: 'View Next Page' })
+            ).toBeEnabled();
+            await expect(
+                page.getByText("You've reached the maximum viewable records.")
+            ).toHaveCount(0);
+        }
+        expect(directionsSeen.size).toBe(2);
     });
 });
