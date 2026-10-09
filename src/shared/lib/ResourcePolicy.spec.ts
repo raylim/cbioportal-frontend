@@ -9,7 +9,7 @@ import {
     shouldHideLegacyHeResource,
     shouldHideLegacyHeResourceTab,
     slideStainFilterForColumnFilters,
-    withSlideStainFilter,
+    slideStainFilterQuery,
     visibleStudyResourceDefinitions,
 } from './ResourcePolicy';
 
@@ -132,17 +132,10 @@ describe('legacy H&E resource policy', () => {
                 },
             ])
         );
-        assert.equal(
-            withSlideStainFilter(
-                '/patient/wsiHESlides?studyId=s&caseId=P-1',
-                'ihc'
-            ),
-            '/patient/wsiHESlides?studyId=s&caseId=P-1&pathologySlideSettings=%7B%22stainFilter%22%3A%22ihc%22%7D'
-        );
-        assert.equal(
-            withSlideStainFilter('/patient/wsiHESlides?caseId=P-1', undefined),
-            '/patient/wsiHESlides?caseId=P-1'
-        );
+        assert.deepEqual(slideStainFilterQuery('ihc'), {
+            pathologySlideSettings: '{"stainFilter":"ihc"}',
+        });
+        assert.deepEqual(slideStainFilterQuery(undefined), {});
     });
 
     it('keeps legacy H&E resources out of both resource tables', () => {

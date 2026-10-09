@@ -1,5 +1,6 @@
 import { ResourceData } from 'cbioportal-ts-api-client';
 import { getServerConfig } from 'config/config';
+import { PatientViewPageTabs } from 'pages/patientView/PatientViewPageTabIds';
 
 // H&E slide resources that the native viewer replaces. Every H&E resource on
 // the public and MSK portals uses one of these IDs.
@@ -67,9 +68,11 @@ export function isPatientViewResourceTab(resourceId: string): boolean {
 export function patientViewPathForResource(
     resourceId: string | undefined
 ): string {
-    return isWsiResourceId(resourceId)
-        ? 'patient/wsiHESlides'
-        : 'patient/filesAndLinks';
+    return `patient/${
+        isWsiResourceId(resourceId)
+            ? PatientViewPageTabs.WSIHESlides
+            : PatientViewPageTabs.FilesAndLinks
+    }`;
 }
 
 // The slide table's stain groups and the Pathology Slides stain filter they
@@ -100,32 +103,19 @@ export function slideStainFilterForColumnFilters(
         return undefined;
     }
     const { operator, values } = stainGroup[0];
-    if (
-        !['in', 'equals', 'equalsAny'].includes(operator) ||
-        !values ||
-        values.length !== 1
-    ) {
+    if (operator !== 'in' || !values || values.length !== 1) {
         return undefined;
     }
     return STAIN_GROUP_TO_SLIDE_STAIN_FILTER[values[0]];
 }
 
-/** Adds the Pathology Slides stain filter to a patient view link. */
-export function withSlideStainFilter(
-    href: string,
+/** The patient view query that opens Pathology Slides with this stain filter. */
+export function slideStainFilterQuery(
     stainFilter: string | undefined
-): string {
-    if (!stainFilter) {
-        return href;
-    }
-    const url = new URL(href, window.location.origin);
-    url.searchParams.set(
-        'pathologySlideSettings',
-        JSON.stringify({ stainFilter })
-    );
-    return /^[a-z]+:\/\//i.test(href)
-        ? url.toString()
-        : `${url.pathname}${url.search}${url.hash}`;
+): { pathologySlideSettings?: string } {
+    return stainFilter
+        ? { pathologySlideSettings: JSON.stringify({ stainFilter }) }
+        : {};
 }
 
 export function shouldHideLegacyHeResource(
