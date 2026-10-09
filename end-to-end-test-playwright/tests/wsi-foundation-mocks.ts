@@ -16,6 +16,10 @@ export interface FoundationMockOptions {
     accessRequests?: string[];
     /** Collects the request headers of every tile and thumbnail request. */
     tileRequestHeaders?: Array<Record<string, string>>;
+    /** Configures the annotation service at the tile server origin. */
+    enableAnnotations?: boolean;
+    /** Enables the research assistant, which implies annotations. */
+    enableAgent?: boolean;
 }
 
 /** Schema-2 tile metadata the viewer accepts, for slide access mocks. */
@@ -93,6 +97,8 @@ export async function installFoundationMocks(
 ): Promise<string[]> {
     const enrichmentRequests: string[] = [];
     const hierarchy = makeHierarchy(!!options.includeSecondSlide);
+    const annotationApiUrl =
+        options.enableAnnotations || options.enableAgent ? '/wsi' : '';
     await page.addInitScript(() => {
         window.localStorage.setItem(
             'frontendConfig',
@@ -116,6 +122,8 @@ export async function installFoundationMocks(
                 app_name: 'wsi-foundation-smoke',
                 authenticationMethod: 'none',
                 msk_wsi_tile_server_url: '/wsi',
+                msk_wsi_annotation_api_url: annotationApiUrl,
+                msk_wsi_agent_enabled: Boolean(options.enableAgent),
             }),
         })
     );

@@ -1483,6 +1483,8 @@ describe('WSIViewer — pathology filter updates', () => {
         });
         (controller as any).osdViewer = { destroy: jest.fn() };
         (controller as any).osdSlideMounted = true;
+        // The active slide's first tile is ready.
+        (controller as any).nativeTileReadySeq = (controller as any).mountSeq;
 
         const beginSpy = jest.spyOn(inst as any, 'beginSlideSelection');
         const mountSpy = jest

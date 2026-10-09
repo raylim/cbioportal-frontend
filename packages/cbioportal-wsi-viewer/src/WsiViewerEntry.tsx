@@ -58,6 +58,10 @@ export default function WsiViewer(props: WsiViewerProps) {
         <WSIViewer
             {...props}
             annotationApiUrl={getWsiViewerRuntime().annotations?.apiUrl}
+            agentEnabled={
+                !!getWsiViewerRuntime().agent?.enabled &&
+                !!getWsiViewerRuntime().annotations?.apiUrl
+            }
         />
     );
 }
