@@ -1,4 +1,5 @@
 import { test, expect, Page } from '../fixtures';
+import { pixel, tileMetadata } from './wsi-foundation-mocks';
 
 const STUDY_ID = 'wsi-study-slides-contract';
 const PATIENT_COUNT = 55;
@@ -108,21 +109,6 @@ function studySlidesPage(request: StudySlidesRequestBody) {
     };
 }
 
-const tileMetadata = {
-    dimensions: { width: 512, height: 512 },
-    levels: 1,
-    level_dimensions: [{ width: 512, height: 512 }],
-    level_downsamples: [1],
-    max_zoom: 0,
-    tile_metadata_schema_version: 2,
-    decode_policy_version:
-        'geometry-v2;tile-max=16777216;thumbnail-max=16777216',
-    max_decode_pixels: 16_777_216,
-    thumbnail_max_decode_pixels: 16_777_216,
-    safe_min_level: 0,
-    tile_size: 256,
-};
-
 /** An opaque 32-hex slide key per patient, as the backend publishes them. */
 function slideKeyFor(patientId: string) {
     return (patientIds.indexOf(patientId) + 1).toString(16).padStart(32, '0');
@@ -169,11 +155,6 @@ function hierarchyFor(patientId: string) {
     };
 }
 
-const pixel = Buffer.from(
-    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
-    'base64'
-);
-
 interface StudySlidesMocks {
     studySlidesRequests: StudySlidesRequestBody[];
     hierarchyPatients: string[];
@@ -196,7 +177,6 @@ async function installStudySlidesMocks(page: Page): Promise<StudySlidesMocks> {
         user_display_name: 'wsi-study-slides-user',
         skin_hide_download_controls: 'HIDE_ALL',
         msk_wsi_tile_server_url: '/wsi',
-        msk_wsi_authentication_enabled: false,
     };
     await page.addInitScript(config => {
         const win = window as any;
@@ -305,14 +285,8 @@ async function installStudySlidesMocks(page: Page): Promise<StudySlidesMocks> {
                 body: JSON.stringify({
                     slideKey,
                     accessToken: 'wsi-study-slides-token',
-                    tokenType: 'Bearer',
                     expiresIn: 300,
                     tileMetadata,
-                    thumbnail: {
-                        width: 1,
-                        height: 1,
-                        contentType: 'image/png',
-                    },
                 }),
             });
         }
