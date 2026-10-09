@@ -5,11 +5,11 @@ import * as React from 'react';
 import { action } from 'mobx';
 import TestRenderer from 'react-test-renderer';
 import WSIViewer from './WSIViewer';
-import { readWsiHashState } from './wsiViewStateUtils';
+import { makeHierarchy, makeSample, makeSlide } from './wsiTestFixtures';
+import { Slide } from './wsiViewerTypes';
 
 jest.mock('./wsiOpenSeadragonLoader', () => ({
     loadOpenSeadragon: jest.fn(),
-    hasPreloadedOpenSeadragon: () => false,
 }));
 
 function makeInstance(
@@ -18,57 +18,18 @@ function makeInstance(
 ) {
     return new (WSIViewer as any)({
         tileServerUrl: url.replace(/\/patient\/[^/]+\/?$/, ''),
-        hierarchyUrl: `/api/wsi/v2/hierarchy/study/P-1`,
         patientId: 'P-1',
         height: 500,
         ...extraProps,
     });
 }
 
-function makeSlide(slide_key: string, can_serve_tiles = true): any {
-    return {
-        slide_key,
-        stain_name: 'H&E',
-        stain_group: 'Histology',
-        is_hne: true,
-        is_ihc: false,
-        magnification: '20x',
-        file_size_bytes: '1000',
-        can_serve_tiles,
-        block_label: 'A1',
-        block_number: '1',
-    };
+function testSlide(slide_key: string, can_serve_tiles = true) {
+    return makeSlide({ slide_key, can_serve_tiles });
 }
 
-function makeHierarchy(slides: any[]): any {
-    return {
-        patient_id: 'P-1',
-        samples: [
-            {
-                sample_id: 'S-1',
-                cancer_type: 'Colon Cancer',
-                cancer_type_detailed: 'Colon Adenocarcinoma',
-                oncotree_code: 'COAD',
-                primary_site: 'Colon',
-                sample_type: 'Primary',
-                parts: [
-                    {
-                        part_number: '1',
-                        part_type: 'Resection',
-                        part_description: 'Colon',
-                        subspecialty: 'GI',
-                        blocks: [
-                            {
-                                block_number: '1',
-                                block_label: 'A1',
-                                slides,
-                            },
-                        ],
-                    },
-                ],
-            },
-        ],
-    };
+function hierarchyOf(slides: Slide[]) {
+    return makeHierarchy([makeSample('S-1', slides)]);
 }
 
 describe('WSIViewer foundation behavior', () => {
@@ -96,25 +57,6 @@ describe('WSIViewer foundation behavior', () => {
         expect(makeInstance(url as string).tileServerBase).toBe(expected);
     });
 
-    it('flattens only servable slides and removes duplicate slide keys', () => {
-        const instance = makeInstance();
-        const slide = makeSlide('slide-a');
-        instance.hierarchy = makeHierarchy([
-            slide,
-            { ...slide },
-            makeSlide('slide-b', false),
-        ]);
-
-        expect(
-            instance.servableSlides.map((entry: any) => entry.slide.slide_key)
-        ).toEqual(['slide-a']);
-        expect(instance.servableSlides[0].sample.sample_id).toBe('S-1');
-    });
-
-    it('returns an empty slide list before hierarchy data is loaded', () => {
-        expect(makeInstance().servableSlides).toEqual([]);
-    });
-
     it('renders loading and failure states without a hierarchy', () => {
         const instance = makeInstance();
         expect(
@@ -131,39 +73,17 @@ describe('WSIViewer foundation behavior', () => {
         );
     });
 
-    it('parses a deep-link hash for a slide and viewport', () => {
-        window.location.hash = '#wsi:slide=slide-a&x=120&y=240&z=3';
-        expect(readWsiHashState()).toEqual({
-            slideId: 'slide-a',
-            x: 120,
-            y: 240,
-            z: 3,
-        });
-    });
-
-    it('rejects unrelated or incomplete hashes', () => {
-        window.location.hash = '#other=value';
-        expect(readWsiHashState()).toBeNull();
-        window.location.hash = '#wsi:slide=slide-a&x=bad&y=2&z=1';
-        expect(readWsiHashState()).toBeNull();
-    });
-
-    it('parses a coordinate-less selection hash', () => {
-        window.location.hash = '#wsi:slide=slide-a';
-        expect(readWsiHashState()).toEqual({ slideId: 'slide-a' });
-    });
-
     describe('requested slideKey', () => {
         const slides = () => [
-            makeSlide('slide-a'),
-            makeSlide('slide id/b #2'),
-            makeSlide('slide-c'),
+            testSlide('slide-a'),
+            testSlide('slide id/b #2'),
+            testSlide('slide-c'),
         ];
 
         function loadedInstance(requestedSlideKey?: string) {
             const instance = makeInstance(undefined, { requestedSlideKey });
             action(() => {
-                instance.hierarchy = makeHierarchy(slides());
+                instance.hierarchy = hierarchyOf(slides());
                 instance.loading = false;
             })();
             return instance;
@@ -211,9 +131,9 @@ describe('WSIViewer foundation behavior', () => {
                 requestedSlideKey: 'slide-x',
             });
             action(() => {
-                instance.hierarchy = makeHierarchy([
-                    makeSlide('slide-a'),
-                    makeSlide('slide-x', false),
+                instance.hierarchy = hierarchyOf([
+                    testSlide('slide-a'),
+                    testSlide('slide-x', false),
                 ]);
             })();
 
@@ -235,13 +155,13 @@ describe('WSIViewer foundation behavior', () => {
 
         function renderSelected(sampleTimelines?: Map<string, any>) {
             const slide = {
-                ...makeSlide('slide-a'),
+                ...testSlide('slide-a'),
                 slide_timepoint_days: -242,
                 slide_timepoint_source: 'Procedure date',
             };
             const instance = makeInstance(undefined, { sampleTimelines });
             action(() => {
-                instance.hierarchy = makeHierarchy([slide]);
+                instance.hierarchy = hierarchyOf([slide]);
                 instance.loading = false;
                 instance.selectedSlide = slide;
                 instance.selectedSample = instance.hierarchy.samples[0];
@@ -301,7 +221,7 @@ describe('WSIViewer foundation behavior', () => {
         function scopedInstance(pathologyFilter?: Record<string, string>) {
             const instance = makeInstance(undefined, { pathologyFilter });
             action(() => {
-                instance.hierarchy = makeHierarchy([makeSlide('slide-a')]);
+                instance.hierarchy = hierarchyOf([testSlide('slide-a')]);
                 instance.loading = false;
             })();
             return instance;

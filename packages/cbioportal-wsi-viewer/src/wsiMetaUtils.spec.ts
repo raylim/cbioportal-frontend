@@ -221,7 +221,7 @@ describe('buildPathRows timeline row', () => {
             { ...procedureSlide },
             sample,
             'P-1',
-            undefined,
+            'study-1',
             undefined,
             { acquisitionDays: -242, sequencingDays: 7 }
         );
@@ -237,7 +237,9 @@ describe('buildPathRows timeline row', () => {
 
     it('shows only the procedure day when the sample timeline is unknown', () => {
         expect(
-            timeline(buildPathRows({ ...procedureSlide }, sample, 'P-1'))
+            timeline(
+                buildPathRows({ ...procedureSlide }, sample, 'P-1', 'study-1')
+            )
         ).toBe('Procedure d-242');
     });
 
@@ -248,7 +250,7 @@ describe('buildPathRows timeline row', () => {
                     { ...slide },
                     sample,
                     'P-1',
-                    undefined,
+                    'study-1',
                     undefined,
                     {
                         sequencingDays: 7,
@@ -264,7 +266,8 @@ describe('buildPathRows timeline row', () => {
                 buildPathRows(
                     { ...slide },
                     { ...sample, sequencing_date: '2021-03-04' },
-                    'P-1'
+                    'P-1',
+                    'study-1'
                 )
             )
         ).toBe('sequenced 2021-03-04');
@@ -277,7 +280,7 @@ describe('buildPathRows timeline row', () => {
                     { ...procedureSlide },
                     { ...sample, sample_id: 'UNMATCHED' },
                     'P-1',
-                    undefined,
+                    'study-1',
                     undefined,
                     { acquisitionDays: 1, sequencingDays: 7 }
                 )
@@ -286,9 +289,9 @@ describe('buildPathRows timeline row', () => {
     });
 
     it('has no timeline row without any timing', () => {
-        expect(timeline(buildPathRows({ ...slide }, sample, 'P-1'))).toBe(
-            undefined
-        );
+        expect(
+            timeline(buildPathRows({ ...slide }, sample, 'P-1', 'study-1'))
+        ).toBe(undefined);
     });
 });
 

@@ -17,7 +17,6 @@ import {
 } from './wsiViewStateUtils';
 import {
     clearWsiSlideAccess,
-    getWsiSessionStorage,
     getWsiSlideAccess,
     registerWsiResourceAccessTarget,
 } from './wsiAuth';
@@ -33,7 +32,6 @@ jest.mock('./WSIViewer', () => ({
 function makeConfig(overrides: Partial<WsiViewerConfig> = {}): WsiViewerConfig {
     return {
         buildApiUrl: (path: string) => `https://portal.example/beta/${path}`,
-        authEnabled: false,
         ...overrides,
     };
 }
@@ -71,8 +69,6 @@ describe('WSI viewer runtime', () => {
     it('defaults to the #wsi: hash and requires a configured API URL builder', () => {
         const runtime = getWsiViewerRuntime();
 
-        expect(runtime.urlState).toBe(hashUrlState);
-        expect(runtime.authEnabled).toBe(false);
         expect(runtime.osdPrefixUrl).toBeUndefined();
         expect(() => runtime.buildApiUrl('api/x')).toThrow(
             'WSI viewer is not configured'
@@ -96,21 +92,6 @@ describe('WSI viewer runtime', () => {
             'https://portal.example/beta/api/wsi/v2/resources/study-1/patient%201/access?slideKey=slide-1',
             { credentials: 'same-origin', cache: 'no-store' }
         );
-    });
-
-    it('keeps protected responses out of sessionStorage when auth is enabled', () => {
-        window.sessionStorage.setItem('wsi-metadata-cache-x', '{}');
-        window.sessionStorage.setItem('unrelated', '1');
-
-        configureWsiViewerRuntime(makeConfig({ authEnabled: false }));
-        expect(getWsiSessionStorage()).toBe(window.sessionStorage);
-
-        configureWsiViewerRuntime(makeConfig({ authEnabled: true }));
-        expect(getWsiSessionStorage()).toBeNull();
-        expect(
-            window.sessionStorage.getItem('wsi-metadata-cache-x')
-        ).toBeNull();
-        expect(window.sessionStorage.getItem('unrelated')).toBe('1');
     });
 });
 
@@ -185,14 +166,11 @@ describe('WsiViewer', () => {
     });
 
     it('uses the installed host services and passes the viewer settings', () => {
-        const urlState = makeMemoryUrlState();
         const fetchImpl = (jest.fn() as unknown) as typeof fetch;
         const renderLoading = () => 'loading';
         configureWsiViewerRuntime(
             makeConfig({
-                authEnabled: true,
                 osdPrefixUrl: '/osd/',
-                urlState,
                 fetchImpl,
             })
         );
@@ -211,16 +189,12 @@ describe('WsiViewer', () => {
 
         expect(getWsiViewerRuntime()).toEqual(
             expect.objectContaining({
-                authEnabled: true,
                 osdPrefixUrl: '/osd/',
-                urlState,
                 fetchImpl,
             })
         );
         expect(mockWsiViewer).toHaveBeenCalledWith(
             expect.objectContaining({
-                hierarchyUrl:
-                    'https://portal.example/beta/api/wsi/v2/hierarchy/study%2F1/P%201',
                 authScope: 'user-a',
                 showDownload: true,
                 renderLoading,

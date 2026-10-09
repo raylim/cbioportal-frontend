@@ -333,7 +333,7 @@ async function hoverPathologyEvent(page: Page, title: string) {
     throw new Error(`No timeline event shows a "${title}" tooltip`);
 }
 
-if (process.env.PW_SUITE === 'wsi' && process.env.WSI_CHILD_CONTRACT !== '1') {
+if (process.env.PW_SUITE === 'wsi') {
     test.describe('WSI patient timeline pathology slide links', () => {
         test('a timeline tooltip link opens the Pathology Slides tab scoped to its event', async ({
             page,

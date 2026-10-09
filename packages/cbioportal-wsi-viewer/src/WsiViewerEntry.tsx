@@ -1,8 +1,6 @@
 import * as React from 'react';
 import { ClinicalEvent } from 'cbioportal-ts-api-client';
-import { buildWsiHierarchyApiUrl } from './wsiUrls';
 import { buildWsiSampleTimelineMap } from './wsiSampleTimeline';
-import { getWsiViewerRuntime } from './wsiViewerConfig';
 import WSIViewer from './WSIViewer';
 import {
     PathologySlideFilter,
@@ -65,16 +63,9 @@ export interface WsiViewerProps {
  * contract used by the viewer itself.
  */
 export default function WsiViewer({
-    patientId,
-    studyId,
     clinicalEvents,
     ...viewerProps
 }: WsiViewerProps) {
-    const hierarchyUrl = buildWsiHierarchyApiUrl(
-        getWsiViewerRuntime().buildApiUrl,
-        studyId,
-        patientId
-    );
     const sampleTimelines = React.useMemo(
         () =>
             clinicalEvents && clinicalEvents.length > 0
@@ -83,13 +74,5 @@ export default function WsiViewer({
         [clinicalEvents]
     );
 
-    return (
-        <WSIViewer
-            {...viewerProps}
-            hierarchyUrl={hierarchyUrl}
-            patientId={patientId}
-            studyId={studyId}
-            sampleTimelines={sampleTimelines}
-        />
-    );
+    return <WSIViewer {...viewerProps} sampleTimelines={sampleTimelines} />;
 }

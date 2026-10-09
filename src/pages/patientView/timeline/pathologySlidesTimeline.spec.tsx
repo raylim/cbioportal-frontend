@@ -413,7 +413,6 @@ describe('loadPathologySlideTimelineData', () => {
         });
         configureWsiViewerRuntime({
             buildApiUrl: (path: string) => `https://portal.example/${path}`,
-            authEnabled: false,
             fetchImpl,
         });
 

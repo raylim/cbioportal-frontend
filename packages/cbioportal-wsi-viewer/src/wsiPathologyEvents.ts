@@ -1,5 +1,5 @@
 import { ClinicalEvent } from 'cbioportal-ts-api-client';
-import { fetchPatientHierarchyReadOnly } from './wsiHierarchyFetchCache';
+import { fetchWsiPatientHierarchy } from './wsiHierarchyFetchCache';
 import {
     DAY_ZERO_TOOLTIP,
     formatDaysSinceDiagnosis,
@@ -10,8 +10,6 @@ import {
 import { WsiSampleTimelineMap } from './wsiSampleTimeline';
 import { isServableDiagnosticSlide, wsiStainKind } from './wsiSlideUtils';
 import { formatSpecimenLabel } from './wsiSpecimenUtils';
-import { buildWsiHierarchyApiUrl } from './wsiUrls';
-import { getWsiViewerRuntime } from './wsiViewerConfig';
 import { MatchLevel, PatientHierarchy, WsiStainFilter } from './wsiViewerTypes';
 
 export const PATHOLOGY_SLIDES_EVENT_TYPE = 'PATHOLOGY SLIDES';
@@ -495,16 +493,11 @@ export async function fetchPathologySlideTimelineData(
     authScope?: string,
     signal?: AbortSignal
 ): Promise<PathologySlideTimelineData> {
-    const hierarchy = await fetchPatientHierarchyReadOnly(
-        buildWsiHierarchyApiUrl(
-            getWsiViewerRuntime().buildApiUrl,
-            scope.studyId,
-            scope.patientId
-        ),
-        signal,
-        authScope,
+    const hierarchy = await fetchWsiPatientHierarchy(
         scope.studyId,
-        scope.patientId
+        scope.patientId,
+        authScope,
+        signal
     );
     return {
         events: buildPathologySlideEvents(hierarchy, scope),

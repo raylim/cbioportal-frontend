@@ -3,21 +3,18 @@
  */
 import {
     clearPatientHierarchyCache,
-    fetchPatientHierarchyReadOnly,
     fetchWsiPatientHierarchy,
-    hasCachedPatientHierarchy,
 } from './wsiHierarchyFetchCache';
-import { buildWsiHierarchyApiUrl } from './wsiUrls';
 import {
     clearWsiResourceAccessTargets,
     clearWsiSlideAccess,
     getWsiSlideAccess,
 } from './wsiAuth';
+import { makeTileMetadata } from './wsiTestFixtures';
 import { configureWsiViewerRuntime } from './wsiViewerConfig';
 
 configureWsiViewerRuntime({
     buildApiUrl: (path: string) => `/${path}`,
-    authEnabled: true,
 });
 
 function makeHierarchy() {
@@ -46,47 +43,17 @@ describe('wsiHierarchyFetchCache read-only contract', () => {
     });
 
     it('deduplicates concurrent requests and reuses the cached hierarchy', async () => {
-        const hierarchy = makeHierarchy();
-        const fetchMock = jest.fn().mockResolvedValue({
-            ok: true,
-            json: () => Promise.resolve(hierarchy),
-        });
-        (global as any).fetch = fetchMock;
-
-        const [first, second] = await Promise.all([
-            fetchPatientHierarchyReadOnly(
-                'https://tiles.example.com/patient/P-1'
-            ),
-            fetchPatientHierarchyReadOnly(
-                'https://tiles.example.com/patient/P-1'
-            ),
-        ]);
-
-        expect(fetchMock).toHaveBeenCalledTimes(1);
-        expect(second).toBe(first);
-    });
-
-    it('shares one request between the host gate and the viewer', async () => {
         const fetchMock = jest.fn().mockResolvedValue({
             ok: true,
             json: () => Promise.resolve(makeHierarchy()),
         });
         (global as any).fetch = fetchMock;
 
-        const gated = await fetchWsiPatientHierarchy('study', 'P 1', 'user-a');
-        const viewerUrl = buildWsiHierarchyApiUrl(
-            path => `/${path}`,
-            'study',
-            'P 1'
-        );
-        expect(hasCachedPatientHierarchy(viewerUrl, 'user-a')).toBe(true);
-        const viewed = await fetchPatientHierarchyReadOnly(
-            viewerUrl,
-            undefined,
-            'user-a',
-            'study',
-            'P 1'
-        );
+        const [first, second] = await Promise.all([
+            fetchWsiPatientHierarchy('study', 'P 1', 'user-a'),
+            fetchWsiPatientHierarchy('study', 'P 1', 'user-a'),
+        ]);
+        const third = await fetchWsiPatientHierarchy('study', 'P 1', 'user-a');
 
         expect(fetchMock).toHaveBeenCalledTimes(1);
         expect(fetchMock).toHaveBeenCalledWith(
@@ -95,8 +62,9 @@ describe('wsiHierarchyFetchCache read-only contract', () => {
                 credentials: 'include',
             }
         );
-        expect(viewed).toBe(gated);
-        expect(gated.patient_id).toBe('P 1');
+        expect(second).toBe(first);
+        expect(third).toBe(first);
+        expect(first.patient_id).toBe('P 1');
     });
 
     it('isolates cached hierarchy data by authenticated subject', async () => {
@@ -116,32 +84,18 @@ describe('wsiHierarchyFetchCache read-only contract', () => {
             });
         (global as any).fetch = fetchMock;
 
-        const first = await fetchPatientHierarchyReadOnly(
-            'https://tiles.example.com/patient/P-1',
-            undefined,
+        const first = await fetchWsiPatientHierarchy('study', 'P-1', 'user-a');
+        const second = await fetchWsiPatientHierarchy('study', 'P-1', 'user-b');
+        const firstAgain = await fetchWsiPatientHierarchy(
+            'study',
+            'P-1',
             'user-a'
-        );
-        const second = await fetchPatientHierarchyReadOnly(
-            'https://tiles.example.com/patient/P-1',
-            undefined,
-            'user-b'
         );
 
         expect(first.reference_sample_id).toBe('S-1');
         expect(second.reference_sample_id).toBe('S-2');
+        expect(firstAgain).toBe(first);
         expect(fetchMock).toHaveBeenCalledTimes(2);
-        expect(
-            hasCachedPatientHierarchy(
-                'https://tiles.example.com/patient/P-1',
-                'user-a'
-            )
-        ).toBe(true);
-        expect(
-            hasCachedPatientHierarchy(
-                'https://tiles.example.com/patient/P-1',
-                'user-b'
-            )
-        ).toBe(true);
     });
 
     it('normalizes the v2 nested payload for the existing viewer state', async () => {
@@ -202,13 +156,7 @@ describe('wsiHierarchyFetchCache read-only contract', () => {
                 }),
         });
 
-        const hierarchy = await fetchPatientHierarchyReadOnly(
-            '/api/wsi/v2/hierarchy/study/P-1',
-            undefined,
-            undefined,
-            'study',
-            'P-1'
-        );
+        const hierarchy = await fetchWsiPatientHierarchy('study', 'P-1');
 
         expect(hierarchy.patient_id).toBe('P-1');
         expect(hierarchy.reference_sample_id).toBe('S-1');
@@ -288,13 +236,7 @@ describe('wsiHierarchyFetchCache read-only contract', () => {
                 ),
         });
 
-        const hierarchy = await fetchPatientHierarchyReadOnly(
-            '/api/wsi/v2/hierarchy/study/P-untimed',
-            undefined,
-            undefined,
-            'study',
-            'P-untimed'
-        );
+        const hierarchy = await fetchWsiPatientHierarchy('study', 'P-untimed');
 
         const slide = hierarchy.samples[0].parts[0].blocks[0].slides[0];
         expect(slide.slide_key).toBe('slide-untimed');
@@ -315,13 +257,7 @@ describe('wsiHierarchyFetchCache read-only contract', () => {
         });
 
         await expect(
-            fetchPatientHierarchyReadOnly(
-                '/api/wsi/v2/hierarchy/study/P-partial',
-                undefined,
-                undefined,
-                'study',
-                'P-partial'
-            )
+            fetchWsiPatientHierarchy('study', 'P-partial')
         ).rejects.toThrow(/incomplete v3 timing contract/);
     });
 
@@ -382,9 +318,7 @@ describe('wsiHierarchyFetchCache read-only contract', () => {
                 }),
         });
 
-        const hierarchy = await fetchPatientHierarchyReadOnly(
-            '/api/wsi/v2/hierarchy/study/P-1'
-        );
+        const hierarchy = await fetchWsiPatientHierarchy('study', 'P-1');
         expect(
             hierarchy.samples[0].parts[0].blocks[0].slides[0].slide_type
         ).toBe('IHC');
@@ -446,9 +380,7 @@ describe('wsiHierarchyFetchCache read-only contract', () => {
             json: () => Promise.resolve(payload),
         });
 
-        const hierarchy = await fetchPatientHierarchyReadOnly(
-            '/api/wsi/v2/hierarchy/study/P-other'
-        );
+        const hierarchy = await fetchWsiPatientHierarchy('study', 'P-other');
         expect(
             hierarchy.samples[0].parts[0].blocks[0].slides[0].slide_type
         ).toBe('Other');
@@ -467,33 +399,15 @@ describe('wsiHierarchyFetchCache read-only contract', () => {
                 json: () => Promise.resolve(makeHierarchy()),
             });
         (global as any).fetch = fetchMock;
-        const url = 'https://tiles.example.com/patient/P-1';
-
-        await expect(fetchPatientHierarchyReadOnly(url)).rejects.toThrow(
+        await expect(fetchWsiPatientHierarchy('study', 'P-1')).rejects.toThrow(
             'Invalid WSI hierarchy: expected the v2 sampleGroups contract'
         );
-        await expect(fetchPatientHierarchyReadOnly(url)).resolves.toMatchObject(
-            {
-                samples: [expect.objectContaining({ sample_id: 'S-1' })],
-            }
-        );
-        expect(fetchMock).toHaveBeenCalledTimes(2);
-    });
-
-    it('fetches after an unrelated session-storage entry', async () => {
-        const url = 'https://tiles.example.com/patient/P-1?studyId=study-1';
-        const fetchMock = jest.fn().mockResolvedValue({
-            ok: true,
-            json: () => Promise.resolve(makeHierarchy()),
+        await expect(
+            fetchWsiPatientHierarchy('study', 'P-1')
+        ).resolves.toMatchObject({
+            samples: [expect.objectContaining({ sample_id: 'S-1' })],
         });
-        (global as any).fetch = fetchMock;
-
-        await expect(fetchPatientHierarchyReadOnly(url)).resolves.toMatchObject(
-            {
-                samples: [expect.objectContaining({ sample_id: 'S-1' })],
-            }
-        );
-        expect(fetchMock).toHaveBeenCalledTimes(1);
+        expect(fetchMock).toHaveBeenCalledTimes(2);
     });
 
     it('lets an aborted caller exit without cancelling the shared request', async () => {
@@ -507,20 +421,13 @@ describe('wsiHierarchyFetchCache read-only contract', () => {
         (global as any).fetch = fetchMock;
 
         const abortController = new AbortController();
-        const abortedPromise = fetchPatientHierarchyReadOnly(
-            'https://tiles.example.com/patient/P-1',
-            abortController.signal,
-            undefined,
+        const abortedPromise = fetchWsiPatientHierarchy(
             'study',
-            'P-1'
-        );
-        const sharedPromise = fetchPatientHierarchyReadOnly(
-            'https://tiles.example.com/patient/P-1',
+            'P-1',
             undefined,
-            undefined,
-            'study',
-            'P-1'
+            abortController.signal
         );
+        const sharedPromise = fetchWsiPatientHierarchy('study', 'P-1');
         abortController.abort();
 
         await expect(abortedPromise).rejects.toMatchObject({
@@ -537,41 +444,21 @@ describe('wsiHierarchyFetchCache read-only contract', () => {
         expect(fetchMock).toHaveBeenCalledTimes(1);
     });
 
-    it('reuses the in-memory hierarchy cache', async () => {
+    it('fetches again after the cache is cleared', async () => {
         const fetchMock = jest.fn().mockResolvedValue({
             ok: true,
             json: () => Promise.resolve(makeHierarchy()),
         });
         (global as any).fetch = fetchMock;
-        const url = 'https://tiles.example.com/patient/P-1?studyId=study-1';
 
-        await fetchPatientHierarchyReadOnly(url);
-        expect(hasCachedPatientHierarchy(url)).toBe(true);
+        await fetchWsiPatientHierarchy('study-1', 'P-1');
+        await fetchWsiPatientHierarchy('study-1', 'P-1');
+        expect(fetchMock).toHaveBeenCalledTimes(1);
 
         clearPatientHierarchyCache();
 
-        await fetchPatientHierarchyReadOnly(url);
+        await fetchWsiPatientHierarchy('study-1', 'P-1');
         expect(fetchMock).toHaveBeenCalledTimes(2);
-    });
-
-    it('does not read hierarchy data from session storage', async () => {
-        const url = 'https://tiles.example.com/patient/P-1?studyId=study-1';
-        window.sessionStorage.setItem(
-            `wsi-hierarchy-cache-v7::${url}`,
-            JSON.stringify({
-                expiresAt: Date.now() + 60_000,
-                data: makeHierarchy(),
-            })
-        );
-        const fetchMock = jest.fn().mockResolvedValueOnce({
-            ok: true,
-            json: () => Promise.resolve(makeHierarchy()),
-        });
-        (global as any).fetch = fetchMock;
-
-        await fetchPatientHierarchyReadOnly(url);
-
-        expect(fetchMock).toHaveBeenCalledTimes(1);
     });
 });
 
@@ -579,7 +466,6 @@ describe('wsiHierarchyFetchCache resource access registration', () => {
     const STUDY = 'study-1';
     const PATIENT = 'P-1';
     const URL_P1 = '/api/wsi/v2/hierarchy/study-1/P-1';
-    const URL_P2 = '/api/wsi/v2/hierarchy/study-1/P-2';
     let originalFetch: typeof globalThis.fetch;
     let hierarchyResponses: Record<string, unknown[]>;
     let accessStatuses: number[];
@@ -638,7 +524,7 @@ describe('wsiHierarchyFetchCache resource access registration', () => {
 
     const accessPayload = {
         slideKey: 'slide',
-        tileMetadata: {
+        tileMetadata: makeTileMetadata({
             dimensions: { width: 100, height: 80 },
             levels: 1,
             level_dimensions: [{ width: 100, height: 80 }],
@@ -646,7 +532,7 @@ describe('wsiHierarchyFetchCache resource access registration', () => {
             max_zoom: 0,
             tile_size: 256,
             safe_min_level: 0,
-        },
+        }),
         thumbnail: {
             width: 128,
             height: 96,
@@ -711,47 +597,18 @@ describe('wsiHierarchyFetchCache resource access registration', () => {
     it('registers the slides of a network hierarchy', async () => {
         hierarchyResponses[URL_P1] = [v2Hierarchy(['slide-1'])];
 
-        await fetchPatientHierarchyReadOnly(
-            URL_P1,
-            undefined,
-            'user-a',
-            STUDY,
-            PATIENT
-        );
+        await fetchWsiPatientHierarchy(STUDY, PATIENT, 'user-a');
         await getWsiSlideAccess(STUDY, 'slide-1', false, 'user-a');
 
         expect(accessCalls()).toEqual(['study-1/P-1/access?slideKey=slide-1']);
     });
 
-    it('does not register slides without an explicit study', async () => {
-        hierarchyResponses[URL_P1] = [v2Hierarchy(['slide-1'])];
-
-        await fetchPatientHierarchyReadOnly(URL_P1, undefined, 'user-a');
-
-        await expect(
-            getWsiSlideAccess(STUDY, 'slide-1', false, 'user-a')
-        ).rejects.toThrow('WSI resource selection is unavailable');
-        expect(accessCalls()).toEqual([]);
-    });
-
     it('re-registers the slides on a cache hit', async () => {
         hierarchyResponses[URL_P1] = [v2Hierarchy(['slide-1'])];
-        await fetchPatientHierarchyReadOnly(
-            URL_P1,
-            undefined,
-            'user-a',
-            STUDY,
-            PATIENT
-        );
+        await fetchWsiPatientHierarchy(STUDY, PATIENT, 'user-a');
         clearWsiResourceAccessTargets(STUDY);
 
-        await fetchPatientHierarchyReadOnly(
-            URL_P1,
-            undefined,
-            'user-a',
-            STUDY,
-            PATIENT
-        );
+        await fetchWsiPatientHierarchy(STUDY, PATIENT, 'user-a');
         await getWsiSlideAccess(STUDY, 'slide-1', false, 'user-a');
 
         expect(hierarchyCalls(URL_P1)).toBe(1);
@@ -760,13 +617,7 @@ describe('wsiHierarchyFetchCache resource access registration', () => {
 
     it('surfaces a 404 without reloading the hierarchy', async () => {
         hierarchyResponses[URL_P1] = [v2Hierarchy(['slide-1'])];
-        await fetchPatientHierarchyReadOnly(
-            URL_P1,
-            undefined,
-            'user-a',
-            STUDY,
-            PATIENT
-        );
+        await fetchWsiPatientHierarchy(STUDY, PATIENT, 'user-a');
         accessStatuses = [404];
 
         await expect(
@@ -779,13 +630,7 @@ describe('wsiHierarchyFetchCache resource access registration', () => {
 
     it('forgets the slides with the whole hierarchy cache', async () => {
         hierarchyResponses[URL_P1] = [v2Hierarchy(['slide-1'])];
-        await fetchPatientHierarchyReadOnly(
-            URL_P1,
-            undefined,
-            'user-a',
-            STUDY,
-            PATIENT
-        );
+        await fetchWsiPatientHierarchy(STUDY, PATIENT, 'user-a');
 
         clearPatientHierarchyCache();
 

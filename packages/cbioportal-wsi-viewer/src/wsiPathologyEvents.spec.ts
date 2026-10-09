@@ -808,7 +808,6 @@ describe('fetchPathologySlideTimelineData', () => {
         });
         configureWsiViewerRuntime({
             buildApiUrl: (path: string) => `https://portal.example/${path}`,
-            authEnabled: false,
             fetchImpl,
         });
 
@@ -830,7 +829,6 @@ describe('fetchPathologySlideTimelineData', () => {
     it('rejects when the hierarchy cannot be loaded', async () => {
         configureWsiViewerRuntime({
             buildApiUrl: (path: string) => `/${path}`,
-            authEnabled: false,
             fetchImpl: jest.fn().mockResolvedValue({ ok: false, status: 503 }),
         });
 
