@@ -324,6 +324,7 @@ const PatientPanel: React.FunctionComponent<{
     const listRef = React.useRef<HTMLUListElement>(null);
     const page = store.page.result!;
     const selected = store.selected;
+    const filtering = store.hasSlideFilters || store.clinicalFilters.length > 0;
 
     // Show the selected patient when it is on the page; otherwise start a
     // newly loaded page from its top.
@@ -421,7 +422,7 @@ const PatientPanel: React.FunctionComponent<{
                     data-testid="study-slides-empty"
                     style={{ color: '#bbb', fontSize: 11, padding: 12 }}
                 >
-                    {store.hasSlideFilters
+                    {filtering
                         ? 'No patients match these filters.'
                         : 'No pathology slides in the current selection.'}
                 </div>
