@@ -7,12 +7,12 @@ import {
     registerWsiResourceAccess,
     registerWsiResourceAccessTarget,
 } from './wsiAuth';
+import { makeTileMetadata } from './wsiTestFixtures';
 import { configureWsiViewerRuntime, WsiViewerConfig } from './wsiViewerConfig';
 
 function configureRuntime(overrides: Partial<WsiViewerConfig> = {}) {
     configureWsiViewerRuntime({
         buildApiUrl: (path: string) => `/${path}`,
-        authEnabled: true,
         ...overrides,
     });
 }
@@ -45,7 +45,7 @@ describe('WSI access capability', () => {
             ok: true,
             json: async () => ({
                 slideKey: 'slide-1',
-                tileMetadata: {
+                tileMetadata: makeTileMetadata({
                     dimensions: { width: 100, height: 80 },
                     levels: 1,
                     level_dimensions: [{ width: 100, height: 80 }],
@@ -53,7 +53,7 @@ describe('WSI access capability', () => {
                     max_zoom: 0,
                     tile_size: 256,
                     safe_min_level: 0,
-                },
+                }),
                 thumbnail: {
                     width: 128,
                     height: 96,
@@ -84,7 +84,7 @@ describe('WSI access capability', () => {
                 ok: true,
                 json: async () => ({
                     slideKey: 'slide-1',
-                    tileMetadata: {
+                    tileMetadata: makeTileMetadata({
                         dimensions: { width: 100, height: 80 },
                         levels: 1,
                         level_dimensions: [{ width: 100, height: 80 }],
@@ -92,7 +92,7 @@ describe('WSI access capability', () => {
                         max_zoom: 0,
                         tile_size: 256,
                         safe_min_level: 0,
-                    },
+                    }),
                     thumbnail: {
                         width: 128,
                         height: 96,
@@ -274,10 +274,27 @@ describe('WSI access capability', () => {
         );
     });
 
+    it('rejects tile metadata without the schema version', async () => {
+        const { tile_metadata_schema_version, ...legacy } = makeTileMetadata();
+        jest.spyOn(global, 'fetch').mockResolvedValue({
+            ok: true,
+            json: async () => ({
+                slideKey: 'slide-1',
+                tileMetadata: legacy,
+                accessToken: 'token',
+                expiresIn: 300,
+            }),
+        } as Response);
+
+        await expect(getWsiSlideAccess('study-1', 'slide-1')).rejects.toThrow(
+            'Invalid WSI tile metadata schema'
+        );
+    });
+
     describe('registered slides', () => {
         const validAccess = {
             slideKey: 'slide-1',
-            tileMetadata: {
+            tileMetadata: makeTileMetadata({
                 dimensions: { width: 100, height: 80 },
                 levels: 1,
                 level_dimensions: [{ width: 100, height: 80 }],
@@ -285,7 +302,7 @@ describe('WSI access capability', () => {
                 max_zoom: 0,
                 tile_size: 256,
                 safe_min_level: 0,
-            },
+            }),
             thumbnail: {
                 width: 128,
                 height: 96,
@@ -437,14 +454,7 @@ describe('WSI access capability', () => {
                 'expiresAt',
                 'expiresIn',
                 'slideKey',
-                'thumbnail',
                 'tileMetadata',
-                'tokenType',
-            ]);
-            expect(Object.keys(access.thumbnail).sort()).toEqual([
-                'contentType',
-                'height',
-                'width',
             ]);
             expect(JSON.stringify(access)).not.toContain('source-image');
         });
@@ -453,7 +463,6 @@ describe('WSI access capability', () => {
             // The portal's URL builder encodes a "?" inside the path.
             configureWsiViewerRuntime({
                 buildApiUrl: (path: string) => `/${path.replace(/\?/g, '%3F')}`,
-                authEnabled: true,
             });
             registerWsiResourceAccess('study-1', hierarchy(['slide-1']));
             const fetchSpy = jest

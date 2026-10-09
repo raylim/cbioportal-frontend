@@ -12,27 +12,11 @@ function renderWsiLoading() {
     return <LoadingIndicator isLoading={true} center={true} size="big" />;
 }
 
-/** SAML portals, or portals that opt in, authenticate WSI users. */
-export function isPortalWsiAuthEnabled(): boolean {
-    const config = getServerConfig();
-    // Portals without authentication report `authenticate=false` as a boolean.
-    const authenticationMethod =
-        typeof config.authenticationMethod === 'string'
-            ? config.authenticationMethod.toLowerCase()
-            : undefined;
-    return (
-        authenticationMethod === 'saml' ||
-        authenticationMethod === 'saml_plus_basic' ||
-        config.msk_wsi_authentication_enabled === true
-    );
-}
-
 /** Viewer services from the portal configuration, installed at startup. */
 export function buildWsiViewerConfig(): WsiViewerConfig {
     const annotationApiUrl = getServerConfig().msk_wsi_annotation_api_url?.trim();
     return {
         buildApiUrl: (path: string) => buildCBioPortalAPIUrl(path),
-        authEnabled: isPortalWsiAuthEnabled(),
         osdPrefixUrl: WSI_OSD_PREFIX_URL,
         annotations: annotationApiUrl
             ? { apiUrl: annotationApiUrl.replace(/\/+$/, '') }

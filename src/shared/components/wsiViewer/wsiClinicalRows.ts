@@ -4,7 +4,7 @@ import {
     ClinicalData,
     ClinicalDataMultiStudyFilter,
 } from 'cbioportal-ts-api-client';
-import { WsiClinicalRow } from 'cbioportal-wsi-viewer';
+import { createPromiseCache, WsiClinicalRow } from 'cbioportal-wsi-viewer';
 import { getServerConfig } from 'config/config';
 import { getClient } from 'shared/api/cbioportalClientInstance';
 import { clean } from 'pages/patientView/clinicalInformation/lib/clinicalAttributesUtil.js';
@@ -25,15 +25,12 @@ export interface WsiPatientClinicalData {
 /**
  * Attributes left out of the Clinical section: sequencing QC and
  * administrative fields that say nothing about the patient or the tissue on
- * the slide, PATH_SLIDE_EXISTS, which the viewer itself already answers, and
- * MSK_SLIDE_ID, whose values are source image identifiers the viewer keeps
- * out of the browser.
+ * the slide, and PATH_SLIDE_EXISTS, which the viewer itself already answers.
  */
 export const WSI_CLINICAL_EXCLUDED_ATTRIBUTE_IDS: ReadonlySet<string> = new Set(
     [
         'GENE_PANEL',
         'INSTITUTE',
-        'MSK_SLIDE_ID',
         'OTHER_PATIENT_ID',
         'PATH_SLIDE_EXISTS',
         'SAMPLE_COVERAGE',
@@ -235,29 +232,14 @@ export function buildWsiPatientClinicalRows({
     ];
 }
 
-const clinicalRowsRequests = new Map<string, Promise<WsiClinicalRow[]>>();
-
-function cached<T>(
-    cache: Map<string, Promise<T>>,
-    key: string,
-    load: () => Promise<T>
-): Promise<T> {
-    let request = cache.get(key);
-    if (!request) {
-        request = load();
-        // A failed request is retried the next time it is needed.
-        request.catch(() => cache.delete(key));
-        cache.set(key, request);
-    }
-    return request;
-}
+// A failed request is retried the next time it is needed.
+const clinicalRowsRequests = createPromiseCache<WsiClinicalRow[]>();
 
 function fetchWsiClinicalRows(
     studyId: string,
     patientId: string
 ): Promise<WsiClinicalRow[]> {
-    return cached(
-        clinicalRowsRequests,
+    return clinicalRowsRequests.get(
         `${studyId}\u0000${patientId}`,
         async () => {
             const [attributes, patientData, samples] = await Promise.all([
