@@ -12,6 +12,7 @@ import {
     StudySlidesRequest,
     StudySlidesRequestError,
 } from './studySlidesApi';
+import { studySlidesPageFor } from './studySlidesTestServer';
 
 const mockViewer = jest.fn((_props: Record<string, unknown>) => null);
 
@@ -42,22 +43,8 @@ const PATIENTS: StudySlidePatient[] = ['P-1', 'P-2', 'P-3'].map(id => ({
     stainGroupCounts: { 'H&E': 1, IHC: 1, Other: 0, Unknown: 0 },
 }));
 
-function pageFor(
-    request: StudySlidesRequest,
-    patients = PATIENTS
-): StudySlidesPage {
-    const located = patients.findIndex(
-        p => p.patientId === request.locatePatientId
-    );
-    return {
-        totalPatients: patients.length,
-        totalSlides: patients.length * 2,
-        stainGroupTotals: { 'H&E': 3, IHC: 3, Other: 0, Unknown: 0 },
-        locatedIndex: located >= 0 ? located : null,
-        pageNumber: request.pageNumber ?? 0,
-        pageSize: request.pageSize ?? 50,
-        patients,
-    };
+function pageFor(request: StudySlidesRequest, patients = PATIENTS) {
+    return studySlidesPageFor(request, patients);
 }
 
 /**
@@ -111,18 +98,6 @@ const MANY = Array.from({ length: 7 }, (_, i) => ({
     ...PATIENTS[0],
     patientId: `M-${i + 1}`,
 }));
-
-function pagedFor(request: StudySlidesRequest): StudySlidesPage {
-    const pageNumber = request.pageNumber ?? 0;
-    const pageSize = request.pageSize ?? 50;
-    return {
-        ...pageFor(request, MANY),
-        patients: MANY.slice(
-            pageNumber * pageSize,
-            (pageNumber + 1) * pageSize
-        ),
-    };
-}
 
 describe('StudyPathologySlidesTab', () => {
     beforeEach(() => {
@@ -379,9 +354,9 @@ describe('StudyPathologySlidesTab', () => {
             r =>
                 r.pageNumber
                     ? new Promise(resolve => {
-                          release = () => resolve(pagedFor(r));
+                          release = () => resolve(pageFor(r, MANY));
                       })
-                    : Promise.resolve(pagedFor(r)),
+                    : Promise.resolve(pageFor(r, MANY)),
             true,
             2
         );
@@ -417,7 +392,7 @@ describe('StudyPathologySlidesTab', () => {
     });
 
     it('jumps to the first, last and a typed page', async () => {
-        const { store } = renderTab(async r => pagedFor(r), true, 2);
+        const { store } = renderTab(async r => pageFor(r, MANY), true, 2);
         await settle();
 
         fireEvent.click(screen.getByLabelText('Last page of patients'));

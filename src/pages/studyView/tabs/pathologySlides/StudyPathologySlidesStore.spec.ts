@@ -13,6 +13,7 @@ import {
     StudySlidesPage,
     StudySlidesRequest,
 } from './studySlidesApi';
+import { studySlidesPageFor } from './studySlidesTestServer';
 
 jest.mock('shared/api/urls', () => ({
     buildCBioPortalAPIUrl: (path: string) => `/${path}`,
@@ -37,41 +38,10 @@ function patient(patientId: string, stain = 'H&E'): StudySlidePatient {
 /** A server over a fixed patient list that honours the request options. */
 function fakeServer(allPatients: () => StudySlidePatient[]) {
     const requests: StudySlidesRequest[] = [];
-    const fetchPage = jest.fn(
-        async (request: StudySlidesRequest): Promise<StudySlidesPage> => {
-            requests.push(request);
-            const listed = allPatients().filter(
-                p =>
-                    (!request.search ||
-                        p.patientId
-                            .toLowerCase()
-                            .includes(request.search.toLowerCase())) &&
-                    (!request.stainGroups?.length ||
-                        request.stainGroups.some(
-                            g => p.stainGroupCounts[g] > 0
-                        ))
-            );
-            const pageNumber = request.pageNumber ?? 0;
-            const pageSize = request.pageSize ?? 50;
-            const located = listed.findIndex(
-                p =>
-                    p.studyId === request.locateStudyId &&
-                    p.patientId === request.locatePatientId
-            );
-            return {
-                totalPatients: listed.length,
-                totalSlides: listed.length,
-                stainGroupTotals: { 'H&E': 0, IHC: 0, Other: 0, Unknown: 0 },
-                locatedIndex: located >= 0 ? located : null,
-                pageNumber,
-                pageSize,
-                patients: listed.slice(
-                    pageNumber * pageSize,
-                    (pageNumber + 1) * pageSize
-                ),
-            };
-        }
-    );
+    const fetchPage = jest.fn(async (request: StudySlidesRequest) => {
+        requests.push(request);
+        return studySlidesPageFor(request, allPatients());
+    });
     return { fetchPage, requests };
 }
 
