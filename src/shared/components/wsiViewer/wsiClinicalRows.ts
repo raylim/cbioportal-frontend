@@ -26,15 +26,12 @@ export interface WsiPatientClinicalData {
  * Attributes left out of the Clinical section: sequencing QC and
  * administrative fields that say nothing about the patient or the tissue on
  * the slide, PATH_SLIDE_EXISTS, which the viewer itself already answers,
- * MSK_SLIDE_ID, whose values are source image identifiers the viewer keeps
- * out of the browser, and the molecular summary the MSK-IMPACT section
- * already shows.
+ * and the molecular summary the MSK-IMPACT section already shows.
  */
 export const WSI_CLINICAL_EXCLUDED_ATTRIBUTE_IDS: ReadonlySet<string> = new Set(
     [
         'GENE_PANEL',
         'INSTITUTE',
-        'MSK_SLIDE_ID',
         'OTHER_PATIENT_ID',
         'PATH_SLIDE_EXISTS',
         'SAMPLE_COVERAGE',
