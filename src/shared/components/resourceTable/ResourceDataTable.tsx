@@ -39,6 +39,11 @@ export interface IResourceDataTableProps {
     searchPlaceholder?: string;
     hideTabs?: boolean;
     scopedResourceId?: string;
+    /**
+     * Opens a row in the page instead of a new window, e.g. a slide in an embedded viewer. The
+     * Link column then shows a "View" button.
+     */
+    onViewRow?: (row: IResourceTableRow) => void;
 }
 
 // Matches the study view's Clinical Data tab, so a wide or long resource table
@@ -327,15 +332,32 @@ export class ResourceDataTable extends React.Component<
             this.createColumn(
                 'link',
                 'Link',
-                row => (
-                    <a href={row.url} target="_blank" rel="noopener noreferrer">
-                        <i
-                            className="fa fa-external-link fa-sm"
-                            style={{ marginRight: 5, color: 'black' }}
-                        />
-                        Open in new window
-                    </a>
-                ),
+                row =>
+                    this.props.onViewRow ? (
+                        <button
+                            className="btn btn-default btn-xs"
+                            data-testid="resource-row-view"
+                            onClick={() => this.props.onViewRow!(row)}
+                        >
+                            <i
+                                className="fa fa-eye fa-sm"
+                                style={{ marginRight: 5 }}
+                            />
+                            View
+                        </button>
+                    ) : (
+                        <a
+                            href={row.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                        >
+                            <i
+                                className="fa fa-external-link fa-sm"
+                                style={{ marginRight: 5, color: 'black' }}
+                            />
+                            Open in new window
+                        </a>
+                    ),
                 // The cell renders a link; a download of it is only useful as the URL behind it.
                 row => row.url,
                 { sortable: false, filterable: false, togglable: false }

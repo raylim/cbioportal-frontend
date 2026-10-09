@@ -120,6 +120,41 @@ describe('ResourceDataTable metadata columns', () => {
         );
     });
 
+    it('shows View for rows the page opens itself, and the link otherwise', () => {
+        const store = {
+            columns: [],
+            facets: {},
+            facetRanges: {},
+            distinctValueCounts: {},
+            rowsForDisplay: [],
+        } as any;
+        const opened: string[] = [];
+        const viewing = new ResourceDataTable({
+            store,
+            onViewRow: row => opened.push(row.url),
+        });
+        const view = mount(
+            <div>
+                {viewing.tableColumns
+                    .find(c => c.id === 'link')!
+                    .render({ url: '/wsi?slideKey=abc' } as any)}
+            </div>
+        );
+        view.find('[data-testid="resource-row-view"]').simulate('click');
+        assert.deepEqual(opened, ['/wsi?slideKey=abc']);
+
+        const linking = new ResourceDataTable({ store });
+        const link = mount(
+            <div>
+                {linking.tableColumns
+                    .find(c => c.id === 'link')!
+                    .render({ url: 'https://example.org/x' } as any)}
+            </div>
+        );
+        assert.equal(link.find('[data-testid="resource-row-view"]').length, 0);
+        assert.equal(link.find('a').prop('href'), 'https://example.org/x');
+    });
+
     const headerText = (store: Partial<ResourceTableStore>) => {
         const table = tableWith({
             totalRowCount: 3074,

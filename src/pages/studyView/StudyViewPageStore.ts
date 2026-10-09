@@ -422,6 +422,7 @@ export enum StudyViewPageTabDescriptions {
     CN_SEGMENTS = 'CN Segments',
     PLOTS = 'Plots',
     EMBEDDINGS = 'Similarity Maps',
+    PATHOLOGY_SLIDES = 'Pathology Slides',
 }
 
 const DEFAULT_CHART_NAME = 'Custom Data';
@@ -473,6 +474,9 @@ export type StudyViewURLQuery = {
     id?: string;
     studyId?: string;
     resourceUrl?: string; // for open resource tabs
+    wsiStudyId?: string; // patient shown in the Pathology Slides tab
+    wsiPatientId?: string;
+    wsiView?: string; // 'table' when the Pathology Slides tab shows its slide table
     cancer_study_id?: string;
     filterJson?: string;
     filterAttributeId?: string;
