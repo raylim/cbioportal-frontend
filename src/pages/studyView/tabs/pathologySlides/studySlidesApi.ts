@@ -74,35 +74,6 @@ export function fetchStudySlidePatients(
     return postStudySlides('api/wsi/v2/study-slides/patients/fetch', request);
 }
 
-export interface StudySlideFacetValue {
-    value: string;
-    /** Listed patients with this value on a sample or the patient. */
-    patientCount: number;
-}
-
-export interface StudySlideAttributeFacet {
-    attributeId: string;
-    /** Most frequent values first. */
-    values: StudySlideFacetValue[];
-    /** Some less frequent values were left out. */
-    truncated: boolean;
-}
-
-export interface StudySlideFacets {
-    attributes: StudySlideAttributeFacet[];
-    /** Listed patients with a slide of each match level. */
-    matchLevels: Record<StudySlideMatchLevel, number>;
-}
-
-export interface StudySlideFacetsRequest
-    extends Pick<
-        StudySlidesRequest,
-        'studyViewFilter' | 'viewableOnly' | 'stainGroups' | 'matchLevels'
-    > {
-    attributeIds: string[];
-    maxValues?: number;
-}
-
 async function postStudySlides<T>(path: string, body: object): Promise<T> {
     const response = await fetch(buildCBioPortalAPIUrl(path), {
         method: 'POST',
@@ -117,16 +88,6 @@ async function postStudySlides<T>(path: string, body: object): Promise<T> {
         throw new StudySlidesRequestError(response.status);
     }
     return response.json();
-}
-
-/**
- * Filter options for the listed patients: patients per clinical value and
- * per match level, each counted without its own filter.
- */
-export function fetchStudySlideFacets(
-    request: StudySlideFacetsRequest
-): Promise<StudySlideFacets> {
-    return postStudySlides('api/wsi/v2/study-slides/facets/fetch', request);
 }
 
 /** The viewer's match filter for a match-level selection: one level, else all. */

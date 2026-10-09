@@ -9,8 +9,6 @@ import {
     StudySlidePatientRef,
 } from './StudyPathologySlidesStore';
 import {
-    StudySlideFacets,
-    StudySlideFacetsRequest,
     StudySlidePatient,
     StudySlidesPage,
     StudySlidesRequest,
@@ -332,16 +330,13 @@ describe('StudyPathologySlidesStore', () => {
         }
     });
 
-    it('waits for an explicit ID search when the text is not ID-like', () => {
+    it('applies the typed search at once on request', () => {
         jest.useFakeTimers();
         try {
             makeStore();
-            store.setSearchText('colorectal');
-            jest.advanceTimersByTime(STUDY_SLIDES_SEARCH_DEBOUNCE_MS * 2);
-            expect(store.search).toBe('');
-
+            store.setSearchText('P-3');
             store.applySearch();
-            expect(store.search).toBe('colorectal');
+            expect(store.search).toBe('P-3');
         } finally {
             jest.useRealTimers();
         }
@@ -384,188 +379,16 @@ describe('StudyPathologySlidesStore', () => {
         expect(store.pageNumber).toBe(0);
     });
 
-    describe('filters', () => {
-        const facets: StudySlideFacets = {
-            attributes: [
-                {
-                    attributeId: 'CANCER_TYPE',
-                    values: [
-                        { value: 'Colorectal Cancer', patientCount: 3 },
-                        { value: 'Breast Cancer', patientCount: 2 },
-                    ],
-                    truncated: false,
-                },
-                {
-                    attributeId: 'SAMPLE_TYPE',
-                    values: [{ value: 'Primary', patientCount: 5 }],
-                    truncated: false,
-                },
-            ],
-            matchLevels: { PART: 4, BLOCK: 2, UNMATCHED: 1 },
-        };
-        const suggestionFacets: StudySlideFacets = {
-            attributes: [
-                {
-                    attributeId: 'PRIMARY_SITE',
-                    values: [{ value: 'Colon', patientCount: 2 }],
-                    truncated: false,
-                },
-            ],
-            matchLevels: { PART: 4, BLOCK: 2, UNMATCHED: 1 },
-        };
-        // Observable, like the study view's filters.
-        const clinicalFilters = observable.box<
-            { attributeId: string; values: string[] }[]
-        >([]);
-        let facetRequests: StudySlideFacetsRequest[];
-        let setFilterValues: jest.Mock;
+    it('clears only the tab filters', async () => {
+        makeStore();
+        store.toggleStainGroup('IHC');
+        store.toggleMatchLevel('UNMATCHED');
+        store.setSearchText('P');
+        store.applySearch();
+        expect(store.hasSlideFilters).toBe(true);
 
-        function makeFilterStore() {
-            runInAction(() => clinicalFilters.set([]));
-            facetRequests = [];
-            setFilterValues = jest.fn((attributeId, values) =>
-                runInAction(() =>
-                    clinicalFilters.set(
-                        values.length ? [{ attributeId, values }] : []
-                    )
-                )
-            );
-            store = new StudyPathologySlidesStore({
-                getFilters: () => filters.get(),
-                getStudyIds: () => [STUDY],
-                fetchPage: server.fetchPage,
-                fetchFacets: async request => {
-                    facetRequests.push(request);
-                    return request.attributeIds.includes('PRIMARY_SITE')
-                        ? suggestionFacets
-                        : facets;
-                },
-                clinical: {
-                    getAttributes: () =>
-                        [
-                            'CANCER_TYPE',
-                            'CANCER_TYPE_DETAILED',
-                            'SAMPLE_TYPE',
-                            'PRIMARY_SITE',
-                        ].map(attributeId => ({
-                            attributeId,
-                            displayName: attributeId.toLowerCase(),
-                        })),
-                    getFilters: () => clinicalFilters.get(),
-                    setFilterValues,
-                },
-                pageSize: 2,
-            });
-            stopObserving = autorun(() => {
-                void store.page.result;
-                void store.facets.result;
-                void store.suggestionFacets.result;
-            });
-        }
-
-        beforeEach(() => window.localStorage.clear());
-
-        it('requests the default filters with the list filters but not the ID search', async () => {
-            makeFilterStore();
-            store.toggleMatchLevel('PART');
-            store.setSearchText('P-1');
-            store.applySearch();
-            await settle();
-
-            expect(facetRequests[facetRequests.length - 1]).toEqual({
-                studyViewFilter: { studyIds: [STUDY] },
-                viewableOnly: true,
-                stainGroups: [],
-                matchLevels: ['PART'],
-                attributeIds: [
-                    'CANCER_TYPE',
-                    'CANCER_TYPE_DETAILED',
-                    'SAMPLE_TYPE',
-                ],
-            });
-            expect(server.requests[server.requests.length - 1]).toEqual(
-                expect.objectContaining({
-                    matchLevels: ['PART'],
-                    search: 'P-1',
-                })
-            );
-            // SAMPLE_TYPE has one value in the cohort, so it is not offered.
-            expect(store.visibleFacets.map(f => f.attributeId)).toEqual([
-                'CANCER_TYPE',
-            ]);
-        });
-
-        it('suggests clinical values and match levels once the search is used', async () => {
-            makeFilterStore();
-            await settle();
-            expect(store.suggestionsFor('col')).toEqual([
-                {
-                    kind: 'clinical',
-                    attributeId: 'CANCER_TYPE',
-                    displayName: 'cancer_type',
-                    value: 'Colorectal Cancer',
-                    patientCount: 3,
-                },
-            ]);
-
-            store.requestSuggestions();
-            await settle();
-            expect(
-                store
-                    .suggestionsFor('col')
-                    .map(s => s.kind + ':' + s.patientCount)
-            ).toEqual(['clinical:3', 'clinical:2']);
-            expect(store.suggestionsFor('unmatch')).toEqual([
-                { kind: 'match', level: 'UNMATCHED', patientCount: 1 },
-            ]);
-            expect(store.suggestionsFor('  ')).toEqual([]);
-        });
-
-        it('sets the shared clinical filter and pins more filters', async () => {
-            makeFilterStore();
-            await settle();
-
-            store.addClinicalValue('CANCER_TYPE', 'Breast Cancer');
-            store.addClinicalValue('CANCER_TYPE', 'Colorectal Cancer');
-            expect(setFilterValues).toHaveBeenLastCalledWith('CANCER_TYPE', [
-                'Breast Cancer',
-                'Colorectal Cancer',
-            ]);
-            expect(store.clinicalFilters).toEqual([
-                {
-                    attributeId: 'CANCER_TYPE',
-                    displayName: 'cancer_type',
-                    values: ['Breast Cancer', 'Colorectal Cancer'],
-                },
-            ]);
-
-            store.pinAttribute('PRIMARY_SITE');
-            expect(store.facetAttributeIds).toContain('PRIMARY_SITE');
-            expect(
-                JSON.parse(
-                    window.localStorage.getItem('wsi.study.pinnedFacets')!
-                )
-            ).toEqual(['PRIMARY_SITE']);
-            store.unpinAttribute('PRIMARY_SITE');
-            expect(store.facetAttributeIds).not.toContain('PRIMARY_SITE');
-            expect(setFilterValues).toHaveBeenLastCalledWith(
-                'PRIMARY_SITE',
-                []
-            );
-        });
-
-        it('clears only the tab filters', async () => {
-            makeFilterStore();
-            store.toggleStainGroup('IHC');
-            store.toggleMatchLevel('UNMATCHED');
-            store.setSearchText('P');
-            store.applySearch();
-            expect(store.hasSlideFilters).toBe(true);
-
-            store.clearSlideFilters();
-            expect(store.hasSlideFilters).toBe(false);
-            expect(store.searchText).toBe('');
-            expect(setFilterValues).not.toHaveBeenCalled();
-        });
+        store.clearSlideFilters();
+        expect(store.hasSlideFilters).toBe(false);
+        expect(store.searchText).toBe('');
     });
 });

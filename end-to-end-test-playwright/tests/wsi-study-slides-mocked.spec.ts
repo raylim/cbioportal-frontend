@@ -37,10 +37,6 @@ function stainCounts(patientId: string) {
 interface StudySlidesRequestBody {
     studyViewFilter: {
         studyIds?: string[];
-        clinicalDataFilters?: {
-            attributeId: string;
-            values: { value: string }[];
-        }[];
     };
     stainGroups?: string[];
     matchLevels?: string[];
@@ -51,29 +47,18 @@ interface StudySlidesRequestBody {
     pageSize?: number;
 }
 
-/** The first 30 patients have colorectal cancer, the rest breast cancer. */
-function cancerType(patientId: string) {
-    return patientIds.indexOf(patientId) < 30
-        ? 'Colorectal Cancer'
-        : 'Breast Cancer';
-}
-
 /** Every seventh patient has an unmatched slide. */
 function isUnmatched(patientId: string) {
     return patientIds.indexOf(patientId) % 7 === 0;
 }
 
 function studySlidesPage(request: StudySlidesRequestBody) {
-    const cancerTypes = request.studyViewFilter.clinicalDataFilters
-        ?.find(f => f.attributeId === 'CANCER_TYPE')
-        ?.values.map(v => v.value);
     const listed = patientIds.filter(
         patientId =>
             (!request.search ||
                 patientId
                     .toLowerCase()
                     .includes(request.search.toLowerCase())) &&
-            (!cancerTypes || cancerTypes.includes(cancerType(patientId))) &&
             (!request.matchLevels?.includes('UNMATCHED') ||
                 isUnmatched(patientId)) &&
             (!request.stainGroups?.length ||
@@ -193,7 +178,6 @@ const pixel = Buffer.from(
 
 interface StudySlidesMocks {
     studySlidesRequests: StudySlidesRequestBody[];
-    facetRequests: StudySlidesRequestBody[];
     hierarchyPatients: string[];
     /** Every slide access request URL. */
     accessRequests: string[];
@@ -204,7 +188,6 @@ interface StudySlidesMocks {
 async function installStudySlidesMocks(page: Page): Promise<StudySlidesMocks> {
     const mocks: StudySlidesMocks = {
         studySlidesRequests: [],
-        facetRequests: [],
         hierarchyPatients: [],
         accessRequests: [],
         pageDelayMs: 0,
@@ -259,23 +242,6 @@ async function installStudySlidesMocks(page: Page): Promise<StudySlidesMocks> {
                 body: JSON.stringify([study]),
             });
         }
-        if (pathname === '/api/clinical-attributes/fetch') {
-            return route.fulfill({
-                status: 200,
-                contentType: 'application/json',
-                body: JSON.stringify([
-                    {
-                        clinicalAttributeId: 'CANCER_TYPE',
-                        displayName: 'Cancer Type',
-                        description: 'Cancer Type',
-                        datatype: 'STRING',
-                        patientAttribute: false,
-                        priority: '3000',
-                        studyId: STUDY_ID,
-                    },
-                ]),
-            });
-        }
         if (pathname === '/api/filtered-samples/fetch') {
             return route.fulfill({
                 status: 200,
@@ -308,43 +274,6 @@ async function installStudySlidesMocks(page: Page): Promise<StudySlidesMocks> {
             });
         }
     );
-    await page.route('**/api/wsi/v2/study-slides/facets/fetch', route => {
-        const body = route
-            .request()
-            .postDataJSON() as StudySlidesRequestBody & {
-            attributeIds: string[];
-        };
-        mocks.facetRequests.push(body);
-        return route.fulfill({
-            status: 200,
-            contentType: 'application/json',
-            body: JSON.stringify({
-                attributes: body.attributeIds.includes('CANCER_TYPE')
-                    ? [
-                          {
-                              attributeId: 'CANCER_TYPE',
-                              values: [
-                                  {
-                                      value: 'Colorectal Cancer',
-                                      patientCount: 30,
-                                  },
-                                  {
-                                      value: 'Breast Cancer',
-                                      patientCount: PATIENT_COUNT - 30,
-                                  },
-                              ],
-                              truncated: false,
-                          },
-                      ]
-                    : [],
-                matchLevels: {
-                    PART: PATIENT_COUNT,
-                    BLOCK: 0,
-                    UNMATCHED: patientIds.filter(isUnmatched).length,
-                },
-            }),
-        });
-    });
     await page.route(`**/api/wsi/v2/hierarchy/${STUDY_ID}/*`, route => {
         const patientId = decodeURIComponent(
             new URL(route.request().url()).pathname.split('/').pop() || ''
@@ -511,7 +440,6 @@ if (process.env.PW_SUITE === 'wsi') {
                 6
             );
             await page.getByTestId('study-slides-search').fill('none');
-            // Text that is not ID-like waits for Enter (or the ID option).
             await page.getByTestId('study-slides-search').press('Enter');
             await expect(page.getByTestId('study-slides-empty')).toHaveText(
                 'No patients match these filters.'
@@ -591,48 +519,12 @@ if (process.env.PW_SUITE === 'wsi') {
             ).toBeVisible();
         });
 
-        test('filters by clinical values from the search and by specimen match', async ({
-            page,
-        }) => {
+        test('filters by specimen match', async ({ page }) => {
             const mocks = await installStudySlidesMocks(page);
             await page.goto(`/study/pathologySlides?id=${STUDY_ID}`);
             await expect(
                 page.getByTestId('study-slides-patient')
             ).toHaveCount(PAGE_SIZE, { timeout: 30000 });
-
-            await page.getByTestId('study-slides-search').fill('colo');
-            const suggestion = page
-                .getByTestId('study-slides-suggestion')
-                .filter({ hasText: /Colorectal Cancer\s*Cancer Type/ });
-            await expect(suggestion).toContainText('30 patients');
-            await suggestion.click();
-
-            await expect(
-                page.getByTestId('study-slides-patient-count')
-            ).toHaveText('30');
-            await expect(
-                page.getByTestId('study-slides-chip-CANCER_TYPE')
-            ).toContainText('Cancer Type: Colorectal Cancer');
-            await expect(page.getByTestId('study-slides-search')).toHaveValue(
-                ''
-            );
-            expect(
-                mocks.studySlidesRequests[mocks.studySlidesRequests.length - 1]
-                    .studyViewFilter.clinicalDataFilters
-            ).toEqual([
-                {
-                    attributeId: 'CANCER_TYPE',
-                    values: [{ value: 'Colorectal Cancer' }],
-                },
-            ]);
-
-            await page
-                .getByTestId('study-slides-chip-CANCER_TYPE')
-                .getByLabel('Remove filter')
-                .click();
-            await expect(
-                page.getByTestId('study-slides-patient-count')
-            ).toHaveText(String(PATIENT_COUNT));
 
             await page.getByTestId('study-slides-filters-toggle').click();
             await page.getByTestId('study-slides-match-UNMATCHED').click();
@@ -642,6 +534,10 @@ if (process.env.PW_SUITE === 'wsi') {
             await expect(
                 page.getByTestId('study-slides-chip-match-UNMATCHED')
             ).toBeVisible();
+            expect(
+                mocks.studySlidesRequests[mocks.studySlidesRequests.length - 1]
+                    .matchLevels
+            ).toEqual(['UNMATCHED']);
         });
     });
 }

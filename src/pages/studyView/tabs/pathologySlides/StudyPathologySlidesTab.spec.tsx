@@ -3,13 +3,10 @@
  */
 import * as React from 'react';
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
-import { observable, runInAction } from 'mobx';
 import { StudyViewFilter } from 'cbioportal-ts-api-client';
 import { StudyPathologySlidesStore } from './StudyPathologySlidesStore';
 import { StudyPathologySlidesTab } from './StudyPathologySlidesTab';
-import { SelectedValues } from './StudySlidesFilters';
 import {
-    StudySlideFacets,
     StudySlidePatient,
     StudySlidesPage,
     StudySlidesRequest,
@@ -89,30 +86,6 @@ async function settle() {
     });
 }
 
-const FACETS: StudySlideFacets = {
-    attributes: [
-        {
-            attributeId: 'CANCER_TYPE',
-            values: [
-                { value: 'Colorectal Cancer', patientCount: 2 },
-                { value: 'Breast Cancer', patientCount: 1 },
-            ],
-            truncated: false,
-        },
-    ],
-    matchLevels: { PART: 2, BLOCK: 1, UNMATCHED: 1 },
-};
-
-/** The study view's clinical filters, as the tab sees them. */
-const clinicalFilters = observable.box<
-    { attributeId: string; values: string[] }[]
->([]);
-const setFilterValues = jest.fn((attributeId: string, values: string[]) =>
-    runInAction(() =>
-        clinicalFilters.set(values.length ? [{ attributeId, values }] : [])
-    )
-);
-
 function renderTab(
     fetchPage: (request: StudySlidesRequest) => Promise<StudySlidesPage>,
     isActive = true,
@@ -122,15 +95,6 @@ function renderTab(
         getFilters: () => ({ studyIds: ['study'] } as StudyViewFilter),
         getStudyIds: () => ['study'],
         fetchPage,
-        fetchFacets: async () => FACETS,
-        clinical: {
-            getAttributes: () => [
-                { attributeId: 'CANCER_TYPE', displayName: 'Cancer Type' },
-                { attributeId: 'SEX', displayName: 'Sex' },
-            ],
-            getFilters: () => clinicalFilters.get(),
-            setFilterValues,
-        },
         pageSize,
     });
     const view = render(
@@ -165,8 +129,6 @@ function pagedFor(request: StudySlidesRequest): StudySlidesPage {
 describe('StudyPathologySlidesTab', () => {
     beforeEach(() => {
         mockViewer.mockClear();
-        setFilterValues.mockClear();
-        runInAction(() => clinicalFilters.set([]));
         window.localStorage.clear();
         // Most cases use the filters, which start closed.
         window.localStorage.setItem('wsi.study.filtersOpen', '1');
@@ -206,7 +168,6 @@ describe('StudyPathologySlidesTab', () => {
             getFilters: () => ({ studyIds: ['study'] } as StudyViewFilter),
             getStudyIds: () => ['study'],
             fetchPage: async r => pageFor(r),
-            fetchFacets: async () => FACETS,
         });
         render(
             <StudyPathologySlidesTab
@@ -483,43 +444,6 @@ describe('StudyPathologySlidesTab', () => {
         store.dispose();
     });
 
-    it('suggests clinical values that add the shared study-view filter', async () => {
-        const { store } = renderTab(async r => pageFor(r));
-        await settle();
-
-        const search = screen.getByTestId('study-slides-search');
-        fireEvent.focus(search);
-        fireEvent.change(search, { target: { value: 'colo' } });
-        await settle();
-        const options = screen.getAllByTestId('study-slides-suggestion');
-        expect(options.map(o => o.textContent)).toEqual([
-            'Patient or sample ID contains “colo”',
-            'Colorectal CancerCancer Type2 patients',
-        ]);
-
-        fireEvent.keyDown(search, { key: 'ArrowDown' });
-        fireEvent.keyDown(search, { key: 'Enter' });
-        expect(setFilterValues).toHaveBeenCalledWith('CANCER_TYPE', [
-            'Colorectal Cancer',
-        ]);
-        expect(store.searchText).toBe('');
-        expect(screen.queryByTestId('study-slides-suggestions')).toBeNull();
-        expect(
-            screen.getByTestId('study-slides-chip-CANCER_TYPE').textContent
-        ).toBe('Cancer Type: Colorectal Cancer');
-
-        fireEvent.click(
-            within(
-                screen.getByTestId('study-slides-chip-CANCER_TYPE')
-            ).getByLabelText('Remove filter')
-        );
-        expect(setFilterValues).toHaveBeenLastCalledWith('CANCER_TYPE', []);
-        expect(
-            screen.queryByTestId('study-slides-chip-CANCER_TYPE')
-        ).toBeNull();
-        store.dispose();
-    });
-
     it('filters by specimen match and passes one level to the viewer', async () => {
         const requests: StudySlidesRequest[] = [];
         const { store } = renderTab(async r => {
@@ -528,9 +452,6 @@ describe('StudyPathologySlidesTab', () => {
         });
         await settle();
 
-        expect(
-            screen.getByTestId('study-slides-match-UNMATCHED').textContent
-        ).toBe('Unmatched 1');
         fireEvent.click(screen.getByTestId('study-slides-match-UNMATCHED'));
         await settle();
 
@@ -550,29 +471,11 @@ describe('StudyPathologySlidesTab', () => {
         store.dispose();
     });
 
-    it('shows clinical filters with counts and adds more filters', async () => {
-        const { store } = renderTab(async r => pageFor(r));
-        await settle();
-
-        expect(
-            screen.getByTestId('study-slides-facet-CANCER_TYPE')
-        ).toBeTruthy();
-        fireEvent.change(screen.getByTestId('study-slides-add-filter'), {
-            target: { value: 'SEX' },
-        });
-        expect(store.pinnedAttributeIds).toEqual(['SEX']);
-        store.dispose();
-    });
-
     it('starts with the filters closed and counts active filters', async () => {
         window.localStorage.removeItem('wsi.study.filtersOpen');
-        runInAction(() =>
-            clinicalFilters.set([
-                { attributeId: 'CANCER_TYPE', values: ['Breast Cancer'] },
-            ])
-        );
         const { store } = renderTab(async r => pageFor(r));
         await settle();
+        act(() => store.toggleStainGroup('IHC'));
 
         expect(screen.queryByTestId('study-slides-filters')).toBeNull();
         expect(
@@ -582,26 +485,5 @@ describe('StudyPathologySlidesTab', () => {
         expect(screen.getByTestId('study-slides-filters')).toBeTruthy();
         expect(window.localStorage.getItem('wsi.study.filtersOpen')).toBe('1');
         store.dispose();
-    });
-
-    it('summarizes several selected values on one line', () => {
-        render(
-            <SelectedValues
-                values={['Breast Cancer', 'Colorectal Cancer', 'Melanoma']}
-            />
-        );
-        const first = screen.getByText('Breast Cancer');
-        expect(first.parentElement!.title).toBe(
-            'Breast Cancer, Colorectal Cancer, Melanoma'
-        );
-        expect(screen.getByTestId('selected-values-more').textContent).toBe(
-            '+2'
-        );
-    });
-
-    it('shows a single selected value without a count', () => {
-        render(<SelectedValues values={['Melanoma']} />);
-        expect(screen.getByText('Melanoma')).toBeTruthy();
-        expect(screen.queryByTestId('selected-values-more')).toBeNull();
     });
 });
