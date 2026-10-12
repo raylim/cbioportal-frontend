@@ -476,6 +476,18 @@ export class StudyPathologySlidesStore {
         this.restartList();
     }
 
+    @action.bound
+    clearMatchLevels() {
+        this.matchLevels = [];
+        this.restartList();
+    }
+
+    @action.bound
+    clearStainGroups() {
+        this.stainGroups = [];
+        this.restartList();
+    }
+
     /** Clears the tab's own filters; the study-view filters stay. */
     @action.bound
     clearSlideFilters() {

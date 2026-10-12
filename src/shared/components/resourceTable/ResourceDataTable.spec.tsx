@@ -18,7 +18,10 @@ describe('ResourceDataTable metadata columns', () => {
         ...overrides,
     });
 
-    const tableWith = (store: Partial<ResourceTableStore>) =>
+    const tableWith = (
+        store: Partial<ResourceTableStore>,
+        props: { onViewRow?: () => void } = {}
+    ) =>
         new ResourceDataTable({
             store: {
                 columns: [],
@@ -28,6 +31,7 @@ describe('ResourceDataTable metadata columns', () => {
                 rowsForDisplay: [],
                 ...store,
             } as any,
+            ...props,
         });
 
     const columns = (store: Partial<ResourceTableStore>) =>
@@ -170,7 +174,7 @@ describe('ResourceDataTable metadata columns', () => {
     it('names the rows after the resource, pluralized', () => {
         assert.include(
             headerText({ activeResourceLabel: 'Slide Microscopy' } as any),
-            '3074 Slide Microscopies'
+            '3,074 Slide Microscopies'
         );
     });
 
@@ -188,7 +192,7 @@ describe('ResourceDataTable metadata columns', () => {
         // Patient-level resources can never report a sample count, so "0 samples" is noise.
         const text = headerText({ activeResourceLabel: 'CT Scan' } as any);
 
-        assert.include(text, '1084 patients');
+        assert.include(text, '1,084 patients');
         assert.notInclude(text, 'sample');
     });
 
@@ -198,7 +202,7 @@ describe('ResourceDataTable metadata columns', () => {
                 activeResourceLabel: 'H&E Slide',
                 filteredSampleCount: 12,
             } as any),
-            '1084 patients / 12 samples'
+            '1,084 patients / 12 samples'
         );
     });
 
@@ -266,6 +270,12 @@ describe('ResourceDataTable metadata columns', () => {
 
         assert.isDefined(link);
         assert.equal(link!.name, 'Link');
+        assert.equal(
+            tableWith({}, { onViewRow: () => {} }).tableColumns.find(
+                c => c.id === 'link'
+            )!.name,
+            'Viewer'
+        );
         assert.equal(
             link!.download!({ url: 'https://example.com/slide.dcm' } as any),
             'https://example.com/slide.dcm'

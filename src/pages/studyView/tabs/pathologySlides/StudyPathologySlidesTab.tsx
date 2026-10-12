@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { observer } from 'mobx-react';
+import { Nav, NavItem } from 'react-bootstrap';
 import {
     WSI_FONT_FAMILY,
     WSI_SECTION_TITLE_STYLE,
@@ -10,6 +11,7 @@ import {
 } from 'cbioportal-wsi-viewer';
 import { getPatientViewUrlWithPathname } from 'shared/api/urls';
 import LoadingIndicator from 'shared/components/loadingIndicator/LoadingIndicator';
+import { PaginationControls } from 'shared/components/paginationControls/PaginationControls';
 import { AppWsiViewer } from 'shared/components/wsiViewer/wsiAppConfig';
 import {
     isSamePatient,
@@ -42,14 +44,14 @@ export interface StudyPathologySlidesTabProps {
     slideTable?: React.ReactNode;
 }
 
-const VIEW_SWITCH_HEIGHT = 38;
+/** Height of the bar holding the view pills and the patient navigation. */
+const BAR_HEIGHT = 40;
 
 /** Browser-stored hidden state of the patient list. */
 export const PATIENT_LIST_COLLAPSED_KEY = 'wsi.study.patientListCollapsed';
 
 const C = WSI_THEME;
 const PANEL_WIDTH = 280;
-const TOOLBAR_HEIGHT = 34;
 
 const iconButtonStyle: React.CSSProperties = {
     border: 'none',
@@ -114,24 +116,6 @@ function IconButton({
     );
 }
 
-function Key({ children }: { children: React.ReactNode }) {
-    return (
-        <kbd
-            style={{
-                background: '#fff',
-                color: C.muted,
-                border: `1px solid ${C.border}`,
-                borderRadius: 3,
-                boxShadow: 'none',
-                padding: '0 4px',
-                fontSize: 10,
-            }}
-        >
-            {children}
-        </kbd>
-    );
-}
-
 const PatientRow: React.FunctionComponent<{
     patient: StudySlidePatient;
     selected: boolean;
@@ -166,7 +150,7 @@ const PatientRow: React.FunctionComponent<{
                 >
                     {patient.patientId}
                 </span>
-                <span style={{ fontSize: 10, whiteSpace: 'nowrap' }}>
+                <span style={{ fontSize: 11, whiteSpace: 'nowrap' }}>
                     {STUDY_SLIDE_STAIN_GROUPS.filter(
                         group => patient.stainGroupCounts[group] > 0
                     ).map(group => (
@@ -181,7 +165,7 @@ const PatientRow: React.FunctionComponent<{
                     ))}
                 </span>
             </div>
-            <div style={{ fontSize: 10, color: C.muted, marginTop: 1 }}>
+            <div style={{ fontSize: 11, color: C.muted, marginTop: 1 }}>
                 {count(patient.slideCount, 'slide')}
             </div>
         </li>
@@ -191,27 +175,21 @@ const PatientRow: React.FunctionComponent<{
 const PatientPager: React.FunctionComponent<{
     store: StudyPathologySlidesStore;
 }> = observer(({ store }) => {
-    const [pageInput, setPageInput] = React.useState('');
     const lastPage = store.pageCount - 1;
+    const isFirstPage = store.pageNumber === 0;
+    const isLastPage = store.pageNumber >= lastPage;
     const { first, last } = store.displayedRange;
     const selectedElsewhere =
         store.selectedPageNumber !== undefined &&
         store.selectedPageNumber !== store.pageNumber;
-    const submitPage = () => {
-        const requested = parseInt(pageInput, 10);
-        if (Number.isFinite(requested)) {
-            store.setPageNumber(requested - 1);
-        }
-        setPageInput('');
-    };
     return (
         <div
             data-testid="study-slides-pages"
             style={{
                 flexShrink: 0,
                 borderTop: `1px solid ${C.border}`,
-                padding: '5px 6px',
-                fontSize: 11,
+                padding: '6px 8px',
+                fontSize: 12,
                 color: C.muted,
             }}
         >
@@ -220,24 +198,9 @@ const PatientPager: React.FunctionComponent<{
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'space-between',
+                    marginBottom: 4,
                 }}
             >
-                <span>
-                    <IconButton
-                        icon="fa-angle-double-left"
-                        label="First page of patients"
-                        disabled={store.pageNumber === 0}
-                        onClick={() => store.setPageNumber(0)}
-                    />
-                    <IconButton
-                        icon="fa-chevron-left"
-                        label="Previous page of patients"
-                        disabled={store.pageNumber === 0}
-                        onClick={() =>
-                            store.setPageNumber(store.pageNumber - 1)
-                        }
-                    />
-                </span>
                 <span data-testid="study-slides-range" aria-live="polite">
                     {first.toLocaleString()}–{last.toLocaleString()} of{' '}
                     {store.totalPatients.toLocaleString()}
@@ -249,70 +212,48 @@ const PatientPager: React.FunctionComponent<{
                         />
                     )}
                 </span>
-                <span>
-                    <IconButton
-                        icon="fa-chevron-right"
-                        label="Next page of patients"
-                        disabled={store.pageNumber >= lastPage}
-                        onClick={() =>
-                            store.setPageNumber(store.pageNumber + 1)
-                        }
-                    />
-                    <IconButton
-                        icon="fa-angle-double-right"
-                        label="Last page of patients"
-                        disabled={store.pageNumber >= lastPage}
-                        onClick={() => store.setPageNumber(lastPage)}
-                    />
-                </span>
-            </div>
-            <div
-                style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    marginTop: 3,
-                }}
-            >
-                <form
-                    onSubmit={event => {
-                        event.preventDefault();
-                        submitPage();
-                    }}
-                >
-                    Page{' '}
-                    <input
-                        type="number"
-                        min={1}
-                        max={store.pageCount}
-                        aria-label="Page number"
-                        data-testid="study-slides-page-input"
-                        placeholder={String(store.pageNumber + 1)}
-                        value={pageInput}
-                        onChange={event => setPageInput(event.target.value)}
-                        onBlur={() => pageInput && submitPage()}
-                        style={{
-                            width: 56,
-                            fontSize: 11,
-                            padding: '0 3px',
-                            border: `1px solid ${C.border}`,
-                            borderRadius: 3,
-                        }}
-                    />{' '}
-                    of {store.pageCount.toLocaleString()}
-                </form>
                 {selectedElsewhere && (
                     <button
                         type="button"
                         className="btn btn-link btn-xs"
                         data-testid="study-slides-go-selected"
                         onClick={store.goToSelectedPage}
-                        style={{ padding: 0, fontSize: 11 }}
+                        style={{ padding: 0, fontSize: 12 }}
                     >
                         Go to selected
                     </button>
                 )}
             </div>
+            <PaginationControls
+                currentPage={store.pageNumber + 1}
+                totalItems={store.totalPatients}
+                itemsPerPage={store.pageSize}
+                showItemsPerPageSelector={false}
+                showAllOption={false}
+                showMoreButton={false}
+                showFirstPage={true}
+                showLastPage={true}
+                hidePaginationIfOnePage={false}
+                pageNumberEditable={true}
+                textBetweenButtons={` / ${store.pageCount.toLocaleString()}`}
+                onChangeCurrentPage={page => {
+                    if (Number.isFinite(page)) {
+                        store.setPageNumber(page - 1);
+                    }
+                }}
+                firstPageDisabled={isFirstPage}
+                previousPageDisabled={isFirstPage}
+                nextPageDisabled={isLastPage}
+                lastPageDisabled={isLastPage}
+                onFirstPageClick={() => store.setPageNumber(0)}
+                onPreviousPageClick={() =>
+                    store.setPageNumber(store.pageNumber - 1)
+                }
+                onNextPageClick={() =>
+                    store.setPageNumber(store.pageNumber + 1)
+                }
+                onLastPageClick={() => store.setPageNumber(lastPage)}
+            />
         </div>
     );
 });
@@ -405,7 +346,7 @@ const PatientPanel: React.FunctionComponent<{
                 </div>
                 <div
                     data-testid="study-slides-summary"
-                    style={{ fontSize: 11, color: C.muted, marginTop: 2 }}
+                    style={{ fontSize: 12, color: C.muted, marginTop: 2 }}
                 >
                     {count(page.totalSlides, 'viewable slide')}
                 </div>
@@ -420,7 +361,7 @@ const PatientPanel: React.FunctionComponent<{
             {page.patients.length === 0 ? (
                 <div
                     data-testid="study-slides-empty"
-                    style={{ color: '#bbb', fontSize: 11, padding: 12 }}
+                    style={{ color: C.muted, fontSize: 12, padding: 12 }}
                 >
                     {filtering
                         ? 'No patients match these filters.'
@@ -477,11 +418,15 @@ const PatientPanel: React.FunctionComponent<{
     );
 });
 
-const ViewerToolbar: React.FunctionComponent<{
+/** The selected patient, with previous/next and a link to the patient's own page. */
+const PatientNav: React.FunctionComponent<{
     store: StudyPathologySlidesStore;
 }> = observer(({ store }) => {
-    const selected = store.selected!;
-    const page = store.page.result!;
+    const selected = store.selected;
+    const page = store.page.result;
+    if (!selected || !page) {
+        return null;
+    }
     const listed = page.patients.find(p => isSamePatient(p, selected));
     const navPatients = page.patients.map(p => ({
         studyId: p.studyId,
@@ -491,14 +436,10 @@ const ViewerToolbar: React.FunctionComponent<{
         <div
             data-testid="study-slides-nav"
             style={{
-                height: TOOLBAR_HEIGHT,
-                flexShrink: 0,
                 display: 'flex',
                 alignItems: 'center',
                 gap: 6,
-                padding: '0 8px',
-                background: C.sidebarBg,
-                borderBottom: `1px solid ${C.border}`,
+                minWidth: 0,
                 whiteSpace: 'nowrap',
                 overflow: 'hidden',
             }}
@@ -528,18 +469,12 @@ const ViewerToolbar: React.FunctionComponent<{
                 testId="study-slides-next"
             />
             {listed && (
-                <span style={{ color: C.muted, fontSize: 11 }}>
+                <span style={{ color: C.muted }}>
                     {count(listed.slideCount, 'slide')}
                 </span>
             )}
-            <span
-                className="hidden-xs hidden-sm"
-                style={{ color: '#aaa', fontSize: 11, marginLeft: 6 }}
-            >
-                <Key>[</Key> <Key>]</Key> patients · <Key>\</Key> list
-            </span>
+            <span style={{ color: C.border }}>|</span>
             <a
-                style={{ marginLeft: 'auto', fontSize: 12 }}
                 href={getPatientViewUrlWithPathname(
                     selected.studyId,
                     selected.patientId,
@@ -557,6 +492,49 @@ const ViewerToolbar: React.FunctionComponent<{
     );
 });
 
+const VIEWS: { id: StudySlidesView; label: string }[] = [
+    { id: 'viewer', label: 'Viewer' },
+    { id: 'table', label: 'Slide table' },
+];
+
+/** The view pills, as on the portal's other tabs, with the patient navigation beside them. */
+const StudySlidesBar: React.FunctionComponent<{
+    store: StudyPathologySlidesStore;
+    showViews: boolean;
+}> = observer(({ store, showViews }) => (
+    <div
+        className="pillTabs"
+        style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 16,
+            height: BAR_HEIGHT,
+            fontSize: 13,
+        }}
+    >
+        {showViews && (
+            <Nav
+                bsStyle="pills"
+                activeKey={store.view}
+                onSelect={(key: any) => store.setView(key as StudySlidesView)}
+                style={{ marginBottom: 0, flexShrink: 0 }}
+            >
+                {VIEWS.map(view => (
+                    <NavItem
+                        key={view.id}
+                        eventKey={view.id}
+                        data-testid={`study-slides-view-${view.id}`}
+                        aria-pressed={store.view === view.id}
+                    >
+                        {view.label}
+                    </NavItem>
+                ))}
+            </Nav>
+        )}
+        {store.view === 'viewer' && <PatientNav store={store} />}
+    </div>
+));
+
 /**
  * The study's pathology slides, as patients beside the slide viewer or as the cohort's slide table
  * (one row per slide, with column filters, sorting and download). A table row's View opens that
@@ -565,46 +543,16 @@ const ViewerToolbar: React.FunctionComponent<{
 export const StudyPathologySlidesTab: React.FunctionComponent<StudyPathologySlidesTabProps> = observer(
     props => {
         const { store, slideTable, height } = props;
-        if (!slideTable) {
-            return <StudySlidesViewerView {...props} />;
-        }
-        const views: { id: StudySlidesView; label: string; icon: string }[] = [
-            { id: 'viewer', label: 'Viewer', icon: 'fa-picture-o' },
-            { id: 'table', label: 'Slide table', icon: 'fa-table' },
-        ];
+        const showTable = !!slideTable && store.view === 'table';
         return (
             <div data-testid="study-slides-views">
-                <div
-                    className="btn-group btn-group-sm"
-                    role="group"
-                    aria-label="Pathology slides view"
-                    style={{ marginBottom: 8 }}
-                >
-                    {views.map(view => (
-                        <button
-                            key={view.id}
-                            type="button"
-                            className={`btn btn-default${
-                                store.view === view.id ? ' active' : ''
-                            }`}
-                            aria-pressed={store.view === view.id}
-                            data-testid={`study-slides-view-${view.id}`}
-                            onClick={() => store.setView(view.id)}
-                        >
-                            <i
-                                className={`fa ${view.icon}`}
-                                style={{ marginRight: 5 }}
-                            />
-                            {view.label}
-                        </button>
-                    ))}
-                </div>
-                {store.view === 'table' ? (
+                <StudySlidesBar store={store} showViews={!!slideTable} />
+                {showTable ? (
                     <div data-testid="study-slides-table">{slideTable}</div>
                 ) : (
                     <StudySlidesViewerView
                         {...props}
-                        height={height - VIEW_SWITCH_HEIGHT}
+                        height={height - BAR_HEIGHT}
                     />
                 )}
             </div>
@@ -730,23 +678,20 @@ const StudySlidesViewerView: React.FunctionComponent<StudyPathologySlidesTabProp
                     }}
                 >
                     {selected ? (
-                        <>
-                            <ViewerToolbar store={store} />
-                            <AppWsiViewer
-                                studyId={selected.studyId}
-                                patientId={selected.patientId}
-                                tileServerUrl={tileServerUrl}
-                                userName={userName}
-                                height={innerHeight - TOOLBAR_HEIGHT - 1}
-                                initialStainFilter={viewerStainFilter(
-                                    store.stainGroups
-                                )}
-                                initialMatchFilter={viewerMatchFilter(
-                                    store.matchLevels
-                                )}
-                                requestedSlideKey={store.requestedSlideKey}
-                            />
-                        </>
+                        <AppWsiViewer
+                            studyId={selected.studyId}
+                            patientId={selected.patientId}
+                            tileServerUrl={tileServerUrl}
+                            userName={userName}
+                            height={innerHeight}
+                            initialStainFilter={viewerStainFilter(
+                                store.stainGroups
+                            )}
+                            initialMatchFilter={viewerMatchFilter(
+                                store.matchLevels
+                            )}
+                            requestedSlideKey={store.requestedSlideKey}
+                        />
                     ) : (
                         <div
                             style={{
