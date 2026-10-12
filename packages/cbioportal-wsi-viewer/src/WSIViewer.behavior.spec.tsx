@@ -2610,6 +2610,49 @@ describe('WSIViewer — open handler (mountOSD integration)', () => {
         return inst;
     }
 
+    it('waits for a hidden container to get a size before fitting the slide', async () => {
+        // A tab laid out off-screen can give the viewer a zero-width container;
+        // fitting the slide then leaves a near-zero zoom once the tab is shown.
+        window.location.hash = '';
+        let resizeCb: ((event: any) => void) | null = null;
+        const addHandler = mockViewer.addHandler.getMockImplementation();
+        mockViewer.addHandler.mockImplementation(
+            (event: string, cb: (event?: any) => void) => {
+                if (event === 'resize') resizeCb = cb;
+                addHandler(event, cb);
+            }
+        );
+        let containerSize = { x: 1, y: 658 };
+        mockViewport.getContainerSize = jest.fn(() => containerSize);
+        const slide = makeSlide({ slide_key: '42' });
+        await runMount(slide);
+
+        capturedOpenCb!();
+        expect(mockViewport.goHome).not.toHaveBeenCalled();
+        expect(resizeCb).not.toBeNull();
+
+        resizeCb!({ newContainerSize: { x: 1, y: 658 } });
+        expect(mockViewport.goHome).not.toHaveBeenCalled();
+
+        // OpenSeadragon raises 'resize' before it rescales the viewport for
+        // the new size, so the view is fitted on the next frame.
+        const frames: FrameRequestCallback[] = [];
+        (global as any).requestAnimationFrame = (cb: FrameRequestCallback) => {
+            frames.push(cb);
+            return frames.length;
+        };
+        containerSize = { x: 462, y: 658 };
+        resizeCb!({ newContainerSize: containerSize });
+        expect(mockViewport.goHome).not.toHaveBeenCalled();
+        expect(mockViewer.removeHandler).toHaveBeenCalledWith(
+            'resize',
+            resizeCb
+        );
+
+        frames.forEach(cb => cb(0));
+        expect(mockViewport.goHome).toHaveBeenCalledTimes(1);
+    });
+
     it('calls goHome(true) on fresh load with no wsi hash', async () => {
         window.location.hash = '';
         const slide = makeSlide({ slide_key: '42' });
