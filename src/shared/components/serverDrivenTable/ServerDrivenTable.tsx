@@ -169,7 +169,9 @@ export default class ServerDrivenTable<T> extends React.Component<
 
     @computed
     private get pageNumberText(): string {
-        return `${this.props.currentPage + 1} / ${this.totalPages}`;
+        return `${(
+            this.props.currentPage + 1
+        ).toLocaleString()} / ${this.totalPages.toLocaleString()}`;
     }
 
     @computed
@@ -187,8 +189,9 @@ export default class ServerDrivenTable<T> extends React.Component<
 
         return (
             <span>
-                {startRow}-{Math.max(startRow, endRow)} of{' '}
-                {this.props.totalRowCount} {itemsLabel}
+                {startRow.toLocaleString()}-
+                {Math.max(startRow, endRow).toLocaleString()} of{' '}
+                {this.props.totalRowCount.toLocaleString()} {itemsLabel}
             </span>
         );
     }
