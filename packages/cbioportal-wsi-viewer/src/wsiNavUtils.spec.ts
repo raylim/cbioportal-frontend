@@ -1,6 +1,7 @@
 import {
     compareSamplesByTimepoint,
     DAY_ZERO_TOOLTIP,
+    fmtFileSize,
     procedureSequencingOffset,
     procedureSlideTimepointText,
     procedureTooltip,
@@ -24,6 +25,14 @@ function makeSample(
 }
 
 describe('wsiNavUtils', () => {
+    describe('fmtFileSize', () => {
+        it('shows MB below 1 GB and GB from there up', () => {
+            expect(fmtFileSize(26.2 * 1024 * 1024)).toBe('26.2 MB');
+            expect(fmtFileSize(1407 * 1024 * 1024)).toBe('1.4 GB');
+            expect(fmtFileSize(null)).toBe('—');
+        });
+    });
+
     describe('timepoint text helpers', () => {
         it('suppresses sequencing-only timepoints from the displayed text', () => {
             expect(timepointText(-12, 'Sequencing date')).toBeNull();

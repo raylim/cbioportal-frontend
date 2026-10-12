@@ -8,7 +8,7 @@ import {
 import {
     cleanStain,
     DAY_ZERO_TOOLTIP,
-    fmtMB,
+    fmtFileSize,
     formatDaysSinceDiagnosis,
     getSlideTimepointDays,
     normalizeBlockLabel,
@@ -103,7 +103,7 @@ export function buildWsiRows(
               ).toFixed(1)} mm of glass`
             : null,
         slide?.file_size_bytes
-            ? `File size ${fmtMB(slide.file_size_bytes)}`
+            ? `File size ${fmtFileSize(slide.file_size_bytes)}`
             : null,
     ].filter(Boolean);
     const rows: MetaRow[] = [
@@ -200,7 +200,13 @@ export function buildPathRows(
         }`;
     }
 
-    const partDesc = slide.part_description || null;
+    // De-identified exports replace the part description with a "Specimen <n>" ordinal, which
+    // names no anatomical site and repeats the Specimen row.
+    const partDesc =
+        slide.part_description &&
+        !/^specimen \d+$/i.test(slide.part_description.trim())
+            ? slide.part_description
+            : null;
     const hasSpecimenDetails = !!(
         association?.part_number ||
         association?.part_description ||

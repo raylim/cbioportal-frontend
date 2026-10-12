@@ -25,7 +25,7 @@ import {
     cleanStain,
     compareSamplesByTimepoint,
     decodeBlockCode,
-    fmtMB,
+    fmtFileSize,
     DAY_ZERO_TOOLTIP,
     formatDaysSinceDiagnosis,
     getSlideTimepointDays,
@@ -736,7 +736,7 @@ function WsiNavPanelComponent({
                             borderRadius: 3,
                             background: theme.blueLight,
                             color: theme.text,
-                            fontSize: 11,
+                            fontSize: 12,
                         }}
                     >
                         <span>Sample {sampleIdFilter}</span>
@@ -759,6 +759,7 @@ function WsiNavPanelComponent({
                         className="btn btn-link btn-xs"
                         data-testid="wsi-clear-filters"
                         style={{
+                            display: 'block',
                             padding: '2px 0',
                             marginTop: 6,
                             color: theme.blue,
@@ -772,7 +773,7 @@ function WsiNavPanelComponent({
                     style={{
                         marginTop: 6,
                         color: theme.muted,
-                        fontSize: 10,
+                        fontSize: 11,
                     }}
                     data-testid="wsi-filtered-slide-count"
                 >
@@ -814,7 +815,7 @@ function WsiNavPanelComponent({
                     <div
                         style={{
                             padding: '8px 12px 12px',
-                            fontSize: 10,
+                            fontSize: 11,
                             color: theme.muted,
                         }}
                     >
@@ -924,7 +925,7 @@ function SampleNode({
             >
                 <span
                     style={{
-                        fontSize: 10,
+                        fontSize: 11,
                         color: theme.muted,
                         marginTop: 2,
                         flexShrink: 0,
@@ -936,7 +937,7 @@ function SampleNode({
                 <div style={{ flex: 1, minWidth: 0 }}>
                     <div
                         style={{
-                            fontSize: 11,
+                            fontSize: 12,
                             fontWeight: 700,
                             color: theme.blue,
                             ...ellipsisStyle,
@@ -959,7 +960,7 @@ function SampleNode({
                     </div>
                     <div
                         style={{
-                            fontSize: 10,
+                            fontSize: 11,
                             color: theme.muted,
                             marginTop: 1,
                         }}
@@ -968,7 +969,7 @@ function SampleNode({
                             <span
                                 style={{
                                     display: 'inline-block',
-                                    fontSize: 9,
+                                    fontSize: 10,
                                     fontWeight: 700,
                                     textTransform: 'uppercase',
                                     letterSpacing: '.4px',
@@ -998,7 +999,7 @@ function SampleNode({
                                     background: '#f0f0f0',
                                     border: `1px solid ${theme.border}`,
                                     borderRadius: 3,
-                                    fontSize: 9,
+                                    fontSize: 10,
                                     fontWeight: 700,
                                     padding: '0 4px',
                                     color: theme.text,
@@ -1014,7 +1015,7 @@ function SampleNode({
                             ''}
                     </div>
                     {sample.primary_site && (
-                        <div style={{ fontSize: 10, color: '#aaa' }}>
+                        <div style={{ fontSize: 11, color: theme.muted }}>
                             {sample.primary_site}
                         </div>
                     )}
@@ -1022,8 +1023,8 @@ function SampleNode({
                 <div
                     title="Viewable slides shown in this sample"
                     style={{
-                        fontSize: 9,
-                        color: '#bbb',
+                        fontSize: 10,
+                        color: theme.muted,
                         flexShrink: 0,
                         textAlign: 'right',
                         lineHeight: 1.4,
@@ -1118,21 +1119,23 @@ function SlideItem({
     const isHE = wsiStainKind(slide) === 'hne';
     const dotColor = getStainDotColor(slide, theme);
     const mag = slide.magnification || '';
-    const sz = fmtMB(slide.file_size_bytes);
+    const sz = fmtFileSize(slide.file_size_bytes);
     const partDesc = multiPart
         ? abbreviatePartDesc(slide.part_description)
         : null;
     const blockMeaning = !partDesc ? decodeBlockCode(blockLabel) : null;
-    const primaryLabel = isHE
-        ? blockLabel || cleanStain(slide.stain_name)
-        : cleanStain(slide.stain_name);
-    const subTokens: string[] = [];
-    if (!isHE && blockLabel) subTokens.push(blockLabel);
+    const stainLabel = cleanStain(slide.stain_name);
     const rawGroup = (slide.stain_group || '').toLowerCase();
-    const rhsStain =
+    const stainText =
         isHE && (rawGroup === '' || rawGroup.startsWith('h&e'))
             ? stainQualifier(slide.stain_group)
-            : null;
+            : stainLabel;
+    // Every slide reads the same way: its block as the title and its stain beneath.
+    const primaryLabel = blockLabel || stainText || 'Slide';
+    const subStain = blockLabel ? stainText : null;
+    const scanDetails = [mag, sz !== '—' ? sz : null]
+        .filter(Boolean)
+        .join(' · ');
     const procedureTimepoint = procedureSlideTimepointText(slide);
     const timepoint = procedureTimepoint
         ? procedureRelativeToSequencingText(
@@ -1234,7 +1237,7 @@ function SlideItem({
                 {partDesc && (
                     <div
                         style={{
-                            fontSize: 10,
+                            fontSize: 11,
                             color: theme.blue,
                             ...ellipsisStyle,
                             fontStyle: 'italic',
@@ -1246,7 +1249,7 @@ function SlideItem({
                 {blockMeaning && (
                     <div
                         style={{
-                            fontSize: 10,
+                            fontSize: 11,
                             color: theme.blue,
                             ...ellipsisStyle,
                         }}
@@ -1254,15 +1257,16 @@ function SlideItem({
                         {blockMeaning}
                     </div>
                 )}
-                {subTokens.length > 0 && (
+                {subStain && (
                     <div
                         style={{
-                            fontSize: 10,
-                            color: theme.muted,
-                            whiteSpace: 'nowrap',
+                            fontSize: 11,
+                            fontWeight: 600,
+                            color: dotColor,
+                            ...ellipsisStyle,
                         }}
                     >
-                        {subTokens.join(' · ')}
+                        {subStain}
                     </div>
                 )}
                 {timepoint && (
@@ -1270,8 +1274,8 @@ function SlideItem({
                         data-testid={`wsi-slide-timepoint-${slide.slide_key}`}
                         title={timepointTooltip}
                         style={{
-                            fontSize: 10,
-                            color: '#888',
+                            fontSize: 11,
+                            color: theme.muted,
                             whiteSpace: 'nowrap',
                         }}
                     >
@@ -1290,7 +1294,7 @@ function SlideItem({
                             borderRadius: 2,
                             background: '#f0f0f0',
                             color: matchBadge.color,
-                            fontSize: 9,
+                            fontSize: 10,
                             fontWeight: 700,
                             lineHeight: '14px',
                             textTransform: 'uppercase',
@@ -1299,23 +1303,17 @@ function SlideItem({
                         {matchBadge.label}
                     </div>
                 )}
-                {rhsStain && (
+                {scanDetails && (
                     <div
                         style={{
-                            fontSize: 10,
-                            fontWeight: 600,
-                            color: dotColor,
+                            fontSize: 11,
+                            color: theme.muted,
+                            whiteSpace: 'nowrap',
                         }}
                     >
-                        {rhsStain}
+                        {scanDetails}
                     </div>
                 )}
-                {mag && (
-                    <div style={{ fontSize: 10, color: theme.muted }}>
-                        {mag}
-                    </div>
-                )}
-                <div style={{ fontSize: 10, color: theme.muted }}>{sz}</div>
             </div>
         </div>
     );
