@@ -575,10 +575,13 @@ export default class StudyViewPage extends React.Component<
         if (!isWsiTileServerConfigured()) {
             return false;
         }
+        // Read before the tab check so the slide check also loads while the tab
+        // is open. Otherwise it first loads on leaving the tab, and the pending
+        // check hides the tab: its viewer unmounts and is rebuilt off-screen.
+        const studyHasSlides = this.pathologySlidesStore.studyHasSlides.result;
         return (
             (this.store.currentTab as string) ===
-                StudyViewPageTabKeyEnum.PATHOLOGY_SLIDES ||
-            this.pathologySlidesStore.studyHasSlides.result
+                StudyViewPageTabKeyEnum.PATHOLOGY_SLIDES || studyHasSlides
         );
     }
 
