@@ -430,7 +430,7 @@ describe('StudyPathologySlidesTab', () => {
         store.dispose();
     });
 
-    it('jumps to the first, last and a typed page', async () => {
+    it('jumps to the last, the next and the first page', async () => {
         const { store } = renderTab(async r => pageFor(r, MANY), true, 2);
         await settle();
 
@@ -441,11 +441,9 @@ describe('StudyPathologySlidesTab', () => {
         );
         expect(listed('M-7')).toBeTruthy();
 
-        const pageInput = screen
-            .getByTestId('study-slides-pages')
-            .querySelector('[contenteditable]') as HTMLElement;
-        (pageInput as any).innerText = '2';
-        fireEvent.blur(pageInput);
+        fireEvent.click(screen.getByLabelText('View First Page'));
+        await settle();
+        fireEvent.click(screen.getByLabelText('View Next Page'));
         await settle();
         expect(listed('M-3')).toBeTruthy();
 

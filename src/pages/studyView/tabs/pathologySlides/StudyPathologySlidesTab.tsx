@@ -172,6 +172,7 @@ const PatientRow: React.FunctionComponent<{
     );
 };
 
+/** Pages the patient list with the portal's pager, laid out like the slide table's. */
 const PatientPager: React.FunctionComponent<{
     store: StudyPathologySlidesStore;
 }> = observer(({ store }) => {
@@ -189,43 +190,12 @@ const PatientPager: React.FunctionComponent<{
                 flexShrink: 0,
                 borderTop: `1px solid ${C.border}`,
                 padding: '6px 8px',
-                fontSize: 12,
-                color: C.muted,
+                textAlign: 'center',
             }}
         >
-            <div
-                style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    marginBottom: 4,
-                }}
-            >
-                <span data-testid="study-slides-range" aria-live="polite">
-                    {first.toLocaleString()}–{last.toLocaleString()} of{' '}
-                    {store.totalPatients.toLocaleString()}
-                    {store.isPageLoading && (
-                        <i
-                            className="fa fa-spinner fa-spin"
-                            aria-label="Loading patients"
-                            style={{ marginLeft: 5 }}
-                        />
-                    )}
-                </span>
-                {selectedElsewhere && (
-                    <button
-                        type="button"
-                        className="btn btn-link btn-xs"
-                        data-testid="study-slides-go-selected"
-                        onClick={store.goToSelectedPage}
-                        style={{ padding: 0, fontSize: 12 }}
-                    >
-                        Go to selected
-                    </button>
-                )}
-            </div>
             <PaginationControls
-                currentPage={store.pageNumber + 1}
+                className="study-slides-pager"
+                style={{ display: 'inline-block' }}
                 totalItems={store.totalPatients}
                 itemsPerPage={store.pageSize}
                 showItemsPerPageSelector={false}
@@ -234,13 +204,19 @@ const PatientPager: React.FunctionComponent<{
                 showFirstPage={true}
                 showLastPage={true}
                 hidePaginationIfOnePage={false}
-                pageNumberEditable={true}
-                textBetweenButtons={` / ${store.pageCount.toLocaleString()}`}
-                onChangeCurrentPage={page => {
-                    if (Number.isFinite(page)) {
-                        store.setPageNumber(page - 1);
-                    }
-                }}
+                textBetweenButtons={
+                    <span data-testid="study-slides-range" aria-live="polite">
+                        {first.toLocaleString()}–{last.toLocaleString()} of{' '}
+                        {store.totalPatients.toLocaleString()}
+                        {store.isPageLoading && (
+                            <i
+                                className="fa fa-spinner fa-spin"
+                                aria-label="Loading patients"
+                                style={{ marginLeft: 5 }}
+                            />
+                        )}
+                    </span>
+                }
                 firstPageDisabled={isFirstPage}
                 previousPageDisabled={isFirstPage}
                 nextPageDisabled={isLastPage}
@@ -254,6 +230,19 @@ const PatientPager: React.FunctionComponent<{
                 }
                 onLastPageClick={() => store.setPageNumber(lastPage)}
             />
+            {selectedElsewhere && (
+                <div style={{ marginTop: 4 }}>
+                    <button
+                        type="button"
+                        className="btn btn-link btn-xs"
+                        data-testid="study-slides-go-selected"
+                        onClick={store.goToSelectedPage}
+                        style={{ padding: 0, fontSize: 12 }}
+                    >
+                        Go to selected patient
+                    </button>
+                </div>
+            )}
         </div>
     );
 });
