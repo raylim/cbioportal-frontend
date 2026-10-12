@@ -18,7 +18,10 @@ describe('ResourceDataTable metadata columns', () => {
         ...overrides,
     });
 
-    const tableWith = (store: Partial<ResourceTableStore>) =>
+    const tableWith = (
+        store: Partial<ResourceTableStore>,
+        props: { onViewRow?: () => void } = {}
+    ) =>
         new ResourceDataTable({
             store: {
                 columns: [],
@@ -28,6 +31,7 @@ describe('ResourceDataTable metadata columns', () => {
                 rowsForDisplay: [],
                 ...store,
             } as any,
+            ...props,
         });
 
     const columns = (store: Partial<ResourceTableStore>) =>
@@ -266,6 +270,12 @@ describe('ResourceDataTable metadata columns', () => {
 
         assert.isDefined(link);
         assert.equal(link!.name, 'Link');
+        assert.equal(
+            tableWith({}, { onViewRow: () => {} }).tableColumns.find(
+                c => c.id === 'link'
+            )!.name,
+            'Viewer'
+        );
         assert.equal(
             link!.download!({ url: 'https://example.com/slide.dcm' } as any),
             'https://example.com/slide.dcm'

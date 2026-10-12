@@ -330,18 +330,22 @@ export class ResourceDataTable extends React.Component<
             ),
             this.createColumn(
                 'link',
-                'Link',
+                this.props.onViewRow ? 'Viewer' : 'Link',
                 row =>
                     this.props.onViewRow ? (
                         <button
-                            className="btn btn-default btn-xs"
+                            type="button"
+                            className="btn btn-link btn-xs"
                             data-testid="resource-row-view"
                             onClick={() => this.props.onViewRow!(row)}
+                            style={{
+                                padding: 0,
+                                border: 0,
+                                fontSize: 'inherit',
+                                lineHeight: 'inherit',
+                                verticalAlign: 'baseline',
+                            }}
                         >
-                            <i
-                                className="fa fa-eye fa-sm"
-                                style={{ marginRight: 5 }}
-                            />
                             View
                         </button>
                     ) : (
