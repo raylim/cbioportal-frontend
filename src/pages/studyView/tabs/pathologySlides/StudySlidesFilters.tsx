@@ -41,7 +41,7 @@ export function useStoredFlag(
 }
 
 const labelStyle: React.CSSProperties = {
-    fontSize: 10,
+    fontSize: 11,
     color: C.muted,
     marginBottom: 2,
 };
@@ -144,7 +144,7 @@ function Chip({
                 borderRadius: 10,
                 background: C.blueLight,
                 border: `1px solid #c5dcf3`,
-                fontSize: 11,
+                fontSize: 12,
                 color: C.text,
             }}
         >
@@ -246,13 +246,36 @@ export const StudySlidesFilterChips: React.FunctionComponent<{
                 className="btn btn-link btn-xs"
                 data-testid="study-slides-clear-filters"
                 onClick={store.clearSlideFilters}
-                style={{ padding: 0, fontSize: 11 }}
+                style={{ padding: 0, fontSize: 12 }}
             >
                 Clear slide filters
             </button>
         </div>
     );
 });
+
+/** Clears one filter group; styled like the viewer's own "All" chip. */
+function AllButton({
+    active,
+    onClick,
+    testId,
+}: {
+    active: boolean;
+    onClick: () => void;
+    testId: string;
+}) {
+    return (
+        <button
+            type="button"
+            className={`btn btn-xs ${active ? 'btn-primary' : 'btn-default'}`}
+            aria-pressed={active}
+            data-testid={testId}
+            onClick={() => !active && onClick()}
+        >
+            All
+        </button>
+    );
+}
 
 /** Match-level and stain filters, in a collapsible section. */
 export const StudySlidesFilterSection: React.FunctionComponent<{
@@ -299,8 +322,12 @@ export const StudySlidesFilterSection: React.FunctionComponent<{
                             role="group"
                             aria-label="Specimen match"
                             className="btn-group btn-group-xs"
-                            style={{ display: 'flex', flexWrap: 'wrap' }}
                         >
+                            <AllButton
+                                active={store.matchLevels.length === 0}
+                                testId="study-slides-match-all"
+                                onClick={store.clearMatchLevels}
+                            />
                             {STUDY_SLIDE_MATCH_LEVELS.map(level => {
                                 const active = store.matchLevels.includes(
                                     level
@@ -332,8 +359,12 @@ export const StudySlidesFilterSection: React.FunctionComponent<{
                             role="group"
                             aria-label="Stain groups"
                             className="btn-group btn-group-xs"
-                            style={{ display: 'flex', flexWrap: 'wrap' }}
                         >
+                            <AllButton
+                                active={store.stainGroups.length === 0}
+                                testId="study-slides-stain-all"
+                                onClick={store.clearStainGroups}
+                            />
                             {STUDY_SLIDE_STAIN_GROUPS.map(group => {
                                 const active = store.stainGroups.includes(
                                     group
@@ -354,11 +385,18 @@ export const StudySlidesFilterSection: React.FunctionComponent<{
                                         }
                                     >
                                         {!active && <StainDot group={group} />}
-                                        {group}{' '}
-                                        <span style={{ opacity: 0.7 }}>
+                                        {group}
+                                        <span
+                                            style={{
+                                                marginLeft: 4,
+                                                opacity: 0.8,
+                                            }}
+                                        >
+                                            (
                                             {stainGroupTotals[
                                                 group
                                             ].toLocaleString()}
+                                            )
                                         </span>
                                     </button>
                                 );

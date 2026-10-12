@@ -367,7 +367,7 @@ describe('StudyPathologySlidesTab', () => {
         const list = screen.getByTestId('study-slides-patients');
         list.scrollTop = 40;
 
-        fireEvent.click(screen.getByLabelText('Next page of patients'));
+        fireEvent.click(screen.getByLabelText('View Next Page'));
         await settle();
         // Before the page arrives: the new range, a spinner and a busy list.
         expect(screen.getByTestId('study-slides-range').textContent).toBe(
@@ -391,27 +391,24 @@ describe('StudyPathologySlidesTab', () => {
         store.dispose();
     });
 
-    it('jumps to the first, last and a typed page', async () => {
+    it('jumps to the last, the next and the first page', async () => {
         const { store } = renderTab(async r => pageFor(r, MANY), true, 2);
         await settle();
 
-        fireEvent.click(screen.getByLabelText('Last page of patients'));
+        fireEvent.click(screen.getByLabelText('View Last Page'));
         await settle();
         expect(screen.getByTestId('study-slides-range').textContent).toBe(
             '7–7 of 7'
         );
         expect(listed('M-7')).toBeTruthy();
 
-        fireEvent.change(screen.getByTestId('study-slides-page-input'), {
-            target: { value: '2' },
-        });
-        fireEvent.submit(
-            screen.getByTestId('study-slides-page-input').closest('form')!
-        );
+        fireEvent.click(screen.getByLabelText('View First Page'));
+        await settle();
+        fireEvent.click(screen.getByLabelText('View Next Page'));
         await settle();
         expect(listed('M-3')).toBeTruthy();
 
-        fireEvent.click(screen.getByLabelText('First page of patients'));
+        fireEvent.click(screen.getByLabelText('View First Page'));
         await settle();
         expect(listed('M-1')).toBeTruthy();
         store.dispose();
