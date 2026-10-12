@@ -429,7 +429,7 @@ if (process.env.PW_SUITE === 'wsi') {
                 timeout: 30000,
             });
 
-            await page.getByLabel('Next page of patients').click();
+            await page.getByLabel('View Next Page').click();
             // The range and the busy list answer before the page arrives.
             await expect(range).toContainText(`51–55 of ${PATIENT_COUNT}`, {
                 timeout: 1000,
