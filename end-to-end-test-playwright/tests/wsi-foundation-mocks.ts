@@ -197,14 +197,8 @@ export async function installFoundationMocks(
                 body: JSON.stringify({
                     slideKey,
                     accessToken: 'wsi-foundation-smoke-token',
-                    tokenType: 'Bearer',
                     expiresIn: 300,
                     tileMetadata,
-                    thumbnail: {
-                        width: 1,
-                        height: 1,
-                        contentType: 'image/png',
-                    },
                 }),
             });
         }

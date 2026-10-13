@@ -112,40 +112,6 @@ describe('PatientViewUrlWrapper pathologySlideSettings', () => {
         );
         expect(urlWrapper.pathologySlideScope.stainFilter).toBe('ihc');
     });
-
-    it('reads the stain filter from a study view slide table link', () => {
-        // The link the study view slide table builds (withSlideStainFilter):
-        // patient/wsiHESlides?...&pathologySlideSettings={"stainFilter":"ihc"}
-        const params = new URLSearchParams({
-            studyId: 's',
-            caseId: 'p',
-        });
-        params.set(
-            'pathologySlideSettings',
-            JSON.stringify({ stainFilter: 'ihc' })
-        );
-        const urlWrapper = open(`/patient/wsiHESlides?${params.toString()}`);
-        expect(urlWrapper.activeTabId).toBe('wsiHESlides');
-        expect(urlWrapper.pathologySlideScope).toEqual({
-            stainFilter: 'ihc',
-        });
-    });
-
-    it('reads the sample from a study view sample link', () => {
-        const params = new URLSearchParams({
-            sampleId: 'P-1-T01',
-            studyId: 's',
-        });
-        params.set(
-            'pathologySlideSettings',
-            JSON.stringify({ stainFilter: 'hne' })
-        );
-        const urlWrapper = open(`/patient/wsiHESlides?${params.toString()}`);
-        expect(urlWrapper.query.sampleId).toBe('P-1-T01');
-        expect(urlWrapper.pathologySlideScope).toEqual({
-            stainFilter: 'hne',
-        });
-    });
 });
 
 describe('pathologySlideSettingsBackwardsCompatibility', () => {

@@ -57,13 +57,7 @@ export interface Part {
 
 export interface Sample {
     sample_id: string;
-    cancer_type: string;
-    cancer_type_detailed: string;
-    oncotree_code: string;
-    primary_site: string;
-    sample_type: string;
     sequencing_date?: string;
-    metastatic_site?: string;
     parts: Part[];
 }
 

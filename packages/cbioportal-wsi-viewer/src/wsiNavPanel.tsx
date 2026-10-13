@@ -9,7 +9,6 @@ import {
     WsiTimepointSelection,
 } from './wsiViewerTypes';
 import {
-    countServableSlidesForSample,
     getOrderedServableSlidesForSampleReadOnly,
     getWsiTimepointOptions,
     matchesMatchFilter,
@@ -53,6 +52,7 @@ import {
     WSI_THEME as theme,
 } from './wsiTheme';
 import { WsiPanelHideButton } from './wsiPanelChrome';
+import { WsiFilterChipGroup } from './wsiFilterChips';
 
 export interface WsiNavPanelProps {
     hierarchy: PatientHierarchy;
@@ -142,13 +142,6 @@ function thumbnailRetryDelayMs(
     return maxAgeMs + Math.round(maxAgeMs * 0.1 * Math.random());
 }
 
-function shouldShowSampleInNavigation(sample: Sample): boolean {
-    return (
-        sample.sample_id !== 'UNMATCHED' ||
-        countServableSlidesForSample(sample) > 0
-    );
-}
-
 function matchesSlideFilters(
     slide: Slide,
     stainFilter: WsiStainFilter,
@@ -168,18 +161,33 @@ type FilteredSampleEntry = {
     filteredSlideIds: Set<string>;
 };
 
-function buildSampleEntry(sample: Sample): FilteredSampleEntry | null {
-    const filteredSlides = getOrderedServableSlidesForSampleReadOnly(sample);
-    if (!filteredSlides.length) {
-        return null;
-    }
-    return {
-        sample,
-        filteredSlides,
-        filteredSlideIds: new Set(
-            filteredSlides.map(({ slide }) => slide.slide_key)
-        ),
-    };
+function sampleEntry(
+    sample: Sample,
+    filteredSlides: FilteredSampleEntry['filteredSlides']
+): FilteredSampleEntry | null {
+    return filteredSlides.length
+        ? {
+              sample,
+              filteredSlides,
+              filteredSlideIds: new Set(
+                  filteredSlides.map(({ slide }) => slide.slide_key)
+              ),
+          }
+        : null;
+}
+
+/** The entries that keep a slide matching `keep`, with only those slides. */
+function narrowSampleEntries(
+    entries: FilteredSampleEntry[],
+    keep: (slide: Slide) => boolean
+): FilteredSampleEntry[] {
+    return entries.flatMap(entry => {
+        const narrowed = sampleEntry(
+            entry.sample,
+            entry.filteredSlides.filter(({ slide }) => keep(slide))
+        );
+        return narrowed ? [narrowed] : [];
+    });
 }
 
 function WsiNavPanelComponent({
@@ -207,82 +215,38 @@ function WsiNavPanelComponent({
     const selectedSlideId = selectedSlide?.slide_key;
     const unscopedSampleEntries = React.useMemo(
         () =>
-            hierarchy.samples.reduce<FilteredSampleEntry[]>(
-                (entries, sample) => {
-                    if (!shouldShowSampleInNavigation(sample)) {
-                        return entries;
-                    }
-
-                    const entry = buildSampleEntry(sample);
-
-                    if (entry) {
-                        entries.push(entry);
-                    }
-
-                    return entries;
-                },
-                []
-            ),
+            hierarchy.samples.flatMap(sample => {
+                const entry = sampleEntry(
+                    sample,
+                    getOrderedServableSlidesForSampleReadOnly(sample)
+                );
+                return entry ? [entry] : [];
+            }),
         [hierarchy.samples]
     );
     const allSampleEntries = React.useMemo(() => {
         if (!sampleIdFilter && !slideIdFilter) {
             return unscopedSampleEntries;
         }
-
-        return unscopedSampleEntries.reduce<FilteredSampleEntry[]>(
-            (entries, entry) => {
-                if (
-                    sampleIdFilter &&
-                    entry.sample.sample_id !== sampleIdFilter
-                ) {
-                    return entries;
-                }
-
-                const filteredSlides = slideIdFilter
-                    ? entry.filteredSlides.filter(({ slide }) =>
-                          slideIdFilter.has(slide.slide_key)
-                      )
-                    : entry.filteredSlides;
-                if (!filteredSlides.length) {
-                    return entries;
-                }
-
-                entries.push({
-                    sample: entry.sample,
-                    filteredSlides,
-                    filteredSlideIds: new Set(
-                        filteredSlides.map(({ slide }) => slide.slide_key)
-                    ),
-                });
-                return entries;
-            },
-            []
+        return narrowSampleEntries(
+            sampleIdFilter
+                ? unscopedSampleEntries.filter(
+                      entry => entry.sample.sample_id === sampleIdFilter
+                  )
+                : unscopedSampleEntries,
+            slide => !slideIdFilter || slideIdFilter.has(slide.slide_key)
         );
     }, [sampleIdFilter, slideIdFilter, unscopedSampleEntries]);
     const filteredSampleEntries = React.useMemo(
         () =>
-            allSampleEntries.reduce<FilteredSampleEntry[]>((entries, entry) => {
-                const filteredSlides = entry.filteredSlides.filter(
-                    ({ slide }) =>
-                        matchesSlideFilters(
-                            slide,
-                            stainFilter,
-                            matchFilter,
-                            timepointDays
-                        )
-                );
-                if (filteredSlides.length) {
-                    entries.push({
-                        sample: entry.sample,
-                        filteredSlides,
-                        filteredSlideIds: new Set(
-                            filteredSlides.map(({ slide }) => slide.slide_key)
-                        ),
-                    });
-                }
-                return entries;
-            }, []),
+            narrowSampleEntries(allSampleEntries, slide =>
+                matchesSlideFilters(
+                    slide,
+                    stainFilter,
+                    matchFilter,
+                    timepointDays
+                )
+            ),
         [allSampleEntries, matchFilter, stainFilter, timepointDays]
     );
     const sampleEntries = React.useMemo(() => {
@@ -409,15 +373,7 @@ function WsiNavPanelComponent({
                 return;
             }
             filteredCounts.all += 1;
-            const stainType = wsiStainKind(slide);
-            if (stainType === 'hne') {
-                filteredCounts.hne += 1;
-            }
-            if (stainType === 'ihc') {
-                filteredCounts.ihc += 1;
-            }
-            if (stainType === 'other') filteredCounts.other += 1;
-            if (stainType === 'unknown') filteredCounts.unknown += 1;
+            filteredCounts[wsiStainKind(slide)] += 1;
         });
 
         return filteredCounts;
@@ -439,6 +395,9 @@ function WsiNavPanelComponent({
         });
         return filteredCounts;
     }, [facetSlides, stainFilter, timepointDays]);
+    /** A click on the active chip only matters for All, to drop a link scope. */
+    const reselects = (current: string, key: string) =>
+        current !== key || (key === 'all' && linkoutScopeActive);
 
     return (
         <div
@@ -476,116 +435,49 @@ function WsiNavPanelComponent({
                         />
                     )}
                 </div>
-                <div
-                    data-testid="wsi-stain-filter-row"
-                    className="btn-group btn-group-xs"
+                <WsiFilterChipGroup
+                    label="Filter slides by stain"
+                    testId="wsi-stain-filter-row"
+                    chipTestIdPrefix="wsi-stain-filter"
                     style={{ marginTop: 7 }}
-                >
-                    {chips.map(chip => {
-                        const count = stainCounts[chip.key];
-                        const disabled = chip.key !== 'all' && count === 0;
-                        const active = stainFilter === chip.key;
-                        return (
-                            <button
-                                key={chip.key}
-                                data-testid={`wsi-stain-filter-${chip.key}`}
-                                className={`btn btn-xs ${
-                                    active ? 'btn-primary' : 'btn-default'
-                                }`}
-                                disabled={disabled}
-                                onClick={() => {
-                                    if (
-                                        disabled ||
-                                        (active &&
-                                            !(
-                                                chip.key === 'all' &&
-                                                linkoutScopeActive
-                                            ))
-                                    ) {
-                                        return;
-                                    }
-                                    onFilterChange(chip.key);
-                                }}
-                            >
-                                {chip.key !== 'all' && (
-                                    <i
-                                        className="fa fa-circle"
-                                        style={{
-                                            fontSize: 8,
-                                            marginRight: 3,
-                                            color: active
-                                                ? undefined
-                                                : chip.color,
-                                            verticalAlign: 'middle',
-                                        }}
-                                    />
-                                )}
-                                {chip.label}
-                                {chip.key !== 'all' && (
-                                    <span
-                                        style={{ marginLeft: 4, opacity: 0.8 }}
-                                    >
-                                        ({count})
-                                    </span>
-                                )}
-                            </button>
-                        );
-                    })}
-                </div>
-                <div
-                    data-testid="wsi-match-filter-row"
-                    className="btn-group btn-group-xs"
+                    chips={chips.map(chip => ({
+                        ...chip,
+                        count:
+                            chip.key === 'all'
+                                ? undefined
+                                : stainCounts[chip.key],
+                        disabled:
+                            chip.key !== 'all' && stainCounts[chip.key] === 0,
+                    }))}
+                    isActive={key => stainFilter === key}
+                    onSelect={key => {
+                        if (reselects(stainFilter, key)) onFilterChange(key);
+                    }}
+                />
+                <WsiFilterChipGroup
+                    label="Filter slides by match level"
+                    testId="wsi-match-filter-row"
+                    chipTestIdPrefix="wsi-match-filter"
                     style={{ marginTop: 6 }}
-                    aria-label="Filter slides by match level"
-                >
-                    {matchChips
+                    chips={matchChips
                         .filter(
                             chip =>
                                 chip.key === 'all' || matchCounts[chip.key] > 0
                         )
-                        .map(chip => {
-                            const count =
+                        .map(chip => ({
+                            ...chip,
+                            count:
                                 chip.key === 'all'
                                     ? undefined
-                                    : matchCounts[chip.key];
-                            const active = matchFilter === chip.key;
-                            return (
-                                <button
-                                    key={chip.key}
-                                    data-testid={`wsi-match-filter-${chip.key}`}
-                                    className={`btn btn-xs ${
-                                        active ? 'btn-primary' : 'btn-default'
-                                    }`}
-                                    disabled={count === 0}
-                                    onClick={() => {
-                                        if (
-                                            count === 0 ||
-                                            (active &&
-                                                !(
-                                                    chip.key === 'all' &&
-                                                    linkoutScopeActive
-                                                ))
-                                        ) {
-                                            return;
-                                        }
-                                        onMatchFilterChange?.(chip.key);
-                                    }}
-                                >
-                                    {chip.label}
-                                    {count !== undefined && (
-                                        <span
-                                            style={{
-                                                marginLeft: 4,
-                                                opacity: 0.8,
-                                            }}
-                                        >
-                                            ({count})
-                                        </span>
-                                    )}
-                                </button>
-                            );
-                        })}
-                </div>
+                                    : matchCounts[chip.key],
+                        }))}
+                    isActive={key => matchFilter === key}
+                    onSelect={key => {
+                        if (reselects(matchFilter, key)) {
+                            onMatchFilterChange?.(key);
+                        }
+                    }}
+                />
                 {showTimepointFilter && (
                     <div
                         style={{ marginTop: 8 }}
@@ -842,20 +734,6 @@ function SampleNode({
         }
     }, [containsSelectedSlide, open]);
 
-    const stLower = (sample.sample_type || '').toLowerCase();
-    const stClass =
-        stLower === 'primary'
-            ? theme.blue
-            : stLower.includes('metastas') || stLower === 'local recurrence'
-            ? '#c05000'
-            : theme.muted;
-    const stBg =
-        stLower === 'primary'
-            ? theme.blueLight
-            : stLower.includes('metastas') || stLower === 'local recurrence'
-            ? '#fef0e8'
-            : '#f0f0f0';
-
     const sequencedText = sampleSequencedText(sampleTimeline);
     const sequencedTooltip = sampleSequencedTooltip(sampleTimeline);
 
@@ -933,67 +811,6 @@ function SampleNode({
                             </span>
                         )}
                     </div>
-                    <div
-                        style={{
-                            fontSize: 11,
-                            color: theme.muted,
-                            marginTop: 1,
-                        }}
-                    >
-                        {sample.sample_type && (
-                            <span
-                                style={{
-                                    display: 'inline-block',
-                                    fontSize: 10,
-                                    fontWeight: 700,
-                                    textTransform: 'uppercase',
-                                    letterSpacing: '.4px',
-                                    padding: '1px 5px',
-                                    borderRadius: 3,
-                                    background: stBg,
-                                    color: stClass,
-                                    marginRight: 4,
-                                }}
-                            >
-                                {sample.sample_type}
-                            </span>
-                        )}
-                        {sample.oncotree_code && (
-                            <a
-                                href="https://oncotree.mskcc.org/"
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                title={`${sample.oncotree_code}${
-                                    sample.cancer_type_detailed
-                                        ? ` — ${sample.cancer_type_detailed}`
-                                        : ''
-                                }\nView OncoTree`}
-                                onClick={e => e.stopPropagation()}
-                                style={{
-                                    display: 'inline-block',
-                                    background: '#f0f0f0',
-                                    border: `1px solid ${theme.border}`,
-                                    borderRadius: 3,
-                                    fontSize: 10,
-                                    fontWeight: 700,
-                                    padding: '0 4px',
-                                    color: theme.text,
-                                    marginRight: 4,
-                                    textDecoration: 'none',
-                                }}
-                            >
-                                {sample.oncotree_code}
-                            </a>
-                        )}
-                        {sample.cancer_type_detailed ||
-                            sample.cancer_type ||
-                            ''}
-                    </div>
-                    {sample.primary_site && (
-                        <div style={{ fontSize: 11, color: theme.muted }}>
-                            {sample.primary_site}
-                        </div>
-                    )}
                 </div>
                 <div
                     title="Viewable slides shown in this sample"

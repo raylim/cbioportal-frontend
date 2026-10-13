@@ -20,8 +20,15 @@ export { createPromiseCache, PromiseCache } from './wsiCacheUtils';
 export * from './wsiTheme';
 export {
     readWsiPanelFlag,
+    useWsiPanelFlag,
     WsiCollapsedRail,
+    WsiIconButton,
     WsiPanelHideButton,
     WsiPanelSide,
     writeWsiPanelFlag,
 } from './wsiPanelChrome';
+export {
+    WsiFilterChip,
+    WsiFilterChipGroup,
+    WsiStainDot,
+} from './wsiFilterChips';

@@ -277,11 +277,6 @@ function hierarchy(
         patient_id: SCOPE.patientId,
         samples: groups.map(group => ({
             sample_id: group.sampleId,
-            cancer_type: '',
-            cancer_type_detailed: '',
-            oncotree_code: '',
-            primary_site: '',
-            sample_type: '',
             parts: group.parts.map(part => ({
                 part_number: part.part,
                 part_type: '',

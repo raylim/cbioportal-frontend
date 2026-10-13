@@ -169,15 +169,6 @@ export function compareSamplesByTimepoint(a: Sample, b: Sample): number {
         return aHasDays ? -1 : 1;
     }
 
-    const sampleTypeCmp = (a.sample_type || '').localeCompare(
-        b.sample_type || '',
-        undefined,
-        { sensitivity: 'base' }
-    );
-    if (sampleTypeCmp !== 0) {
-        return sampleTypeCmp;
-    }
-
     return a.sample_id.localeCompare(b.sample_id, undefined, {
         numeric: true,
         sensitivity: 'base',

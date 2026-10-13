@@ -14,11 +14,6 @@ function makeSample(
 ): Sample {
     return {
         sample_id: 'S-1',
-        cancer_type: '',
-        cancer_type_detailed: '',
-        oncotree_code: '',
-        primary_site: '',
-        sample_type: '',
         parts: [],
         ...overrides,
     };

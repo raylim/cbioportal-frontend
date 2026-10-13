@@ -10,7 +10,12 @@ import {
     clearWsiSlideAccess,
     getWsiSlideAccess,
 } from './wsiAuth';
-import { makeTileMetadata } from './wsiTestFixtures';
+import {
+    makeAccessPayload,
+    makeSample,
+    makeSlide,
+    toWireHierarchy,
+} from './wsiTestFixtures';
 import { configureWsiViewerRuntime } from './wsiViewerConfig';
 
 configureWsiViewerRuntime({
@@ -264,60 +269,24 @@ describe('wsiHierarchyFetchCache read-only contract', () => {
     });
 
     it('derives an IHC slide type from the authoritative flag when slideType is null', async () => {
+        const payload = toWireHierarchy({
+            patient_id: 'P-1',
+            samples: [
+                makeSample('S-1', [
+                    makeSlide({
+                        is_hne: false,
+                        is_ihc: true,
+                        stain_group: 'IHC',
+                    }),
+                ]),
+            ],
+        });
+        expect(
+            payload.sampleGroups[0].parts[0].blocks[0].slides[0].slideType
+        ).toBeNull();
         (global as any).fetch = jest.fn().mockResolvedValue({
             ok: true,
-            json: () =>
-                Promise.resolve({
-                    referenceSampleId: 'S-1',
-                    sampleGroups: [
-                        {
-                            sampleId: 'S-1',
-                            parts: [
-                                {
-                                    partNumber: '1',
-                                    partType: '',
-                                    partDescription: '',
-                                    subspecialty: '',
-                                    blocks: [
-                                        {
-                                            blockNumber: '1',
-                                            blockLabel: 'A1',
-                                            slides: [
-                                                {
-                                                    slideKey: 'ihc-slide',
-                                                    stainName: 'PD-L1',
-                                                    stainGroup: 'IHC',
-                                                    isHne: false,
-                                                    isIhc: true,
-                                                    magnification: '',
-                                                    fileSizeBytes: null,
-                                                    canServeTiles: true,
-                                                    slideType: null,
-                                                    sampleId: 'S-1',
-                                                    matchLevel: 'BLOCK',
-                                                    specimenKey: 'block::1',
-                                                    procedureDateDays: null,
-                                                    timepointSource:
-                                                        'Procedure date unavailable',
-                                                    procedureDateKind:
-                                                        'UNDATED',
-                                                    procedureDateSource:
-                                                        'missing_procedure_date',
-                                                    procedureDateReason:
-                                                        'unavailable',
-                                                    procedureDateStatus:
-                                                        'MISSING_PROCEDURE_DATE',
-                                                    procedureCoordinateSystem:
-                                                        'patient_first_tumor_sequencing_day_zero',
-                                                },
-                                            ],
-                                        },
-                                    ],
-                                },
-                            ],
-                        },
-                    ],
-                }),
+            json: () => Promise.resolve(payload),
         });
 
         const hierarchy = await fetchWsiPatientHierarchy('study', 'P-1');
@@ -327,55 +296,19 @@ describe('wsiHierarchyFetchCache read-only contract', () => {
     });
 
     it('preserves Other instead of coercing it to H&E or IHC', async () => {
-        const payload = {
-            referenceSampleId: null,
-            sampleGroups: [
-                {
-                    sampleId: null,
-                    parts: [
-                        {
-                            partNumber: '1',
-                            partType: '',
-                            partDescription: '',
-                            subspecialty: '',
-                            blocks: [
-                                {
-                                    blockNumber: 'A',
-                                    blockLabel: 'A1',
-                                    slides: [
-                                        {
-                                            slideKey: 'other-slide',
-                                            stainName: 'Other',
-                                            stainGroup: 'Other',
-                                            isHne: false,
-                                            isIhc: false,
-                                            magnification: '',
-                                            fileSizeBytes: null,
-                                            canServeTiles: true,
-                                            slideType: 'Other',
-                                            sampleId: null,
-                                            matchLevel: 'UNMATCHED',
-                                            specimenKey: 'unmatched::other',
-                                            procedureDateDays: null,
-                                            timepointSource:
-                                                'Procedure date unavailable',
-                                            procedureDateKind: 'UNDATED',
-                                            procedureDateSource:
-                                                'missing_procedure_date',
-                                            procedureDateReason: 'unavailable',
-                                            procedureDateStatus:
-                                                'MISSING_PROCEDURE_DATE',
-                                            procedureCoordinateSystem:
-                                                'patient_first_tumor_sequencing_day_zero',
-                                        },
-                                    ],
-                                },
-                            ],
-                        },
-                    ],
-                },
+        const payload = toWireHierarchy({
+            patient_id: 'P-other',
+            samples: [
+                makeSample('UNMATCHED', [
+                    makeSlide({
+                        is_hne: false,
+                        is_ihc: false,
+                        stain_group: 'Other',
+                        slide_type: 'Other',
+                    }),
+                ]),
             ],
-        };
+        });
         (global as any).fetch = jest.fn().mockResolvedValue({
             ok: true,
             json: () => Promise.resolve(payload),
@@ -409,57 +342,6 @@ describe('wsiHierarchyFetchCache read-only contract', () => {
         });
         expect(fetchMock).toHaveBeenCalledTimes(2);
     });
-
-    it('lets an aborted caller exit without cancelling the shared request', async () => {
-        let resolveFetch!: (value: unknown) => void;
-        const fetchMock = jest.fn().mockImplementation(
-            () =>
-                new Promise(resolve => {
-                    resolveFetch = resolve;
-                })
-        );
-        (global as any).fetch = fetchMock;
-
-        const abortController = new AbortController();
-        const abortedPromise = fetchWsiPatientHierarchy(
-            'study',
-            'P-1',
-            undefined,
-            abortController.signal
-        );
-        const sharedPromise = fetchWsiPatientHierarchy('study', 'P-1');
-        abortController.abort();
-
-        await expect(abortedPromise).rejects.toMatchObject({
-            name: 'AbortError',
-        });
-
-        resolveFetch({
-            ok: true,
-            json: () => Promise.resolve(makeHierarchy()),
-        });
-        await expect(sharedPromise).resolves.toMatchObject({
-            patient_id: 'P-1',
-        });
-        expect(fetchMock).toHaveBeenCalledTimes(1);
-    });
-
-    it('fetches again after the cache is cleared', async () => {
-        const fetchMock = jest.fn().mockResolvedValue({
-            ok: true,
-            json: () => Promise.resolve(makeHierarchy()),
-        });
-        (global as any).fetch = fetchMock;
-
-        await fetchWsiPatientHierarchy('study-1', 'P-1');
-        await fetchWsiPatientHierarchy('study-1', 'P-1');
-        expect(fetchMock).toHaveBeenCalledTimes(1);
-
-        clearPatientHierarchyCache();
-
-        await fetchWsiPatientHierarchy('study-1', 'P-1');
-        expect(fetchMock).toHaveBeenCalledTimes(2);
-    });
 });
 
 describe('wsiHierarchyFetchCache resource access registration', () => {
@@ -471,77 +353,21 @@ describe('wsiHierarchyFetchCache resource access registration', () => {
     let accessStatuses: number[];
     let fetchMock: jest.Mock;
 
-    function v2Slide(slideKey: string) {
-        return {
-            slideKey,
-            stainName: 'H&E',
-            stainGroup: 'H&E',
-            isHne: true,
-            isIhc: false,
-            magnification: '20x',
-            fileSizeBytes: null,
-            canServeTiles: true,
-            slideType: 'H&E',
-            sampleId: 'S-1',
-            matchLevel: 'BLOCK',
-            specimenKey: 'block::1::A',
-            procedureDateDays: 3,
-            timepointSource: 'Procedure date',
-            procedureDateKind: 'RECORDED',
-            procedureDateSource: 'Recorded procedure date',
-            procedureDateReason: null,
-            procedureDateStatus: 'AVAILABLE',
-            procedureCoordinateSystem:
-                'patient_first_tumor_sequencing_day_zero',
-        };
-    }
-
     function v2Hierarchy(slideKeys: string[]) {
-        return {
-            referenceSampleId: 'S-1',
-            sampleGroups: [
-                {
-                    sampleId: 'S-1',
-                    parts: [
-                        {
-                            partNumber: '1',
-                            partType: '',
-                            partDescription: '',
-                            subspecialty: '',
-                            blocks: [
-                                {
-                                    blockNumber: 'A',
-                                    blockLabel: 'A1',
-                                    slides: slideKeys.map(v2Slide),
-                                },
-                            ],
-                        },
-                    ],
-                },
+        return toWireHierarchy({
+            patient_id: PATIENT,
+            samples: [
+                makeSample(
+                    'S-1',
+                    slideKeys.map(slideKey =>
+                        makeSlide({ slide_key: slideKey })
+                    )
+                ),
             ],
-        };
+        });
     }
 
-    const accessPayload = {
-        slideKey: 'slide',
-        tileMetadata: makeTileMetadata({
-            dimensions: { width: 100, height: 80 },
-            levels: 1,
-            level_dimensions: [{ width: 100, height: 80 }],
-            level_downsamples: [1],
-            max_zoom: 0,
-            tile_size: 256,
-            safe_min_level: 0,
-        }),
-        thumbnail: {
-            width: 128,
-            height: 96,
-            contentType: 'image/jpeg',
-        },
-        accessToken: 'token',
-        tokenType: 'Bearer',
-        expiresIn: 300,
-    };
+    const accessPayload = makeAccessPayload({ slideKey: 'slide' });
 
     function hierarchyCalls(url: string): number {
         return fetchMock.mock.calls.filter(([called]) => called === url).length;

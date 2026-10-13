@@ -1,4 +1,5 @@
 // Test data shared by the package specs.
+import { registerWsiResourceAccess } from './wsiAuth';
 import {
     Block,
     Part,
@@ -6,6 +7,7 @@ import {
     Sample,
     Slide,
     TileMetadata,
+    WsiV2Hierarchy,
 } from './wsiViewerTypes';
 
 export function makeSlide(overrides: Partial<Slide> = {}): Slide {
@@ -50,11 +52,6 @@ export function makeSample(
 ): Sample {
     return {
         sample_id: sampleId,
-        cancer_type: '',
-        cancer_type_detailed: '',
-        oncotree_code: '',
-        primary_site: '',
-        sample_type: 'Primary',
         parts: [makePart([makeBlock(slides)])],
         ...overrides,
     };
@@ -82,5 +79,98 @@ export function makeTileMetadata(
         thumbnail_max_decode_pixels: 16_777_216,
         safe_min_level: 0,
         ...overrides,
+    };
+}
+
+/** A slide-access response body, as the backend sends it. */
+export function makeAccessPayload(overrides: Record<string, unknown> = {}) {
+    return {
+        slideKey: 'slide-1',
+        tileMetadata: makeTileMetadata(),
+        accessToken: 'test-token',
+        expiresIn: 300,
+        ...overrides,
+    };
+}
+
+/** Publishes one slide for a patient, as a loaded hierarchy would. */
+export function registerTestSlideAccess(
+    studyId: string,
+    patientId: string,
+    slideKey: string
+): void {
+    registerWsiResourceAccess(studyId, {
+        patient_id: patientId,
+        samples: [makeSample('S-1', [makeSlide({ slide_key: slideKey })])],
+    });
+}
+
+/** A hierarchy as the v2 endpoint sends it: the normalizer's inverse. */
+export function toWireHierarchy(hierarchy: PatientHierarchy): WsiV2Hierarchy {
+    return {
+        referenceSampleId: hierarchy.reference_sample_id || null,
+        sampleGroups: hierarchy.samples.map(sample => ({
+            sampleId:
+                sample.sample_id === 'UNMATCHED' ? null : sample.sample_id,
+            parts: sample.parts.map(part => ({
+                partNumber: part.part_number,
+                partType: part.part_type,
+                partDescription: part.part_description,
+                subspecialty: part.subspecialty,
+                blocks: part.blocks.map(block => ({
+                    blockNumber: block.block_number,
+                    blockLabel: block.block_label,
+                    slides: block.slides.map(slide => {
+                        const hasDays = slide.slide_timepoint_days != null;
+                        return {
+                            slideKey: slide.slide_key,
+                            stainName: slide.stain_name,
+                            stainGroup: slide.stain_group,
+                            isHne: slide.is_hne,
+                            isIhc: slide.is_ihc,
+                            magnification: slide.magnification,
+                            fileSizeBytes: slide.file_size_bytes
+                                ? Number(slide.file_size_bytes)
+                                : null,
+                            canServeTiles: slide.can_serve_tiles,
+                            slideType: slide.slide_type || null,
+                            sampleId: slide.sample_id ?? sample.sample_id,
+                            matchLevel:
+                                slide.match_level ||
+                                (sample.sample_id === 'UNMATCHED'
+                                    ? 'UNMATCHED'
+                                    : 'BLOCK'),
+                            specimenKey: slide.specimen_key || 'specimen-1',
+                            procedureDateDays:
+                                slide.slide_timepoint_days ?? null,
+                            timepointSource:
+                                slide.slide_timepoint_source ||
+                                (hasDays
+                                    ? 'Procedure date'
+                                    : 'Procedure date unavailable'),
+                            procedureDateKind:
+                                slide.slide_timepoint_kind ||
+                                (hasDays ? 'RECORDED' : 'UNDATED'),
+                            procedureDateSource:
+                                slide.slide_timepoint_date_source ||
+                                (hasDays
+                                    ? 'recorded_procedure_date'
+                                    : 'missing_procedure_date'),
+                            procedureDateReason: hasDays
+                                ? null
+                                : slide.slide_timepoint_reason || 'unavailable',
+                            procedureDateStatus:
+                                slide.slide_timepoint_status ||
+                                (hasDays
+                                    ? 'AVAILABLE'
+                                    : 'MISSING_PROCEDURE_DATE'),
+                            procedureCoordinateSystem:
+                                slide.slide_timepoint_coordinate_system ||
+                                'patient_first_tumor_sequencing_day_zero',
+                        };
+                    }),
+                })),
+            })),
+        })),
     };
 }
