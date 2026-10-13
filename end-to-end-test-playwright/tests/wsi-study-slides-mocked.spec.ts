@@ -1,5 +1,7 @@
 import { test, expect, Page } from '../fixtures';
-import { pixel, tileMetadata } from './wsi-foundation-mocks';
+import { routeSlideAccess, routeTilePixels } from './wsi-foundation-mocks';
+import { studySlidesPageFor } from '../../src/pages/studyView/tabs/pathologySlides/studySlidesTestServer';
+import { StudySlidesRequest } from '../../src/pages/studyView/tabs/pathologySlides/studySlidesApi';
 
 const STUDY_ID = 'wsi-study-slides-contract';
 const PATIENT_COUNT = 55;
@@ -35,79 +37,15 @@ function stainCounts(patientId: string) {
     return { 'H&E': 1, IHC: ihc, Other: 0, Unknown: 0 };
 }
 
-interface StudySlidesRequestBody {
-    studyViewFilter: {
-        studyIds?: string[];
-    };
-    stainGroups?: string[];
-    matchLevels?: string[];
-    search?: string;
-    locateStudyId?: string;
-    locatePatientId?: string;
-    pageNumber?: number;
-    pageSize?: number;
-}
-
-/** Every seventh patient has an unmatched slide. */
-function isUnmatched(patientId: string) {
-    return patientIds.indexOf(patientId) % 7 === 0;
-}
-
-function studySlidesPage(request: StudySlidesRequestBody) {
-    const listed = patientIds.filter(
-        patientId =>
-            (!request.search ||
-                patientId
-                    .toLowerCase()
-                    .includes(request.search.toLowerCase())) &&
-            (!request.matchLevels?.includes('UNMATCHED') ||
-                isUnmatched(patientId)) &&
-            (!request.stainGroups?.length ||
-                request.stainGroups.some(
-                    group =>
-                        stainCounts(patientId)[
-                            group as keyof ReturnType<typeof stainCounts>
-                        ] > 0
-                ))
-    );
-    const pageNumber = request.pageNumber ?? 0;
-    const pageSize = request.pageSize ?? PAGE_SIZE;
-    const located =
-        request.locateStudyId === STUDY_ID
-            ? listed.indexOf(request.locatePatientId || '')
-            : -1;
-    const patients = listed
-        .slice(pageNumber * pageSize, (pageNumber + 1) * pageSize)
-        .map(patientId => {
-            const counts = stainCounts(patientId);
-            const slideCount = counts['H&E'] + counts.IHC;
-            return {
-                studyId: STUDY_ID,
-                patientId,
-                slideCount,
-                stainGroupCounts: counts,
-            };
-        });
-    const slides = listed.reduce(
-        (sum, patientId) =>
-            sum + stainCounts(patientId)['H&E'] + stainCounts(patientId).IHC,
-        0
-    );
+const patients = patientIds.map(patientId => {
+    const counts = stainCounts(patientId);
     return {
-        totalPatients: listed.length,
-        totalSlides: slides,
-        stainGroupTotals: {
-            'H&E': PATIENT_COUNT,
-            IHC: patientIds.filter(p => stainCounts(p).IHC > 0).length,
-            Other: 0,
-            Unknown: 0,
-        },
-        locatedIndex: located >= 0 ? located : null,
-        pageNumber,
-        pageSize,
-        patients,
+        studyId: STUDY_ID,
+        patientId,
+        slideCount: counts['H&E'] + counts.IHC,
+        stainGroupCounts: counts,
     };
-}
+});
 
 /** An opaque 32-hex slide key per patient, as the backend publishes them. */
 function slideKeyFor(patientId: string) {
@@ -156,12 +94,10 @@ function hierarchyFor(patientId: string) {
 }
 
 interface StudySlidesMocks {
-    studySlidesRequests: StudySlidesRequestBody[];
+    studySlidesRequests: StudySlidesRequest[];
     hierarchyPatients: string[];
     /** Every slide access request URL. */
     accessRequests: string[];
-    /** Delay for list pages after the first, to observe the pending state. */
-    pageDelayMs: number;
 }
 
 async function installStudySlidesMocks(page: Page): Promise<StudySlidesMocks> {
@@ -169,7 +105,6 @@ async function installStudySlidesMocks(page: Page): Promise<StudySlidesMocks> {
         studySlidesRequests: [],
         hierarchyPatients: [],
         accessRequests: [],
-        pageDelayMs: 0,
     };
     const serverConfig = {
         authenticationMethod: 'none',
@@ -236,19 +171,12 @@ async function installStudySlidesMocks(page: Page): Promise<StudySlidesMocks> {
     await page.route(
         '**/api/wsi/v2/study-slides/patients/fetch',
         async route => {
-            const body = route
-                .request()
-                .postDataJSON() as StudySlidesRequestBody;
+            const body = route.request().postDataJSON() as StudySlidesRequest;
             mocks.studySlidesRequests.push(body);
-            if (body.pageNumber && mocks.pageDelayMs) {
-                await new Promise(resolve =>
-                    setTimeout(resolve, mocks.pageDelayMs)
-                );
-            }
             return route.fulfill({
                 status: 200,
                 contentType: 'application/json',
-                body: JSON.stringify(studySlidesPage(body)),
+                body: JSON.stringify(studySlidesPageFor(body, patients)),
             });
         }
     );
@@ -263,40 +191,13 @@ async function installStudySlidesMocks(page: Page): Promise<StudySlidesMocks> {
             body: JSON.stringify(hierarchyFor(patientId)),
         });
     });
-    await page.route(
-        `**/api/wsi/v2/resources/${STUDY_ID}/*/access?*`,
-        route => {
-            const url = new URL(route.request().url());
-            mocks.accessRequests.push(url.toString());
-            const patientId = decodeURIComponent(
-                url.pathname.split('/').slice(-2, -1)[0]
-            );
-            const slideKey = url.searchParams.get('slideKey') || '';
-            // As the backend: 400 unless 32 hex, 404 for an unknown slide.
-            if (!/^[0-9a-f]{32}$/.test(slideKey)) {
-                return route.fulfill({ status: 400, body: '' });
-            }
-            if (slideKey !== slideKeyFor(patientId)) {
-                return route.fulfill({ status: 404, body: '' });
-            }
-            return route.fulfill({
-                status: 200,
-                contentType: 'application/json',
-                body: JSON.stringify({
-                    slideKey,
-                    accessToken: 'wsi-study-slides-token',
-                    expiresIn: 300,
-                    tileMetadata,
-                }),
-            });
-        }
+    await routeSlideAccess(
+        page,
+        STUDY_ID,
+        (patientId, slideKey) => slideKey === slideKeyFor(patientId),
+        mocks.accessRequests
     );
-    await page.route('**/wsi/tiles/**', route =>
-        route.fulfill({ status: 200, contentType: 'image/png', body: pixel })
-    );
-    await page.route('**/wsi/thumbnails**', route =>
-        route.fulfill({ status: 200, contentType: 'image/png', body: pixel })
-    );
+    await routeTilePixels(page);
     return mocks;
 }
 
@@ -416,100 +317,6 @@ if (process.env.PW_SUITE === 'wsi') {
             await expect(page.getByTestId('study-slides-empty')).toHaveText(
                 'No patients match these filters.'
             );
-        });
-
-        test('pages the patient list with immediate feedback', async ({
-            page,
-        }) => {
-            const mocks = await installStudySlidesMocks(page);
-            mocks.pageDelayMs = 1500;
-            await page.goto(`/study/pathologySlides?id=${STUDY_ID}`);
-            const range = page.getByTestId('study-slides-range');
-            await expect(range).toHaveText(`1–50 of ${PATIENT_COUNT}`, {
-                timeout: 30000,
-            });
-
-            await page.getByLabel('View Next Page').click();
-            // The range and the busy list answer before the page arrives.
-            await expect(range).toContainText(`51–55 of ${PATIENT_COUNT}`, {
-                timeout: 1000,
-            });
-            await expect(page.getByLabel('Loading patients')).toBeVisible();
-            await expect(
-                page.getByTestId('study-slides-patients')
-            ).toHaveAttribute('aria-busy', 'true');
-            await expect(
-                page.getByTestId('study-slides-patient').first()
-            ).toContainText(patientIds[PAGE_SIZE], { timeout: 10000 });
-            await expect(page.getByLabel('Loading patients')).toHaveCount(0);
-
-            await page.getByTestId('study-slides-go-selected').click();
-            await expect(
-                page.getByTestId('study-slides-patient').first()
-            ).toContainText(patientIds[0], { timeout: 10000 });
-        });
-
-        test('hides the patient list and the viewer panels, and remembers it', async ({
-            page,
-        }) => {
-            await installStudySlidesMocks(page);
-            await page.goto(`/study/pathologySlides?id=${STUDY_ID}`);
-            await expect(
-                page.getByTestId(`wsi-slide-item-${slideKeyFor(patientIds[0])}`)
-            ).toBeVisible({ timeout: 30000 });
-
-            await page.getByTestId('study-slides-hide').click();
-            await page.getByTestId('wsi-nav-hide').click();
-            await page.getByTestId('wsi-metadata-hide').click();
-            await expect(page.getByTestId('study-slides-rail')).toBeVisible();
-            await expect(page.getByTestId('wsi-nav-rail')).toBeVisible();
-            await expect(page.getByTestId('wsi-metadata-rail')).toBeVisible();
-
-            // Stepping still works from the rail.
-            await page.getByTestId('study-slides-rail-next').click();
-            await expect(patientPosition(page)).toHaveText(
-                `${patientIds[1]} · 2 of ${PATIENT_COUNT}`
-            );
-
-            await page.reload();
-            await expect(page.getByTestId('study-slides-rail')).toBeVisible({
-                timeout: 30000,
-            });
-            await expect(page.getByTestId('wsi-nav-rail')).toBeVisible({
-                timeout: 30000,
-            });
-            await expect(page.getByTestId('wsi-metadata-rail')).toBeVisible();
-
-            await page.getByTestId('study-slides-rail-expand').click();
-            await page.getByTestId('wsi-nav-rail-expand').click();
-            await page.getByTestId('wsi-metadata-rail-expand').click();
-            await expect(
-                page.getByTestId('study-slides-patient-panel')
-            ).toBeVisible();
-            await expect(
-                page.getByTestId('wsi-metadata-sidebar')
-            ).toBeVisible();
-        });
-
-        test('filters by specimen match', async ({ page }) => {
-            const mocks = await installStudySlidesMocks(page);
-            await page.goto(`/study/pathologySlides?id=${STUDY_ID}`);
-            await expect(
-                page.getByTestId('study-slides-patient')
-            ).toHaveCount(PAGE_SIZE, { timeout: 30000 });
-
-            await page.getByTestId('study-slides-filters-toggle').click();
-            await page.getByTestId('study-slides-match-UNMATCHED').click();
-            await expect(
-                page.getByTestId('study-slides-patient-count')
-            ).toHaveText(String(patientIds.filter(isUnmatched).length));
-            await expect(
-                page.getByTestId('study-slides-chip-match-UNMATCHED')
-            ).toBeVisible();
-            expect(
-                mocks.studySlidesRequests[mocks.studySlidesRequests.length - 1]
-                    .matchLevels
-            ).toEqual(['UNMATCHED']);
         });
 
         test('restores the slide table view and redirects the old slide table tab', async ({

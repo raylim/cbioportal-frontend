@@ -12,7 +12,12 @@ import {
     StudySlidesRequest,
     StudySlidesRequestError,
 } from './studySlidesApi';
-import { settle, studySlidesPageFor } from './studySlidesTestServer';
+import {
+    settle as settleRequests,
+    studySlidesPageFor,
+} from './studySlidesTestServer';
+
+const settle = () => act(settleRequests);
 
 const mockViewer = jest.fn((_props: Record<string, unknown>) => null);
 
