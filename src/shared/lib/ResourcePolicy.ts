@@ -2,14 +2,15 @@ import { ResourceData } from 'cbioportal-ts-api-client';
 import { WsiStainFilter } from 'cbioportal-wsi-viewer';
 import { getServerConfig } from 'config/config';
 import { PatientViewPageTabs } from 'pages/patientView/PatientViewPageTabIds';
+import { PathologySlideSettings } from 'pages/patientView/PatientViewUrlWrapper';
 
 // H&E slide resources that the native viewer replaces. Every H&E resource on
 // the public and MSK portals uses one of these IDs.
 const LEGACY_HE_RESOURCE_IDS = new Set(['HE', 'MSK_HNE']);
-// Whole-slide images are stored as these resources, one row per slide (1.7M
-// for MSK-IMPACT). The patient view reaches slides through its Pathology
-// Slides tab; study view lists WSI_SAMPLE as its slide table, which the
-// backend serves with only the allowlisted public slide fields.
+// Whole-slide images are stored as these resources, one row per slide. The
+// patient view reaches slides through its Pathology Slides tab; study view
+// lists WSI_SAMPLE as its slide table, which the backend serves with only the
+// allowlisted public slide fields.
 const WSI_RESOURCE_IDS = new Set(['WSI_SAMPLE', 'WSI_PATIENT']);
 export const STUDY_SLIDE_TABLE_RESOURCE_ID = 'WSI_SAMPLE';
 
@@ -31,18 +32,6 @@ export function shouldHideLegacyHeResourceTab(
     return !!resourceId && isWsiTileServerConfigured()
         ? LEGACY_HE_RESOURCE_IDS.has(resourceId)
         : false;
-}
-
-/**
- * The study's resource definitions Files & Links lists: legacy H&E ones give way to the slide
- * viewer, so a study with only those has no Files & Links tab.
- */
-export function visibleStudyResourceDefinitions<
-    T extends { resourceId: string }
->(definitions: T[]): T[] {
-    return definitions.filter(
-        d => !shouldHideLegacyHeResourceTab(d.resourceId)
-    );
 }
 
 /**
@@ -110,7 +99,7 @@ export function slideStainFilterForColumnFilters(
         operator: string;
         values?: string[];
     }>
-): string | undefined {
+): WsiStainFilter | undefined {
     const stainGroup = filters.filter(
         filter => filter.columnId === 'metadata:stain_group'
     );
@@ -126,10 +115,11 @@ export function slideStainFilterForColumnFilters(
 
 /** The patient view query that opens Pathology Slides with this stain filter. */
 export function slideStainFilterQuery(
-    stainFilter: string | undefined
+    stainFilter: WsiStainFilter | undefined
 ): { pathologySlideSettings?: string } {
+    const settings: PathologySlideSettings = { stainFilter };
     return stainFilter
-        ? { pathologySlideSettings: JSON.stringify({ stainFilter }) }
+        ? { pathologySlideSettings: JSON.stringify(settings) }
         : {};
 }
 
