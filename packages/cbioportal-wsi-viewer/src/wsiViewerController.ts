@@ -24,7 +24,6 @@ import {
     promoteOsdImageLoaderLimit,
     reopenOsdViewer,
     restoreOrHomeViewport,
-    scheduleOsdSpinnerHide,
 } from './wsiOsdUtils';
 import { getWsiSlideAccess, getWsiSourceFingerprint } from './wsiAuth';
 import { WsiAgentViewport } from './wsiAgent';
@@ -32,7 +31,6 @@ import { buildWsiRequestHeaders } from './wsiUrls';
 import { fetchWsiThumbnailBlob } from './wsiThumbnailFetchCache';
 import {
     PatientHierarchy,
-    PathologySlideFilter,
     Sample,
     Slide,
     TileMetadata,
@@ -82,7 +80,6 @@ export interface WsiViewerControllerHost {
     getProps(): {
         studyId: string;
         patientId: string;
-        pathologyFilter?: PathologySlideFilter;
         authScope: string;
     };
     resetHierarchyLoadState(): void;
@@ -135,10 +132,30 @@ type MountTimer =
     | 'selectionTimeoutTimer'
     | 'writeHashTimer';
 
+/**
+ * Runs `run` when the browser is idle (at most `idleTimeoutMs` later), or
+ * after `fallbackMs` without requestIdleCallback. Returns a cancel function.
+ */
+function scheduleIdle(
+    run: () => void,
+    idleTimeoutMs: number,
+    fallbackMs: number
+): () => void {
+    if (
+        typeof window !== 'undefined' &&
+        typeof window.requestIdleCallback === 'function'
+    ) {
+        const handle = window.requestIdleCallback(run, {
+            timeout: idleTimeoutMs,
+        });
+        return () => window.cancelIdleCallback?.(handle);
+    }
+    const timer = setTimeout(run, fallbackMs);
+    return () => clearTimeout(timer);
+}
+
 export class WsiViewerController {
-    private static readonly METADATA_PREFETCH_CONCURRENCY = 3;
     private static readonly METADATA_PREFETCH_LIMIT = 3;
-    private static readonly METADATA_PREFETCH_BATCH_DELAY_MS = 150;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     private osdViewer: any = null;
     /** Whether `osdViewer` shows, or is opening, the current mount's slide. */
@@ -177,16 +194,13 @@ export class WsiViewerController {
     private hierarchyLoadSeq = 0;
     private hierarchyAbortController: AbortController | null = null;
     private backgroundWorkStarted = false;
-    private backgroundWorkScheduled = false;
-    private backgroundWorkIdleHandle: number | null = null;
-    private backgroundWorkTimer: ReturnType<typeof setTimeout> | null = null;
+    /** Cancels the scheduled metadata prefetch; null when none is pending. */
+    private cancelScheduledBackgroundWork: (() => void) | null = null;
     private sampleEnrichmentStarted = false;
-    private sampleEnrichmentScheduled = false;
-    private sampleEnrichmentIdleHandle: number | null = null;
-    private sampleEnrichmentTimer: ReturnType<typeof setTimeout> | null = null;
-    private navigatorScheduled = false;
-    private navigatorIdleHandle: number | null = null;
-    private navigatorTimer: ReturnType<typeof setTimeout> | null = null;
+    /** Cancels the scheduled sample enrichment; null when none is pending. */
+    private cancelScheduledSampleEnrichment: (() => void) | null = null;
+    /** Cancels the scheduled navigator setup or its retry. */
+    private cancelScheduledNavigator: (() => void) | null = null;
     private selectionWaiters = new Map<
         number,
         {
@@ -303,51 +317,18 @@ export class WsiViewerController {
     }
 
     private cancelBackgroundWorkSchedule() {
-        if (
-            this.backgroundWorkIdleHandle !== null &&
-            typeof window !== 'undefined' &&
-            typeof window.cancelIdleCallback === 'function'
-        ) {
-            window.cancelIdleCallback(this.backgroundWorkIdleHandle);
-        }
-        this.backgroundWorkIdleHandle = null;
-        if (this.backgroundWorkTimer !== null) {
-            clearTimeout(this.backgroundWorkTimer);
-            this.backgroundWorkTimer = null;
-        }
-        this.backgroundWorkScheduled = false;
+        this.cancelScheduledBackgroundWork?.();
+        this.cancelScheduledBackgroundWork = null;
     }
 
     private cancelSampleEnrichmentSchedule() {
-        if (
-            this.sampleEnrichmentIdleHandle !== null &&
-            typeof window !== 'undefined' &&
-            typeof window.cancelIdleCallback === 'function'
-        ) {
-            window.cancelIdleCallback(this.sampleEnrichmentIdleHandle);
-        }
-        this.sampleEnrichmentIdleHandle = null;
-        if (this.sampleEnrichmentTimer !== null) {
-            clearTimeout(this.sampleEnrichmentTimer);
-            this.sampleEnrichmentTimer = null;
-        }
-        this.sampleEnrichmentScheduled = false;
+        this.cancelScheduledSampleEnrichment?.();
+        this.cancelScheduledSampleEnrichment = null;
     }
 
     private cancelNavigatorSchedule() {
-        if (
-            this.navigatorIdleHandle !== null &&
-            typeof window !== 'undefined' &&
-            typeof window.cancelIdleCallback === 'function'
-        ) {
-            window.cancelIdleCallback(this.navigatorIdleHandle);
-        }
-        this.navigatorIdleHandle = null;
-        if (this.navigatorTimer !== null) {
-            clearTimeout(this.navigatorTimer);
-            this.navigatorTimer = null;
-        }
-        this.navigatorScheduled = false;
+        this.cancelScheduledNavigator?.();
+        this.cancelScheduledNavigator = null;
     }
 
     /**
@@ -659,9 +640,7 @@ export class WsiViewerController {
         this.hierarchyAbortController = abortController;
         this.resetMount();
         this.backgroundWorkStarted = false;
-        this.backgroundWorkScheduled = false;
         this.sampleEnrichmentStarted = false;
-        this.sampleEnrichmentScheduled = false;
         this.initialSlideKey = undefined;
         this.cancelBackgroundWorkSchedule();
         this.cancelSampleEnrichmentSchedule();
@@ -744,16 +723,14 @@ export class WsiViewerController {
     private scheduleSampleEnrichment(expectedLoadSeq: number) {
         if (
             this.sampleEnrichmentStarted ||
-            this.sampleEnrichmentScheduled ||
+            this.cancelScheduledSampleEnrichment ||
             !this.host.getProps().studyId
         ) {
             return;
         }
 
         const runSampleEnrichment = () => {
-            this.sampleEnrichmentIdleHandle = null;
-            this.sampleEnrichmentTimer = null;
-            this.sampleEnrichmentScheduled = false;
+            this.cancelScheduledSampleEnrichment = null;
             if (
                 this.sampleEnrichmentStarted ||
                 !this.shouldContinueBackgroundWork(expectedLoadSeq) ||
@@ -766,19 +743,19 @@ export class WsiViewerController {
             void this.enrichSamplesFromCbioportal(expectedLoadSeq);
         };
 
-        this.sampleEnrichmentScheduled = true;
         // Mutation data is part of the initial sidebar contract. Schedule it on
         // the next task instead of waiting for requestIdleCallback or the first
         // tile; a slow/failed tile load must not prevent the variant table from
         // hydrating.
-        this.sampleEnrichmentTimer = setTimeout(runSampleEnrichment, 0);
+        const timer = setTimeout(runSampleEnrichment, 0);
+        this.cancelScheduledSampleEnrichment = () => clearTimeout(timer);
     }
 
     private startBackgroundWorkIfReady(seq: number) {
         if (
             seq !== this.mountSeq ||
             this.backgroundWorkStarted ||
-            this.backgroundWorkScheduled ||
+            this.cancelScheduledBackgroundWork ||
             !this.initialSlideKey
         ) {
             return;
@@ -786,9 +763,7 @@ export class WsiViewerController {
 
         const expectedLoadSeq = this.hierarchyLoadSeq;
         const runBackgroundWork = () => {
-            this.backgroundWorkIdleHandle = null;
-            this.backgroundWorkTimer = null;
-            this.backgroundWorkScheduled = false;
+            this.cancelScheduledBackgroundWork = null;
             if (
                 seq !== this.mountSeq ||
                 this.backgroundWorkStarted ||
@@ -804,25 +779,17 @@ export class WsiViewerController {
             );
         };
 
-        this.backgroundWorkScheduled = true;
-        if (
-            typeof window !== 'undefined' &&
-            typeof window.requestIdleCallback === 'function'
-        ) {
-            this.backgroundWorkIdleHandle = window.requestIdleCallback(
-                runBackgroundWork,
-                { timeout: 1500 }
-            );
-            return;
-        }
-
-        this.backgroundWorkTimer = setTimeout(runBackgroundWork, 300);
+        this.cancelScheduledBackgroundWork = scheduleIdle(
+            runBackgroundWork,
+            1500,
+            300
+        );
     }
 
     private scheduleNavigatorIfReady(seq: number) {
         if (
             seq !== this.mountSeq ||
-            this.navigatorScheduled ||
+            this.cancelScheduledNavigator ||
             !this.osdViewer ||
             this.osdViewer.navigator ||
             !this.openSeadragon ||
@@ -836,9 +803,7 @@ export class WsiViewerController {
         const meta = this.host.getSelectedMeta()!;
         const expectedMountSeq = this.mountSeq;
         const runNavigatorSetup = async () => {
-            this.navigatorIdleHandle = null;
-            this.navigatorTimer = null;
-            this.navigatorScheduled = false;
+            this.cancelScheduledNavigator = null;
             if (
                 expectedMountSeq !== this.mountSeq ||
                 !this.osdViewer ||
@@ -871,26 +836,19 @@ export class WsiViewerController {
                 });
             } catch (_) {
                 if (expectedMountSeq !== this.mountSeq) return;
-                this.navigatorTimer = setTimeout(() => {
-                    this.navigatorTimer = null;
+                const retry = setTimeout(() => {
+                    this.cancelScheduledNavigator = null;
                     this.scheduleNavigatorIfReady(expectedMountSeq);
                 }, 5000);
+                this.cancelScheduledNavigator = () => clearTimeout(retry);
             }
         };
 
-        this.navigatorScheduled = true;
-        if (
-            typeof window !== 'undefined' &&
-            typeof window.requestIdleCallback === 'function'
-        ) {
-            this.navigatorIdleHandle = window.requestIdleCallback(
-                runNavigatorSetup,
-                { timeout: 750 }
-            );
-            return;
-        }
-
-        this.navigatorTimer = setTimeout(runNavigatorSetup, 150);
+        this.cancelScheduledNavigator = scheduleIdle(
+            runNavigatorSetup,
+            750,
+            150
+        );
     }
 
     /** Tile metadata comes with the slide access, which is cached. */
@@ -915,41 +873,12 @@ export class WsiViewerController {
             }
         );
 
-        for (
-            let index = 0;
-            index < prioritizedSlides.length;
-            index += WsiViewerController.METADATA_PREFETCH_CONCURRENCY
-        ) {
-            if (!this.shouldContinueBackgroundWork(expectedLoadSeq)) return;
-
-            const batchRequests: Array<Promise<TileMetadata>> = [];
-            const batchEnd = Math.min(
-                index + WsiViewerController.METADATA_PREFETCH_CONCURRENCY,
-                prioritizedSlides.length
-            );
-            for (
-                let batchIndex = index;
-                batchIndex < batchEnd;
-                batchIndex += 1
-            ) {
-                batchRequests.push(
-                    this.fetchSlideMetadata(
-                        prioritizedSlides[batchIndex].slide_key
-                    )
-                );
-            }
-            await Promise.allSettled(batchRequests);
-            if (!this.shouldContinueBackgroundWork(expectedLoadSeq)) return;
-
-            if (batchEnd < prioritizedSlides.length) {
-                await new Promise(resolve =>
-                    setTimeout(
-                        resolve,
-                        WsiViewerController.METADATA_PREFETCH_BATCH_DELAY_MS
-                    )
-                );
-            }
-        }
+        if (!this.shouldContinueBackgroundWork(expectedLoadSeq)) return;
+        await Promise.allSettled(
+            prioritizedSlides.map(slide =>
+                this.fetchSlideMetadata(slide.slide_key)
+            )
+        );
     }
 
     private async enrichSamplesFromCbioportal(
@@ -1306,20 +1235,18 @@ export class WsiViewerController {
             if (didMarkNativeTileReady) return;
             didMarkNativeTileReady = true;
             this.nativeTileReadySeq = seq;
-            const hideSpinner = () => this.hideSpinnerForMount(seq);
-            if (
-                Date.now() - this.loadingStart >=
-                WsiViewerController.MIN_SPINNER_MS
-            ) {
-                hideSpinner();
+            const remainingMs =
+                WsiViewerController.MIN_SPINNER_MS -
+                (Date.now() - this.loadingStart);
+            if (remainingMs <= 0) {
+                this.hideSpinnerForMount(seq);
                 return;
             }
-            this.spinnerTimer = scheduleOsdSpinnerHide({
-                existingTimer: this.spinnerTimer,
-                hideSpinner,
-                loadingStart: this.loadingStart,
-                minimumSpinnerMs: WsiViewerController.MIN_SPINNER_MS,
-            });
+            this.clearTimer('spinnerTimer');
+            this.spinnerTimer = setTimeout(
+                () => this.hideSpinnerForMount(seq),
+                remainingMs
+            );
         };
         const markNativeTileDrawn = () => {
             if (didMarkNativeTileDrawn) return;
@@ -1594,7 +1521,7 @@ export class WsiViewerController {
             this.agentSourceFingerprint = getWsiSourceFingerprint(access);
             // Reuse needs an idle viewer: tile requests of the previous slide
             // still in flight would hold loader slots ahead of this slide's
-            // cold open. A busy viewer is rebuilt, as before.
+            // cold open. A busy viewer is rebuilt.
             const reusableViewer =
                 this.osdViewer?.element === containerEl &&
                 isOsdViewerIdle(this.osdViewer)
