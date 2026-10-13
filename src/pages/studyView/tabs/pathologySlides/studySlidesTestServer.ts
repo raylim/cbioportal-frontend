@@ -1,10 +1,14 @@
+// Type-only imports keep this module free of path aliases, so the Playwright
+// specs can import it too.
 import {
-    STUDY_SLIDE_STAIN_GROUPS,
     StudySlidePatient,
     StudySlidesPage,
     StudySlidesRequest,
     StudySlideStainCounts,
+    StudySlideStainGroup,
 } from './studySlidesApi';
+
+const STAIN_GROUPS: StudySlideStainGroup[] = ['H&E', 'IHC', 'Other', 'Unknown'];
 
 /**
  * The study-slides endpoint over a fixed patient list, for tests: honours the
@@ -31,7 +35,7 @@ export function studySlidesPageFor(
             p.patientId === request.locatePatientId
     );
     const stainGroupTotals = {} as StudySlideStainCounts;
-    STUDY_SLIDE_STAIN_GROUPS.forEach(
+    STAIN_GROUPS.forEach(
         group =>
             (stainGroupTotals[group] = patients.reduce(
                 (sum, p) => sum + p.stainGroupCounts[group],
@@ -50,4 +54,11 @@ export function studySlidesPageFor(
             (pageNumber + 1) * pageSize
         ),
     };
+}
+
+/** Lets pending requests and reactions run. */
+export async function settle() {
+    for (let i = 0; i < 10; i++) {
+        await new Promise(resolve => setTimeout(resolve, 0));
+    }
 }

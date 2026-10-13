@@ -17,7 +17,7 @@ import {
     StudySlidesPage,
     StudySlidesRequest,
 } from './studySlidesApi';
-import { studySlidesPageFor } from './studySlidesTestServer';
+import { settle, studySlidesPageFor } from './studySlidesTestServer';
 
 jest.mock('shared/api/urls', () => ({
     buildCBioPortalAPIUrl: (path: string) => `/${path}`,
@@ -47,12 +47,6 @@ function fakeServer(allPatients: () => StudySlidePatient[]) {
         return studySlidesPageFor(request, allPatients());
     });
     return { fetchPage, requests };
-}
-
-async function settle() {
-    for (let i = 0; i < 10; i++) {
-        await new Promise(resolve => setTimeout(resolve, 0));
-    }
 }
 
 describe('StudyPathologySlidesStore', () => {

@@ -3,11 +3,12 @@ import { observer } from 'mobx-react';
 import { CheckedSelect } from 'cbioportal-frontend-commons';
 import { components as SelectComponents } from 'react-select';
 import {
-    readWsiPanelFlag,
+    useWsiPanelFlag,
     WSI_SECTION_TITLE_STYLE,
     WSI_STAIN_COLORS,
     WSI_THEME,
-    writeWsiPanelFlag,
+    WsiFilterChip,
+    WsiFilterChipGroup,
 } from 'cbioportal-wsi-viewer';
 import {
     DEFAULT_FACET_ATTRIBUTE_IDS,
@@ -26,27 +27,6 @@ const C = WSI_THEME;
 /** Browser-stored open state of the filters section, which starts closed. */
 export const FILTERS_OPEN_KEY = 'wsi.study.filtersOpen';
 
-const MATCH_BUTTON_LABELS = {
-    PART: 'Part',
-    BLOCK: 'Block',
-    UNMATCHED: 'Unmatched',
-};
-
-/** Remembers a panel flag, such as its hidden or open state, per browser. */
-export function useStoredFlag(
-    key: string
-): [boolean, (value: boolean) => void] {
-    const [value, setValue] = React.useState(() => readWsiPanelFlag(key));
-    const update = React.useCallback(
-        (next: boolean) => {
-            setValue(next);
-            writeWsiPanelFlag(key, next);
-        },
-        [key]
-    );
-    return [value, update];
-}
-
 type SearchOption = { kind: 'id' } | StudySlidesSuggestion;
 
 const labelStyle: React.CSSProperties = {
@@ -54,21 +34,6 @@ const labelStyle: React.CSSProperties = {
     color: C.muted,
     marginBottom: 2,
 };
-
-export function StainDot({ group }: { group: StudySlideStainGroup }) {
-    return (
-        <i
-            className="fa fa-circle"
-            aria-hidden="true"
-            style={{
-                fontSize: 7,
-                marginRight: 3,
-                color: WSI_STAIN_COLORS[group],
-                verticalAlign: 'middle',
-            }}
-        />
-    );
-}
 
 function optionKey(option: SearchOption): string {
     switch (option.kind) {
@@ -592,26 +557,46 @@ const ClinicalFacet: React.FunctionComponent<{
     );
 });
 
-/** Clears one filter group; styled like the viewer's own "All" chip. */
-function AllButton({
-    active,
-    onClick,
-    testId,
+/**
+ * A multi-select filter group like the viewer's chips: All clears the
+ * group, and each other chip toggles its value.
+ */
+function MultiSelectChips<K extends string>({
+    label,
+    chipTestIdPrefix,
+    chips,
+    selected,
+    onToggle,
+    onClear,
 }: {
-    active: boolean;
-    onClick: () => void;
-    testId: string;
+    label: string;
+    chipTestIdPrefix: string;
+    chips: WsiFilterChip<K>[];
+    selected: K[];
+    onToggle: (key: K) => void;
+    onClear: () => void;
 }) {
     return (
-        <button
-            type="button"
-            className={`btn btn-xs ${active ? 'btn-primary' : 'btn-default'}`}
-            aria-pressed={active}
-            data-testid={testId}
-            onClick={() => !active && onClick()}
-        >
-            All
-        </button>
+        <div style={{ marginTop: 6 }}>
+            <div style={labelStyle}>{label}</div>
+            <WsiFilterChipGroup<K | 'all'>
+                label={label}
+                chipTestIdPrefix={chipTestIdPrefix}
+                chips={[{ key: 'all', label: 'All' }, ...chips]}
+                isActive={key =>
+                    key === 'all'
+                        ? selected.length === 0
+                        : selected.includes(key as K)
+                }
+                onSelect={key => {
+                    if (key !== 'all') {
+                        onToggle(key as K);
+                    } else if (selected.length > 0) {
+                        onClear();
+                    }
+                }}
+            />
+        </div>
     );
 }
 
@@ -620,7 +605,7 @@ export const StudySlidesFilterSection: React.FunctionComponent<{
     store: StudyPathologySlidesStore;
     stainGroupTotals: Record<StudySlideStainGroup, number>;
 }> = observer(({ store, stainGroupTotals }) => {
-    const [open, setOpen] = useStoredFlag(FILTERS_OPEN_KEY);
+    const [open, setOpen] = useWsiPanelFlag(FILTERS_OPEN_KEY);
     const collapsed = !open;
     const toggle = () => setOpen(!open);
     const activeCount =
@@ -678,108 +663,31 @@ export const StudySlidesFilterSection: React.FunctionComponent<{
                             facet={facet}
                         />
                     ))}
-                    <div style={{ marginTop: 6 }}>
-                        <div style={labelStyle}>Specimen match</div>
-                        <div
-                            role="group"
-                            aria-label="Specimen match"
-                            className="btn-group btn-group-xs"
-                        >
-                            <AllButton
-                                active={store.matchLevels.length === 0}
-                                testId="study-slides-match-all"
-                                onClick={store.clearMatchLevels}
-                            />
-                            {STUDY_SLIDE_MATCH_LEVELS.map(level => {
-                                const active = store.matchLevels.includes(
-                                    level
-                                );
-                                return (
-                                    <button
-                                        key={level}
-                                        type="button"
-                                        className={`btn btn-xs ${
-                                            active
-                                                ? 'btn-primary'
-                                                : 'btn-default'
-                                        }`}
-                                        aria-pressed={active}
-                                        data-testid={`study-slides-match-${level}`}
-                                        onClick={() =>
-                                            store.toggleMatchLevel(level)
-                                        }
-                                    >
-                                        {MATCH_BUTTON_LABELS[level]}
-                                        {typeof matchCounts?.[level] ===
-                                            'number' && (
-                                            <span
-                                                style={{
-                                                    marginLeft: 4,
-                                                    opacity: 0.8,
-                                                }}
-                                            >
-                                                (
-                                                {matchCounts[
-                                                    level
-                                                ].toLocaleString()}
-                                                )
-                                            </span>
-                                        )}
-                                    </button>
-                                );
-                            })}
-                        </div>
-                    </div>
-                    <div style={{ marginTop: 6 }}>
-                        <div style={labelStyle}>Stain</div>
-                        <div
-                            role="group"
-                            aria-label="Stain groups"
-                            className="btn-group btn-group-xs"
-                        >
-                            <AllButton
-                                active={store.stainGroups.length === 0}
-                                testId="study-slides-stain-all"
-                                onClick={store.clearStainGroups}
-                            />
-                            {STUDY_SLIDE_STAIN_GROUPS.map(group => {
-                                const active = store.stainGroups.includes(
-                                    group
-                                );
-                                return (
-                                    <button
-                                        key={group}
-                                        type="button"
-                                        className={`btn btn-xs ${
-                                            active
-                                                ? 'btn-primary'
-                                                : 'btn-default'
-                                        }`}
-                                        aria-pressed={active}
-                                        data-testid={`study-slides-stain-${group}`}
-                                        onClick={() =>
-                                            store.toggleStainGroup(group)
-                                        }
-                                    >
-                                        {!active && <StainDot group={group} />}
-                                        {group}
-                                        <span
-                                            style={{
-                                                marginLeft: 4,
-                                                opacity: 0.8,
-                                            }}
-                                        >
-                                            (
-                                            {stainGroupTotals[
-                                                group
-                                            ].toLocaleString()}
-                                            )
-                                        </span>
-                                    </button>
-                                );
-                            })}
-                        </div>
-                    </div>
+                    <MultiSelectChips
+                        label="Specimen match"
+                        chipTestIdPrefix="study-slides-match"
+                        chips={STUDY_SLIDE_MATCH_LEVELS.map(level => ({
+                            key: level,
+                            label: STUDY_SLIDE_MATCH_LABELS[level],
+                            count: matchCounts?.[level],
+                        }))}
+                        selected={store.matchLevels}
+                        onToggle={store.toggleMatchLevel}
+                        onClear={store.clearMatchLevels}
+                    />
+                    <MultiSelectChips
+                        label="Stain"
+                        chipTestIdPrefix="study-slides-stain"
+                        chips={STUDY_SLIDE_STAIN_GROUPS.map(group => ({
+                            key: group,
+                            label: group,
+                            color: WSI_STAIN_COLORS[group],
+                            count: stainGroupTotals[group],
+                        }))}
+                        selected={store.stainGroups}
+                        onToggle={store.toggleStainGroup}
+                        onClear={store.clearStainGroups}
+                    />
                     {addable.length > 0 && (
                         <select
                             aria-label="Add a clinical filter"

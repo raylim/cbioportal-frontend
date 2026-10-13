@@ -491,11 +491,16 @@ export class StudyPathologySlidesStore {
     /** Clears the tab's own filters; the study-view filters stay. */
     @action.bound
     clearSlideFilters() {
+        this.resetSlideFilters();
+        this.restartList();
+    }
+
+    @action
+    private resetSlideFilters() {
         this.stainGroups = [];
         this.matchLevels = [];
         this.searchText = '';
         this.applySearch();
-        this.restartList();
     }
 
     @computed get hasSlideFilters(): boolean {
@@ -723,17 +728,11 @@ export class StudyPathologySlidesStore {
             if (
                 this.selected &&
                 page.locatedIndex === null &&
-                (this.stainGroups.length > 0 ||
-                    this.matchLevels.length > 0 ||
-                    this.search !== '')
+                this.hasSlideFilters
             ) {
                 // The list's own filters hide the patient opened from the slide table: clear
                 // them rather than replace the patient.
-                this.stainGroups = [];
-                this.matchLevels = [];
-                this.search = '';
-                this.searchText = '';
-                this.restartList();
+                this.clearSlideFilters();
                 return;
             }
         }

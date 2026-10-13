@@ -104,8 +104,8 @@ import {
     isStudyViewResourceTab,
     isWsiTileServerConfigured,
     slideKeyFromSlideUrl,
+    shouldHideLegacyHeResourceTab,
     STUDY_SLIDE_TABLE_RESOURCE_ID,
-    visibleStudyResourceDefinitions,
 } from 'shared/lib/ResourcePolicy';
 import { IResourceTableRow } from 'shared/lib/ResourceTableUtils';
 import ResourceDataTable from 'shared/components/resourceTable/ResourceDataTable';
@@ -547,8 +547,10 @@ export default class StudyViewPage extends React.Component<
     }
 
     @computed get visibleResourceDefinitions() {
-        return visibleStudyResourceDefinitions(
-            this.store.resourceDefinitions.result || []
+        // Legacy H&E resources give way to the slide viewer, so a study with
+        // only those has no Files & Links tab.
+        return (this.store.resourceDefinitions.result || []).filter(
+            d => !shouldHideLegacyHeResourceTab(d.resourceId)
         );
     }
 
