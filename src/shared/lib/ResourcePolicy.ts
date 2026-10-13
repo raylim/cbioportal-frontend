@@ -5,10 +5,10 @@ import { PatientViewPageTabs } from 'pages/patientView/PatientViewPageTabIds';
 // H&E slide resources that the native viewer replaces. Every H&E resource on
 // the public and MSK portals uses one of these IDs.
 const LEGACY_HE_RESOURCE_IDS = new Set(['HE', 'MSK_HNE']);
-// Whole-slide images are stored as these resources, one row per slide (1.7M
-// for MSK-IMPACT). The patient view reaches slides through its Pathology
-// Slides tab; study view lists WSI_SAMPLE as its slide table, which the
-// backend serves with only the allowlisted public slide fields.
+// Whole-slide images are stored as these resources, one row per slide. The
+// patient view reaches slides through its Pathology Slides tab; study view
+// lists WSI_SAMPLE as its slide table, which the backend serves with only the
+// allowlisted public slide fields.
 const WSI_RESOURCE_IDS = new Set(['WSI_SAMPLE', 'WSI_PATIENT']);
 const STUDY_SLIDE_TABLE_RESOURCE_ID = 'WSI_SAMPLE';
 
