@@ -15,7 +15,6 @@ import {
     WsiStainFilter,
 } from './wsiViewerTypes';
 import {
-    getServableSlideAssociationsBySlideKeyReadOnly,
     getOrderedServableSlidesForSampleReadOnly,
     getServableSlideIdsForPathologyFilterReadOnly,
     matchesMatchFilter,
@@ -581,7 +580,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
             prev.studyId !== this.props.studyId ||
             prev.tileServerUrl !== this.props.tileServerUrl ||
             prev.patientId !== this.props.patientId ||
-            (pathologyFilterChanged && !this.canReusePathologyFilterLocally());
+            (pathologyFilterChanged && !this.hierarchy);
         const stainFilterChanged =
             prev.initialStainFilter !== this.props.initialStainFilter;
 
@@ -697,10 +696,6 @@ export default class WSIViewer extends React.Component<Props, {}> {
         return filter?.sampleId && !filter.matchLevel && !filter.specimenKey
             ? filter.sampleId
             : undefined;
-    }
-
-    private canReusePathologyFilterLocally(): boolean {
-        return !!this.hierarchy?.slide_associations?.length;
     }
 
     @action.bound
@@ -858,9 +853,6 @@ export default class WSIViewer extends React.Component<Props, {}> {
         }
 
         const preferredSlideKeys = this.preferredSlideKeys;
-        const associationsBySlideKey = getServableSlideAssociationsBySlideKeyReadOnly(
-            this.hierarchy.slide_associations
-        );
         const matchingSlides = servableSlides.filter(({ slide }) => {
             if (
                 preferredSlideKeys &&
@@ -871,10 +863,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
             if (!matchesWsiStainFilter(slide, this.stainFilter)) {
                 return false;
             }
-            return matchesMatchFilter(
-                associationsBySlideKey.get(slide.slide_key),
-                this.matchFilter
-            );
+            return matchesMatchFilter(slide, this.matchFilter);
         });
         if (!matchingSlides.length) {
             this.controller.clearSelectedSlide();
@@ -1047,12 +1036,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
             this.selectedSlide,
             this.selectedSample,
             this.props.patientId,
-            this.props.studyId,
-            this.hierarchy
-                ? getServableSlideAssociationsBySlideKeyReadOnly(
-                      this.hierarchy.slide_associations
-                  ).get(this.selectedSlide.slide_key)
-                : undefined
+            this.props.studyId
         );
     }
 

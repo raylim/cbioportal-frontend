@@ -5,13 +5,11 @@ import {
     PathologySlideMatchFilter,
     Sample,
     Slide,
-    SlideAssociation,
     WsiStainFilter,
 } from './wsiViewerTypes';
 import {
     countServableSlidesForSample,
     getOrderedServableSlidesForSampleReadOnly,
-    getServableSlideAssociationsBySlideKeyReadOnly,
     matchesMatchFilter,
     matchesWsiStainFilter,
     sampleHasMultiplePartDescriptions,
@@ -136,13 +134,12 @@ function shouldShowSampleInNavigation(sample: Sample): boolean {
 
 function matchesSlideFilters(
     slide: Slide,
-    association: SlideAssociation | undefined,
     stainFilter: WsiStainFilter,
     matchFilter: PathologySlideMatchFilter
 ): boolean {
     return (
         matchesWsiStainFilter(slide, stainFilter) &&
-        matchesMatchFilter(association, matchFilter)
+        matchesMatchFilter(slide, matchFilter)
     );
 }
 
@@ -186,13 +183,6 @@ function WsiNavPanelComponent({
     authScope,
     onHide,
 }: WsiNavPanelProps) {
-    const associationsBySlideKey = React.useMemo(
-        () =>
-            getServableSlideAssociationsBySlideKeyReadOnly(
-                hierarchy.slide_associations
-            ),
-        [hierarchy.slide_associations]
-    );
     const selectedSlideId = selectedSlide?.slide_key;
     const unscopedSampleEntries = React.useMemo(
         () =>
@@ -254,12 +244,7 @@ function WsiNavPanelComponent({
             allSampleEntries.reduce<FilteredSampleEntry[]>((entries, entry) => {
                 const filteredSlides = entry.filteredSlides.filter(
                     ({ slide }) =>
-                        matchesSlideFilters(
-                            slide,
-                            associationsBySlideKey.get(slide.slide_key),
-                            stainFilter,
-                            matchFilter
-                        )
+                        matchesSlideFilters(slide, stainFilter, matchFilter)
                 );
                 if (filteredSlides.length) {
                     entries.push({
@@ -272,7 +257,7 @@ function WsiNavPanelComponent({
                 }
                 return entries;
             }, []),
-        [allSampleEntries, associationsBySlideKey, matchFilter, stainFilter]
+        [allSampleEntries, matchFilter, stainFilter]
     );
     const sampleEntries = React.useMemo(() => {
         const sorted = [...filteredSampleEntries].sort((left, right) =>
@@ -334,15 +319,12 @@ function WsiNavPanelComponent({
     );
     const hiddenSampleCount =
         filteredSampleEntries.length - sampleEntries.length;
-    const facetSlideEntries = React.useMemo(
+    const facetSlides = React.useMemo(
         () =>
             unscopedSampleEntries.flatMap(entry =>
-                entry.filteredSlides.map(({ slide }) => ({
-                    slide,
-                    association: associationsBySlideKey.get(slide.slide_key),
-                }))
+                entry.filteredSlides.map(({ slide }) => slide)
             ),
-        [associationsBySlideKey, unscopedSampleEntries]
+        [unscopedSampleEntries]
     );
     const chips: Array<{
         key: WsiStainFilter;
@@ -372,8 +354,8 @@ function WsiNavPanelComponent({
             other: 0,
             unknown: 0,
         };
-        facetSlideEntries.forEach(({ slide, association }) => {
-            if (!matchesMatchFilter(association, matchFilter)) {
+        facetSlides.forEach(slide => {
+            if (!matchesMatchFilter(slide, matchFilter)) {
                 return;
             }
             filteredCounts.all += 1;
@@ -389,22 +371,21 @@ function WsiNavPanelComponent({
         });
 
         return filteredCounts;
-    }, [facetSlideEntries, matchFilter]);
+    }, [facetSlides, matchFilter]);
     const matchCounts = React.useMemo(() => {
         const filteredCounts = { part: 0, block: 0, unmatched: 0 };
-        facetSlideEntries.forEach(({ slide, association }) => {
-            const matchesStain = matchesWsiStainFilter(slide, stainFilter);
-            if (!matchesStain || !association) {
+        facetSlides.forEach(slide => {
+            if (!matchesWsiStainFilter(slide, stainFilter)) {
                 return;
             }
-            if (association.match_level === 'PART') filteredCounts.part += 1;
-            if (association.match_level === 'BLOCK') filteredCounts.block += 1;
-            if (association.match_level === 'UNMATCHED') {
+            if (slide.match_level === 'PART') filteredCounts.part += 1;
+            if (slide.match_level === 'BLOCK') filteredCounts.block += 1;
+            if (slide.match_level === 'UNMATCHED') {
                 filteredCounts.unmatched += 1;
             }
         });
         return filteredCounts;
-    }, [facetSlideEntries, stainFilter]);
+    }, [facetSlides, stainFilter]);
 
     return (
         <div
@@ -627,7 +608,6 @@ function WsiNavPanelComponent({
                             dataVersion={dataVersion}
                             sampleIndex={index}
                             selectedSlide={selectedSlide}
-                            associationsBySlideKey={associationsBySlideKey}
                             onSelectSlide={onSelectSlide}
                             tileServerBase={tileServerBase}
                             studyId={studyId}
@@ -660,7 +640,6 @@ function SampleNode({
     sampleIndex,
     selectedSlide,
     filteredSlides,
-    associationsBySlideKey,
     onSelectSlide,
     tileServerBase,
     studyId,
@@ -672,7 +651,6 @@ function SampleNode({
     dataVersion: number;
     sampleIndex: number;
     selectedSlide: Slide | null;
-    associationsBySlideKey: Map<string, SlideAssociation>;
     onSelectSlide: (slide: Slide, sample: Sample) => void;
     tileServerBase: string;
     studyId: string;
@@ -849,9 +827,6 @@ function SampleNode({
                             slide={slide}
                             sample={sample}
                             blockLabel={blockLabel}
-                            association={associationsBySlideKey.get(
-                                slide.slide_key
-                            )}
                             multiPart={multiPart}
                             selected={
                                 selectedSlide?.slide_key === slide.slide_key
@@ -875,7 +850,6 @@ const MemoSampleNode = React.memo(SampleNode, (prev, next) => {
         prev.dataVersion !== next.dataVersion ||
         prev.sampleIndex !== next.sampleIndex ||
         prev.filteredSlides !== next.filteredSlides ||
-        prev.associationsBySlideKey !== next.associationsBySlideKey ||
         prev.onSelectSlide !== next.onSelectSlide ||
         prev.tileServerBase !== next.tileServerBase ||
         prev.studyId !== next.studyId ||
@@ -898,7 +872,6 @@ function SlideItem({
     slide,
     sample,
     blockLabel,
-    association,
     multiPart,
     selected,
     onSelectSlide,
@@ -909,7 +882,6 @@ function SlideItem({
     slide: Slide;
     sample: Sample;
     blockLabel: string | null;
-    association: SlideAssociation | undefined;
     multiPart: boolean;
     selected: boolean;
     onSelectSlide: (slide: Slide, sample: Sample) => void;
@@ -939,9 +911,9 @@ function SlideItem({
         .filter(Boolean)
         .join(' · ');
     const matchBadge =
-        association?.match_level === 'BLOCK'
+        slide.match_level === 'BLOCK'
             ? { label: 'Block', color: '#2f7d32' }
-            : association?.match_level === 'PART'
+            : slide.match_level === 'PART'
             ? { label: 'Part', color: '#476f9e' }
             : undefined;
 
