@@ -1,10 +1,10 @@
 import { ClinicalEvent } from 'cbioportal-ts-api-client';
+import { PatientHierarchy } from 'cbioportal-wsi-viewer';
 import {
+    hasServableSlide,
     loadPathologySlidesTimeline,
     PathologySlidesTimelineModule,
     PathologySlidesTimelineRequest,
-    patientWsiSlideCount,
-    undatedPathologySlideCount,
     withPathologySlideEvents,
 } from './pathologySlidesTimelineLoader';
 
@@ -14,11 +14,41 @@ const SLIDE_EVENT = {
     attributes: [],
 } as any;
 
-function slideCount(value: string) {
-    return [
-        { clinicalAttributeId: 'SAMPLE_COUNT', value: '1' },
-        { clinicalAttributeId: 'WSI_PATIENT_SLIDE_COUNT', value },
-    ];
+function hierarchyWith(canServeTiles: boolean[]): PatientHierarchy {
+    return {
+        patient_id: 'P-0000024',
+        samples: [
+            {
+                sample_id: 'S-1',
+                parts: [
+                    {
+                        part_number: '1',
+                        part_type: '',
+                        part_description: '',
+                        subspecialty: '',
+                        blocks: [
+                            {
+                                block_number: '1',
+                                block_label: 'A1',
+                                slides: canServeTiles.map((serves, i) => ({
+                                    slide_key: `slide-${i}`,
+                                    stain_name: 'H&E',
+                                    stain_group: 'H&E',
+                                    is_hne: true,
+                                    is_ihc: false,
+                                    magnification: '',
+                                    file_size_bytes: '',
+                                    can_serve_tiles: serves,
+                                    block_label: 'A1',
+                                    block_number: '1',
+                                })),
+                            },
+                        ],
+                    },
+                ],
+            },
+        ],
+    };
 }
 
 function request(
@@ -26,7 +56,6 @@ function request(
 ): PathologySlidesTimelineRequest {
     return {
         tileServerUrl: '/wsi',
-        clinicalDataPatient: slideCount('10'),
         studyId: 'mskimpact',
         patientId: 'P-0000024',
         authScope: 'user-1',
@@ -45,62 +74,40 @@ function mockModule(
     return { module, importModule };
 }
 
-describe('patientWsiSlideCount', () => {
-    it('reads WSI_PATIENT_SLIDE_COUNT', () => {
-        expect(patientWsiSlideCount(slideCount('77'))).toBe(77);
-    });
+const loadedTimeline = () =>
+    mockModule(() =>
+        Promise.resolve({
+            events: [SLIDE_EVENT],
+            undatedViewableSlideCount: 2,
+        })
+    );
 
-    it('is 0 when the attribute is missing or not a number', () => {
-        expect(patientWsiSlideCount([])).toBe(0);
-        expect(patientWsiSlideCount(slideCount('NA'))).toBe(0);
-    });
-});
-
-describe('undatedPathologySlideCount', () => {
-    const timeline = (undatedViewableSlideCount: number) =>
-        ({ events: [], undatedViewableSlideCount } as any);
-    const precomputed = (value: string) => [
-        ...slideCount('10'),
-        { clinicalAttributeId: 'WSI_PATIENT_UNDATED_SLIDE_COUNT', value },
-    ];
-
-    it('uses the precomputed attribute without waiting for the timeline', () => {
-        expect(undatedPathologySlideCount(precomputed('3'), undefined)).toBe(3);
-        expect(undatedPathologySlideCount(precomputed('0'), timeline(5))).toBe(
-            0
-        );
-    });
-
-    it('falls back to the hierarchy count when the attribute is missing', () => {
-        expect(undatedPathologySlideCount(slideCount('10'), timeline(2))).toBe(
-            2
-        );
-        expect(undatedPathologySlideCount(precomputed('NA'), timeline(2))).toBe(
-            2
-        );
-    });
-
-    it('is undefined until the fallback timeline has loaded', () => {
-        expect(
-            undatedPathologySlideCount(slideCount('10'), undefined)
-        ).toBeUndefined();
+describe('hasServableSlide', () => {
+    it('needs a slide the viewer can open', () => {
+        expect(hasServableSlide(hierarchyWith([false, true]))).toBe(true);
+        expect(hasServableSlide(hierarchyWith([false]))).toBe(false);
+        expect(hasServableSlide({ patient_id: 'P', samples: [] })).toBe(false);
     });
 });
 
 describe('loadPathologySlidesTimeline', () => {
-    it('loads the slide events and track for a patient with slides', async () => {
-        const { module, importModule } = mockModule(() =>
-            Promise.resolve({
-                events: [SLIDE_EVENT],
-                undatedViewableSlideCount: 2,
-            })
+    it('loads the slide events and track for a patient with servable slides', async () => {
+        const { module, importModule } = loadedTimeline();
+        const fetchHierarchy = jest.fn(() =>
+            Promise.resolve(hierarchyWith([true]))
         );
 
         const timeline = await loadPathologySlidesTimeline(
             request(),
-            importModule
+            importModule,
+            fetchHierarchy
         );
 
+        expect(fetchHierarchy).toHaveBeenCalledWith(
+            'mskimpact',
+            'P-0000024',
+            'user-1'
+        );
         expect(importModule).toHaveBeenCalledTimes(1);
         expect(module.loadPathologySlideTimelineData).toHaveBeenCalledWith(
             'mskimpact',
@@ -115,41 +122,52 @@ describe('loadPathologySlidesTimeline', () => {
     });
 
     it.each([
-        [
-            'the slide count is 0',
-            request({ clinicalDataPatient: slideCount('0') }),
-        ],
-        ['the slide count is missing', request({ clinicalDataPatient: [] })],
-        ['no tile server is configured', request({ tileServerUrl: null })],
-    ])('loads nothing when %s', async (_reason, noSlides) => {
-        const { module, importModule } = mockModule(() =>
-            Promise.resolve({
-                events: [SLIDE_EVENT],
-                undatedViewableSlideCount: 2,
-            })
-        );
+        ['the patient has no slides', { patient_id: 'P', samples: [] }],
+        ['no slide is servable', hierarchyWith([false, false])],
+    ])('loads no track module when %s', async (_reason, hierarchy) => {
+        const { module, importModule } = loadedTimeline();
 
         expect(
-            await loadPathologySlidesTimeline(noSlides, importModule)
+            await loadPathologySlidesTimeline(request(), importModule, () =>
+                Promise.resolve(hierarchy as PatientHierarchy)
+            )
         ).toBeUndefined();
         expect(importModule).not.toHaveBeenCalled();
         expect(module.loadPathologySlideTimelineData).not.toHaveBeenCalled();
     });
 
-    it('resolves undefined when the hierarchy fails to load', async () => {
-        const { importModule } = mockModule(() =>
-            Promise.reject(new Error('Server returned 503'))
-        );
+    it('requests nothing when no tile server is configured', async () => {
+        const { importModule } = loadedTimeline();
+        const fetchHierarchy = jest.fn();
 
         expect(
-            await loadPathologySlidesTimeline(request(), importModule)
+            await loadPathologySlidesTimeline(
+                request({ tileServerUrl: null }),
+                importModule,
+                fetchHierarchy
+            )
         ).toBeUndefined();
+        expect(fetchHierarchy).not.toHaveBeenCalled();
+        expect(importModule).not.toHaveBeenCalled();
+    });
+
+    it('resolves undefined when the hierarchy fails to load', async () => {
+        const { importModule } = loadedTimeline();
+
+        expect(
+            await loadPathologySlidesTimeline(request(), importModule, () =>
+                Promise.reject(new Error('Server returned 503'))
+            )
+        ).toBeUndefined();
+        expect(importModule).not.toHaveBeenCalled();
     });
 
     it('resolves undefined when the module fails to load', async () => {
         expect(
-            await loadPathologySlidesTimeline(request(), () =>
-                Promise.reject(new Error('ChunkLoadError'))
+            await loadPathologySlidesTimeline(
+                request(),
+                () => Promise.reject(new Error('ChunkLoadError')),
+                () => Promise.resolve(hierarchyWith([true]))
             )
         ).toBeUndefined();
     });

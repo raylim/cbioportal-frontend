@@ -1,16 +1,10 @@
 import { ITrackEventConfig } from 'cbioportal-clinical-timeline';
-import { ClinicalData, ClinicalEvent } from 'cbioportal-ts-api-client';
+import { ClinicalEvent } from 'cbioportal-ts-api-client';
+import {
+    fetchWsiPatientHierarchy,
+    PatientHierarchy,
+} from 'cbioportal-wsi-viewer';
 import { ISampleMetaDeta } from './TimelineWrapper';
-
-/** Patient attribute with the patient's WSI slide count. */
-export const WSI_PATIENT_SLIDE_COUNT_ATTRIBUTE = 'WSI_PATIENT_SLIDE_COUNT';
-
-/**
- * Patient attribute with the patient's viewable slides without a procedure
- * day, written by the Core WSI converter.
- */
-export const WSI_PATIENT_UNDATED_SLIDE_COUNT_ATTRIBUTE =
-    'WSI_PATIENT_UNDATED_SLIDE_COUNT';
 
 /** The PATHOLOGY SLIDES timeline track of a patient with slides. */
 export interface PathologySlidesTimeline {
@@ -55,52 +49,21 @@ function importPathologySlidesTimeline(): Promise<
     return import('./pathologySlidesTimeline');
 }
 
-/** A patient count attribute; 0 when missing or not a number. */
-export function patientCountAttribute(
-    clinicalDataPatient: Pick<ClinicalData, 'clinicalAttributeId' | 'value'>[],
-    attributeId: string
-): number {
-    const datum = clinicalDataPatient.find(
-        d => d.clinicalAttributeId === attributeId
+/** Whether the hierarchy has a slide the viewer can open. */
+export function hasServableSlide(hierarchy: PatientHierarchy): boolean {
+    return hierarchy.samples.some(sample =>
+        sample.parts.some(part =>
+            part.blocks.some(block =>
+                block.slides.some(
+                    slide => slide.can_serve_tiles && !!slide.slide_key
+                )
+            )
+        )
     );
-    const count = datum ? parseInt(datum.value, 10) : 0;
-    return Number.isFinite(count) ? count : 0;
-}
-
-/** The patient's WSI_PATIENT_SLIDE_COUNT; 0 when missing or not a number. */
-export function patientWsiSlideCount(
-    clinicalDataPatient: Pick<ClinicalData, 'clinicalAttributeId' | 'value'>[]
-): number {
-    return patientCountAttribute(
-        clinicalDataPatient,
-        WSI_PATIENT_SLIDE_COUNT_ATTRIBUTE
-    );
-}
-
-/**
- * The patient's undated viewable slides: the precomputed
- * WSI_PATIENT_UNDATED_SLIDE_COUNT when the study has it, so the notice need
- * not wait for the slide hierarchy; otherwise the count from the timeline's
- * hierarchy, or undefined until that has loaded.
- */
-export function undatedPathologySlideCount(
-    clinicalDataPatient: Pick<ClinicalData, 'clinicalAttributeId' | 'value'>[],
-    timeline:
-        | Pick<PathologySlidesTimeline, 'undatedViewableSlideCount'>
-        | undefined
-): number | undefined {
-    const datum = clinicalDataPatient.find(
-        d => d.clinicalAttributeId === WSI_PATIENT_UNDATED_SLIDE_COUNT_ATTRIBUTE
-    );
-    const precomputed = datum ? parseInt(datum.value, 10) : NaN;
-    return Number.isFinite(precomputed)
-        ? precomputed
-        : timeline?.undatedViewableSlideCount;
 }
 
 export interface PathologySlidesTimelineRequest {
     tileServerUrl: string | null | undefined;
-    clinicalDataPatient: Pick<ClinicalData, 'clinicalAttributeId' | 'value'>[];
     studyId: string;
     patientId: string;
     /** Scopes the shared hierarchy cache, as for the Pathology Slides tab. */
@@ -108,25 +71,33 @@ export interface PathologySlidesTimelineRequest {
 }
 
 /**
- * The PATHOLOGY SLIDES track for a patient with slides on a portal that
- * serves them. Resolves undefined, without loading anything, when the tile
- * server is not configured or WSI_PATIENT_SLIDE_COUNT is not positive, and
- * undefined when the hierarchy cannot be loaded, so the timeline renders
- * without the track.
+ * The PATHOLOGY SLIDES track for a patient with servable slides on a portal
+ * that serves them. The patient's slide hierarchy decides, through the
+ * viewer's shared hierarchy cache that the Pathology Slides tab also uses,
+ * so the page requests it once. Resolves undefined, without loading the
+ * track module, when the tile server is not configured or the patient has
+ * no servable slide, and undefined when the hierarchy cannot be loaded, so
+ * the timeline renders without the track.
  */
 export async function loadPathologySlidesTimeline(
     request: PathologySlidesTimelineRequest,
     importModule: () => Promise<
         PathologySlidesTimelineModule
-    > = importPathologySlidesTimeline
+    > = importPathologySlidesTimeline,
+    fetchHierarchy: typeof fetchWsiPatientHierarchy = fetchWsiPatientHierarchy
 ): Promise<PathologySlidesTimeline | undefined> {
-    if (
-        !request.tileServerUrl ||
-        patientWsiSlideCount(request.clinicalDataPatient) <= 0
-    ) {
+    if (!request.tileServerUrl) {
         return undefined;
     }
     try {
+        const hierarchy = await fetchHierarchy(
+            request.studyId,
+            request.patientId,
+            request.authScope
+        );
+        if (!hasServableSlide(hierarchy)) {
+            return undefined;
+        }
         const module = await importModule();
         const data = await module.loadPathologySlideTimelineData(
             request.studyId,

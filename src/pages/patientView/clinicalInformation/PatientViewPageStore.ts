@@ -2356,16 +2356,15 @@ export class PatientViewPageStore {
 
     /**
      * The PATHOLOGY SLIDES timeline track, loaded for the Summary tab only
-     * when the patient has slides; undefined otherwise.
+     * when the patient has servable slides; undefined otherwise. It reads
+     * the same cached hierarchy as hasPathologySlides.
      */
     readonly pathologySlidesTimeline = remoteData<
         PathologySlidesTimeline | undefined
     >({
-        await: () => [this.clinicalDataPatient],
         invoke: () =>
             loadPathologySlidesTimeline({
                 tileServerUrl: getServerConfig().msk_wsi_tile_server_url,
-                clinicalDataPatient: this.clinicalDataPatient.result,
                 studyId: this.studyId,
                 patientId: this.patientId,
                 authScope: wsiAuthScope(this.appStore.userName),

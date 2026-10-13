@@ -191,9 +191,8 @@ const samples = [SAMPLE_ID, LATER_SAMPLE_ID].map(sampleId => ({
 
 /**
  * The patient page around the foundation slide mocks: every other portal
- * API answers empty, the patient has two samples and a positive
- * WSI_PATIENT_SLIDE_COUNT, so the Summary timeline loads the PATHOLOGY
- * SLIDES track.
+ * API answers empty and the patient has two samples. The slide hierarchy has
+ * servable slides, so the Summary timeline loads the PATHOLOGY SLIDES track.
  */
 async function installPatientPageMocks(page: Page, accessRequests: string[]) {
     // Registered first, so the specific routes below take precedence.
@@ -225,22 +224,6 @@ async function installPatientPageMocks(page: Page, accessRequests: string[]) {
             `/api/studies/${STUDY_ID}/patients/${PATIENT_ID}/samples(\\?.*)?$`
         ),
         route => route.fulfill(json(samples))
-    );
-    await page.route(
-        new RegExp(
-            `/api/studies/${STUDY_ID}/patients/${PATIENT_ID}/clinical-data(\\?.*)?$`
-        ),
-        route =>
-            route.fulfill(
-                json([
-                    {
-                        clinicalAttributeId: 'WSI_PATIENT_SLIDE_COUNT',
-                        value: String(ALL_KEYS.length),
-                        patientId: PATIENT_ID,
-                        studyId: STUDY_ID,
-                    },
-                ])
-            )
     );
 }
 
