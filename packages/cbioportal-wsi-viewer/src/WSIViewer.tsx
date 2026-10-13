@@ -63,7 +63,7 @@ const SLIDE_SELECTION_DEBOUNCE_MS = 120;
 export const WSI_NAV_COLLAPSED_KEY = 'wsi.viewer.navCollapsed';
 export const WSI_METADATA_COLLAPSED_KEY = 'wsi.viewer.metadataCollapsed';
 
-interface Props {
+export interface WsiViewerProps {
     /** Tile-server base URL (never a patient-scoped or resource URL). */
     tileServerUrl: string;
     patientId: string;
@@ -71,12 +71,9 @@ interface Props {
     studyId: string;
     initialStainFilter?: WsiStainFilter;
     initialMatchFilter?: PathologySlideMatchFilter;
-    onStainFilterChange?: (filter: WsiStainFilter) => void;
-    onMatchFilterChange?: (filter: PathologySlideMatchFilter) => void;
-    onClearFilters?: () => void;
     preferredSampleId?: string;
     pathologyFilter?: PathologySlideFilter;
-    /** Authenticated subject scope used to isolate protected in-memory caches. */
+    /** Subject that isolates protected in-memory caches (the user name). */
     authScope: string;
     /**
      * Slide named by a `slideKey` viewer link. A URL hash selection wins over
@@ -86,7 +83,8 @@ interface Props {
     requestedSlideKey?: string;
     /**
      * Clinical rows for the sidebar, in display order. Rows with a `sampleId`
-     * show only for that sample's slides; unset hides the section.
+     * show only for that sample's slides. Unset hides the section; an empty
+     * list shows it with no values.
      */
     clinicalRows?: ReadonlyArray<WsiClinicalRow>;
     /** Shows the "download view" control. */
@@ -142,22 +140,12 @@ function getInitialMatchFilter(
         : 'all';
 }
 
-function getPathologyPreferredSlideKeys(
-    hierarchy: PatientHierarchy | null | undefined,
-    pathologyFilter?: PathologySlideFilter
-): Set<string> | undefined {
-    if (!hierarchy || !pathologyFilter) {
-        return undefined;
-    }
-
-    return getServableSlideIdsForPathologyFilterReadOnly(
-        hierarchy,
-        pathologyFilter
-    );
-}
-
+/**
+ * Patient slide viewer: loads the patient's slide hierarchy from the portal
+ * and shows the selected slide.
+ */
 @observer
-export default class WSIViewer extends React.Component<Props, {}> {
+export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
     @observable private hierarchy: PatientHierarchy | null = null;
     @observable private selectedSlide: Slide | null = null;
     @observable private selectedSample: Sample | null = null;
@@ -190,7 +178,6 @@ export default class WSIViewer extends React.Component<Props, {}> {
     @observable cursorPos: { x: number; y: number } | null = null;
 
     private viewerContainerRef = React.createRef<HTMLDivElement>();
-    /** Stable per-instance ID prefix for OSD custom nav button elements */
     private resizeStartX = 0;
     private resizeStartWidth = 0;
     private isResizingSidebar = false;
@@ -199,6 +186,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
     @observable private requestedSlideNoticeDismissed = false;
     private slideSelectionTimer: ReturnType<typeof setTimeout> | null = null;
 
+    /** Per-instance ID prefix of the OSD zoom buttons. */
     private get navId() {
         return this.controller.navId;
     }
@@ -226,7 +214,6 @@ export default class WSIViewer extends React.Component<Props, {}> {
         }
         this.cancelPendingSlideSelection();
         this.stainFilter = f;
-        this.props.onStainFilterChange?.(f);
         void this.reselectSlideForCurrentFilters();
     });
     private readonly handleMatchFilterChange = action(
@@ -237,7 +224,6 @@ export default class WSIViewer extends React.Component<Props, {}> {
             }
             this.cancelPendingSlideSelection();
             this.matchFilter = f;
-            this.props.onMatchFilterChange?.(f);
             void this.reselectSlideForCurrentFilters();
         }
     );
@@ -246,7 +232,6 @@ export default class WSIViewer extends React.Component<Props, {}> {
         this.linkoutScopeActive = false;
         this.stainFilter = 'all';
         this.matchFilter = 'all';
-        this.props.onClearFilters?.();
         void this.reselectSlideForCurrentFilters();
     });
     private readonly handleSelectSlide = (slide: Slide, sample: Sample) => {
@@ -272,11 +257,10 @@ export default class WSIViewer extends React.Component<Props, {}> {
     private readonly handleChangeY = action((v: string) => {
         this.coordInputY = v;
     });
-    private readonly handleCopyLink = () => this.copyViewLink();
-    private readonly handleDownload = () => this.downloadView();
-    private readonly handleGoToCoordinates = () => {
-        this.goToCoordinates();
-    };
+    private readonly handleCopyLink = () => this.controller.copyViewLink();
+    private readonly handleDownload = () => this.controller.downloadView();
+    private readonly handleGoToCoordinates = () =>
+        this.controller.goToCoordinates();
     private readonly handleSidebarResizeMove = (event: MouseEvent) => {
         if (!this.isResizingSidebar) return;
         const nextWidth =
@@ -292,7 +276,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
         window.removeEventListener('mouseup', this.handleSidebarResizeEnd);
     };
 
-    constructor(props: Props) {
+    constructor(props: WsiViewerProps) {
         super(props);
         makeObservable(this);
         if (props.initialStainFilter) {
@@ -462,18 +446,6 @@ export default class WSIViewer extends React.Component<Props, {}> {
         );
     }
 
-    goToCoordinates() {
-        this.controller.goToCoordinates();
-    }
-
-    downloadView() {
-        this.controller.downloadView();
-    }
-
-    async copyViewLink() {
-        return this.controller.copyViewLink();
-    }
-
     componentDidMount() {
         this.unsubscribeUrlState = hashUrlState.subscribe(
             this.handleHashChange
@@ -520,7 +492,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
         );
     }
 
-    componentDidUpdate(prev: Props) {
+    componentDidUpdate(prev: WsiViewerProps) {
         const authScopeChanged = prev.authScope !== this.props.authScope;
         const preferredSampleChanged =
             prev.preferredSampleId !== this.props.preferredSampleId;
@@ -643,7 +615,6 @@ export default class WSIViewer extends React.Component<Props, {}> {
         return {
             studyId: this.props.studyId,
             patientId: this.props.patientId,
-            pathologyFilter: this.activePathologyFilter,
             authScope: this.props.authScope,
         };
     }
@@ -654,10 +625,13 @@ export default class WSIViewer extends React.Component<Props, {}> {
 
     /** Slides the active linkout scope allows; undefined when unscoped. */
     @computed private get preferredSlideKeys(): Set<string> | undefined {
-        return getPathologyPreferredSlideKeys(
-            this.hierarchy,
-            this.activePathologyFilter
-        );
+        const filter = this.activePathologyFilter;
+        return this.hierarchy && filter
+            ? getServableSlideIdsForPathologyFilterReadOnly(
+                  this.hierarchy,
+                  filter
+              )
+            : undefined;
     }
 
     /**
@@ -1073,42 +1047,21 @@ export default class WSIViewer extends React.Component<Props, {}> {
                             zIndex: 100,
                         }}
                     >
-                        <button
-                            id={`${this.navId}-zoom-in`}
-                            className="btn btn-default btn-sm"
-                            title="Zoom in"
-                            style={{
-                                width: 28,
-                                padding: '3px 0',
-                                lineHeight: 1,
-                            }}
-                        >
-                            <i className="fa fa-plus" />
-                        </button>
-                        <button
-                            id={`${this.navId}-zoom-out`}
-                            className="btn btn-default btn-sm"
-                            title="Zoom out"
-                            style={{
-                                width: 28,
-                                padding: '3px 0',
-                                lineHeight: 1,
-                            }}
-                        >
-                            <i className="fa fa-minus" />
-                        </button>
-                        <button
-                            id={`${this.navId}-home`}
-                            className="btn btn-default btn-sm"
-                            title="Fit to view"
-                            style={{
-                                width: 28,
-                                padding: '3px 0',
-                                lineHeight: 1,
-                            }}
-                        >
-                            <i className="fa fa-home" />
-                        </button>
+                        {ZOOM_BUTTONS.map(({ id, title, icon }) => (
+                            <button
+                                key={id}
+                                id={`${this.navId}-${id}`}
+                                className="btn btn-default btn-sm"
+                                title={title}
+                                style={{
+                                    width: 28,
+                                    padding: '3px 0',
+                                    lineHeight: 1,
+                                }}
+                            >
+                                <i className={`fa ${icon}`} />
+                            </button>
+                        ))}
                     </div>
                     {this.requestedSlideUnavailable &&
                         !this.requestedSlideNoticeDismissed && (
@@ -1218,7 +1171,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
                         </div>
                     )}
                     {this.tilesReady && (
-                        <ObservedCoordBar
+                        <CoordBar
                             viewer={this}
                             onChangeX={this.handleChangeX}
                             onChangeY={this.handleChangeY}
@@ -1323,6 +1276,13 @@ export default class WSIViewer extends React.Component<Props, {}> {
 
 // ---- helpers ----
 
+/** OSD adopts these by id (`zoomInButton`, `zoomOutButton`, `homeButton`). */
+const ZOOM_BUTTONS = [
+    { id: 'zoom-in', title: 'Zoom in', icon: 'fa-plus' },
+    { id: 'zoom-out', title: 'Zoom out', icon: 'fa-minus' },
+    { id: 'home', title: 'Fit to view', icon: 'fa-home' },
+];
+
 const overlayStyle: React.CSSProperties = {
     position: 'absolute',
     inset: 0,
@@ -1336,10 +1296,7 @@ const overlayStyle: React.CSSProperties = {
 // ---- CoordBar ----
 
 interface CoordBarProps {
-    inputX: string;
-    inputY: string;
-    cursorPos: { x: number; y: number } | null;
-    mpp?: { x: number; y: number };
+    viewer: CoordBarViewerState;
     onChangeX: (v: string) => void;
     onChangeY: (v: string) => void;
     onGo: () => void;
@@ -1348,7 +1305,7 @@ interface CoordBarProps {
     showDownload: boolean;
 }
 
-const ObservedCoordBar = observer(function ObservedCoordBar({
+const CoordBar = observer(function CoordBar({
     viewer,
     onChangeX,
     onChangeY,
@@ -1356,43 +1313,13 @@ const ObservedCoordBar = observer(function ObservedCoordBar({
     onCopyLink,
     onDownload,
     showDownload,
-}: {
-    viewer: CoordBarViewerState;
-    onChangeX: (v: string) => void;
-    onChangeY: (v: string) => void;
-    onGo: () => void;
-    onCopyLink: () => void;
-    onDownload: () => void;
-    showDownload: boolean;
-}) {
-    return (
-        <CoordBar
-            inputX={viewer.coordInputX}
-            inputY={viewer.coordInputY}
-            cursorPos={viewer.cursorPos}
-            mpp={viewer.selectedMpp}
-            onChangeX={onChangeX}
-            onChangeY={onChangeY}
-            onGo={onGo}
-            onCopyLink={onCopyLink}
-            onDownload={onDownload}
-            showDownload={showDownload}
-        />
-    );
-});
-
-function CoordBar({
-    inputX,
-    inputY,
-    cursorPos,
-    mpp,
-    onChangeX,
-    onChangeY,
-    onGo,
-    onCopyLink,
-    onDownload,
-    showDownload,
 }: CoordBarProps) {
+    const {
+        coordInputX: inputX,
+        coordInputY: inputY,
+        cursorPos,
+        selectedMpp: mpp,
+    } = viewer;
     const handleKey = (e: React.KeyboardEvent) => {
         if (e.key === 'Enter') onGo();
     };
@@ -1523,4 +1450,4 @@ function CoordBar({
             )}
         </div>
     );
-}
+});

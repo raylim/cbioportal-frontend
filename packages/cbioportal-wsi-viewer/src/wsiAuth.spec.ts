@@ -5,9 +5,12 @@ import {
     getAnnotationAccessToken,
     getWsiSlideAccess,
     registerWsiResourceAccess,
-    registerWsiResourceAccessTarget,
 } from './wsiAuth';
-import { makeTileMetadata } from './wsiTestFixtures';
+import {
+    makeAccessPayload,
+    makeTileMetadata,
+    registerTestSlideAccess,
+} from './wsiTestFixtures';
 import { configureWsiViewerRuntime, WsiViewerConfig } from './wsiViewerConfig';
 
 function configureRuntime(overrides: Partial<WsiViewerConfig> = {}) {
@@ -37,32 +40,13 @@ describe('WSI access capability', () => {
                 return this.values.get(key.toLowerCase()) ?? null;
             }
         } as unknown) as typeof Headers;
-        registerWsiResourceAccessTarget('study-1', 'slide-1', 'patient-1');
+        registerTestSlideAccess('study-1', 'patient-1', 'slide-1');
     });
 
     it('requests and caches access for one slide', async () => {
         const response = {
             ok: true,
-            json: async () => ({
-                slideKey: 'slide-1',
-                tileMetadata: makeTileMetadata({
-                    dimensions: { width: 100, height: 80 },
-                    levels: 1,
-                    level_dimensions: [{ width: 100, height: 80 }],
-                    level_downsamples: [1],
-                    max_zoom: 0,
-                    tile_size: 256,
-                    safe_min_level: 0,
-                }),
-                thumbnail: {
-                    width: 128,
-                    height: 96,
-                    contentType: 'image/jpeg',
-                },
-                accessToken: 'token',
-                tokenType: 'Bearer',
-                expiresIn: 300,
-            }),
+            json: async () => makeAccessPayload({ accessToken: 'token' }),
         } as Response;
         jest.spyOn(global, 'fetch').mockResolvedValue(response);
 
@@ -82,26 +66,7 @@ describe('WSI access capability', () => {
         const response = (accessToken: string) =>
             ({
                 ok: true,
-                json: async () => ({
-                    slideKey: 'slide-1',
-                    tileMetadata: makeTileMetadata({
-                        dimensions: { width: 100, height: 80 },
-                        levels: 1,
-                        level_dimensions: [{ width: 100, height: 80 }],
-                        level_downsamples: [1],
-                        max_zoom: 0,
-                        tile_size: 256,
-                        safe_min_level: 0,
-                    }),
-                    thumbnail: {
-                        width: 128,
-                        height: 96,
-                        contentType: 'image/jpeg',
-                    },
-                    accessToken,
-                    tokenType: 'Bearer',
-                    expiresIn: 300,
-                }),
+                json: async () => makeAccessPayload({ accessToken }),
             } as Response);
 
         jest.spyOn(global, 'fetch')
@@ -258,11 +223,6 @@ describe('WSI access capability', () => {
                     max_decode_pixels: 4194304,
                     thumbnail_max_decode_pixels: 4194304,
                 },
-                thumbnail: {
-                    width: 128,
-                    height: 96,
-                    contentType: 'image/jpeg',
-                },
                 accessToken: 'token',
                 expiresIn: 300,
             }),
@@ -292,26 +252,7 @@ describe('WSI access capability', () => {
     });
 
     describe('registered slides', () => {
-        const validAccess = {
-            slideKey: 'slide-1',
-            tileMetadata: makeTileMetadata({
-                dimensions: { width: 100, height: 80 },
-                levels: 1,
-                level_dimensions: [{ width: 100, height: 80 }],
-                level_downsamples: [1],
-                max_zoom: 0,
-                tile_size: 256,
-                safe_min_level: 0,
-            }),
-            thumbnail: {
-                width: 128,
-                height: 96,
-                contentType: 'image/jpeg',
-            },
-            accessToken: 'token',
-            tokenType: 'Bearer',
-            expiresIn: 300,
-        };
+        const validAccess = makeAccessPayload();
         const response = (status: number) =>
             ({
                 ok: status >= 200 && status < 300,
@@ -440,10 +381,7 @@ describe('WSI access capability', () => {
                     ...validAccess,
                     imageId: 'source-image',
                     sourceUrl: 's3://bucket/source-image.svs',
-                    thumbnail: {
-                        ...validAccess.thumbnail,
-                        sourceUrl: 's3://bucket/source-image.jpg',
-                    },
+                    thumbnail: { sourceUrl: 's3://bucket/source-image.jpg' },
                 }),
             } as Response);
 
