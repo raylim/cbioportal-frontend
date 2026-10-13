@@ -1,14 +1,20 @@
 import * as React from 'react';
 import { observer } from 'mobx-react';
 import { Nav, NavItem } from 'react-bootstrap';
+import { pluralize } from 'cbioportal-frontend-commons';
 import {
+    useWsiPanelFlag,
     WSI_FONT_FAMILY,
     WSI_SECTION_TITLE_STYLE,
+    WSI_STAIN_COLORS,
     WSI_THEME,
     WsiCollapsedRail,
+    WsiIconButton,
     WsiPanelHideButton,
     wsiListItemStyle,
+    WsiStainDot,
 } from 'cbioportal-wsi-viewer';
+import { PatientViewPageTabs } from 'pages/patientView/PatientViewPageTabIds';
 import { getPatientViewUrlWithPathname } from 'shared/api/urls';
 import LoadingIndicator from 'shared/components/loadingIndicator/LoadingIndicator';
 import { PaginationControls } from 'shared/components/paginationControls/PaginationControls';
@@ -26,11 +32,9 @@ import {
     viewerStainFilter,
 } from './studySlidesApi';
 import {
-    StainDot,
     StudySlidesFilterChips,
     StudySlidesFilterSection,
     StudySlidesSearch,
-    useStoredFlag,
 } from './StudySlidesFilters';
 
 export interface StudyPathologySlidesTabProps {
@@ -53,17 +57,10 @@ export const PATIENT_LIST_COLLAPSED_KEY = 'wsi.study.patientListCollapsed';
 const C = WSI_THEME;
 const PANEL_WIDTH = 280;
 
-const iconButtonStyle: React.CSSProperties = {
-    border: 'none',
-    background: 'transparent',
-    padding: '2px 6px',
-    color: C.muted,
-    cursor: 'pointer',
-    lineHeight: 1,
-};
+const NO_SLIDES_MESSAGE = 'No pathology slides in the current selection.';
 
 function count(n: number, noun: string): string {
-    return `${n.toLocaleString()} ${noun}${n === 1 ? '' : 's'}`;
+    return `${n.toLocaleString()} ${pluralize(noun, n)}`;
 }
 
 function isTypingTarget(target: EventTarget | null): boolean {
@@ -82,38 +79,6 @@ function isTypingTarget(target: EventTarget | null): boolean {
 
 function patientOptionId(patient: { studyId: string; patientId: string }) {
     return `study-slides-patient-${patient.studyId}-${patient.patientId}`;
-}
-
-function IconButton({
-    icon,
-    label,
-    onClick,
-    disabled,
-    testId,
-}: {
-    icon: string;
-    label: string;
-    onClick: () => void;
-    disabled?: boolean;
-    testId?: string;
-}) {
-    return (
-        <button
-            type="button"
-            title={label}
-            aria-label={label}
-            disabled={disabled}
-            data-testid={testId}
-            onClick={onClick}
-            style={{
-                ...iconButtonStyle,
-                opacity: disabled ? 0.35 : 1,
-                cursor: disabled ? 'default' : 'pointer',
-            }}
-        >
-            <i className={`fa ${icon}`} aria-hidden="true" />
-        </button>
-    );
 }
 
 const PatientRow: React.FunctionComponent<{
@@ -159,7 +124,7 @@ const PatientRow: React.FunctionComponent<{
                             title={`${group}: ${patient.stainGroupCounts[group]}`}
                             style={{ marginLeft: 6, color: C.muted }}
                         >
-                            <StainDot group={group} />
+                            <WsiStainDot color={WSI_STAIN_COLORS[group]} />
                             {patient.stainGroupCounts[group]}
                         </span>
                     ))}
@@ -353,7 +318,7 @@ const PatientPanel: React.FunctionComponent<{
                 >
                     {store.hasSlideFilters
                         ? 'No patients match these filters.'
-                        : 'No pathology slides in the current selection.'}
+                        : NO_SLIDES_MESSAGE}
                 </div>
             ) : (
                 <ul
@@ -432,7 +397,7 @@ const PatientNav: React.FunctionComponent<{
                 overflow: 'hidden',
             }}
         >
-            <IconButton
+            <WsiIconButton
                 icon="fa-chevron-left"
                 label="Previous patient ([)"
                 disabled={!store.hasPrevious}
@@ -449,7 +414,7 @@ const PatientNav: React.FunctionComponent<{
                     </span>
                 )}
             </span>
-            <IconButton
+            <WsiIconButton
                 icon="fa-chevron-right"
                 label="Next patient (])"
                 disabled={!store.hasNext}
@@ -466,7 +431,7 @@ const PatientNav: React.FunctionComponent<{
                 href={getPatientViewUrlWithPathname(
                     selected.studyId,
                     selected.patientId,
-                    'patient/wsiHESlides',
+                    `patient/${PatientViewPageTabs.WSIHESlides}`,
                     listed ? navPatients : undefined
                 )}
                 target="_blank"
@@ -550,7 +515,7 @@ export const StudyPathologySlidesTab: React.FunctionComponent<StudyPathologySlid
 
 const StudySlidesViewerView: React.FunctionComponent<StudyPathologySlidesTabProps> = observer(
     ({ store, tileServerUrl, isActive, height, userName }) => {
-        const [listCollapsed, setListCollapsed] = useStoredFlag(
+        const [listCollapsed, setListCollapsed] = useWsiPanelFlag(
             PATIENT_LIST_COLLAPSED_KEY
         );
 
@@ -635,14 +600,14 @@ const StudySlidesViewerView: React.FunctionComponent<StudyPathologySlidesTabProp
                         background={C.navBg}
                         testId="study-slides-rail"
                     >
-                        <IconButton
+                        <WsiIconButton
                             icon="fa-chevron-up"
                             label="Previous patient ([)"
                             disabled={!store.hasPrevious}
                             onClick={store.selectPrevious}
                             testId="study-slides-rail-previous"
                         />
-                        <IconButton
+                        <WsiIconButton
                             icon="fa-chevron-down"
                             label="Next patient (])"
                             disabled={!store.hasNext}
@@ -692,7 +657,7 @@ const StudySlidesViewerView: React.FunctionComponent<StudyPathologySlidesTabProp
                             }}
                         >
                             {page.totalPatients === 0
-                                ? 'No pathology slides in the current selection.'
+                                ? NO_SLIDES_MESSAGE
                                 : 'Select a patient to view their slides.'}
                         </div>
                     )}

@@ -12,7 +12,7 @@ import {
     StudySlidesRequest,
     StudySlidesRequestError,
 } from './studySlidesApi';
-import { studySlidesPageFor } from './studySlidesTestServer';
+import { settle, studySlidesPageFor } from './studySlidesTestServer';
 
 const mockViewer = jest.fn((_props: Record<string, unknown>) => null);
 
@@ -61,14 +61,6 @@ function listed(patientId: string) {
     return within(screen.getByTestId('study-slides-patients')).getByText(
         patientId
     );
-}
-
-async function settle() {
-    await act(async () => {
-        for (let i = 0; i < 10; i++) {
-            await new Promise(resolve => setTimeout(resolve, 0));
-        }
-    });
 }
 
 function renderTab(

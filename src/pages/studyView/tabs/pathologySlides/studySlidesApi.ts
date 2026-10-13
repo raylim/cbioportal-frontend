@@ -23,8 +23,8 @@ export const STUDY_SLIDE_MATCH_LEVELS: StudySlideMatchLevel[] = [
 ];
 
 export const STUDY_SLIDE_MATCH_LABELS: Record<StudySlideMatchLevel, string> = {
-    PART: 'Part-matched',
-    BLOCK: 'Block-matched',
+    PART: 'Part',
+    BLOCK: 'Block',
     UNMATCHED: 'Unmatched',
 };
 
@@ -70,22 +70,21 @@ export class StudySlidesRequestError extends Error {
 }
 
 /** Lists the patients with viewable pathology slides in a study-view cohort. */
-export function fetchStudySlidePatients(
+export async function fetchStudySlidePatients(
     request: StudySlidesRequest
 ): Promise<StudySlidesPage> {
-    return postStudySlides('api/wsi/v2/study-slides/patients/fetch', request);
-}
-
-async function postStudySlides<T>(path: string, body: object): Promise<T> {
-    const response = await fetch(buildCBioPortalAPIUrl(path), {
-        method: 'POST',
-        credentials: 'same-origin',
-        headers: {
-            Accept: 'application/json',
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(body),
-    });
+    const response = await fetch(
+        buildCBioPortalAPIUrl('api/wsi/v2/study-slides/patients/fetch'),
+        {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {
+                Accept: 'application/json',
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(request),
+        }
+    );
     if (!response.ok) {
         throw new StudySlidesRequestError(response.status);
     }

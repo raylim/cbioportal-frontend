@@ -1,3 +1,4 @@
+import { act } from '@testing-library/react';
 import {
     STUDY_SLIDE_STAIN_GROUPS,
     StudySlidePatient,
@@ -50,4 +51,13 @@ export function studySlidesPageFor(
             (pageNumber + 1) * pageSize
         ),
     };
+}
+
+/** Lets pending requests and reactions run, inside act for rendered tabs. */
+export async function settle() {
+    await act(async () => {
+        for (let i = 0; i < 10; i++) {
+            await new Promise(resolve => setTimeout(resolve, 0));
+        }
+    });
 }
