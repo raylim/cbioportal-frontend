@@ -131,11 +131,7 @@ describe('WSIViewer foundation behavior', () => {
         }
 
         function renderSelected(sampleTimelines?: Map<string, any>) {
-            const slide = {
-                ...testSlide('slide-a'),
-                slide_timepoint_days: -242,
-                slide_timepoint_source: 'Procedure date',
-            };
+            const slide = testSlide('slide-a');
             const instance = makeInstance({ sampleTimelines });
             action(() => {
                 instance.hierarchy = hierarchyOf([slide]);
@@ -156,7 +152,7 @@ describe('WSIViewer foundation behavior', () => {
                 })
             );
             expect(sidebar).toContain(
-                'Timeline Procedure d-242 · acquired d-242 · sequenced d+7 (249 d later)'
+                'Timeline acquired d-242 · sequenced d+7'
             );
 
             expect(
@@ -166,31 +162,17 @@ describe('WSIViewer foundation behavior', () => {
                     })
                 )
             ).toBe('sequenced d+7');
-            expect(
-                textOf(
-                    rendered.root.findByProps({
-                        'data-testid': 'wsi-slide-item-slide-a',
-                    })
-                )
-            ).toContain('Proc 249 d before sequencing');
         });
 
-        it('keeps the patient-level display without timeline data', () => {
+        it('has no timeline context without timeline data', () => {
             const rendered = renderSelected();
             const sidebar = textOf(
                 rendered.root.findByProps({
                     'data-testid': 'wsi-metadata-sidebar',
                 })
             );
-            expect(sidebar).toContain('Timeline Procedure d-242');
+            expect(sidebar).not.toContain('Timeline');
             expect(sidebar).not.toContain('sequenced');
-            expect(
-                textOf(
-                    rendered.root.findByProps({
-                        'data-testid': 'wsi-slide-item-slide-a',
-                    })
-                )
-            ).toContain('Proc d-242');
         });
     });
 

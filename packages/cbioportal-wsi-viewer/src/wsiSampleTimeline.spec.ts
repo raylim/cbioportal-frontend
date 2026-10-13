@@ -2,10 +2,8 @@ import { ClinicalEvent } from 'cbioportal-ts-api-client';
 import { DAY_ZERO_TOOLTIP } from './wsiNavUtils';
 import {
     buildWsiSampleTimelineMap,
-    procedureRelativeToSequencingText,
     sampleSequencedText,
     sampleSequencedTooltip,
-    sequencedRelativeToProcedureText,
 } from './wsiSampleTimeline';
 
 function event(
@@ -97,30 +95,5 @@ describe('sample timeline text', () => {
         );
         expect(sampleSequencedText({ acquisitionDays: 3 })).toBeNull();
         expect(sampleSequencedText(undefined)).toBeNull();
-    });
-
-    it('relates the procedure to sample sequencing', () => {
-        expect(procedureRelativeToSequencingText(-242, 7)).toBe(
-            'Proc 249 d before sequencing'
-        );
-        expect(procedureRelativeToSequencingText(20, 7)).toBe(
-            'Proc 13 d after sequencing'
-        );
-        expect(procedureRelativeToSequencingText(7, 7)).toBe(
-            'Proc same day as sequencing'
-        );
-        expect(procedureRelativeToSequencingText(undefined, 7)).toBeNull();
-        expect(procedureRelativeToSequencingText(-242, undefined)).toBeNull();
-    });
-
-    it('relates sequencing to the procedure', () => {
-        expect(sequencedRelativeToProcedureText(7, -242)).toBe(
-            'd+7 (249 d later)'
-        );
-        expect(sequencedRelativeToProcedureText(-10, -4)).toBe(
-            'd-10 (6 d earlier)'
-        );
-        expect(sequencedRelativeToProcedureText(0, 0)).toBe('d0 (same day)');
-        expect(sequencedRelativeToProcedureText(7, undefined)).toBe('d+7');
     });
 });

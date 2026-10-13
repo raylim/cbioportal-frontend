@@ -11,13 +11,11 @@ import {
     TileMetadata,
     WsiClinicalRow,
     WsiStainFilter,
-    WsiTimepointSelection,
 } from './wsiViewerTypes';
 import {
     getOrderedServableSlidesForSampleReadOnly,
     getServableSlideIdsForPathologyFilterReadOnly,
     matchesMatchFilter,
-    matchesWsiTimepointFilter,
     matchesWsiStainFilter,
     normalizeMatchLevel,
     sampleHasServableSlide,
@@ -26,7 +24,7 @@ import { chooseInitialServableSlide } from './wsiInitialSlideUtils';
 import { MetaRow, WsiMetaSidebar } from './wsiMetaSidebar';
 import { buildPathRows, buildWsiRows } from './wsiMetaUtils';
 import { hashUrlState } from './wsiViewStateUtils';
-import { compareSamplesByTimepoint } from './wsiNavUtils';
+import { compareSamplesForNavigation } from './wsiNavUtils';
 import { WsiNavPanel } from './wsiNavPanel';
 import { WsiSampleTimelineMap } from './wsiSampleTimeline';
 import {
@@ -66,7 +64,6 @@ export interface WsiViewerProps {
     studyId: string;
     initialStainFilter?: WsiStainFilter;
     initialMatchFilter?: PathologySlideMatchFilter;
-    initialTimepointDays?: WsiTimepointSelection;
     preferredSampleId?: string;
     pathologyFilter?: PathologySlideFilter;
     /** Subject that isolates protected in-memory caches (the user name). */
@@ -159,7 +156,6 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
     @observable private thumbnailPreviewUrl: string | null = null;
     @observable private stainFilter: WsiStainFilter = 'all';
     @observable private matchFilter: PathologySlideMatchFilter = 'all';
-    @observable private timepointDays: WsiTimepointSelection | undefined;
     @observable private linkoutScopeActive = false;
     @observable private sidebarWidth = WSI_SIDEBAR_WIDTH;
     @observable private storedNavCollapsed = readWsiPanelFlag(
@@ -223,23 +219,11 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
             void this.reselectSlideForCurrentFilters();
         }
     );
-    private readonly handleTimepointChange = action(
-        (days?: WsiTimepointSelection) => {
-            const releasedScope = this.releaseLinkoutScope();
-            if (this.timepointDays === days && !releasedScope) {
-                return;
-            }
-            this.cancelPendingSlideSelection();
-            this.timepointDays = days;
-            void this.reselectSlideForCurrentFilters();
-        }
-    );
     private readonly handleClearFilters = action(() => {
         this.cancelPendingSlideSelection();
         this.linkoutScopeActive = false;
         this.stainFilter = 'all';
         this.matchFilter = 'all';
-        this.timepointDays = undefined;
         void this.reselectSlideForCurrentFilters();
     });
     private readonly handleSelectSlide = (slide: Slide, sample: Sample) => {
@@ -290,7 +274,6 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
         if (props.initialStainFilter) {
             this.stainFilter = props.initialStainFilter;
         }
-        this.timepointDays = props.initialTimepointDays;
         this.matchFilter =
             props.initialMatchFilter ||
             getInitialMatchFilter(props.pathologyFilter);
@@ -467,8 +450,7 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
             entry =>
                 entry.slide.slide_key === hashState.slideId &&
                 (!preferredSlideKeys ||
-                    preferredSlideKeys.has(entry.slide.slide_key)) &&
-                this.matchesCurrentTimepoint(entry.slide)
+                    preferredSlideKeys.has(entry.slide.slide_key))
         );
         if (!matching) return;
 
@@ -508,15 +490,9 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
             (pathologyFilterChanged && !this.hierarchy);
         const stainFilterChanged =
             prev.initialStainFilter !== this.props.initialStainFilter;
-        const timepointFilterChanged =
-            prev.initialTimepointDays !== this.props.initialTimepointDays;
 
         if (prev.hidden !== this.props.hidden) {
             this.updateControllerVisibility();
-        }
-
-        if (timepointFilterChanged) {
-            this.timepointDays = this.props.initialTimepointDays;
         }
 
         if (requestedSlideKeyChanged) {
@@ -549,11 +525,7 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
             void this.controller.loadHierarchy(false);
         } else if (pathologyFilterChanged) {
             this.applyPathologyFilterFromSourceHierarchy();
-        } else if (
-            initialMatchFilterChanged ||
-            stainFilterChanged ||
-            timepointFilterChanged
-        ) {
+        } else if (initialMatchFilterChanged || stainFilterChanged) {
             void this.reselectSlideForCurrentFilters();
         } else if (preferredSampleChanged || requestedSlideKeyChanged) {
             void this.reselectPreferredSampleSlide();
@@ -632,10 +604,6 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
             : undefined;
     }
 
-    private matchesCurrentTimepoint(slide: Slide): boolean {
-        return matchesWsiTimepointFilter(slide, this.timepointDays);
-    }
-
     @action.bound
     private applyPathologyFilterFromSourceHierarchy() {
         const hierarchy = this.hierarchy;
@@ -654,8 +622,7 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
                 ? getOrderedServableSlidesForSampleReadOnly(currentSample).find(
                       ({ slide }) =>
                           preferredSlideKeys.has(slide.slide_key) &&
-                          matchesWsiStainFilter(slide, this.stainFilter) &&
-                          this.matchesCurrentTimepoint(slide)
+                          matchesWsiStainFilter(slide, this.stainFilter)
                   )?.slide
                 : undefined;
             if (
@@ -684,9 +651,7 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
         );
         const matchingSlide = matchingSample
             ? getOrderedServableSlidesForSampleReadOnly(matchingSample).find(
-                  ({ slide }) =>
-                      slide.slide_key === currentSlideKey &&
-                      this.matchesCurrentTimepoint(slide)
+                  ({ slide }) => slide.slide_key === currentSlideKey
               )?.slide
             : undefined;
 
@@ -711,8 +676,7 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
             preferredSampleId: this.props.preferredSampleId,
             stainFilter: this.stainFilter,
             matchesEntry: entry =>
-                preferredSlideKeys.has(entry.slide.slide_key) &&
-                this.matchesCurrentTimepoint(entry.slide),
+                preferredSlideKeys.has(entry.slide.slide_key),
         });
 
         if (!next) {
@@ -736,20 +700,15 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
         const hashState = hashUrlState.read();
         const preferredSlideKeys = this.preferredSlideKeys;
 
-        return chooseInitialServableSlide(
-            allSlides.filter(entry =>
-                this.matchesCurrentTimepoint(entry.slide)
-            ),
-            {
-                preferredSampleId: this.props.preferredSampleId,
-                preferredSlideId: hashState?.slideId,
-                requestedSlideKey: this.props.requestedSlideKey,
-                stainFilter: this.stainFilter,
-                matchesEntry: entry =>
-                    !preferredSlideKeys ||
-                    preferredSlideKeys.has(entry.slide.slide_key),
-            }
-        );
+        return chooseInitialServableSlide(allSlides, {
+            preferredSampleId: this.props.preferredSampleId,
+            preferredSlideId: hashState?.slideId,
+            requestedSlideKey: this.props.requestedSlideKey,
+            stainFilter: this.stainFilter,
+            matchesEntry: entry =>
+                !preferredSlideKeys ||
+                preferredSlideKeys.has(entry.slide.slide_key),
+        });
     }
 
     @action.bound
@@ -810,9 +769,6 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
             if (!matchesWsiStainFilter(slide, this.stainFilter)) {
                 return false;
             }
-            if (!matchesWsiTimepointFilter(slide, this.timepointDays)) {
-                return false;
-            }
             return matchesMatchFilter(slide, this.matchFilter);
         });
         if (!matchingSlides.length) {
@@ -833,7 +789,7 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
     @computed get servableSlides(): Array<{ slide: Slide; sample: Sample }> {
         if (!this.hierarchy) return [];
         return [...this.hierarchy.samples]
-            .sort(compareSamplesByTimepoint)
+            .sort(compareSamplesForNavigation)
             .flatMap(sample =>
                 getOrderedServableSlidesForSampleReadOnly(
                     sample
@@ -908,17 +864,14 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
             thumbnailPreviewUrl,
             stainFilter,
             matchFilter,
-            timepointDays,
         } = this;
         const showClearFilters =
             !!this.activePathologyFilter ||
             !!this.props.preferredSampleId ||
             this.props.initialStainFilter === 'hne' ||
             this.props.initialStainFilter === 'ihc' ||
-            this.props.initialTimepointDays != null ||
             stainFilter !== 'all' ||
-            matchFilter !== 'all' ||
-            timepointDays != null;
+            matchFilter !== 'all';
 
         if (loading) {
             return (
@@ -985,12 +938,10 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
                         linkoutScopeActive={this.linkoutScopeActive}
                         stainFilter={stainFilter}
                         matchFilter={matchFilter}
-                        timepointDays={timepointDays}
                         showClearFilters={showClearFilters}
                         deferOffscreenSamples={!this.tilesReady}
                         onFilterChange={this.handleFilterChange}
                         onMatchFilterChange={this.handleMatchFilterChange}
-                        onTimepointChange={this.handleTimepointChange}
                         onClearFilters={this.handleClearFilters}
                         onSelectSlide={this.handleSelectSlide}
                         tileServerBase={this.tileServerBase}

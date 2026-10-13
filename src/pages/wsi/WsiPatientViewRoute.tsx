@@ -8,7 +8,7 @@ import { AppWsiViewer } from 'shared/components/wsiViewer/wsiAppConfig';
 /**
  * Loads the patient's clinical events for sample acquisition/sequencing
  * days. The viewer renders without them, and a failed request leaves them
- * unset so slides keep their patient-level timepoints.
+ * unset, so the viewer shows no sample days.
  */
 function usePatientClinicalEvents(
     studyId: string,

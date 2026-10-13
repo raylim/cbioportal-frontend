@@ -12,47 +12,19 @@ const LATER_SAMPLE_ID = 'wsi-foundation-smoke-sample-2';
 /** Opaque 32-hex slide keys, as the backend publishes them. */
 const HNE_KEY = '11111111111111111111111111111111';
 const IHC_KEY = '22222222222222222222222222222222';
-const UNDATED_KEY = '33333333333333333333333333333333';
 const LATER_KEY = '44444444444444444444444444444444';
-const ALL_KEYS = [HNE_KEY, IHC_KEY, UNDATED_KEY, LATER_KEY];
+const ALL_KEYS = [HNE_KEY, IHC_KEY, LATER_KEY];
 
 const BLOCK_SPECIMEN_KEY = 'block::1::A1';
 const PART_SPECIMEN_KEY = 'part::2';
-const HNE_DAYS = -10;
-
-const LEGACY_PARAMS = [
-    'stainFilter',
-    'matchLevel',
-    'specimenKey',
-    'timepointDays',
-];
 
 function slide(
     slideKey: string,
     stain: 'H&E' | 'IHC',
     sampleId: string,
     matchLevel: 'BLOCK' | 'PART',
-    specimenKey: string,
-    days: number | null
+    specimenKey: string
 ) {
-    const timing =
-        days === null
-            ? {
-                  procedureDateDays: null,
-                  timepointSource: 'Procedure date unavailable',
-                  procedureDateKind: 'UNDATED',
-                  procedureDateSource: 'missing_procedure_date',
-                  procedureDateReason: 'unavailable',
-                  procedureDateStatus: 'MISSING_PROCEDURE_DATE',
-              }
-            : {
-                  procedureDateDays: days,
-                  timepointSource: 'Procedure date',
-                  procedureDateKind: 'RECORDED',
-                  procedureDateSource: 'Recorded procedure date',
-                  procedureDateReason: null,
-                  procedureDateStatus: 'AVAILABLE',
-              };
     return {
         slideKey,
         stainName: stain === 'IHC' ? 'IHC PD-L1' : 'H&E initial',
@@ -66,14 +38,12 @@ function slide(
         sampleId,
         matchLevel,
         specimenKey,
-        ...timing,
-        procedureCoordinateSystem: 'patient_first_tumor_sequencing_day_zero',
     };
 }
 
 /**
- * Sample 1, block A1: a dated H&E and IHC slide on the same day and an
- * undated H&E slide. Sample 2, part 2: a later H&E slide.
+ * Sample 1, block A1: an H&E and an IHC slide. Sample 2, part 2: an H&E
+ * slide. The hierarchy carries no timing; the timeline file does.
  */
 const hierarchy = {
     referenceSampleId: SAMPLE_ID,
@@ -96,24 +66,14 @@ const hierarchy = {
                                     'H&E',
                                     SAMPLE_ID,
                                     'BLOCK',
-                                    BLOCK_SPECIMEN_KEY,
-                                    HNE_DAYS
+                                    BLOCK_SPECIMEN_KEY
                                 ),
                                 slide(
                                     IHC_KEY,
                                     'IHC',
                                     SAMPLE_ID,
                                     'BLOCK',
-                                    BLOCK_SPECIMEN_KEY,
-                                    HNE_DAYS
-                                ),
-                                slide(
-                                    UNDATED_KEY,
-                                    'H&E',
-                                    SAMPLE_ID,
-                                    'BLOCK',
-                                    BLOCK_SPECIMEN_KEY,
-                                    null
+                                    BLOCK_SPECIMEN_KEY
                                 ),
                             ],
                         },
@@ -139,8 +99,7 @@ const hierarchy = {
                                     'H&E',
                                     LATER_SAMPLE_ID,
                                     'PART',
-                                    PART_SPECIMEN_KEY,
-                                    200
+                                    PART_SPECIMEN_KEY
                                 ),
                             ],
                         },
@@ -150,6 +109,97 @@ const hierarchy = {
         },
     ],
 };
+
+/**
+ * LINKOUT as pdm's generate_pathology_timeline_files.py writes it: the
+ * Pathology Slides tab with top-level scope params.
+ */
+function pdmLinkout(
+    stainFilter: string,
+    matchLevel: string,
+    specimenKey: string,
+    sampleId: string
+): string {
+    const params = new URLSearchParams({
+        studyId: STUDY_ID,
+        caseId: PATIENT_ID,
+        stainFilter,
+        matchLevel,
+        specimenKey,
+        sampleId,
+    });
+    return `/patient/wsiHESlides?${params.toString()}`;
+}
+
+const HNE_LINKOUT = pdmLinkout('hne', 'BLOCK', BLOCK_SPECIMEN_KEY, SAMPLE_ID);
+
+function clinicalEvent(
+    eventType: string,
+    days: number,
+    attributes: Record<string, string>
+) {
+    return {
+        uniquePatientKey: `${PATIENT_ID}:${STUDY_ID}`,
+        studyId: STUDY_ID,
+        patientId: PATIENT_ID,
+        eventType,
+        startNumberOfDaysSinceDiagnosis: days,
+        attributes: Object.entries(attributes).map(([key, value]) => ({
+            key,
+            value,
+        })),
+    };
+}
+
+/** A row of the pdm pathology timeline file, as an imported event. */
+function pathologySlidesEvent(
+    days: number,
+    sampleId: string,
+    subtype: 'H&E' | 'IHC',
+    matchLevel: 'BLOCK' | 'PART',
+    specimen: string,
+    linkout: string
+) {
+    return clinicalEvent('PATHOLOGY SLIDES', days, {
+        SAMPLE_ID: sampleId,
+        SUBTYPE: subtype,
+        MATCH_LEVEL: matchLevel,
+        SPECIMEN: specimen,
+        IMAGE_COUNT: '1',
+        NON_SERVABLE_IMAGE_COUNT: '0',
+        TOTAL_IMAGE_COUNT: '1',
+        TIMEPOINT_SOURCE: 'Procedure date relative to first ICD-O diagnosis',
+        LINKOUT: linkout,
+    });
+}
+
+const clinicalEvents = [
+    clinicalEvent('SEQUENCING', 0, { SAMPLE_ID }),
+    pathologySlidesEvent(
+        -10,
+        SAMPLE_ID,
+        'H&E',
+        'BLOCK',
+        'Part 1 / Block A1',
+        HNE_LINKOUT
+    ),
+    pathologySlidesEvent(
+        -10,
+        SAMPLE_ID,
+        'IHC',
+        'BLOCK',
+        'Part 1 / Block A1',
+        pdmLinkout('ihc', 'BLOCK', BLOCK_SPECIMEN_KEY, SAMPLE_ID)
+    ),
+    pathologySlidesEvent(
+        200,
+        LATER_SAMPLE_ID,
+        'H&E',
+        'PART',
+        'Part 2',
+        pdmLinkout('hne', 'PART', PART_SPECIMEN_KEY, LATER_SAMPLE_ID)
+    ),
+];
 
 function json(body: unknown) {
     return {
@@ -191,8 +241,8 @@ const samples = [SAMPLE_ID, LATER_SAMPLE_ID].map(sampleId => ({
 
 /**
  * The patient page around the foundation slide mocks: every other portal
- * API answers empty and the patient has two samples. The slide hierarchy has
- * servable slides, so the Summary timeline loads the PATHOLOGY SLIDES track.
+ * API answers empty, the patient has two samples, and the clinical events
+ * include the PATHOLOGY SLIDES events of the pdm pathology timeline file.
  */
 async function installPatientPageMocks(page: Page, accessRequests: string[]) {
     // Registered first, so the specific routes below take precedence.
@@ -225,6 +275,10 @@ async function installPatientPageMocks(page: Page, accessRequests: string[]) {
         ),
         route => route.fulfill(json(samples))
     );
+    await page.route(
+        `**/api/studies/${STUDY_ID}/patients/${PATIENT_ID}/clinical-events**`,
+        route => route.fulfill(json(clinicalEvents))
+    );
 }
 
 /** The slide key of each slide access request. */
@@ -237,14 +291,14 @@ function accessedSlideKeys(accessRequests: string[]): string[] {
 /**
  * Slide access is requested only for the linked sample's slides: the opened
  * slide plus the viewer's metadata prefetch, which covers the selected
- * sample regardless of the stain and time filters. The other sample's slide
- * is never requested.
+ * sample regardless of the stain filter. The other sample's slide is never
+ * requested.
  */
 function expectAccessWithinLinkedSample(accessRequests: string[]) {
     const keys = accessedSlideKeys(accessRequests);
     expect(keys).not.toContain(LATER_KEY);
     for (const key of keys) {
-        expect([HNE_KEY, IHC_KEY, UNDATED_KEY]).toContain(key);
+        expect([HNE_KEY, IHC_KEY]).toContain(key);
     }
 }
 
@@ -263,27 +317,6 @@ async function expectListedSlides(page: Page, slideKeys: string[]) {
     }
 }
 
-/** Checks a Pathology Slides link carries its scope only in the nested node. */
-function parseSlidesLink(href: string, page: Page) {
-    const url = new URL(href, page.url());
-    const params = url.searchParams;
-    expect(url.pathname).toBe('/patient/wsiHESlides');
-    expect(params.get('studyId')).toBe(STUDY_ID);
-    expect(params.get('caseId')).toBe(PATIENT_ID);
-    for (const legacy of LEGACY_PARAMS) {
-        expect(params.has(legacy)).toBe(false);
-    }
-    expect(url.hash).toBe('');
-    expect(href).not.toMatch(/imageId|image_id|barcode|accession/i);
-    for (const key of ALL_KEYS) {
-        expect(href).not.toContain(key);
-    }
-    return {
-        params,
-        settings: JSON.parse(params.get('pathologySlideSettings') || 'null'),
-    };
-}
-
 /**
  * Hovers the timeline events in turn until one shows a pathology slide
  * tooltip titled `title`, and returns that tooltip.
@@ -293,6 +326,8 @@ async function hoverPathologyEvent(page: Page, title: string) {
         '.tl-timeline-svg g.tl-track g[style*="cursor"]'
     );
     await expect(events.first()).toBeVisible({ timeout: 30000 });
+    // Any event's tooltip; other tracks (Sequencing) have their own.
+    const anyTooltip = page.locator('.tl-timeline-tooltip');
     const tooltip = page.locator('[data-test="pathology-slide-tooltip"]');
     const count = await events.count();
     for (let i = 0; i < count; i++) {
@@ -301,13 +336,16 @@ async function hoverPathologyEvent(page: Page, title: string) {
             continue;
         }
         await page.mouse.move(0, 0);
-        await expect(tooltip).toHaveCount(0);
+        await expect(anyTooltip).toHaveCount(0);
         await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
         await page.mouse.move(
             box.x + box.width / 2 + 1,
             box.y + box.height / 2
         );
-        await expect(tooltip).toHaveCount(1);
+        await expect(anyTooltip).toHaveCount(1);
+        if ((await tooltip.count()) === 0) {
+            continue;
+        }
         const text = (await tooltip.locator('strong').textContent()) || '';
         if (text === title) {
             return tooltip;
@@ -332,19 +370,14 @@ if (process.env.PW_SUITE === 'wsi') {
                 'Pathology slides · H&E · Block-matched'
             );
             await expect(tooltip).toContainText(SAMPLE_ID);
+            await expect(tooltip).toContainText(
+                'd-10 — 10 d before sequencing (d0)'
+            );
+            await expect(tooltip).toContainText('Part 1 / Block A1');
             await expect(tooltip).toContainText('1 of 1 viewable');
             const link = tooltip.getByRole('link', { name: /Open H&E slides/ });
-            const { params, settings } = parseSlidesLink(
-                (await link.getAttribute('href')) || '',
-                page
-            );
-            expect(params.get('sampleId')).toBe(SAMPLE_ID);
-            expect(settings).toEqual({
-                stainFilter: 'hne',
-                matchLevel: 'BLOCK',
-                specimenKey: BLOCK_SPECIMEN_KEY,
-                timepointDays: String(HNE_DAYS),
-            });
+            // The link is the event's LINKOUT, as the timeline file has it.
+            expect(await link.getAttribute('href')).toBe(HNE_LINKOUT);
             // No slide is opened while the Summary tab is showing.
             expect(accessRequests).toEqual([]);
 
@@ -357,12 +390,9 @@ if (process.env.PW_SUITE === 'wsi') {
             await link.click();
 
             await expect(page).toHaveURL(/\/patient\/wsiHESlides\?/);
-            // The tab keeps the link's scope; the viewer may add a slide hash.
-            const opened = new URL(page.url()).searchParams;
-            expect(
-                JSON.parse(opened.get('pathologySlideSettings') || 'null')
-            ).toEqual(settings);
-            expect(opened.get('sampleId')).toBe(SAMPLE_ID);
+            expect(new URL(page.url()).searchParams.get('sampleId')).toBe(
+                SAMPLE_ID
+            );
             await expectListedSlides(page, [HNE_KEY]);
             await expect(
                 page.getByTestId(`wsi-slide-item-${HNE_KEY}`)
@@ -387,7 +417,6 @@ if (process.env.PW_SUITE === 'wsi') {
                 stainFilter: 'hne',
                 matchLevel: 'BLOCK',
                 specimenKey: BLOCK_SPECIMEN_KEY,
-                timepointDays: String(HNE_DAYS),
             });
             await page.goto(`/patient/wsiHESlides?${legacy.toString()}`);
             await expectListedSlides(page, [HNE_KEY]);
@@ -410,39 +439,6 @@ if (process.env.PW_SUITE === 'wsi') {
             });
             await page.goto(`/patient/wsiHESlides?${nested.toString()}`);
             await expectListedSlides(page, [IHC_KEY]);
-        });
-
-        test('the undated slides notice links to the undated slides', async ({
-            page,
-        }) => {
-            const accessRequests: string[] = [];
-            await installPatientPageMocks(page, accessRequests);
-            await page.goto(
-                `/patient/summary?studyId=${STUDY_ID}&caseId=${PATIENT_ID}`
-            );
-
-            const notice = page.locator(
-                '[data-test="undated-pathology-slides-notice"]'
-            );
-            await expect(
-                notice
-            ).toContainText(
-                '1 viewable pathology slide has no procedure date',
-                { timeout: 30000 }
-            );
-            const link = notice.getByRole('link', {
-                name: 'View undated slides',
-            });
-            const { params, settings } = parseSlidesLink(
-                (await link.getAttribute('href')) || '',
-                page
-            );
-            expect(params.has('sampleId')).toBe(false);
-            expect(settings).toEqual({ timepointDays: 'undated' });
-
-            await link.click();
-            await expect(page).toHaveURL(/\/patient\/wsiHESlides\?/);
-            await expectListedSlides(page, [UNDATED_KEY]);
         });
     });
 }

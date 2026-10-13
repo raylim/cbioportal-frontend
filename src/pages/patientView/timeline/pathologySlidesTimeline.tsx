@@ -12,17 +12,10 @@ import {
 import { ClinicalEvent } from 'cbioportal-ts-api-client';
 import {
     buildWsiSampleTimelineMap,
+    DAY_ZERO_TOOLTIP,
+    formatDaysSinceDiagnosis,
     WsiSampleTimelineMap,
 } from 'cbioportal-wsi-viewer';
-import {
-    buildPathologySlideRow,
-    buildPathologySlideTooltipContent,
-    fetchPathologySlideTimelineData,
-    PATHOLOGY_SLIDES_EVENT_TYPE,
-    PathologySlideEvent,
-    pathologySlideSampleId,
-    PathologySlideTimelineData,
-} from 'cbioportal-wsi-viewer/events';
 import { getTextWidth } from 'cbioportal-frontend-commons';
 import SampleMarker, { MultipleSampleMarker } from './SampleMarker';
 import {
@@ -32,26 +25,200 @@ import {
 import { ISampleMetaDeta } from './TimelineWrapper';
 import { PatientViewPageTabs } from 'pages/patientView/PatientViewPageTabIds';
 
-// This module is loaded lazily, with the viewer entry, for patients with
-// slides; see pathologySlidesTimelineLoader.
+// The PATHOLOGY SLIDES events are the patient's clinical events imported
+// from the pathology timeline file (data_clinical_timeline_pathology_slides),
+// one per procedure day, sample, match level, specimen and stain: SAMPLE_ID
+// ("Unmatched" when not linked to a sequenced sample), SUBTYPE (the stain
+// row), MATCH_LEVEL, SPECIMEN, IMAGE_COUNT (viewable slides),
+// TOTAL_IMAGE_COUNT, TIMEPOINT_SOURCE and LINKOUT (the Pathology Slides
+// tab, scoped to the event).
+
+export const PATHOLOGY_SLIDES_EVENT_TYPE = 'PATHOLOGY SLIDES';
+
+/** Whether the events include PATHOLOGY SLIDES events. */
+export function hasPathologySlideEvents(events: ClinicalEvent[]): boolean {
+    return events.some(
+        e => e.eventType?.toUpperCase() === PATHOLOGY_SLIDES_EVENT_TYPE
+    );
+}
 
 /**
- * The patient's PATHOLOGY SLIDES events, linking to the Pathology Slides tab,
- * and the count of viewable slides without a procedure day.
+ * A PATHOLOGY SLIDES event; only the fields the track reads, satisfied by
+ * both a clinical event and a timeline item's event.
  */
-export function loadPathologySlideTimelineData(
-    studyId: string,
-    patientId: string,
-    authScope: string
-): Promise<PathologySlideTimelineData> {
-    return fetchPathologySlideTimelineData(
-        {
-            studyId,
-            patientId,
-            slidesTabPath: `/patient/${PatientViewPageTabs.WSIHESlides}`,
-        },
-        authScope
+export interface PathologySlideEvent {
+    attributes: Array<{ key: string; value: string }>;
+    startNumberOfDaysSinceDiagnosis?: number;
+}
+
+function attribute(event: PathologySlideEvent, key: string): string {
+    const found = (event.attributes || []).find(
+        attr => attr.key.toUpperCase() === key
     );
+    return (found?.value || '').trim();
+}
+
+function countAttribute(event: PathologySlideEvent, key: string): number {
+    const count = parseInt(attribute(event, key), 10);
+    return Number.isFinite(count) && count > 0 ? count : 0;
+}
+
+const UNMATCHED_LABEL = 'Unmatched';
+
+/** BLOCK, PART or UNMATCHED. */
+function matchLevel(event: PathologySlideEvent): string {
+    const level = attribute(event, 'MATCH_LEVEL').toUpperCase();
+    return level === 'BLOCK' || level === 'PART' ? level : 'UNMATCHED';
+}
+
+/** Sequenced sample of a BLOCK- or PART-matched event; unset when unmatched. */
+export function pathologySlideSampleId(
+    event: PathologySlideEvent
+): string | undefined {
+    const sampleId = attribute(event, 'SAMPLE_ID');
+    return matchLevel(event) !== 'UNMATCHED' &&
+        sampleId &&
+        sampleId.toUpperCase() !== 'UNMATCHED'
+        ? sampleId
+        : undefined;
+}
+
+const SLIDES_TAB_PATH = `/patient/${PatientViewPageTabs.WSIHESlides}`;
+
+/**
+ * The event's LINKOUT when it opens the patient Pathology Slides tab;
+ * anything else is not linked.
+ */
+export function pathologySlideOpenPath(
+    event: PathologySlideEvent
+): string | undefined {
+    const linkout = attribute(event, 'LINKOUT');
+    return linkout.startsWith(`${SLIDES_TAB_PATH}?`) ? linkout : undefined;
+}
+
+const MATCH_LABELS: Record<string, { text: string; tooltip: string }> = {
+    BLOCK: {
+        text: 'Block',
+        tooltip:
+            'The slide was cut from the same tissue block that was sequenced for this sample',
+    },
+    PART: {
+        text: 'Part',
+        tooltip:
+            'The slide comes from the same specimen part as the sequenced sample; the sequenced block is not confirmed',
+    },
+};
+
+const UNMATCHED_TOOLTIP = 'Not linked to a sequenced sample';
+const UNMATCHED_SAMPLE_TEXT = 'Unmatched (not linked to a sequenced sample)';
+
+/**
+ * Procedure offset from sequencing, e.g. "42 d before sequencing (d+962)".
+ * Empty when the sequencing day is unknown.
+ */
+function sequencingRelation(
+    procedureDays: number,
+    sequencingDays: number | undefined
+): string {
+    if (sequencingDays == null) {
+        return '';
+    }
+    const day = formatDaysSinceDiagnosis(sequencingDays);
+    const delta = sequencingDays - procedureDays;
+    if (delta === 0) {
+        return `same day as sequencing (${day})`;
+    }
+    return `${Math.abs(delta)} d ${
+        delta > 0 ? 'before' : 'after'
+    } sequencing (${day})`;
+}
+
+/** One labelled line of the timeline tooltip for a PATHOLOGY SLIDES event. */
+export interface PathologySlideTooltipLine {
+    label: string;
+    value: string;
+    /** Hover explanation for the value. */
+    tooltip?: string;
+}
+
+export interface PathologySlideTooltipContent {
+    title: string;
+    lines: PathologySlideTooltipLine[];
+    /** In-app path to the Pathology Slides tab; unset when nothing is viewable. */
+    openPath?: string;
+    openLabel: string;
+}
+
+/**
+ * Timeline tooltip content for one PATHOLOGY SLIDES event, e.g.
+ * "Pathology slides · H&E · Part-matched" followed by Sample, Procedure,
+ * Specimen and Slides lines.
+ */
+export function buildPathologySlideTooltipContent(
+    event: PathologySlideEvent,
+    sampleTimelines: WsiSampleTimelineMap
+): PathologySlideTooltipContent {
+    const match = MATCH_LABELS[matchLevel(event)];
+    const sampleId = pathologySlideSampleId(event);
+    const stain = attribute(event, 'SUBTYPE');
+    const title = [
+        'Pathology slides',
+        stain,
+        match ? `${match.text}-matched` : UNMATCHED_LABEL,
+    ]
+        .filter(Boolean)
+        .join(' · ');
+
+    const lines: PathologySlideTooltipLine[] = [
+        {
+            label: 'Sample',
+            value: sampleId || UNMATCHED_SAMPLE_TEXT,
+            tooltip: match ? match.tooltip : UNMATCHED_TOOLTIP,
+        },
+    ];
+    const days = event.startNumberOfDaysSinceDiagnosis;
+    if (typeof days === 'number' && Number.isFinite(days)) {
+        const relation = sequencingRelation(
+            days,
+            sampleId ? sampleTimelines.get(sampleId)?.sequencingDays : undefined
+        );
+        const procedure = formatDaysSinceDiagnosis(days);
+        lines.push({
+            label: 'Procedure',
+            value: relation ? `${procedure} — ${relation}` : procedure,
+            tooltip: [attribute(event, 'TIMEPOINT_SOURCE'), DAY_ZERO_TOOLTIP]
+                .filter(Boolean)
+                .join('. '),
+        });
+    }
+    const specimen = attribute(event, 'SPECIMEN');
+    if (specimen) {
+        lines.push({ label: 'Specimen', value: specimen });
+    }
+    const viewable = countAttribute(event, 'IMAGE_COUNT');
+    const total = Math.max(
+        countAttribute(event, 'TOTAL_IMAGE_COUNT'),
+        viewable
+    );
+    const nonViewable = total - viewable;
+    lines.push({
+        label: 'Slides',
+        value: `${viewable} of ${total} viewable`,
+        tooltip:
+            nonViewable > 0
+                ? `${nonViewable} ${
+                      nonViewable === 1 ? 'slide is' : 'slides are'
+                  } not viewable: no scanned image is available.`
+                : undefined,
+    });
+
+    return {
+        title,
+        lines,
+        openPath: viewable > 0 ? pathologySlideOpenPath(event) : undefined,
+        openLabel: `Open ${stain || 'pathology'} slides for ${sampleId ||
+            UNMATCHED_LABEL}`,
+    };
 }
 
 export interface PathologySlideMarkerSample {
@@ -193,9 +360,7 @@ export const PathologySlideTooltip: React.FunctionComponent<{
     event: PathologySlideEvent;
     sampleTimelines: WsiSampleTimelineMap;
 }> = function({ event, sampleTimelines }) {
-    const content = buildPathologySlideTooltipContent(
-        buildPathologySlideRow(event, sampleTimelines)
-    );
+    const content = buildPathologySlideTooltipContent(event, sampleTimelines);
     return (
         <div data-test="pathology-slide-tooltip">
             <strong>{content.title}</strong>

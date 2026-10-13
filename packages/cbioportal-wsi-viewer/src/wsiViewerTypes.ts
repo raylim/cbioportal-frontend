@@ -14,19 +14,6 @@ export interface Slide {
     part_description?: string;
     /** Number of the parent Part. */
     part_number?: string;
-    /** Preferred slide timepoint in days relative to tumor sequencing. */
-    slide_timepoint_days?: number;
-    /** Source of the preferred slide timepoint. */
-    slide_timepoint_source?: string;
-    /** RECORDED, ESTIMATED, or UNDATED. */
-    slide_timepoint_kind?: string;
-    /** Machine-readable timing source. */
-    slide_timepoint_date_source?: string;
-    /** Why a relative date is unavailable, when undated. */
-    slide_timepoint_reason?: string;
-    /** Published timing status and coordinate system. */
-    slide_timepoint_status?: string;
-    slide_timepoint_coordinate_system?: string;
     /** Association fields carried by the nested v2 slide placement. A slide
      *  belongs to exactly one sample. */
     sample_id?: string | null;
@@ -37,7 +24,6 @@ export interface Slide {
 
 export type MatchLevel = 'PART' | 'BLOCK' | 'UNMATCHED';
 export type WsiSlideType = 'H&E' | 'IHC' | 'Other' | 'Unknown';
-export type WsiTimepointSelection = number | 'undated';
 
 export type WsiStainFilter = 'all' | 'hne' | 'ihc' | 'other' | 'unknown';
 export type PathologySlideMatchFilter = 'all' | 'part' | 'block' | 'unmatched';
@@ -57,7 +43,6 @@ export interface Part {
 
 export interface Sample {
     sample_id: string;
-    sequencing_date?: string;
     parts: Part[];
 }
 
@@ -83,13 +68,6 @@ export interface WsiV2Slide {
     sampleId: string | null;
     matchLevel: MatchLevel;
     specimenKey: string;
-    procedureDateDays: number | null;
-    timepointSource: string | null;
-    procedureDateKind: string | null;
-    procedureDateSource: string | null;
-    procedureDateReason: string | null;
-    procedureDateStatus: string | null;
-    procedureCoordinateSystem: string | null;
 }
 
 export interface WsiV2Block {

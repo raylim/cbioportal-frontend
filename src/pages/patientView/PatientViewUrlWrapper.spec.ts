@@ -9,19 +9,17 @@ const NESTED_LINK =
     '/patient/wsiHESlides?studyId=mskimpact&caseId=P-0000024' +
     '&sampleId=P-0000024-T01-IM3' +
     '&pathologySlideSettings=%7B%22stainFilter%22%3A%22hne%22%2C' +
-    '%22matchLevel%22%3A%22PART%22%2C%22specimenKey%22%3A%22part%3A%3A1%22%2C' +
-    '%22timepointDays%22%3A%22-136%22%7D';
+    '%22matchLevel%22%3A%22PART%22%2C%22specimenKey%22%3A%22part%3A%3A1%22%7D';
 
 const LEGACY_LINK =
     '/patient/wsiHESlides?studyId=mskimpact&caseId=P-0000024' +
     '&stainFilter=hne&matchLevel=PART&specimenKey=part%3A%3A1' +
-    '&sampleId=P-0000024-T01-IM3&timepointDays=-136';
+    '&sampleId=P-0000024-T01-IM3';
 
 const SCOPE = {
     stainFilter: 'hne',
     matchLevel: 'PART',
     specimenKey: 'part::1',
-    timepointDays: '-136',
 };
 
 describe('PatientViewUrlWrapper pathologySlideSettings', () => {
@@ -61,13 +59,12 @@ describe('PatientViewUrlWrapper pathologySlideSettings', () => {
 
     it('reads a partial legacy link', () => {
         const urlWrapper = open(
-            '/patient/wsiHESlides?studyId=s&caseId=p&timepointDays=undated'
+            '/patient/wsiHESlides?studyId=s&caseId=p&stainFilter=ihc'
         );
         expect(urlWrapper.pathologySlideScope).toEqual({
-            stainFilter: undefined,
+            stainFilter: 'ihc',
             matchLevel: undefined,
             specimenKey: undefined,
-            timepointDays: 'undated',
         });
     });
 
@@ -77,13 +74,12 @@ describe('PatientViewUrlWrapper pathologySlideSettings', () => {
             stainFilter: undefined,
             matchLevel: undefined,
             specimenKey: undefined,
-            timepointDays: undefined,
         });
     });
 
     it('prefers the nested node over legacy params', () => {
         const urlWrapper = open(
-            `${NESTED_LINK}&stainFilter=ihc&timepointDays=10`
+            `${NESTED_LINK}&stainFilter=ihc&matchLevel=BLOCK`
         );
         expect(urlWrapper.pathologySlideScope).toEqual(SCOPE);
     });
@@ -95,7 +91,7 @@ describe('PatientViewUrlWrapper pathologySlideSettings', () => {
                 '&pathologySlideSettings=%7B%22stainFilter%22%3A%22ihc%22%7D'
         );
         expect(urlWrapper.pathologySlideScope.stainFilter).toBe('ihc');
-        expect(urlWrapper.pathologySlideScope.timepointDays).toBeUndefined();
+        expect(urlWrapper.pathologySlideScope.matchLevel).toBeUndefined();
         history.push(LEGACY_LINK);
         expect(urlWrapper.pathologySlideScope).toEqual(SCOPE);
         history.push('/patient/wsiHESlides?studyId=s&caseId=p');
@@ -120,12 +116,12 @@ describe('pathologySlideSettingsBackwardsCompatibility', () => {
             studyId: 's',
             stainFilter: 'hne',
             matchLevel: '',
-            timepointDays: '5',
+            specimenKey: 'part::1',
         });
         expect(mapped.studyId).toBe('s');
         expect(JSON.parse(mapped.pathologySlideSettings!)).toEqual({
             stainFilter: 'hne',
-            timepointDays: '5',
+            specimenKey: 'part::1',
         });
     });
 

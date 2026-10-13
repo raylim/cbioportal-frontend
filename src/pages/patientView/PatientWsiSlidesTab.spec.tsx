@@ -4,7 +4,6 @@
 import * as React from 'react';
 import { render } from '@testing-library/react';
 import PatientWsiSlidesTab, {
-    parseTimepointDays,
     wsiSlidesTabScopeFromQuery,
 } from './PatientWsiSlidesTab';
 
@@ -81,31 +80,6 @@ describe('wsiSlidesTabScopeFromQuery', () => {
     });
 });
 
-describe('timepointDays link param', () => {
-    it('parses a procedure day or undated', () => {
-        expect(parseTimepointDays('920')).toBe(920);
-        expect(parseTimepointDays('-21')).toBe(-21);
-        expect(parseTimepointDays('undated')).toBe('undated');
-        expect(parseTimepointDays('UNDATED')).toBe('undated');
-        expect(parseTimepointDays('9.5')).toBeUndefined();
-        expect(parseTimepointDays('x')).toBeUndefined();
-        expect(parseTimepointDays(undefined)).toBeUndefined();
-    });
-
-    it('scopes the viewer to the day unless the hash names a slide', () => {
-        expect(
-            wsiSlidesTabScopeFromQuery({ timepointDays: 'undated' })
-                .initialTimepointDays
-        ).toBe('undated');
-        expect(
-            wsiSlidesTabScopeFromQuery(
-                { ...LINK_QUERY, timepointDays: '57' },
-                '3658364'
-            ).initialTimepointDays
-        ).toBeUndefined();
-    });
-});
-
 describe('PatientWsiSlidesTab', () => {
     afterEach(() => {
         mockEntryPoint.mockClear();
@@ -135,16 +109,14 @@ describe('PatientWsiSlidesTab', () => {
         );
     });
 
-    it('passes a timepoint day to the viewer', () => {
-        render(
-            <PatientWsiSlidesTab
-                {...baseProps}
-                query={{ ...LINK_QUERY, timepointDays: '-136' }}
-            />
-        );
-        expect(mockEntryPoint).toHaveBeenLastCalledWith(
-            expect.objectContaining({ initialTimepointDays: -136 })
-        );
+    it('lets a hash slide deep link take precedence', () => {
+        window.history.replaceState(null, '', '/#wsi:slide=slide-9');
+        render(<PatientWsiSlidesTab {...baseProps} query={LINK_QUERY} />);
+        const props =
+            mockEntryPoint.mock.calls[mockEntryPoint.mock.calls.length - 1][0];
+        expect(props.pathologyFilter).toBeUndefined();
+        expect(props.initialStainFilter).toBeUndefined();
+        expect(props.preferredSampleId).toBe('P-1-T01');
     });
 
     it('passes the clinical events to the viewer', () => {
@@ -165,15 +137,5 @@ describe('PatientWsiSlidesTab', () => {
         const props =
             mockEntryPoint.mock.calls[mockEntryPoint.mock.calls.length - 1][0];
         expect(props.clinicalEvents).toBe(clinicalEvents);
-    });
-
-    it('lets a hash slide deep link take precedence', () => {
-        window.history.replaceState(null, '', '/#wsi:slide=slide-9');
-        render(<PatientWsiSlidesTab {...baseProps} query={LINK_QUERY} />);
-        const props =
-            mockEntryPoint.mock.calls[mockEntryPoint.mock.calls.length - 1][0];
-        expect(props.pathologyFilter).toBeUndefined();
-        expect(props.initialStainFilter).toBeUndefined();
-        expect(props.preferredSampleId).toBe('P-1-T01');
     });
 });

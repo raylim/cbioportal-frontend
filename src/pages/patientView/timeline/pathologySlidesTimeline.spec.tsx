@@ -13,13 +13,8 @@ import {
 import { ClinicalEvent } from 'cbioportal-ts-api-client';
 import SampleManager from 'pages/patientView/SampleManager';
 import { buildBaseConfig, sortTracks } from './timeline_helpers';
-import { configureWsiViewerRuntime } from 'cbioportal-wsi-viewer';
 import {
-    PathologySlideClinicalEvent,
-    PathologySlideEventDetails,
-} from 'cbioportal-wsi-viewer/events';
-import {
-    loadPathologySlideTimelineData,
+    hasPathologySlideEvents,
     pathologySlideGroupMarker,
     pathologySlideMarkerSample,
     pathologySlidesTrackConfig,
@@ -51,34 +46,53 @@ const TestPortal = (Portal as unknown) as React.ComponentType<
 >;
 
 const SAMPLE = 'P-0000081-T02-IM6';
+// As written by pdm's generate_pathology_timeline_files.py.
 const LINKOUT =
-    '/patient/wsiHESlides?studyId=mskimpact&caseId=P-0000081&stainFilter=hne&matchLevel=PART&sampleId=P-0000081-T02-IM6';
+    '/patient/wsiHESlides?studyId=mskimpact&caseId=P-0000081&stainFilter=hne&matchLevel=PART&specimenKey=sk_0123456789abcdef&sampleId=P-0000081-T02-IM6';
 
-const UNMATCHED: Partial<PathologySlideEventDetails> = {
-    matchLevel: 'UNMATCHED',
-    sampleId: undefined,
+/** Attributes of a pathology timeline file row. */
+interface SlideRow {
+    sampleId?: string;
+    matchLevel: string;
+    stain: string;
+    specimen: string;
+    viewable: number;
+    total: number;
+    linkout: string;
+}
+
+const UNMATCHED: Partial<SlideRow> = {
+    matchLevel: 'Unmatched',
+    sampleId: 'Unmatched',
+    linkout: LINKOUT.replace('&sampleId=P-0000081-T02-IM6', '').replace(
+        'matchLevel=PART',
+        'matchLevel=Unmatched'
+    ),
 };
 
-function slide(
-    details: Partial<PathologySlideEventDetails>,
-    days = 920
-): PathologySlideClinicalEvent {
-    const pathologySlide: PathologySlideEventDetails = {
+/** A PATHOLOGY SLIDES clinical event imported from the timeline file. */
+function slide(row: Partial<SlideRow>, days = 920): ClinicalEvent {
+    const r: SlideRow = {
         sampleId: SAMPLE,
         matchLevel: 'PART',
         stain: 'H&E',
         specimen: 'Part 1',
-        viewableSlideKeys: ['5d41402abc4b2a76b9719d911017c592'],
-        totalCount: 1,
-        openPath: LINKOUT,
-        ...details,
+        viewable: 1,
+        total: 1,
+        linkout: LINKOUT,
+        ...row,
     };
-    return {
-        ...event('PATHOLOGY SLIDES', days, {
-            SUBTYPE: pathologySlide.stain,
-        }),
-        pathologySlide,
-    };
+    return event('PATHOLOGY SLIDES', days, {
+        SAMPLE_ID: r.sampleId || '',
+        SUBTYPE: r.stain,
+        MATCH_LEVEL: r.matchLevel,
+        SPECIMEN: r.specimen,
+        IMAGE_COUNT: String(r.viewable),
+        NON_SERVABLE_IMAGE_COUNT: String(r.total - r.viewable),
+        TOTAL_IMAGE_COUNT: String(r.total),
+        TIMEPOINT_SOURCE: 'Procedure date relative to first ICD-O diagnosis',
+        LINKOUT: r.viewable > 0 ? r.linkout : '',
+    });
 }
 
 const CASE_META: ISampleMetaDeta = {
@@ -273,13 +287,15 @@ describe('PATHOLOGY SLIDES timeline track', () => {
             slide({}),
         ]);
         const sorted = track.sortSimultaneousEvents!(track.items);
+        const attr = (e: TimelineEvent, key: string) =>
+            e.event.attributes.find(a => a.key === key)!.value;
         expect(
-            sorted.map(e => {
-                const details = (e.event as PathologySlideClinicalEvent)
-                    .pathologySlide;
-                return `${details.sampleId ?? '-'} ${details.matchLevel}`;
-            })
-        ).toEqual(['P-0000081-T01-IM3 PART', `${SAMPLE} PART`, '- UNMATCHED']);
+            sorted.map(e => `${attr(e, 'SAMPLE_ID')} ${attr(e, 'MATCH_LEVEL')}`)
+        ).toEqual([
+            'P-0000081-T01-IM3 PART',
+            `${SAMPLE} PART`,
+            'Unmatched Unmatched',
+        ]);
     });
 
     it('splits the track into stain rows: H&E, IHC, then the rest', () => {
@@ -325,10 +341,9 @@ describe('PATHOLOGY SLIDES timeline track', () => {
         expect(
             screen.getByText('d+920 — 42 d before sequencing (d+962)')
         ).toBeTruthy();
+        expect(screen.getByText('Part 1')).toBeTruthy();
         expect(screen.getByText('1 of 1 viewable')).toBeTruthy();
-        expect(document.body.textContent).not.toContain(
-            '5d41402abc4b2a76b9719d911017c592'
-        );
+        expect(document.body.textContent).not.toContain('sk_0123456789abcdef');
 
         // The timeline renders tooltips in a portal; the router context
         // still reaches the link, so it navigates without a page load.
@@ -340,113 +355,49 @@ describe('PATHOLOGY SLIDES timeline track', () => {
     });
 
     it('omits Open slides when nothing is viewable', () => {
-        const track = pathologyTrack([slide({ viewableSlideKeys: [] })]);
+        const track = pathologyTrack([slide({ viewable: 0 })]);
         renderTooltip(track, track.items[0]);
         expect(screen.getByText('0 of 1 viewable')).toBeTruthy();
         expect(screen.queryByRole('link')).toBeNull();
     });
 
+    it('links only to the Pathology Slides tab', () => {
+        const track = pathologyTrack([
+            slide({ linkout: 'https://example.org/patient/wsiHESlides?x=1' }),
+        ]);
+        renderTooltip(track, track.items[0]);
+        expect(screen.getByText('1 of 1 viewable')).toBeTruthy();
+        expect(screen.queryByRole('link')).toBeNull();
+    });
+
+    it('explains slides that are not viewable', () => {
+        const track = pathologyTrack([slide({ viewable: 1, total: 3 })]);
+        renderTooltip(track, track.items[0]);
+        expect(screen.getByText('1 of 3 viewable').getAttribute('title')).toBe(
+            '2 slides are not viewable: no scanned image is available.'
+        );
+    });
+
     it('describes unmatched slides in the tooltip', () => {
         const track = pathologyTrack([slide(UNMATCHED)]);
-        renderTooltip(track, track.items[0]);
+        const location = renderTooltip(track, track.items[0]);
+        expect(
+            screen.getByText('Pathology slides · H&E · Unmatched')
+        ).toBeTruthy();
         expect(
             screen.getByText('Unmatched (not linked to a sequenced sample)')
         ).toBeTruthy();
         expect(screen.getByText('d+920')).toBeTruthy();
+        fireEvent.click(
+            screen.getByRole('link', { name: /Open H&E slides for Unmatched/ })
+        );
+        expect(location()?.search).toContain('matchLevel=Unmatched');
     });
 });
 
-describe('loadPathologySlideTimelineData', () => {
-    const hierarchy = {
-        referenceSampleId: SAMPLE,
-        sampleGroups: [
-            {
-                sampleId: SAMPLE,
-                parts: [
-                    {
-                        partNumber: '1',
-                        partType: '',
-                        partDescription: '',
-                        subspecialty: '',
-                        blocks: [
-                            {
-                                blockNumber: '1',
-                                blockLabel: 'Block 1',
-                                slides: [
-                                    {
-                                        slideKey:
-                                            '5d41402abc4b2a76b9719d911017c592',
-                                        stainName: 'H&E',
-                                        stainGroup: 'initial',
-                                        isHne: true,
-                                        isIhc: false,
-                                        magnification: '40x',
-                                        fileSizeBytes: null,
-                                        canServeTiles: true,
-                                        slideType: 'H&E',
-                                        sampleId: SAMPLE,
-                                        matchLevel: 'PART',
-                                        specimenKey: 'part::part:1',
-                                        procedureDateDays: 920,
-                                        timepointSource:
-                                            'Recorded procedure date relative to first tumor sequencing',
-                                        procedureDateKind: 'RECORDED',
-                                        procedureDateSource: 'procedure',
-                                        procedureDateReason: null,
-                                        procedureDateStatus: 'AVAILABLE',
-                                        procedureCoordinateSystem:
-                                            'patient_first_tumor_sequencing_day_zero',
-                                    },
-                                ],
-                            },
-                        ],
-                    },
-                ],
-            },
-        ],
-    };
-
-    it('builds timeline events linking to the Pathology Slides tab', async () => {
-        const fetchImpl = jest.fn().mockResolvedValue({
-            ok: true,
-            json: () => Promise.resolve(hierarchy),
-        });
-        configureWsiViewerRuntime({
-            buildApiUrl: (path: string) => `https://portal.example/${path}`,
-            fetchImpl,
-        });
-
-        const {
-            events: slides,
-            undatedViewableSlideCount,
-        } = await loadPathologySlideTimelineData(
-            'mskimpact',
-            'P-0000081',
-            'user-1'
-        );
-        expect(undatedViewableSlideCount).toBe(0);
-
-        expect(fetchImpl.mock.calls[0][0]).toBe(
-            'https://portal.example/api/wsi/v2/hierarchy/mskimpact/P-0000081'
-        );
-        const track = pathologyTrack(slides);
-        const location = renderTooltip(track, track.items[0]);
-        expect(
-            screen.getByText('d+920 — 42 d before sequencing (d+962)')
-        ).toBeTruthy();
-        fireEvent.click(screen.getByRole('link', { name: /Open H&E slides/ }));
-        expect(location()?.pathname).toBe('/patient/wsiHESlides');
-        const search = new URLSearchParams(location()?.search);
-        expect(Object.fromEntries(search.entries())).toEqual({
-            studyId: 'mskimpact',
-            caseId: 'P-0000081',
-            sampleId: 'P-0000081-T02-IM6',
-            pathologySlideSettings: JSON.stringify({
-                stainFilter: 'hne',
-                matchLevel: 'PART',
-                specimenKey: 'part::part:1',
-                timepointDays: '920',
-            }),
-        });
+describe('hasPathologySlideEvents', () => {
+    it('finds PATHOLOGY SLIDES events', () => {
+        expect(hasPathologySlideEvents([SEQUENCING])).toBe(false);
+        expect(hasPathologySlideEvents([SEQUENCING, slide({})])).toBe(true);
     });
 });

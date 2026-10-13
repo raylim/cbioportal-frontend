@@ -294,8 +294,9 @@ export function configureGenieTimeline(baseConfig: ITimelineConfig) {
 }
 
 /**
- * @param extraTrackEventRenderers renderers for tracks the page adds, such as
- * the PATHOLOGY SLIDES track built from the patient's slides.
+ * @param extraTrackEventRenderers renderers for tracks the page draws itself,
+ * such as the PATHOLOGY SLIDES track of the patient's imported pathology
+ * timeline events.
  */
 export function buildBaseConfig(
     sampleManager: SampleManager,

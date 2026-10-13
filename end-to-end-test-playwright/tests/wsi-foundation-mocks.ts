@@ -62,13 +62,6 @@ function makeSlide(slideKey: string, stainName: string, stainGroup: string) {
         sampleId: 'wsi-foundation-smoke-sample',
         matchLevel: 'BLOCK',
         specimenKey: 'block::1::A1',
-        procedureDateDays: -10,
-        timepointSource: 'Procedure date',
-        procedureDateKind: 'RECORDED',
-        procedureDateSource: 'Recorded procedure date',
-        procedureDateReason: null,
-        procedureDateStatus: 'AVAILABLE',
-        procedureCoordinateSystem: 'patient_first_tumor_sequencing_day_zero',
     };
 }
 
@@ -203,8 +196,9 @@ export async function installFoundationMocks(
                 body: JSON.stringify(hierarchy),
             })
     );
-    // The viewer route loads the patient's clinical events to relate slides
-    // to sequencing; the smoke patient has none.
+    // The viewer route loads the patient's clinical events for the sample
+    // sequencing days; the smoke patient has none. Register a later route to
+    // give the patient events.
     await page.route(
         `**/api/studies/${STUDY_ID}/patients/${PATIENT_ID}/clinical-events**`,
         route =>

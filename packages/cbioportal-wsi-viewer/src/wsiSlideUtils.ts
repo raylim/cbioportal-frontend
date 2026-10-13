@@ -1,9 +1,4 @@
-import {
-    formatDaysSinceDiagnosis,
-    getSlideTimepointDays,
-    normalizeBlockLabel,
-    timepointText,
-} from './wsiNavUtils';
+import { normalizeBlockLabel } from './wsiNavUtils';
 import {
     MatchLevel,
     PathologySlideFilter,
@@ -12,58 +7,7 @@ import {
     Sample,
     Slide,
     WsiStainFilter,
-    WsiTimepointSelection,
 } from './wsiViewerTypes';
-
-export type WsiTimepointOption = {
-    days: WsiTimepointSelection;
-    label: string;
-};
-
-export function getWsiTimepointOptions(
-    slides: ReadonlyArray<
-        Pick<Slide, 'slide_timepoint_days' | 'slide_timepoint_source'>
-    >
-): WsiTimepointOption[] {
-    const optionsByDays = new Map<number, WsiTimepointOption>();
-    let hasUndated = false;
-    slides.forEach(slide => {
-        const days = getSlideTimepointDays(slide);
-        if (days == null) {
-            hasUndated = true;
-            return;
-        }
-        if (optionsByDays.has(days)) {
-            return;
-        }
-        optionsByDays.set(days, {
-            days,
-            label:
-                timepointText(days, slide.slide_timepoint_source) ||
-                formatDaysSinceDiagnosis(days),
-        });
-    });
-
-    const options = Array.from(optionsByDays.values()).sort(
-        (left, right) => Number(left.days) - Number(right.days)
-    );
-    if (hasUndated) {
-        options.push({ days: 'undated', label: 'Undated' });
-    }
-    return options;
-}
-
-export function matchesWsiTimepointFilter(
-    slide: Pick<Slide, 'slide_timepoint_days'>,
-    timepointDays?: WsiTimepointSelection
-): boolean {
-    return (
-        timepointDays == null ||
-        (timepointDays === 'undated'
-            ? getSlideTimepointDays(slide) == null
-            : getSlideTimepointDays(slide) === timepointDays)
-    );
-}
 
 export interface ServableSlideEntry {
     slide: Slide;
@@ -183,40 +127,22 @@ function compareSpecimenNumbers(
     });
 }
 
-/** Dated slides first, earliest first; undated slides tie. */
-function compareSlideTimepoints(
-    left: Pick<Slide, 'slide_timepoint_days'>,
-    right: Pick<Slide, 'slide_timepoint_days'>
-): number {
-    const leftDays = getSlideTimepointDays(left);
-    const rightDays = getSlideTimepointDays(right);
-    if (leftDays == null || rightDays == null) {
-        return Number(leftDays == null) - Number(rightDays == null);
-    }
-    return leftDays - rightDays;
-}
-
 export interface SampleSlideOrderEntry {
-    slide: Pick<
-        Slide,
-        'block_number' | 'is_hne' | 'stain_name' | 'slide_timepoint_days'
-    >;
+    slide: Pick<Slide, 'block_number' | 'is_hne' | 'stain_name'>;
     /** Number of the part holding the slide. */
     partNumber?: string | null;
 }
 
 /**
- * Orders slides within a sample by timepoint (dated slides first, earliest
- * first), then part number, then block number (as the backend orders them),
- * then stain: H&E first, the rest by stain name. Slide selection takes the
- * first matching slide in this order as the default.
+ * Orders slides within a sample by part number, then block number (as the
+ * backend orders them), then stain: H&E first, the rest by stain name. Slide
+ * selection takes the first matching slide in this order as the default.
  */
 export function compareSlidesInSample(
     left: SampleSlideOrderEntry,
     right: SampleSlideOrderEntry
 ): number {
     return (
-        compareSlideTimepoints(left.slide, right.slide) ||
         compareSpecimenNumbers(left.partNumber, right.partNumber) ||
         compareSpecimenNumbers(
             left.slide.block_number,

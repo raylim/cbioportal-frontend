@@ -2,8 +2,6 @@ import {
     compareSlidesInSample,
     getOrderedServableSlidesForSampleReadOnly,
     getServableSlideIdsForPathologyFilterReadOnly,
-    getWsiTimepointOptions,
-    matchesWsiTimepointFilter,
     sampleHasMultiplePartDescriptions,
     sampleHasServableSlide,
     selectMetadataPrefetchSlides,
@@ -13,32 +11,6 @@ import { makeSample, makeSlide } from './wsiTestFixtures';
 import { PatientHierarchy, Sample, Slide } from './wsiViewerTypes';
 
 describe('wsiSlideUtils read-only slide derivation', () => {
-    it('builds ordered unique timepoint options and keeps undated slides in All', () => {
-        const slides = [
-            makeSlide({
-                slide_key: 'late',
-                slide_timepoint_days: 10,
-                slide_timepoint_source: 'Procedure date',
-            }),
-            makeSlide({
-                slide_key: 'early',
-                slide_timepoint_days: -10,
-                slide_timepoint_source: 'Procedure date',
-            }),
-            makeSlide({ slide_key: 'undated' }),
-        ];
-        const options = getWsiTimepointOptions(slides);
-
-        expect(options).toEqual([
-            { days: -10, label: 'Proc d-10' },
-            { days: 10, label: 'Proc d+10' },
-            { days: 'undated', label: 'Undated' },
-        ]);
-        expect(matchesWsiTimepointFilter(slides[2], 'undated')).toBe(true);
-        expect(matchesWsiTimepointFilter(slides[2], -10)).toBe(false);
-        expect(matchesWsiTimepointFilter(slides[2])).toBe(true);
-    });
-
     it('memoizes servable slides by sample identity', () => {
         const sample = makeSample('S-1', [makeSlide({ slide_key: 'slide-1' })]);
         const first = getOrderedServableSlidesForSampleReadOnly(sample);
@@ -85,19 +57,6 @@ describe('wsiSlideUtils read-only slide derivation', () => {
                 entry => entry.slide.slide_key
             )
         ).toEqual(['p2-b2-he', 'p2-b2-ihc', 'p2-b10-he', 'p10-b1-he']);
-    });
-
-    it('orders slides by slide-level timepoint', () => {
-        const sample = makeSample('S-1', [
-            makeSlide({ slide_key: 'late', slide_timepoint_days: 10 }),
-            makeSlide({ slide_key: 'early', slide_timepoint_days: -10 }),
-        ]);
-
-        expect(
-            getOrderedServableSlidesForSampleReadOnly(sample).map(
-                entry => entry.slide.slide_key
-            )
-        ).toEqual(['early', 'late']);
     });
 
     it('keeps hierarchy order for slides with the same part, block and stain', () => {

@@ -24,7 +24,10 @@ import {
     sortTracks,
 } from 'pages/patientView/timeline/timeline_helpers';
 import { downloadZippedTracks } from './timelineDataUtils';
-import { PathologySlidesTimeline } from './pathologySlidesTimelineLoader';
+import {
+    hasPathologySlideEvents,
+    pathologySlidesTrackConfig,
+} from './pathologySlidesTimeline';
 
 export interface ISampleMetaDeta {
     color: { [sampleId: string]: string };
@@ -41,8 +44,11 @@ export interface ITimelineProps {
     samples: Sample[];
     mutationProfileId: string;
     headerWidth?: number;
-    /** Renderer of the PATHOLOGY SLIDES events included in `data`. */
-    pathologySlidesTrackConfig?: PathologySlidesTimeline['trackConfig'];
+    /**
+     * Draws the PATHOLOGY SLIDES events in `data` as the slide track, linked
+     * to the Pathology Slides tab; set when the portal serves slides.
+     */
+    showPathologySlides?: boolean;
 }
 
 const TimelineWrapper: React.FunctionComponent<ITimelineProps> = observer(
@@ -52,7 +58,7 @@ const TimelineWrapper: React.FunctionComponent<ITimelineProps> = observer(
         sampleManager,
         width,
         headerWidth,
-        pathologySlidesTrackConfig,
+        showPathologySlides,
     }: ITimelineProps) {
         const [events, setEvents] = useState<
             TimelineTrackSpecification[] | null
@@ -77,7 +83,7 @@ const TimelineWrapper: React.FunctionComponent<ITimelineProps> = observer(
             const baseConfig: ITimelineConfig = buildBaseConfig(
                 sampleManager,
                 caseMetaData,
-                pathologySlidesTrackConfig
+                showPathologySlides && hasPathologySlideEvents(data)
                     ? [pathologySlidesTrackConfig(caseMetaData, data)]
                     : []
             );

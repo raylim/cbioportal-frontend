@@ -1,9 +1,5 @@
 import { ClinicalEvent } from 'cbioportal-ts-api-client';
-import {
-    DAY_ZERO_TOOLTIP,
-    formatDaysSinceDiagnosis,
-    procedureSequencingOffset,
-} from './wsiNavUtils';
+import { DAY_ZERO_TOOLTIP, formatDaysSinceDiagnosis } from './wsiNavUtils';
 
 /** Per-sample acquisition and sequencing days from the patient timeline. */
 export interface WsiSampleTimeline {
@@ -91,39 +87,4 @@ export function sampleSequencedText(
     return timeline?.sequencingDays != null
         ? `sequenced ${formatDaysSinceDiagnosis(timeline.sequencingDays)}`
         : null;
-}
-
-/** "Proc 249 d before sequencing", or null when either day is unknown. */
-export function procedureRelativeToSequencingText(
-    procedureDays: number | null | undefined,
-    sequencingDays: number | null | undefined
-): string | null {
-    const offset = procedureSequencingOffset(procedureDays, sequencingDays);
-    if (!offset) {
-        return null;
-    }
-    return offset.relation === 'same'
-        ? 'Proc same day as sequencing'
-        : `Proc ${offset.days} d ${offset.relation} sequencing`;
-}
-
-/**
- * Sequencing day with its offset from the procedure, e.g.
- * "d+7 (249 d later)". Without a procedure day only the day is shown.
- */
-export function sequencedRelativeToProcedureText(
-    sequencingDays: number,
-    procedureDays: number | null | undefined
-): string {
-    const day = formatDaysSinceDiagnosis(sequencingDays);
-    const offset = procedureSequencingOffset(procedureDays, sequencingDays);
-    if (!offset) {
-        return day;
-    }
-    if (offset.relation === 'same') {
-        return `${day} (same day)`;
-    }
-    return `${day} (${offset.days} d ${
-        offset.relation === 'before' ? 'later' : 'earlier'
-    })`;
 }
