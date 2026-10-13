@@ -91,7 +91,7 @@ import {
 } from 'shared/lib/customTabs/customTabHelpers';
 import {
     isStudyViewResourceTab,
-    visibleStudyResourceDefinitions,
+    shouldHideLegacyHeResourceTab,
 } from 'shared/lib/ResourcePolicy';
 import { VirtualStudyModal } from 'pages/studyView/virtualStudy/VirtualStudyModal';
 import { PlotsTabWrapper } from 'pages/studyView/StudyViewPlotsTabWrapper';
@@ -503,8 +503,10 @@ export default class StudyViewPage extends React.Component<
     }
 
     @computed get visibleResourceDefinitions() {
-        return visibleStudyResourceDefinitions(
-            this.store.resourceDefinitions.result || []
+        // Legacy H&E resources give way to the slide viewer, so a study with
+        // only those has no Files & Links tab.
+        return (this.store.resourceDefinitions.result || []).filter(
+            d => !shouldHideLegacyHeResourceTab(d.resourceId)
         );
     }
 
