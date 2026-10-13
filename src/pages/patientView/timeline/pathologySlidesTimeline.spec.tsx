@@ -19,6 +19,7 @@ import {
     pathologySlideMarkerSample,
     pathologySlidesTrackConfig,
     UNMATCHED_MARKER_COLOR,
+    withoutPathologySlideLinkouts,
 } from './pathologySlidesTimeline';
 import { ISampleMetaDeta } from './TimelineWrapper';
 
@@ -143,6 +144,26 @@ function renderTooltip(track: TimelineTrackSpecification, item: TimelineEvent) {
     );
     return () => location;
 }
+
+describe('withoutPathologySlideLinkouts', () => {
+    it('drops LINKOUT from PATHOLOGY SLIDES events only', () => {
+        const slides = event('PATHOLOGY SLIDES', 10, {
+            SUBTYPE: 'H&E',
+            LINKOUT,
+        });
+        const imaging = event('IMAGING', 20, { linkout: 'https://x.org' });
+        const [slidesOut, imagingOut] = withoutPathologySlideLinkouts([
+            slides,
+            imaging,
+        ]);
+        expect(slidesOut.attributes.map(a => a.key)).toEqual(['SUBTYPE']);
+        expect(imagingOut).toBe(imaging);
+        expect(slides.attributes.map(a => a.key)).toEqual([
+            'SUBTYPE',
+            'LINKOUT',
+        ]);
+    });
+});
 
 describe('pathologySlideMarkerSample', () => {
     it("maps matched events to their sample's color and number", () => {

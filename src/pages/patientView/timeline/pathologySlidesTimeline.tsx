@@ -43,6 +43,26 @@ export function hasPathologySlideEvents(events: ClinicalEvent[]): boolean {
 }
 
 /**
+ * The events with LINKOUT dropped from PATHOLOGY SLIDES events, for a portal
+ * that serves no slides: the link points at a Pathology Slides tab it does
+ * not have.
+ */
+export function withoutPathologySlideLinkouts(
+    events: ClinicalEvent[]
+): ClinicalEvent[] {
+    return events.map(e =>
+        e.eventType?.toUpperCase() === PATHOLOGY_SLIDES_EVENT_TYPE
+            ? {
+                  ...e,
+                  attributes: e.attributes.filter(
+                      a => a.key.toUpperCase() !== 'LINKOUT'
+                  ),
+              }
+            : e
+    );
+}
+
+/**
  * A PATHOLOGY SLIDES event; only the fields the track reads, satisfied by
  * both a clinical event and a timeline item's event.
  */

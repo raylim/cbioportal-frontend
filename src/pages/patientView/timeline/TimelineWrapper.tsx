@@ -27,6 +27,7 @@ import { downloadZippedTracks } from './timelineDataUtils';
 import {
     hasPathologySlideEvents,
     pathologySlidesTrackConfig,
+    withoutPathologySlideLinkouts,
 } from './pathologySlidesTimeline';
 
 export interface ISampleMetaDeta {
@@ -123,7 +124,10 @@ const TimelineWrapper: React.FunctionComponent<ITimelineProps> = observer(
                 configureTimelineToxicityColors(baseConfig);
             }
 
-            const trackSpecifications = sortTracks(baseConfig, data);
+            const trackSpecifications = sortTracks(
+                baseConfig,
+                showPathologySlides ? data : withoutPathologySlideLinkouts(data)
+            );
 
             configureTracks(trackSpecifications, baseConfig);
 
