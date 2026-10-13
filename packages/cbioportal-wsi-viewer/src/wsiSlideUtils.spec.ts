@@ -2,7 +2,6 @@ import {
     compareSlidesInSample,
     countServableSlidesForSample,
     getOrderedServableSlidesForSampleReadOnly,
-    getServableSlideAssociationsBySlideKeyReadOnly,
     getServableSlideIdsForPathologyFilterReadOnly,
     getWsiTimepointOptions,
     matchesWsiTimepointFilter,
@@ -12,12 +11,7 @@ import {
     wsiStainKind,
 } from './wsiSlideUtils';
 import { makeSample, makeSlide } from './wsiTestFixtures';
-import {
-    PatientHierarchy,
-    Sample,
-    Slide,
-    SlideAssociation,
-} from './wsiViewerTypes';
+import { PatientHierarchy, Sample, Slide } from './wsiViewerTypes';
 
 describe('wsiSlideUtils read-only slide derivation', () => {
     it('builds ordered unique timepoint options and keeps undated slides in All', () => {
@@ -34,90 +28,16 @@ describe('wsiSlideUtils read-only slide derivation', () => {
             }),
             makeSlide({ slide_key: 'undated' }),
         ];
-        const options = getWsiTimepointOptions(
-            slides.map(slide => ({ slide }))
-        );
+        const options = getWsiTimepointOptions(slides);
 
         expect(options).toEqual([
             { days: -10, label: 'Proc d-10' },
             { days: 10, label: 'Proc d+10' },
             { days: 'undated', label: 'Undated' },
         ]);
-        expect(matchesWsiTimepointFilter(slides[2], undefined, 'undated')).toBe(
-            true
-        );
-        expect(matchesWsiTimepointFilter(slides[2], undefined, -10)).toBe(
-            false
-        );
-        expect(matchesWsiTimepointFilter(slides[2], undefined)).toBe(true);
-    });
-
-    it('uses only the slide timing contract', () => {
-        const slide = makeSlide({ slide_key: 'legacy' });
-        const association: SlideAssociation = {
-            slide_key: 'legacy',
-            sample_id: 'S-1',
-            match_level: 'BLOCK',
-            specimen_key: 'block::1',
-            slide_type: 'H&E',
-            procedure_date_days: -4,
-            timepoint_source: 'Procedure date',
-            can_serve_tiles: true,
-        };
-
-        expect(getWsiTimepointOptions([{ slide, association }])).toEqual([
-            { days: 'undated', label: 'Undated' },
-        ]);
-        expect(matchesWsiTimepointFilter(slide, association, -4)).toBe(false);
-    });
-
-    it('selects the preferred association for an image', () => {
-        const associations: SlideAssociation[] = [
-            {
-                slide_key: 'slide-1',
-                sample_id: 'S-1',
-                match_level: 'PART',
-                specimen_key: 'part::1',
-                slide_type: 'H&E',
-                can_serve_tiles: true,
-            },
-            {
-                slide_key: 'slide-1',
-                sample_id: 'S-1',
-                match_level: 'BLOCK',
-                specimen_key: 'block::1::A1',
-                slide_type: 'H&E',
-                can_serve_tiles: true,
-            },
-        ];
-
-        expect(
-            getServableSlideAssociationsBySlideKeyReadOnly(associations).get(
-                'slide-1'
-            )?.match_level
-        ).toBe('BLOCK');
-    });
-
-    it('memoizes the preferred associations by array identity', () => {
-        const association: SlideAssociation = {
-            slide_key: 'slide-1',
-            sample_id: 'S-1',
-            match_level: 'PART',
-            specimen_key: 'part::1',
-            slide_type: 'H&E',
-            can_serve_tiles: true,
-        };
-        const associations = [association];
-        const first = getServableSlideAssociationsBySlideKeyReadOnly(
-            associations
-        );
-
-        expect(
-            getServableSlideAssociationsBySlideKeyReadOnly(associations)
-        ).toBe(first);
-        expect(
-            getServableSlideAssociationsBySlideKeyReadOnly([association])
-        ).not.toBe(first);
+        expect(matchesWsiTimepointFilter(slides[2], 'undated')).toBe(true);
+        expect(matchesWsiTimepointFilter(slides[2], -10)).toBe(false);
+        expect(matchesWsiTimepointFilter(slides[2])).toBe(true);
     });
 
     it('memoizes servable slides by sample identity', () => {
@@ -251,27 +171,26 @@ describe('wsiSlideUtils read-only slide derivation', () => {
         ]);
     });
 
-    it('uses association metadata for pathology filtering', () => {
+    it('filters pathology slides by their own placement fields', () => {
         const hierarchy: PatientHierarchy = {
             patient_id: 'P-1',
-            samples: [makeSample('S-1', [makeSlide({ slide_key: 'slide-1' })])],
-            slide_associations: [
-                {
-                    slide_key: 'slide-1',
-                    sample_id: 'S-1',
-                    match_level: 'BLOCK',
-                    specimen_key: 'block::1::A1',
-                    slide_type: 'H&E',
-                    can_serve_tiles: true,
-                },
-                {
-                    slide_key: 'slide-2',
-                    sample_id: null,
-                    match_level: 'UNMATCHED',
-                    specimen_key: 'unmatched::1::B1',
-                    slide_type: 'IHC',
-                    can_serve_tiles: true,
-                },
+            samples: [
+                makeSample('S-1', [
+                    makeSlide({
+                        slide_key: 'slide-1',
+                        sample_id: 'S-1',
+                        match_level: 'BLOCK',
+                        specimen_key: 'block::1::A1',
+                    }),
+                ]),
+                makeSample('UNMATCHED', [
+                    makeSlide({
+                        slide_key: 'slide-2',
+                        sample_id: null,
+                        match_level: 'UNMATCHED',
+                        specimen_key: 'unmatched::1::B1',
+                    }),
+                ]),
             ],
         };
 
@@ -288,21 +207,15 @@ describe('wsiSlideUtils read-only slide derivation', () => {
             patient_id: 'P-1',
             samples: [
                 makeSample('UNMATCHED', [
-                    makeSlide({ slide_key: 'source-slide' }),
+                    makeSlide({
+                        slide_key: 'source-slide',
+                        sample_id: null,
+                        match_level: 'BLOCK',
+                        specimen_key: 'block::part:1::block:S16-1681/1-4TC',
+                        block_number: 'S16-1681/1-4TC',
+                        block_label: '4TC',
+                    }),
                 ]),
-            ],
-            slide_associations: [
-                {
-                    slide_key: 'source-slide',
-                    sample_id: null,
-                    match_level: 'BLOCK',
-                    specimen_key: 'block::part:1::block:S16-1681/1-4TC',
-                    part_number: '1',
-                    block_number: 'S16-1681/1-4TC',
-                    block_label: '4TC',
-                    slide_type: 'H&E',
-                    can_serve_tiles: true,
-                },
             ],
         };
 
@@ -315,27 +228,24 @@ describe('wsiSlideUtils read-only slide derivation', () => {
         ).toEqual(new Set(['source-slide']));
     });
 
-    it('memoizes pathology filter results per associations and filter', () => {
+    it('memoizes pathology filter results per hierarchy and filter', () => {
         const hierarchy: PatientHierarchy = {
             patient_id: 'P-1',
-            samples: [],
-            slide_associations: [
-                {
-                    slide_key: 'slide-1',
-                    sample_id: null,
-                    match_level: 'PART',
-                    specimen_key: 'part::1',
-                    slide_type: 'H&E',
-                    can_serve_tiles: true,
-                },
-                {
-                    slide_key: 'slide-2',
-                    sample_id: null,
-                    match_level: 'BLOCK',
-                    specimen_key: 'block::1::A1',
-                    slide_type: 'IHC',
-                    can_serve_tiles: true,
-                },
+            samples: [
+                makeSample('UNMATCHED', [
+                    makeSlide({
+                        slide_key: 'slide-1',
+                        sample_id: null,
+                        match_level: 'PART',
+                        specimen_key: 'part::1',
+                    }),
+                    makeSlide({
+                        slide_key: 'slide-2',
+                        sample_id: null,
+                        match_level: 'BLOCK',
+                        specimen_key: 'block::1::A1',
+                    }),
+                ]),
             ],
         };
         const partFilter = {

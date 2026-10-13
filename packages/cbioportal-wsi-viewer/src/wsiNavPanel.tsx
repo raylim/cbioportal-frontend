@@ -5,14 +5,12 @@ import {
     PathologySlideMatchFilter,
     Sample,
     Slide,
-    SlideAssociation,
     WsiStainFilter,
     WsiTimepointSelection,
 } from './wsiViewerTypes';
 import {
     countServableSlidesForSample,
     getOrderedServableSlidesForSampleReadOnly,
-    getServableSlideAssociationsBySlideKeyReadOnly,
     getWsiTimepointOptions,
     matchesMatchFilter,
     matchesWsiStainFilter,
@@ -153,15 +151,14 @@ function shouldShowSampleInNavigation(sample: Sample): boolean {
 
 function matchesSlideFilters(
     slide: Slide,
-    association: SlideAssociation | undefined,
     stainFilter: WsiStainFilter,
     matchFilter: PathologySlideMatchFilter,
     timepointDays?: WsiTimepointSelection
 ): boolean {
     return (
         matchesWsiStainFilter(slide, stainFilter) &&
-        matchesMatchFilter(association, matchFilter) &&
-        matchesWsiTimepointFilter(slide, association, timepointDays)
+        matchesMatchFilter(slide, matchFilter) &&
+        matchesWsiTimepointFilter(slide, timepointDays)
     );
 }
 
@@ -207,13 +204,6 @@ function WsiNavPanelComponent({
     sampleTimelines,
     onHide,
 }: WsiNavPanelProps) {
-    const associationsBySlideKey = React.useMemo(
-        () =>
-            getServableSlideAssociationsBySlideKeyReadOnly(
-                hierarchy.slide_associations
-            ),
-        [hierarchy.slide_associations]
-    );
     const selectedSlideId = selectedSlide?.slide_key;
     const unscopedSampleEntries = React.useMemo(
         () =>
@@ -277,7 +267,6 @@ function WsiNavPanelComponent({
                     ({ slide }) =>
                         matchesSlideFilters(
                             slide,
-                            associationsBySlideKey.get(slide.slide_key),
                             stainFilter,
                             matchFilter,
                             timepointDays
@@ -294,13 +283,7 @@ function WsiNavPanelComponent({
                 }
                 return entries;
             }, []),
-        [
-            allSampleEntries,
-            associationsBySlideKey,
-            matchFilter,
-            stainFilter,
-            timepointDays,
-        ]
+        [allSampleEntries, matchFilter, stainFilter, timepointDays]
     );
     const sampleEntries = React.useMemo(() => {
         const sorted = [...filteredSampleEntries].sort((left, right) =>
@@ -362,19 +345,16 @@ function WsiNavPanelComponent({
     );
     const hiddenSampleCount =
         filteredSampleEntries.length - sampleEntries.length;
-    const facetSlideEntries = React.useMemo(
+    const facetSlides = React.useMemo(
         () =>
             unscopedSampleEntries.flatMap(entry =>
-                entry.filteredSlides.map(({ slide }) => ({
-                    slide,
-                    association: associationsBySlideKey.get(slide.slide_key),
-                }))
+                entry.filteredSlides.map(({ slide }) => slide)
             ),
-        [associationsBySlideKey, unscopedSampleEntries]
+        [unscopedSampleEntries]
     );
     const timepointOptions = React.useMemo(
-        () => getWsiTimepointOptions(facetSlideEntries),
-        [facetSlideEntries]
+        () => getWsiTimepointOptions(facetSlides),
+        [facetSlides]
     );
     const selectedTimepointOption =
         timepointDays == null
@@ -421,11 +401,11 @@ function WsiNavPanelComponent({
             other: 0,
             unknown: 0,
         };
-        facetSlideEntries.forEach(({ slide, association }) => {
-            if (!matchesMatchFilter(association, matchFilter)) {
+        facetSlides.forEach(slide => {
+            if (!matchesMatchFilter(slide, matchFilter)) {
                 return;
             }
-            if (!matchesWsiTimepointFilter(slide, association, timepointDays)) {
+            if (!matchesWsiTimepointFilter(slide, timepointDays)) {
                 return;
             }
             filteredCounts.all += 1;
@@ -441,26 +421,24 @@ function WsiNavPanelComponent({
         });
 
         return filteredCounts;
-    }, [facetSlideEntries, matchFilter, timepointDays]);
+    }, [facetSlides, matchFilter, timepointDays]);
     const matchCounts = React.useMemo(() => {
         const filteredCounts = { part: 0, block: 0, unmatched: 0 };
-        facetSlideEntries.forEach(({ slide, association }) => {
-            const matchesStain = matchesWsiStainFilter(slide, stainFilter);
+        facetSlides.forEach(slide => {
             if (
-                !matchesStain ||
-                !association ||
-                !matchesWsiTimepointFilter(slide, association, timepointDays)
+                !matchesWsiStainFilter(slide, stainFilter) ||
+                !matchesWsiTimepointFilter(slide, timepointDays)
             ) {
                 return;
             }
-            if (association.match_level === 'PART') filteredCounts.part += 1;
-            if (association.match_level === 'BLOCK') filteredCounts.block += 1;
-            if (association.match_level === 'UNMATCHED') {
+            if (slide.match_level === 'PART') filteredCounts.part += 1;
+            if (slide.match_level === 'BLOCK') filteredCounts.block += 1;
+            if (slide.match_level === 'UNMATCHED') {
                 filteredCounts.unmatched += 1;
             }
         });
         return filteredCounts;
-    }, [facetSlideEntries, stainFilter, timepointDays]);
+    }, [facetSlides, stainFilter, timepointDays]);
 
     return (
         <div
@@ -798,7 +776,6 @@ function WsiNavPanelComponent({
                             filteredSlides={filteredSlides}
                             sampleIndex={index}
                             selectedSlide={selectedSlide}
-                            associationsBySlideKey={associationsBySlideKey}
                             sampleTimeline={
                                 sample.sample_id === 'UNMATCHED'
                                     ? undefined
@@ -836,7 +813,6 @@ function SampleNode({
     sampleIndex,
     selectedSlide,
     filteredSlides,
-    associationsBySlideKey,
     sampleTimeline,
     onSelectSlide,
     tileServerBase,
@@ -848,7 +824,6 @@ function SampleNode({
     filteredSlides: Array<{ slide: Slide; blockLabel: string | null }>;
     sampleIndex: number;
     selectedSlide: Slide | null;
-    associationsBySlideKey: Map<string, SlideAssociation>;
     sampleTimeline?: WsiSampleTimeline;
     onSelectSlide: (slide: Slide, sample: Sample) => void;
     tileServerBase: string;
@@ -1044,9 +1019,6 @@ function SampleNode({
                             slide={slide}
                             sample={sample}
                             blockLabel={blockLabel}
-                            association={associationsBySlideKey.get(
-                                slide.slide_key
-                            )}
                             multiPart={multiPart}
                             sequencingDays={sampleTimeline?.sequencingDays}
                             selected={
@@ -1070,7 +1042,6 @@ const MemoSampleNode = React.memo(SampleNode, (prev, next) => {
         prev.containsSelectedSlide !== next.containsSelectedSlide ||
         prev.sampleIndex !== next.sampleIndex ||
         prev.filteredSlides !== next.filteredSlides ||
-        prev.associationsBySlideKey !== next.associationsBySlideKey ||
         prev.sampleTimeline !== next.sampleTimeline ||
         prev.onSelectSlide !== next.onSelectSlide ||
         prev.tileServerBase !== next.tileServerBase ||
@@ -1094,7 +1065,6 @@ function SlideItem({
     slide,
     sample,
     blockLabel,
-    association,
     multiPart,
     sequencingDays,
     selected,
@@ -1106,7 +1076,6 @@ function SlideItem({
     slide: Slide;
     sample: Sample;
     blockLabel: string | null;
-    association: SlideAssociation | undefined;
     multiPart: boolean;
     sequencingDays?: number;
     selected: boolean;
@@ -1147,9 +1116,9 @@ function SlideItem({
         ? procedureTooltip(getSlideTimepointDays(slide), sequencingDays)
         : undefined;
     const matchBadge =
-        association?.match_level === 'BLOCK'
+        slide.match_level === 'BLOCK'
             ? { label: 'Block', color: '#2f7d32' }
-            : association?.match_level === 'PART'
+            : slide.match_level === 'PART'
             ? { label: 'Part', color: '#476f9e' }
             : undefined;
 

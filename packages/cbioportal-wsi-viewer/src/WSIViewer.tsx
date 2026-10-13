@@ -14,7 +14,6 @@ import {
     WsiTimepointSelection,
 } from './wsiViewerTypes';
 import {
-    getServableSlideAssociationsBySlideKeyReadOnly,
     getOrderedServableSlidesForSampleReadOnly,
     getServableSlideIdsForPathologyFilterReadOnly,
     matchesMatchFilter,
@@ -536,7 +535,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
             prev.studyId !== this.props.studyId ||
             prev.tileServerUrl !== this.props.tileServerUrl ||
             prev.patientId !== this.props.patientId ||
-            (pathologyFilterChanged && !this.canReusePathologyFilterLocally());
+            (pathologyFilterChanged && !this.hierarchy);
         const stainFilterChanged =
             prev.initialStainFilter !== this.props.initialStainFilter;
         const timepointFilterChanged =
@@ -661,22 +660,8 @@ export default class WSIViewer extends React.Component<Props, {}> {
             : undefined;
     }
 
-    private canReusePathologyFilterLocally(): boolean {
-        return !!this.hierarchy?.slide_associations?.length;
-    }
-
     private matchesCurrentTimepoint(slide: Slide): boolean {
-        if (!this.hierarchy) {
-            return this.timepointDays == null;
-        }
-        const association = getServableSlideAssociationsBySlideKeyReadOnly(
-            this.hierarchy.slide_associations
-        ).get(slide.slide_key);
-        return matchesWsiTimepointFilter(
-            slide,
-            association,
-            this.timepointDays
-        );
+        return matchesWsiTimepointFilter(slide, this.timepointDays);
     }
 
     @action.bound
@@ -843,9 +828,6 @@ export default class WSIViewer extends React.Component<Props, {}> {
         }
 
         const preferredSlideKeys = this.preferredSlideKeys;
-        const associationsBySlideKey = getServableSlideAssociationsBySlideKeyReadOnly(
-            this.hierarchy.slide_associations
-        );
         const matchingSlides = servableSlides.filter(({ slide }) => {
             if (
                 preferredSlideKeys &&
@@ -856,19 +838,10 @@ export default class WSIViewer extends React.Component<Props, {}> {
             if (!matchesWsiStainFilter(slide, this.stainFilter)) {
                 return false;
             }
-            if (
-                !matchesWsiTimepointFilter(
-                    slide,
-                    associationsBySlideKey.get(slide.slide_key),
-                    this.timepointDays
-                )
-            ) {
+            if (!matchesWsiTimepointFilter(slide, this.timepointDays)) {
                 return false;
             }
-            return matchesMatchFilter(
-                associationsBySlideKey.get(slide.slide_key),
-                this.matchFilter
-            );
+            return matchesMatchFilter(slide, this.matchFilter);
         });
         if (!matchingSlides.length) {
             this.controller.clearSelectedSlide();
@@ -946,11 +919,6 @@ export default class WSIViewer extends React.Component<Props, {}> {
             this.selectedSample,
             this.props.patientId,
             this.props.studyId,
-            this.hierarchy
-                ? getServableSlideAssociationsBySlideKeyReadOnly(
-                      this.hierarchy.slide_associations
-                  ).get(this.selectedSlide.slide_key)
-                : undefined,
             this.props.sampleTimelines?.get(this.selectedSample.sample_id)
         );
     }
