@@ -15,6 +15,12 @@ export enum PatientViewPageTabs {
 
 export const PatientViewResourceTabPrefix = 'openResource_';
 
+export const PatientViewResourceTableTabPrefix = 'resourceTable_';
+
+export function getPatientViewResourceTableTabId(resourceId: string) {
+    return `${PatientViewResourceTableTabPrefix}${resourceId}`;
+}
+
 export function getPatientViewResourceTabId(resourceId: string) {
     return `${PatientViewResourceTabPrefix}${resourceId}`;
 }
