@@ -174,7 +174,7 @@ describe('ResourceDataTable metadata columns', () => {
     it('names the rows after the resource, pluralized', () => {
         assert.include(
             headerText({ activeResourceLabel: 'Slide Microscopy' } as any),
-            '3,074 Slide Microscopies'
+            '3074 Slide Microscopies'
         );
     });
 
@@ -192,7 +192,7 @@ describe('ResourceDataTable metadata columns', () => {
         // Patient-level resources can never report a sample count, so "0 samples" is noise.
         const text = headerText({ activeResourceLabel: 'CT Scan' } as any);
 
-        assert.include(text, '1,084 patients');
+        assert.include(text, '1084 patients');
         assert.notInclude(text, 'sample');
     });
 
@@ -202,7 +202,7 @@ describe('ResourceDataTable metadata columns', () => {
                 activeResourceLabel: 'H&E Slide',
                 filteredSampleCount: 12,
             } as any),
-            '1,084 patients / 12 samples'
+            '1084 patients / 12 samples'
         );
     });
 

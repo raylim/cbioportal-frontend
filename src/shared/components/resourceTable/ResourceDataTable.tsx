@@ -94,11 +94,6 @@ function icon(url: string) {
     ) : null;
 }
 
-/** "SAMPLE" reads as "Sample", like the portal's other entity labels. */
-function formatResourceScope(scope: string | undefined): string {
-    return scope ? scope.charAt(0) + scope.slice(1).toLowerCase() : '';
-}
-
 @observer
 export class ResourceDataTable extends React.Component<
     IResourceDataTableProps
@@ -223,7 +218,7 @@ export class ResourceDataTable extends React.Component<
 
     /**
      * A builtin column carrying the same value in every row of the filtered set tells the user
-     * nothing, so it starts hidden and stays available under "Columns". In a single-resource
+     * nothing, so it starts hidden and stays available under "Add columns". In a single-resource
      * tab "Resource Type" is always the resource's own name, "Scope" is usually one entity type,
      * and "Details" is often blank throughout. The counts come from the backend, so this reflects
      * the whole result set rather than just the page on screen.
@@ -309,7 +304,7 @@ export class ResourceDataTable extends React.Component<
             this.createColumn(
                 'resourceScope',
                 'Scope',
-                row => <span>{formatResourceScope(row.resourceScope)}</span>,
+                row => <span>{row.resourceScope}</span>,
                 row => row.resourceScope,
                 {
                     visible: !this.isSingleValuedColumn('resourceScope'),
@@ -414,12 +409,11 @@ export class ResourceDataTable extends React.Component<
                 }}
             >
                 <span>
-                    {startRow.toLocaleString()}-{endRow.toLocaleString()} of{' '}
-                    {totalRowCount.toLocaleString()} {this.itemsLabel}
+                    {startRow}-{endRow} of {totalRowCount} {this.itemsLabel}
                 </span>
                 <span style={{ color: '#666', fontWeight: 'normal' }}>·</span>
                 <span>
-                    from {filteredPatientCount.toLocaleString()}{' '}
+                    {filteredPatientCount}{' '}
                     {pluralize('patient', filteredPatientCount)}
                     {/* Resources attached at patient level have no sample-linked rows at all, so
                         this count is permanently zero for them — say nothing rather than "0
@@ -427,7 +421,7 @@ export class ResourceDataTable extends React.Component<
                     {filteredSampleCount > 0 && (
                         <>
                             {' / '}
-                            {filteredSampleCount.toLocaleString()}{' '}
+                            {filteredSampleCount}{' '}
                             {pluralize('sample', filteredSampleCount)}
                         </>
                     )}
@@ -672,7 +666,7 @@ export class ResourceDataTable extends React.Component<
                     }
                     onRangeFilterDeactivate={this.onRangeFilterDeactivate}
                     showColumnVisibility={true}
-                    columnVisibilityButtonText="Columns"
+                    columnVisibilityButtonText="Add columns"
                     isLoading={store.tableData.isPending}
                     headerContent={this.headerContent}
                     tableMaxHeight={RESOURCE_TABLE_MAX_HEIGHT}
