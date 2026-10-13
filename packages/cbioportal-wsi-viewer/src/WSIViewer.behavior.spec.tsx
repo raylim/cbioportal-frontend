@@ -502,13 +502,31 @@ describe('WSIViewer — servableSlides', () => {
         );
     });
 
-    it('keeps explicit pathology association filters hard during fallback', () => {
+    it('keeps explicit pathology placement filters hard during fallback', () => {
         const inst = makeInstance('https://tiles.example.com/patient/P-1');
         const matchingSample = makeSample('S-1', [
-            makePart([makeBlock([makeSlide({ slide_key: 'matching-slide' })])]),
+            makePart([
+                makeBlock([
+                    makeSlide({
+                        slide_key: 'matching-slide',
+                        sample_id: 'S-1',
+                        match_level: 'BLOCK',
+                        specimen_key: 'block::matching',
+                    }),
+                ]),
+            ]),
         ]);
         const otherSample = makeSample('S-2', [
-            makePart([makeBlock([makeSlide({ slide_key: 'other-slide' })])]),
+            makePart([
+                makeBlock([
+                    makeSlide({
+                        slide_key: 'other-slide',
+                        sample_id: 'S-2',
+                        match_level: 'BLOCK',
+                        specimen_key: 'block::other',
+                    }),
+                ]),
+            ]),
         ]);
         inst.props = {
             ...inst.props,
@@ -522,24 +540,6 @@ describe('WSIViewer — servableSlides', () => {
         inst.hierarchy = {
             patient_id: 'P-1',
             samples: [matchingSample, otherSample],
-            slide_associations: [
-                {
-                    slide_key: 'matching-slide',
-                    sample_id: 'S-1',
-                    match_level: 'BLOCK',
-                    specimen_key: 'block::matching',
-                    slide_type: 'H&E',
-                    can_serve_tiles: true,
-                },
-                {
-                    slide_key: 'other-slide',
-                    sample_id: 'S-2',
-                    match_level: 'BLOCK',
-                    specimen_key: 'block::other',
-                    slide_type: 'H&E',
-                    can_serve_tiles: true,
-                },
-            ],
         };
 
         const selected = (inst as any).chooseInitialServableSlide(
@@ -735,8 +735,16 @@ describe('WSIViewer — pathology filter updates', () => {
             makePart([
                 makeBlock(
                     [
-                        makeSlide({ slide_key: 'first-unmatched' }),
-                        makeSlide({ slide_key: 'linked-unmatched' }),
+                        makeSlide({
+                            slide_key: 'first-unmatched',
+                            sample_id: 'S-1',
+                            match_level: 'UNMATCHED',
+                        }),
+                        makeSlide({
+                            slide_key: 'linked-unmatched',
+                            sample_id: 'S-1',
+                            match_level: 'UNMATCHED',
+                        }),
                     ],
                     '1'
                 ),
@@ -745,20 +753,6 @@ describe('WSIViewer — pathology filter updates', () => {
         const hierarchy = {
             patient_id: 'P-XYZ',
             samples: [sample],
-            slide_associations: [
-                {
-                    slide_key: 'first-unmatched',
-                    sample_id: 'S-1',
-                    match_level: 'UNMATCHED',
-                    can_serve_tiles: true,
-                },
-                {
-                    slide_key: 'linked-unmatched',
-                    sample_id: 'S-1',
-                    match_level: 'UNMATCHED',
-                    can_serve_tiles: true,
-                },
-            ],
         };
         inst.hierarchy = hierarchy;
         inst.stainFilter = 'hne';
@@ -830,9 +824,17 @@ describe('WSIViewer — pathology filter updates', () => {
             makePart([
                 makeBlock(
                     [
-                        makeSlide({ slide_key: 'block-slide' }),
+                        makeSlide({
+                            slide_key: 'block-slide',
+                            sample_id: 'S-1',
+                            match_level: 'BLOCK',
+                            specimen_key: 'block::1::A1',
+                        }),
                         makeSlide({
                             slide_key: 'part-slide',
+                            sample_id: 'S-1',
+                            match_level: 'PART',
+                            specimen_key: 'part::2::B1',
                             block_number: '2',
                             block_label: 'B1',
                         }),
@@ -844,24 +846,6 @@ describe('WSIViewer — pathology filter updates', () => {
         const sourceHierarchy = {
             patient_id: 'P-XYZ',
             samples: [sample],
-            slide_associations: [
-                {
-                    slide_key: 'block-slide',
-                    sample_id: 'S-1',
-                    match_level: 'BLOCK',
-                    specimen_key: 'block::1::A1',
-                    slide_type: 'H&E',
-                    can_serve_tiles: true,
-                },
-                {
-                    slide_key: 'part-slide',
-                    sample_id: 'S-1',
-                    match_level: 'PART',
-                    specimen_key: 'part::2::B1',
-                    slide_type: 'H&E',
-                    can_serve_tiles: true,
-                },
-            ],
         };
         inst.hierarchy = sourceHierarchy as any;
         inst.selectedSample = sample;
@@ -910,11 +894,17 @@ describe('WSIViewer — pathology filter updates', () => {
         const onStainFilterChange = jest.fn();
         const hne = makeSlide({
             slide_key: 'hne-slide',
+            sample_id: 'S-1',
+            match_level: 'BLOCK',
+            specimen_key: 'block::1::A1',
             is_hne: true,
             is_ihc: false,
         });
         const ihc = makeSlide({
             slide_key: 'ihc-slide',
+            sample_id: 'S-1',
+            match_level: 'BLOCK',
+            specimen_key: 'block::1::A1',
             stain_name: 'IHC',
             stain_group: 'IHC',
             is_hne: false,
@@ -936,24 +926,6 @@ describe('WSIViewer — pathology filter updates', () => {
         inst.hierarchy = {
             patient_id: 'P-XYZ',
             samples: [sample],
-            slide_associations: [
-                {
-                    slide_key: 'hne-slide',
-                    sample_id: 'S-1',
-                    match_level: 'BLOCK',
-                    specimen_key: 'block::1::A1',
-                    slide_type: 'H&E',
-                    can_serve_tiles: true,
-                },
-                {
-                    slide_key: 'ihc-slide',
-                    sample_id: 'S-1',
-                    match_level: 'BLOCK',
-                    specimen_key: 'block::1::A1',
-                    slide_type: 'IHC',
-                    can_serve_tiles: true,
-                },
-            ],
         };
         inst.selectedSample = sample;
         inst.selectedSlide = hne;
@@ -986,7 +958,12 @@ describe('WSIViewer — pathology filter updates', () => {
             makePart([
                 makeBlock(
                     [
-                        makeSlide({ slide_key: 'block-slide' }),
+                        makeSlide({
+                            slide_key: 'block-slide',
+                            sample_id: 'S-1',
+                            match_level: 'BLOCK',
+                            specimen_key: 'block::1::A1',
+                        }),
                         makeSlide({
                             slide_key: 'part-slide',
                             block_number: '2',
@@ -1000,16 +977,6 @@ describe('WSIViewer — pathology filter updates', () => {
         const sourceHierarchy = {
             patient_id: 'P-XYZ',
             samples: [sample],
-            slide_associations: [
-                {
-                    slide_key: 'block-slide',
-                    sample_id: 'S-1',
-                    match_level: 'BLOCK',
-                    specimen_key: 'block::1::A1',
-                    slide_type: 'H&E',
-                    can_serve_tiles: true,
-                },
-            ],
         };
         inst.hierarchy = sourceHierarchy as any;
         inst.selectedSample = sample;
@@ -1183,9 +1150,17 @@ describe('WSIViewer — pathology filter updates', () => {
             makePart([
                 makeBlock(
                     [
-                        makeSlide({ slide_key: 'block-slide' }),
+                        makeSlide({
+                            slide_key: 'block-slide',
+                            sample_id: 'S-1',
+                            match_level: 'BLOCK',
+                            specimen_key: 'block::1::A1',
+                        }),
                         makeSlide({
                             slide_key: 'part-slide',
+                            sample_id: 'S-1',
+                            match_level: 'PART',
+                            specimen_key: 'part::2::B1',
                             block_number: '2',
                             block_label: 'B1',
                         }),
@@ -1197,24 +1172,6 @@ describe('WSIViewer — pathology filter updates', () => {
         inst.hierarchy = {
             patient_id: 'P-XYZ',
             samples: [sample],
-            slide_associations: [
-                {
-                    slide_key: 'block-slide',
-                    sample_id: 'S-1',
-                    match_level: 'BLOCK',
-                    specimen_key: 'block::1::A1',
-                    slide_type: 'H&E',
-                    can_serve_tiles: true,
-                },
-                {
-                    slide_key: 'part-slide',
-                    sample_id: 'S-1',
-                    match_level: 'PART',
-                    specimen_key: 'part::2::B1',
-                    slide_type: 'H&E',
-                    can_serve_tiles: true,
-                },
-            ],
         };
         inst.selectedSample = sample;
         inst.selectedSlide = sample.parts[0].blocks[0].slides[0];
@@ -1248,8 +1205,18 @@ describe('WSIViewer — pathology filter updates', () => {
             makePart([
                 makeBlock(
                     [
-                        makeSlide({ slide_key: 'first-part-slide' }),
-                        makeSlide({ slide_key: 'second-part-slide' }),
+                        makeSlide({
+                            slide_key: 'first-part-slide',
+                            sample_id: 'S-1',
+                            match_level: 'PART',
+                            specimen_key: 'part::1',
+                        }),
+                        makeSlide({
+                            slide_key: 'second-part-slide',
+                            sample_id: 'S-1',
+                            match_level: 'PART',
+                            specimen_key: 'part::2',
+                        }),
                     ],
                     '1'
                 ),
@@ -1258,24 +1225,6 @@ describe('WSIViewer — pathology filter updates', () => {
         inst.hierarchy = {
             patient_id: 'P-XYZ',
             samples: [sample],
-            slide_associations: [
-                {
-                    slide_key: 'first-part-slide',
-                    sample_id: 'S-1',
-                    match_level: 'PART',
-                    specimen_key: 'part::1',
-                    slide_type: 'H&E',
-                    can_serve_tiles: true,
-                },
-                {
-                    slide_key: 'second-part-slide',
-                    sample_id: 'S-1',
-                    match_level: 'PART',
-                    specimen_key: 'part::2',
-                    slide_type: 'H&E',
-                    can_serve_tiles: true,
-                },
-            ],
         };
         inst.selectedSample = sample;
         inst.selectedSlide = sample.parts[0].blocks[0].slides[1];
@@ -1302,22 +1251,22 @@ describe('WSIViewer — pathology filter updates', () => {
         });
         const sample = makeSample('S-1', [
             makePart([
-                makeBlock([makeSlide({ slide_key: 'part-slide' })], '1'),
+                makeBlock(
+                    [
+                        makeSlide({
+                            slide_key: 'part-slide',
+                            sample_id: 'S-1',
+                            match_level: 'PART',
+                            specimen_key: 'part::1',
+                        }),
+                    ],
+                    '1'
+                ),
             ]),
         ]);
         inst.hierarchy = {
             patient_id: 'P-XYZ',
             samples: [sample],
-            slide_associations: [
-                {
-                    slide_key: 'part-slide',
-                    sample_id: 'S-1',
-                    match_level: 'PART',
-                    specimen_key: 'part::1',
-                    slide_type: 'H&E',
-                    can_serve_tiles: true,
-                },
-            ],
         };
         inst.selectedSample = sample;
         inst.selectedSlide = sample.parts[0].blocks[0].slides[0];
@@ -1378,6 +1327,7 @@ describe('WSIViewer — pathology filter updates', () => {
             ...viewerPropsForUrl('https://tiles.example.com/patient/P-XYZ'),
             url: 'https://tiles.example.com/patient/P-XYZ',
             height: 500,
+            studyId: 'previous-study',
             initialStainFilter: 'all',
             pathologyFilter: {
                 sampleId: 'S-1',
@@ -1437,21 +1387,23 @@ describe('WSIViewer — pathology filter updates', () => {
             onStainFilterChange,
         });
         const sample = makeSample('S-1', [
-            makePart([makeBlock([makeSlide({ slide_key: 'hne-slide' })], '1')]),
+            makePart([
+                makeBlock(
+                    [
+                        makeSlide({
+                            slide_key: 'hne-slide',
+                            sample_id: 'S-1',
+                            match_level: 'BLOCK',
+                            specimen_key: 'block::1::A1',
+                        }),
+                    ],
+                    '1'
+                ),
+            ]),
         ]);
         inst.hierarchy = {
             patient_id: 'P-XYZ',
             samples: [sample],
-            slide_associations: [
-                {
-                    slide_key: 'hne-slide',
-                    sample_id: 'S-1',
-                    match_level: 'BLOCK',
-                    specimen_key: 'block::1::A1',
-                    slide_type: 'H&E',
-                    can_serve_tiles: true,
-                },
-            ],
         };
 
         (inst as any).handleFilterChange('all');
@@ -1697,28 +1649,20 @@ describe('WSIViewer — loadHierarchy', () => {
     it('filters the loaded hierarchy to the requested pathology context before selecting the initial slide', async () => {
         const mockHierarchy: PatientHierarchy = {
             patient_id: 'P-XYZ',
-            slide_associations: [
-                {
-                    slide_key: 'matched-1',
-                    sample_id: 'S-123456-T01',
-                    match_level: 'BLOCK',
-                    specimen_key: 'block::1::A1',
-                    slide_type: 'H&E',
-                    can_serve_tiles: true,
-                },
-                {
-                    slide_key: 'unmatched-1',
-                    sample_id: null,
-                    match_level: 'UNMATCHED',
-                    specimen_key: 'unmatched::1::B1',
-                    slide_type: 'H&E',
-                    can_serve_tiles: true,
-                },
-            ],
             samples: [
                 makeSample('S-123456-T01', [
                     makePart([
-                        makeBlock([makeSlide({ slide_key: 'matched-1' })], '1'),
+                        makeBlock(
+                            [
+                                makeSlide({
+                                    slide_key: 'matched-1',
+                                    sample_id: 'S-123456-T01',
+                                    match_level: 'BLOCK',
+                                    specimen_key: 'block::1::A1',
+                                }),
+                            ],
+                            '1'
+                        ),
                         makeBlock(
                             [
                                 makeSlide({
@@ -1767,19 +1711,21 @@ describe('WSIViewer — loadHierarchy', () => {
             )
         ).toEqual(['matched-1', 'unmatched-1']);
         expect(inst.matchFilter).toBe('unmatched');
-        expect(inst.hierarchy.slide_associations).toEqual(
-            expect.arrayContaining([
-                expect.objectContaining({
-                    slide_key: 'matched-1',
-                    match_level: 'BLOCK',
-                }),
-                expect.objectContaining({
-                    slide_key: 'unmatched-1',
-                    match_level: 'UNMATCHED',
-                    specimen_key: 'unmatched::1::B1',
-                }),
-            ])
-        );
+        expect(
+            inst.hierarchy.samples[0].parts[0].blocks.flatMap(
+                (block: any) => block.slides
+            )
+        ).toEqual([
+            expect.objectContaining({
+                slide_key: 'matched-1',
+                match_level: 'BLOCK',
+            }),
+            expect.objectContaining({
+                slide_key: 'unmatched-1',
+                match_level: 'UNMATCHED',
+                specimen_key: 'unmatched::1::B1',
+            }),
+        ]);
         expect(selectSlideSpy).toHaveBeenCalledTimes(1);
         expect((selectSlideSpy.mock.calls[0][0] as Slide).slide_key).toBe(
             'unmatched-1'
@@ -1883,28 +1829,20 @@ describe('WSIViewer — loadHierarchy', () => {
     it('keeps metadata tracing on the selected slide when frontend filtering picks an unmatched slide', async () => {
         const mockHierarchy: PatientHierarchy = {
             patient_id: 'P-XYZ',
-            slide_associations: [
-                {
-                    slide_key: 'matched-1',
-                    sample_id: 'S-123456-T01',
-                    match_level: 'BLOCK',
-                    specimen_key: 'block::1::A1',
-                    slide_type: 'H&E',
-                    can_serve_tiles: true,
-                },
-                {
-                    slide_key: 'unmatched-1',
-                    sample_id: null,
-                    match_level: 'UNMATCHED',
-                    specimen_key: 'unmatched::1::B1',
-                    slide_type: 'H&E',
-                    can_serve_tiles: true,
-                },
-            ],
             samples: [
                 makeSample('S-123456-T01', [
                     makePart([
-                        makeBlock([makeSlide({ slide_key: 'matched-1' })], '1'),
+                        makeBlock(
+                            [
+                                makeSlide({
+                                    slide_key: 'matched-1',
+                                    sample_id: 'S-123456-T01',
+                                    match_level: 'BLOCK',
+                                    specimen_key: 'block::1::A1',
+                                }),
+                            ],
+                            '1'
+                        ),
                         makeBlock(
                             [
                                 makeSlide({
