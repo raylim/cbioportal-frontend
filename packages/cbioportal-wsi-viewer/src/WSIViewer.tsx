@@ -764,12 +764,7 @@ export default class WSIViewer extends React.Component<Props, {}> {
         }
         return (
             matchesWsiStainFilter(entry.slide, this.stainFilter) &&
-            matchesMatchFilter(
-                getServableSlideAssociationsBySlideKeyReadOnly(
-                    this.hierarchy.slide_associations
-                ).get(entry.slide.slide_key),
-                this.matchFilter
-            )
+            matchesMatchFilter(entry.slide, this.matchFilter)
         );
     }
 
