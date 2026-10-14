@@ -5,13 +5,14 @@ import { pluralize } from 'cbioportal-frontend-commons';
 import {
     useWsiPanelFlag,
     WSI_FONT_FAMILY,
-    WSI_SECTION_TITLE_STYLE,
+    WSI_NAV_COLLAPSED_KEY,
     WSI_STAIN_COLORS,
     WSI_THEME,
     WsiCollapsedRail,
     WsiIconButton,
-    WsiPanelHideButton,
     wsiListItemStyle,
+    WsiPanelHeader,
+    WsiRailSection,
     WsiStainDot,
 } from 'cbioportal-wsi-viewer';
 import { PatientViewPageTabs } from 'pages/patientView/PatientViewPageTabIds';
@@ -274,29 +275,15 @@ const PatientPanel: React.FunctionComponent<{
                     flexShrink: 0,
                 }}
             >
-                <div
-                    style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                    }}
-                >
-                    <div style={WSI_SECTION_TITLE_STYLE}>
-                        Patients{' '}
-                        <span
-                            data-testid="study-slides-patient-count"
-                            style={{ fontWeight: 400, letterSpacing: 0 }}
-                        >
-                            {page.totalPatients.toLocaleString()}
-                        </span>
-                    </div>
-                    <WsiPanelHideButton
-                        side="left"
-                        label="Hide patient list (\)"
-                        onClick={onHide}
-                        testId="study-slides-hide"
-                    />
-                </div>
+                <WsiPanelHeader
+                    title="Patients"
+                    detail={page.totalPatients.toLocaleString()}
+                    detailTestId="study-slides-patient-count"
+                    side="left"
+                    hideLabel="Hide patient list (\)"
+                    onHide={onHide}
+                    hideTestId="study-slides-hide"
+                />
                 <div
                     data-testid="study-slides-summary"
                     style={{ fontSize: 12, color: C.muted, marginTop: 2 }}
@@ -518,6 +505,11 @@ const StudySlidesViewerView: React.FunctionComponent<StudyPathologySlidesTabProp
         const [listCollapsed, setListCollapsed] = useWsiPanelFlag(
             PATIENT_LIST_COLLAPSED_KEY
         );
+        // The tab owns the slide list's hidden state too, so that with both
+        // lists hidden it can hand its rail to the viewer as one rail.
+        const [navCollapsed, setNavCollapsed] = useWsiPanelFlag(
+            WSI_NAV_COLLAPSED_KEY
+        );
 
         React.useEffect(() => {
             if (!isActive) {
@@ -575,6 +567,32 @@ const StudySlidesViewerView: React.FunctionComponent<StudyPathologySlidesTabProp
 
         const selected = store.selected;
         const innerHeight = height - 2;
+        const patientsRail: WsiRailSection = {
+            title: 'Patients',
+            detail: page.totalPatients.toLocaleString(),
+            expandLabel: 'Show patient list (\\)',
+            onExpand: () => setListCollapsed(false),
+            testId: 'study-slides-rail',
+            controls: (
+                <>
+                    <WsiIconButton
+                        icon="fa-chevron-up"
+                        label="Previous patient ([)"
+                        disabled={!store.hasPrevious}
+                        onClick={store.selectPrevious}
+                        testId="study-slides-rail-previous"
+                    />
+                    <WsiIconButton
+                        icon="fa-chevron-down"
+                        label="Next patient (])"
+                        disabled={!store.hasNext}
+                        onClick={store.selectNext}
+                        testId="study-slides-rail-next"
+                    />
+                </>
+            ),
+        };
+        const railInViewer = listCollapsed && navCollapsed && !!selected;
 
         return (
             <div
@@ -591,29 +609,17 @@ const StudySlidesViewerView: React.FunctionComponent<StudyPathologySlidesTabProp
                     background: '#fff',
                 }}
             >
-                {listCollapsed ? (
+                {railInViewer ? null : listCollapsed ? (
                     <WsiCollapsedRail
                         side="left"
-                        title="Patients"
-                        showLabel="Show patient list (\)"
-                        onExpand={() => setListCollapsed(false)}
+                        title={patientsRail.title}
+                        detail={patientsRail.detail}
+                        showLabel={patientsRail.expandLabel}
+                        onExpand={patientsRail.onExpand}
                         background={C.navBg}
-                        testId="study-slides-rail"
+                        testId={patientsRail.testId}
                     >
-                        <WsiIconButton
-                            icon="fa-chevron-up"
-                            label="Previous patient ([)"
-                            disabled={!store.hasPrevious}
-                            onClick={store.selectPrevious}
-                            testId="study-slides-rail-previous"
-                        />
-                        <WsiIconButton
-                            icon="fa-chevron-down"
-                            label="Next patient (])"
-                            disabled={!store.hasNext}
-                            onClick={store.selectNext}
-                            testId="study-slides-rail-next"
-                        />
+                        {patientsRail.controls}
                     </WsiCollapsedRail>
                 ) : (
                     <PatientPanel
@@ -644,6 +650,11 @@ const StudySlidesViewerView: React.FunctionComponent<StudyPathologySlidesTabProp
                                 store.matchLevels
                             )}
                             requestedSlideKey={store.requestedSlideKey}
+                            navCollapsed={navCollapsed}
+                            onNavCollapsedChange={setNavCollapsed}
+                            leadingRailSections={
+                                railInViewer ? [patientsRail] : undefined
+                            }
                         />
                     ) : (
                         <div
