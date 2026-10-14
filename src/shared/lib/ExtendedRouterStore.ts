@@ -94,9 +94,26 @@ export default class ExtendedRouterStore extends RouterStore {
             URL.format({
                 pathname: path,
                 query: newQuery,
-                hash: this.location.hash,
+                hash: this.currentHash,
             })
         );
+    }
+
+    /**
+     * The page's hash. Code that writes the hash straight to the browser
+     * history (e.g. the slide viewer's `#wsi:` view state) leaves the
+     * router's copy stale, so the browser's own hash is used while it shows
+     * the router's page.
+     */
+    private get currentHash(): string {
+        if (
+            typeof window !== 'undefined' &&
+            window.location.pathname === this.location.pathname &&
+            window.location.search === this.location.search
+        ) {
+            return window.location.hash;
+        }
+        return this.location.hash;
     }
 
     @computed get query() {

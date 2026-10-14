@@ -100,29 +100,12 @@ export default class StudyViewURLWrapper extends URLWrapper<
         this.updateURL({ resourceUrl });
     }
 
-    /**
-     * Updates the query and keeps the page's hash. The router rebuilds the
-     * URL with its own copy of the hash, which is stale once the slide viewer
-     * has written its `#wsi:` state straight to the browser history.
-     */
-    private updateWsiURL(params: Partial<StudyViewURLQuery>, replace: boolean) {
-        const hash = window.location.hash;
-        this.updateURL(params, undefined, false, replace);
-        if (window.location.hash !== hash) {
-            const url = new URL(window.location.href);
-            url.hash = hash;
-            window.history.replaceState(
-                window.history.state,
-                '',
-                url.toString()
-            );
-        }
-    }
-
     /** Records the Pathology Slides tab's view; the viewer is the default. */
     public setWsiView(view: 'viewer' | 'table') {
-        this.updateWsiURL(
+        this.updateURL(
             { wsiView: view === 'table' ? 'table' : undefined },
+            undefined,
+            false,
             true
         );
     }
@@ -135,11 +118,13 @@ export default class StudyViewURLWrapper extends URLWrapper<
         patient: { studyId: string; patientId: string } | undefined,
         push: boolean
     ) {
-        this.updateWsiURL(
+        this.updateURL(
             {
                 wsiStudyId: patient?.studyId,
                 wsiPatientId: patient?.patientId,
             },
+            undefined,
+            false,
             !push
         );
     }
@@ -150,12 +135,14 @@ export default class StudyViewURLWrapper extends URLWrapper<
         matchLevels: string[];
         search: string;
     }) {
-        this.updateWsiURL(
+        this.updateURL(
             {
                 wsiStain: filters.stainGroups.join(',') || undefined,
                 wsiMatch: filters.matchLevels.join(',') || undefined,
                 wsiSearch: filters.search || undefined,
             },
+            undefined,
+            false,
             true
         );
     }

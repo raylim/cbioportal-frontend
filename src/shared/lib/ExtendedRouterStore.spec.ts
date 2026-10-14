@@ -31,6 +31,18 @@ describe('ExtendedRouterStore', () => {
         history.unsubscribe!();
     });
 
+    it('keeps a hash written straight to the browser history', () => {
+        // As the slide viewer does with its #wsi: view state.
+        const url = new URL(window.location.href);
+        url.hash = 'wsi:slide=a&stain=hne';
+        window.history.replaceState(null, '', url.toString());
+
+        routingStore.updateRoute({ param1: 'changed' });
+
+        assert.equal(routingStore.location.hash, '#wsi:slide=a&stain=hne');
+        assert.equal(routingStore.query.param1, 'changed');
+    });
+
     it('Updating route with clear=true will clear all params and except new ones', () => {
         routingStore.updateRoute(
             {
