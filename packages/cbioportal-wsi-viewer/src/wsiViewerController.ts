@@ -609,6 +609,17 @@ export class WsiViewerController {
             this.host.setLoading(false);
 
             const allSlides = this.host.getServableSlides();
+            // A hash slide from another patient (the host navigated with the
+            // old hash in the URL) must not lend its viewport to this one.
+            const hashState = hashUrlState.read();
+            if (
+                hashState &&
+                !allSlides.some(
+                    entry => entry.slide.slide_key === hashState.slideId
+                )
+            ) {
+                hashUrlState.clear();
+            }
             const first = this.host.chooseInitialServableSlide(allSlides);
             if (first) {
                 this.restoreHashViewportForNextSelection = restoreHashViewport;
