@@ -146,16 +146,16 @@ export function writeWsiHashToCurrentUrl(hash: string, push = false): string {
  */
 export function writeSelectedSlideState(
     urlState: WsiUrlStateAdapter,
-    selectedSlideId: string
+    selectedSlideId: string,
+    push = false
 ): string {
     const existing = urlState.read();
     if (existing && existing.slideId === selectedSlideId) {
         return urlState.currentUrl();
     }
 
-    // Choosing another slide is a step Back can return to; the first slide
-    // shown on a page is not.
-    const options = { push: !!existing };
+    // With `push`, the selection gets its own history entry for Back.
+    const options = { push };
     if (hasWsiHashViewport(existing)) {
         return urlState.write(
             { ...existing, slideId: selectedSlideId },

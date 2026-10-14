@@ -53,13 +53,13 @@ describe('slide list filters in the #wsi: hash', () => {
         expect(window.location.hash).toBe('#wsi:stain=ihc');
     });
 
-    it('gives another slide its own history entry, but not the first slide', () => {
+    it('gives a selection its own history entry only when asked', () => {
         const push = jest.spyOn(window.history, 'pushState');
         try {
             writeSelectedSlideState(hashUrlState, 'first');
             expect(push).not.toHaveBeenCalled();
 
-            writeSelectedSlideState(hashUrlState, 'second');
+            writeSelectedSlideState(hashUrlState, 'second', true);
             expect(push).toHaveBeenCalledTimes(1);
             expect(window.location.hash).toBe('#wsi:slide=second');
         } finally {

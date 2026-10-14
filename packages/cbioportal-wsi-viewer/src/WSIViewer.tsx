@@ -281,7 +281,11 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
         }, SLIDE_SELECTION_DEBOUNCE_MS);
     };
     private readonly handleHashChange = () => {
-        this.applyFiltersFromHash();
+        // A hidden viewer (another tab is shown) keeps its filters: that
+        // tab's history entries don't carry them.
+        if (!this.props.hidden && window.location.hash.startsWith('#wsi:')) {
+            this.applyFiltersFromHash();
+        }
         void this.selectSlideFromHash();
     };
     private disposeFilterUrlSync: IReactionDisposer | null = null;
@@ -629,7 +633,9 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
 
         if (requiresHierarchyReload) {
             this.controller.dispose();
-            void this.controller.loadHierarchy(false);
+            // The viewport is restored only for a hash slide of this patient,
+            // e.g. after Back to an earlier patient.
+            void this.controller.loadHierarchy(true);
         } else if (pathologyFilterChanged) {
             this.applyPathologyFilterFromSourceHierarchy();
         } else if (initialMatchFilterChanged || stainFilterChanged) {

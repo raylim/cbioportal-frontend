@@ -269,6 +269,32 @@ describe('WSIViewer list filters in the URL', () => {
         }
     });
 
+    it('keeps its filters while hidden or when the hash is not its own', () => {
+        window.location.hash = 'wsi:slide=slide-a&stain=ihc';
+        const hidden = makeViewer({ hidden: true });
+        hidden.controller.selectSlide = jest.fn(async () => undefined);
+        expect(hidden.stainFilter).toBe('ihc');
+        window.location.hash = 'wsi:slide=slide-a';
+        act(() => hidden.handleHashChange());
+        expect(hidden.stainFilter).toBe('ihc');
+
+        window.location.hash = 'wsi:slide=slide-a&stain=ihc';
+        const shown = makeViewer();
+        shown.controller.selectSlide = jest.fn(async () => undefined);
+        window.location.hash = 'summary';
+        act(() => shown.handleHashChange());
+        expect(shown.stainFilter).toBe('ihc');
+    });
+
+    it('leaves the hash alone when it switches patients', () => {
+        window.location.hash = 'wsi:slide=slide-a&x=1&y=2&z=1.000000';
+        const viewer = makeViewer();
+        viewer.controller.dispose();
+        expect(window.location.hash).toBe(
+            '#wsi:slide=slide-a&x=1&y=2&z=1.000000'
+        );
+    });
+
     it('takes the filters back from the hash after Back or Forward', () => {
         const viewer = makeViewer();
         window.location.hash = 'wsi:slide=slide-a&match=unmatched';
