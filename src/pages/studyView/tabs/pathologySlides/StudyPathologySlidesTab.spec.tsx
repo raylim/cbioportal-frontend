@@ -116,8 +116,8 @@ describe('StudyPathologySlidesTab', () => {
         );
         const rows = screen.getAllByTestId('study-slides-patient');
         expect(rows).toHaveLength(3);
-        expect(within(rows[1]).getByTitle('H&E: 1')).toBeTruthy();
-        expect(within(rows[1]).getByTitle('IHC: 1')).toBeTruthy();
+        expect(within(rows[1]).getByLabelText('H&E: 1')).toBeTruthy();
+        expect(within(rows[1]).getByLabelText('IHC: 1')).toBeTruthy();
         expect(within(rows[1]).getByText('2 slides')).toBeTruthy();
         expect(screen.getByTestId('study-slides-position').textContent).toBe(
             'P-1 · 1 of 3'
@@ -332,6 +332,31 @@ describe('StudyPathologySlidesTab', () => {
             window.localStorage.getItem('wsi.study.patientListCollapsed')
         ).toBeNull();
         again.store.dispose();
+    });
+
+    it('hands its rail to the viewer when the slide list is hidden too', async () => {
+        window.localStorage.setItem('wsi.study.patientListCollapsed', '1');
+        window.localStorage.setItem('wsi.viewer.navCollapsed', '1');
+        const { store } = renderTab(async r => pageFor(r));
+        await settle();
+
+        // One rail: the viewer's, with the patient section first.
+        expect(screen.queryByTestId('study-slides-rail')).toBeNull();
+        const props = mockViewer.mock.calls[
+            mockViewer.mock.calls.length - 1
+        ][0] as any;
+        expect(props.navCollapsed).toBe(true);
+        expect(props.leadingRailSections).toHaveLength(1);
+        expect(props.leadingRailSections[0].testId).toBe('study-slides-rail');
+
+        // Showing the slide list gives the tab its own rail back.
+        act(() => props.onNavCollapsedChange(false));
+        expect(screen.getByTestId('study-slides-rail')).toBeTruthy();
+        const latest = mockViewer.mock.calls[
+            mockViewer.mock.calls.length - 1
+        ][0] as any;
+        expect(latest.leadingRailSections).toBeUndefined();
+        store.dispose();
     });
 
     it('toggles the patient list with the backslash key', async () => {

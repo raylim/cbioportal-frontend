@@ -91,7 +91,7 @@ import {
 } from 'shared/lib/customTabs/customTabHelpers';
 import { VirtualStudyModal } from 'pages/studyView/virtualStudy/VirtualStudyModal';
 import { PlotsTabWrapper } from 'pages/studyView/StudyViewPlotsTabWrapper';
-import { hashUrlState } from 'cbioportal-wsi-viewer';
+import { capWsiViewerHeight, hashUrlState } from 'cbioportal-wsi-viewer';
 import WindowStore from 'shared/components/window/WindowStore';
 import {
     StudyPathologySlidesStore,
@@ -1025,10 +1025,13 @@ export default class StudyViewPage extends React.Component<
                                                         .currentTab as string) ===
                                                     StudyViewPageTabKeyEnum.PATHOLOGY_SLIDES
                                                 }
-                                                height={Math.max(
-                                                    480,
-                                                    WindowStore.size.height -
-                                                        300
+                                                height={capWsiViewerHeight(
+                                                    Math.max(
+                                                        480,
+                                                        WindowStore.size
+                                                            .height - 300
+                                                    ),
+                                                    WindowStore.size.width
                                                 )}
                                                 userName={
                                                     this.props.appStore.userName
