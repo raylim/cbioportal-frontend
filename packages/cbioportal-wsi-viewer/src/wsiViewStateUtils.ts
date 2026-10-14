@@ -1,4 +1,8 @@
-import { TileMetadata } from './wsiViewerTypes';
+import {
+    PathologySlideMatchFilter,
+    TileMetadata,
+    WsiStainFilter,
+} from './wsiViewerTypes';
 
 export type WsiHashViewport = {
     x: number;
@@ -15,6 +19,27 @@ export type WsiHashState =
     | ({ slideId: string } & WsiHashViewport)
     | { slideId: string; x?: undefined; y?: undefined; z?: undefined };
 
+/**
+ * The slide list's filters, kept in the same hash so a shared link opens the
+ * list as it was. Only filters other than "all" are written.
+ */
+export type WsiHashFilters = {
+    stain?: Exclude<WsiStainFilter, 'all'>;
+    match?: Exclude<PathologySlideMatchFilter, 'all'>;
+};
+
+const HASH_STAIN_FILTERS: ReadonlyArray<WsiStainFilter> = [
+    'hne',
+    'ihc',
+    'other',
+    'unknown',
+];
+const HASH_MATCH_FILTERS: ReadonlyArray<PathologySlideMatchFilter> = [
+    'part',
+    'block',
+    'unmatched',
+];
+
 export function hasWsiHashViewport(
     state: WsiHashState | null | undefined
 ): state is { slideId: string } & WsiHashViewport {
@@ -28,9 +53,13 @@ export function hasWsiHashViewport(
 export interface WsiUrlStateAdapter {
     /** The stored slide selection and viewport, or null when there is none. */
     read(): WsiHashState | null;
-    /** Stores the state and returns the shareable URL that carries it. */
-    write(state: WsiHashState): string;
-    /** Removes the stored state. */
+    /**
+     * Stores the state and returns the shareable URL that carries it. With
+     * `push`, the state gets its own history entry, so Back returns to the
+     * previous one; otherwise it replaces the current entry.
+     */
+    write(state: WsiHashState, options?: { push?: boolean }): string;
+    /** Removes the stored slide and viewport. */
     clear(): void;
     /** Shareable URL of the current page. */
     currentUrl(): string;
@@ -41,14 +70,24 @@ export interface WsiUrlStateAdapter {
     subscribe(listener: () => void): () => void;
 }
 
-export function formatWsiHash(state: WsiHashState): string {
-    const slide = `wsi:slide=${encodeURIComponent(state.slideId)}`;
-    if (!hasWsiHashViewport(state)) {
-        return slide;
+export function formatWsiHash(
+    state: WsiHashState | null,
+    filters: WsiHashFilters = {}
+): string {
+    const parts: string[] = [];
+    if (state) {
+        parts.push(`slide=${encodeURIComponent(state.slideId)}`);
+        if (hasWsiHashViewport(state)) {
+            parts.push(
+                `x=${Math.round(state.x)}`,
+                `y=${Math.round(state.y)}`,
+                `z=${state.z.toFixed(6)}`
+            );
+        }
     }
-    return `${slide}&x=${Math.round(state.x)}&y=${Math.round(
-        state.y
-    )}&z=${state.z.toFixed(6)}`;
+    if (filters.stain) parts.push(`stain=${filters.stain}`);
+    if (filters.match) parts.push(`match=${filters.match}`);
+    return parts.length ? `wsi:${parts.join('&')}` : '';
 }
 
 /** Slide and viewport shown by an OpenSeadragon viewer, in image pixels. */
@@ -84,16 +123,20 @@ export function buildWsiViewState({
     }
 }
 
-export function writeWsiHashToCurrentUrl(hash: string): string {
-    const nextHash = hash.startsWith('#') ? hash : `#${hash}`;
+export function writeWsiHashToCurrentUrl(hash: string, push = false): string {
+    const nextHash = !hash ? '' : hash.startsWith('#') ? hash : `#${hash}`;
     if (window.location.hash === nextHash) {
         return window.location.href;
     }
 
     const url = new URL(window.location.href);
-    url.hash = hash;
+    url.hash = nextHash;
     const href = url.toString();
-    window.history.replaceState(null, '', href);
+    if (push) {
+        window.history.pushState(null, '', href);
+    } else {
+        window.history.replaceState(null, '', href);
+    }
     return href;
 }
 
@@ -110,13 +153,20 @@ export function writeSelectedSlideState(
         return urlState.currentUrl();
     }
 
+    // Choosing another slide is a step Back can return to; the first slide
+    // shown on a page is not.
+    const options = { push: !!existing };
     if (hasWsiHashViewport(existing)) {
-        return urlState.write({ ...existing, slideId: selectedSlideId });
+        return urlState.write(
+            { ...existing, slideId: selectedSlideId },
+            options
+        );
     }
 
-    return urlState.write({ slideId: selectedSlideId });
+    return urlState.write({ slideId: selectedSlideId }, options);
 }
 
+/** Removes the slide and viewport from the hash; the list's filters stay. */
 export function clearWsiHashFromCurrentUrl(): void {
     if (
         typeof window === 'undefined' ||
@@ -124,10 +174,48 @@ export function clearWsiHashFromCurrentUrl(): void {
     ) {
         return;
     }
+    writeWsiHashToCurrentUrl(formatWsiHash(null, readWsiHashFilters()));
+}
 
-    const url = new URL(window.location.href);
-    url.hash = '';
-    window.history.replaceState(null, '', url.toString());
+/** The slide list's filters in the current hash. */
+export function readWsiHashFilters(): WsiHashFilters {
+    if (
+        typeof window === 'undefined' ||
+        !window.location.hash.startsWith('#wsi:')
+    ) {
+        return {};
+    }
+    try {
+        const params = new URLSearchParams(window.location.hash.slice(5));
+        const stain = params.get('stain') as WsiStainFilter | null;
+        const match = params.get('match') as PathologySlideMatchFilter | null;
+        const filters: WsiHashFilters = {};
+        if (stain && HASH_STAIN_FILTERS.includes(stain)) {
+            filters.stain = stain as WsiHashFilters['stain'];
+        }
+        if (match && HASH_MATCH_FILTERS.includes(match)) {
+            filters.match = match as WsiHashFilters['match'];
+        }
+        return filters;
+    } catch (_) {
+        return {};
+    }
+}
+
+/**
+ * Stores the slide list's filters in the hash, keeping the slide and
+ * viewport; "all" removes a filter. Replaces the current history entry.
+ */
+export function writeWsiHashFilters(
+    stain: WsiStainFilter,
+    match: PathologySlideMatchFilter
+): string {
+    return writeWsiHashToCurrentUrl(
+        formatWsiHash(readWsiHashState(), {
+            stain: stain === 'all' ? undefined : stain,
+            match: match === 'all' ? undefined : match,
+        })
+    );
 }
 
 export function scheduleHashStateWrite({
@@ -181,15 +269,32 @@ export function readWsiHashState(): WsiHashState | null {
     }
 }
 
+/**
+ * Replaces the hash with only the given filters, e.g. when a host moves to
+ * another patient: the next patient's list opens filtered the same way.
+ */
+export function writeOnlyWsiHashFilters(filters: WsiHashFilters): string {
+    return writeWsiHashToCurrentUrl(formatWsiHash(null, filters));
+}
+
 /** Keeps the view state in the `#wsi:` hash of the current URL. */
 export const hashUrlState: WsiUrlStateAdapter = {
     read: readWsiHashState,
-    write: state => writeWsiHashToCurrentUrl(formatWsiHash(state)),
+    write: (state, options) =>
+        writeWsiHashToCurrentUrl(
+            formatWsiHash(state, readWsiHashFilters()),
+            options?.push
+        ),
     clear: clearWsiHashFromCurrentUrl,
     currentUrl: () => window.location.href,
     subscribe(listener) {
+        // Back and Forward between entries the viewer pushed raise popstate.
         window.addEventListener('hashchange', listener);
-        return () => window.removeEventListener('hashchange', listener);
+        window.addEventListener('popstate', listener);
+        return () => {
+            window.removeEventListener('hashchange', listener);
+            window.removeEventListener('popstate', listener);
+        };
     },
 };
 

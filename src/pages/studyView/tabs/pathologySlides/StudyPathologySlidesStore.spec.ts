@@ -8,6 +8,7 @@ import {
     STUDY_SLIDES_SEARCH_DEBOUNCE_MS,
     StudyPathologySlidesStore,
     StudySlidePatientRef,
+    studySlidesUrlState,
     studySlidesViewFromUrl,
 } from './StudyPathologySlidesStore';
 import {
@@ -342,6 +343,67 @@ describe('StudyPathologySlidesStore', () => {
         expect(store.pageNumber).toBe(0);
     });
 
+    it('starts from list filters restored from the URL and reports changes', async () => {
+        const reported: unknown[] = [];
+        store = new StudyPathologySlidesStore({
+            getFilters: () => filters.get(),
+            getStudyIds: () => [STUDY],
+            fetchPage: server.fetchPage,
+            pageSize: 2,
+            initialSlideFilters: {
+                stainGroups: ['IHC'],
+                matchLevels: [],
+                search: 'P-3',
+            },
+            onSlideFiltersChange: f => reported.push(f),
+        });
+        stopObserving = autorun(() => void store.page.result);
+        await settle();
+
+        expect(server.requests[0]).toEqual(
+            expect.objectContaining({ stainGroups: ['IHC'], search: 'P-3' })
+        );
+        expect(store.searchText).toBe('P-3');
+        expect(reported).toEqual([]);
+
+        store.toggleMatchLevel('BLOCK');
+        expect(reported).toEqual([
+            { stainGroups: ['IHC'], matchLevels: ['BLOCK'], search: 'P-3' },
+        ]);
+    });
+
+    it('follows the patient and filters in the URL without reporting them', async () => {
+        const reported: unknown[] = [];
+        store = new StudyPathologySlidesStore({
+            getFilters: () => filters.get(),
+            getStudyIds: () => [STUDY],
+            onSelectionChange: p => selections.push(p),
+            onSlideFiltersChange: f => reported.push(f),
+            fetchPage: server.fetchPage,
+            pageSize: 2,
+        });
+        stopObserving = autorun(() => void store.page.result);
+        await settle();
+        selections = [];
+
+        // As after Back to an entry for P-4 with an H&E filter.
+        store.followUrl(
+            { studyId: STUDY, patientId: 'P-4' },
+            { stainGroups: ['H&E'], matchLevels: [], search: '' }
+        );
+        await settle();
+
+        expect(store.selected?.patientId).toBe('P-4');
+        expect(store.selectedIndex).toBe(3);
+        expect(store.stainGroups).toEqual(['H&E']);
+        expect(selections).toEqual([]);
+        // The reaction reports the filters it was given; the page writes the
+        // same values back, which leaves the URL unchanged.
+        expect(reported).toEqual([
+            { stainGroups: ['H&E'], matchLevels: [], search: '' },
+        ]);
+    });
+
     it('clears only the tab filters', async () => {
         makeStore();
         store.toggleStainGroup('IHC');
@@ -394,5 +456,30 @@ describe('studySlidesViewFromUrl', () => {
         expect(
             studySlidesViewFromUrl('resourceTable_WSI_SAMPLE', undefined)
         ).toEqual({ view: 'viewer', redirectToSlidesTab: false });
+    });
+});
+
+describe('studySlidesUrlState', () => {
+    it('reads the patient and the list filters, dropping unknown values', () => {
+        expect(
+            studySlidesUrlState({
+                wsiStudyId: 's',
+                wsiPatientId: 'P-1',
+                wsiStain: 'H&E,bogus,IHC',
+                wsiMatch: 'BLOCK',
+                wsiSearch: ' P-1 ',
+            })
+        ).toEqual({
+            selection: { studyId: 's', patientId: 'P-1' },
+            filters: {
+                stainGroups: ['H&E', 'IHC'],
+                matchLevels: ['BLOCK'],
+                search: 'P-1',
+            },
+        });
+        expect(studySlidesUrlState({})).toEqual({
+            selection: undefined,
+            filters: { stainGroups: [], matchLevels: [], search: '' },
+        });
     });
 });

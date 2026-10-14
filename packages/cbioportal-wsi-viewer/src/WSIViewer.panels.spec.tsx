@@ -237,3 +237,43 @@ describe('WSIViewer hideable panels', () => {
         expect(window.localStorage.getItem(WSI_NAV_COLLAPSED_KEY)).toBe('1');
     });
 });
+
+describe('WSIViewer list filters in the URL', () => {
+    beforeEach(() => {
+        window.history.replaceState(null, '', '/patient?caseId=P-1');
+    });
+
+    it('opens with the filters from a shared link', () => {
+        window.location.hash = 'wsi:slide=slide-a&stain=ihc&match=block';
+        const viewer = makeViewer({ initialStainFilter: 'hne' });
+        expect(viewer.stainFilter).toBe('ihc');
+        expect(viewer.matchFilter).toBe('block');
+    });
+
+    it('writes filter changes to the hash, keeping the slide', () => {
+        window.location.hash = 'wsi:slide=slide-a';
+        const viewer = makeViewer();
+        // Only the URL sync is under test; don't load slides.
+        viewer.controller.loadHierarchy = jest.fn();
+        viewer.controller.dispose = jest.fn();
+        viewer.controller.selectSlide = jest.fn(async () => undefined);
+        viewer.controller.clearSelectedSlide = jest.fn();
+        viewer.componentDidMount();
+        try {
+            act(() => viewer.handleFilterChange('hne'));
+            expect(window.location.hash).toBe('#wsi:slide=slide-a&stain=hne');
+            act(() => viewer.handleFilterChange('all'));
+            expect(window.location.hash).toBe('#wsi:slide=slide-a');
+        } finally {
+            viewer.componentWillUnmount();
+        }
+    });
+
+    it('takes the filters back from the hash after Back or Forward', () => {
+        const viewer = makeViewer();
+        window.location.hash = 'wsi:slide=slide-a&match=unmatched';
+        act(() => viewer.applyFiltersFromHash());
+        expect(viewer.matchFilter).toBe('unmatched');
+        expect(viewer.stainFilter).toBe('all');
+    });
+});
