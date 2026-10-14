@@ -66,4 +66,13 @@ describe('slide list filters in the #wsi: hash', () => {
             push.mockRestore();
         }
     });
+
+    it("leaves a hash that belongs to the page, such as patient view's cohort", () => {
+        window.location.hash = 'navCaseIds=s:P-1,s:P-2';
+        hashUrlState.write({ slideId: 'a', x: 1, y: 2, z: 1 }, { push: true });
+        writeWsiHashFilters('hne', 'all');
+        writeOnlyWsiHashFilters({ stain: 'ihc' });
+        hashUrlState.clear();
+        expect(window.location.hash).toBe('#navCaseIds=s:P-1,s:P-2');
+    });
 });

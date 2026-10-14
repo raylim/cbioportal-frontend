@@ -125,7 +125,16 @@ export function buildWsiViewState({
 
 export function writeWsiHashToCurrentUrl(hash: string, push = false): string {
     const nextHash = !hash ? '' : hash.startsWith('#') ? hash : `#${hash}`;
-    if (window.location.hash === nextHash) {
+    const currentHash = window.location.hash;
+    // The hash belongs to the page when it holds something else, such as a
+    // study's cohort filter or patient view's cohort navigation: the view
+    // state isn't written over it.
+    if (
+        window.location.hash === nextHash ||
+        (currentHash !== '' &&
+            currentHash !== '#' &&
+            !currentHash.startsWith('#wsi:'))
+    ) {
         return window.location.href;
     }
 

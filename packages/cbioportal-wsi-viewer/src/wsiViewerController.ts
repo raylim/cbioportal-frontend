@@ -259,8 +259,9 @@ export class WsiViewerController {
         this.cancelBackgroundWorkSchedule();
         this.cancelNavigatorSchedule();
         this.destroyViewer();
-        // The hash stays: Back may have restored this patient's slide there,
-        // and a host moving to another patient replaces it itself.
+        // The hash stays: Back may have restored this patient's slide there.
+        // A hash slide of another patient is dropped when the next patient
+        // loads, and hosts drop it when they move to a patient.
     }
 
     private cancelBackgroundWorkSchedule() {

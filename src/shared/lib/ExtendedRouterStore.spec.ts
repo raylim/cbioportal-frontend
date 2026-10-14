@@ -43,6 +43,24 @@ describe('ExtendedRouterStore', () => {
         assert.equal(routingStore.query.param1, 'changed');
     });
 
+    it('keeps the viewer hash when the portal runs under a base path', () => {
+        history.unsubscribe!();
+        routingStore = new ExtendedRouterStore();
+        history = syncHistoryWithStore(
+            createBrowserHistory({ basename: '/cbioportal' }),
+            routingStore
+        );
+        history.push('/patient?caseId=P-1');
+        const url = new URL(window.location.href);
+        url.hash = 'wsi:slide=a';
+        window.history.replaceState(null, '', url.toString());
+
+        routingStore.updateRoute({ tab: 'summary' });
+
+        assert.equal(window.location.pathname, '/cbioportal/patient');
+        assert.equal(routingStore.location.hash, '#wsi:slide=a');
+    });
+
     it("keeps the router's own hash when the browser's is not the viewer's", () => {
         // As after the app reads bookmark settings and drops them from its copy.
         const url = new URL(window.location.href);

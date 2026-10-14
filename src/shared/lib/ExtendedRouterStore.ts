@@ -108,11 +108,20 @@ export default class ExtendedRouterStore extends RouterStore {
      */
     private get currentHash(): string {
         const routerHash = this.location.hash || '';
-        if (
-            typeof window === 'undefined' ||
-            window.location.pathname !== this.location.pathname ||
-            window.location.search !== this.location.search
-        ) {
+        if (typeof window === 'undefined') {
+            return routerHash;
+        }
+        // The router's paths leave out the portal's base path; its history
+        // adds it back.
+        const history = (this as any).history;
+        const routerPage =
+            typeof history?.createHref === 'function'
+                ? history.createHref({
+                      pathname: this.location.pathname,
+                      search: this.location.search,
+                  })
+                : this.location.pathname + this.location.search;
+        if (window.location.pathname + window.location.search !== routerPage) {
             return routerHash;
         }
         const isViewerHash = (hash: string) =>

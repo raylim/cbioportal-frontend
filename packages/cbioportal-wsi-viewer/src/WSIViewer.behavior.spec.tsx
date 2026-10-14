@@ -2137,7 +2137,7 @@ describe('WSIViewer — URL hash state', () => {
             },
         };
 
-        window.history.replaceState(null, '', '/patient/P-1#old');
+        window.history.replaceState(null, '', '/patient/P-1#wsi:slide=old');
 
         await controllerOf(inst).copyViewLink();
 
