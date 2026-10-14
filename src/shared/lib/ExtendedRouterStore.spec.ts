@@ -31,6 +31,57 @@ describe('ExtendedRouterStore', () => {
         history.unsubscribe!();
     });
 
+    it('keeps a hash written straight to the browser history', () => {
+        // As the slide viewer does with its #wsi: view state.
+        const url = new URL(window.location.href);
+        url.hash = 'wsi:slide=a&stain=hne';
+        window.history.replaceState(null, '', url.toString());
+
+        routingStore.updateRoute({ param1: 'changed' });
+
+        assert.equal(routingStore.location.hash, '#wsi:slide=a&stain=hne');
+        assert.equal(routingStore.query.param1, 'changed');
+    });
+
+    it('keeps the viewer hash when the portal runs under a base path', () => {
+        history.unsubscribe!();
+        routingStore = new ExtendedRouterStore();
+        history = syncHistoryWithStore(
+            createBrowserHistory({ basename: '/cbioportal' }),
+            routingStore
+        );
+        history.push('/patient?caseId=P-1');
+        const url = new URL(window.location.href);
+        url.hash = 'wsi:slide=a';
+        window.history.replaceState(null, '', url.toString());
+
+        routingStore.updateRoute({ tab: 'summary' });
+
+        assert.equal(window.location.pathname, '/cbioportal/patient');
+        assert.equal(routingStore.location.hash, '#wsi:slide=a');
+    });
+
+    it("keeps the router's own hash when the browser's is not the viewer's", () => {
+        // As after the app reads bookmark settings and drops them from its copy.
+        const url = new URL(window.location.href);
+        url.hash = 'userSettingsJson=x';
+        window.history.replaceState(null, '', url.toString());
+        routingStore.location.hash = '';
+
+        routingStore.updateRoute({ param1: 'changed' });
+        assert.equal(routingStore.location.hash, '');
+    });
+
+    it("keeps a study filter hash the viewer's state would replace", () => {
+        routingStore.location.hash = '#filterJson=%7B%7D';
+        const url = new URL(window.location.href);
+        url.hash = 'wsi:slide=a';
+        window.history.replaceState(null, '', url.toString());
+
+        routingStore.updateRoute({ param1: 'changed' });
+        assert.equal(routingStore.location.hash, '#filterJson=%7B%7D');
+    });
+
     it('Updating route with clear=true will clear all params and except new ones', () => {
         routingStore.updateRoute(
             {

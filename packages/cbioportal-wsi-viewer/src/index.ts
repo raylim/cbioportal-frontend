@@ -6,7 +6,10 @@ export { configureWsiViewerRuntime, WsiViewerConfig } from './wsiViewerConfig';
 export { WsiViewerProps } from './WsiViewerEntry';
 export {
     hashUrlState,
+    readWsiHashFilters,
     readWsiHashState,
+    writeOnlyWsiHashFilters,
+    WsiHashFilters,
     WsiHashState,
     WsiHashViewport,
 } from './wsiViewStateUtils';

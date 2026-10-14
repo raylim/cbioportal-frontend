@@ -17,6 +17,9 @@ export default class StudyViewURLWrapper extends URLWrapper<
         | 'wsiStudyId'
         | 'wsiPatientId'
         | 'wsiView'
+        | 'wsiStain'
+        | 'wsiMatch'
+        | 'wsiSearch'
         | 'plots_horz_selection'
         | 'plots_vert_selection'
         | 'plots_coloring_selection'
@@ -44,6 +47,9 @@ export default class StudyViewURLWrapper extends URLWrapper<
             wsiStudyId: { isSessionProp: false },
             wsiPatientId: { isSessionProp: false },
             wsiView: { isSessionProp: false },
+            wsiStain: { isSessionProp: false },
+            wsiMatch: { isSessionProp: false },
+            wsiSearch: { isSessionProp: false },
             ...PLOTS_TAB_URL_PARAMS,
             embeddings_coloring_selection: {
                 isSessionProp: false,
@@ -104,12 +110,36 @@ export default class StudyViewURLWrapper extends URLWrapper<
         );
     }
 
-    /** Records the Pathology Slides tab's patient, replacing the history entry. */
-    public setWsiPatient(patient?: { studyId: string; patientId: string }) {
+    /**
+     * Records the Pathology Slides tab's patient. Moving to another patient
+     * gets its own history entry, so Back returns to the previous one.
+     */
+    public setWsiPatient(
+        patient: { studyId: string; patientId: string } | undefined,
+        push: boolean
+    ) {
         this.updateURL(
             {
                 wsiStudyId: patient?.studyId,
                 wsiPatientId: patient?.patientId,
+            },
+            undefined,
+            false,
+            !push
+        );
+    }
+
+    /** Records the Pathology Slides tab's list filters, replacing the history entry. */
+    public setWsiSlideFilters(filters: {
+        stainGroups: string[];
+        matchLevels: string[];
+        search: string;
+    }) {
+        this.updateURL(
+            {
+                wsiStain: filters.stainGroups.join(',') || undefined,
+                wsiMatch: filters.matchLevels.join(',') || undefined,
+                wsiSearch: filters.search || undefined,
             },
             undefined,
             false,
