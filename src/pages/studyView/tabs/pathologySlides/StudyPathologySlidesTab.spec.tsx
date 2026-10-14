@@ -116,8 +116,8 @@ describe('StudyPathologySlidesTab', () => {
         );
         const rows = screen.getAllByTestId('study-slides-patient');
         expect(rows).toHaveLength(3);
-        expect(within(rows[1]).getByTitle('H&E: 1')).toBeTruthy();
-        expect(within(rows[1]).getByTitle('IHC: 1')).toBeTruthy();
+        expect(within(rows[1]).getByLabelText('H&E: 1')).toBeTruthy();
+        expect(within(rows[1]).getByLabelText('IHC: 1')).toBeTruthy();
         expect(within(rows[1]).getByText('2 slides')).toBeTruthy();
         expect(screen.getByTestId('study-slides-position').textContent).toBe(
             'P-1 · 1 of 3'

@@ -21,7 +21,7 @@ const C = WSI_THEME;
 export const FILTERS_OPEN_KEY = 'wsi.study.filtersOpen';
 
 const labelStyle: React.CSSProperties = {
-    fontSize: 11,
+    fontSize: 12,
     color: C.muted,
     marginBottom: 2,
 };
