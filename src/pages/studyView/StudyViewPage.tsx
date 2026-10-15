@@ -154,7 +154,9 @@ export default class StudyViewPage extends React.Component<
     private toolbarLeftUpdater: any;
     @observable private toolbarLeft: number = 0;
 
-    private readonly resourceTableStore = new ResourceTableStore();
+    private readonly resourceTableStore = new ResourceTableStore({
+        hideResource: isHiddenFromStudyResourceTable,
+    });
     private readonly resourceTableStores = new Map<
         string,
         ResourceTableStore
@@ -353,7 +355,7 @@ export default class StudyViewPage extends React.Component<
                 this.urlWrapper.tabId ===
                     StudyViewPageTabKeyEnum.FILES_AND_LINKS
             ) {
-                const firstTab = this.resourceTableStore.tabs.result?.[0];
+                const firstTab = this.resourceTableStore.visibleTabs[0];
                 if (firstTab) {
                     this.urlWrapper.setTab(
                         getStudyViewResourceTableTabId(firstTab.resourceId)
@@ -689,9 +691,7 @@ export default class StudyViewPage extends React.Component<
     readonly resourceTabs = MakeMobxView({
         await: () => [this.resourceTableStore.tabs],
         render: () => {
-            const apiTabs = (this.resourceTableStore.tabs.result || []).filter(
-                tab => !isHiddenFromStudyResourceTable(tab.resourceId)
-            );
+            const apiTabs = this.resourceTableStore.visibleTabs;
             if (apiTabs.length === 0) {
                 return [] as JSX.Element[];
             }
@@ -712,8 +712,7 @@ export default class StudyViewPage extends React.Component<
     });
 
     @computed get hasNewResourceTabs(): boolean {
-        const tabs = this.resourceTableStore.tabs.result;
-        return !!tabs && tabs.length > 0;
+        return this.resourceTableStore.visibleTabs.length > 0;
     }
 
     @computed get customTabs() {
