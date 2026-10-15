@@ -7,7 +7,11 @@ import {
     WsiViewerProps,
 } from 'cbioportal-wsi-viewer';
 import { getServerConfig } from 'config/config';
-import { buildCBioPortalAPIUrl, getOncoKbApiUrl } from 'shared/api/urls';
+import {
+    buildCBioPortalAPIUrl,
+    buildCBioPortalPageUrl,
+    getOncoKbApiUrl,
+} from 'shared/api/urls';
 import { getWsiOncoKbClient } from 'shared/api/wsiOncoKbClientInstance';
 import LoadingIndicator from 'shared/components/loadingIndicator/LoadingIndicator';
 import { getCivicCNAVariants } from 'shared/lib/CivicUtils';
