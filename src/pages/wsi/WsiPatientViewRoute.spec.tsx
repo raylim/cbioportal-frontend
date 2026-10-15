@@ -40,7 +40,7 @@ describe('WsiPatientViewRoute', () => {
         mockGetClinicalEvents.mockReset();
         // Pending by default so synchronous tests see no late state update.
         mockGetClinicalEvents.mockReturnValue(new Promise(() => {}));
-        mockServerConfig.msk_wsi_tile_server_url = '/wsi';
+        mockServerConfig.wsi_tile_server_url = '/wsi';
     });
 
     it('passes the slideKey link parameter as the requested slide', () => {

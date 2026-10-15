@@ -18,9 +18,10 @@ function freezeMetaRows(rows: MetaRow[]): MetaRow[] {
 }
 
 export function buildPatientUrl(studyId: string, patientId: string): string {
-    return `/patient?studyId=${encodeURIComponent(
-        studyId
-    )}&caseId=${encodeURIComponent(patientId)}`;
+    return getWsiViewerRuntime().buildPageUrl('patient', {
+        studyId,
+        caseId: patientId,
+    });
 }
 
 export function buildSampleUrl(
@@ -28,10 +29,11 @@ export function buildSampleUrl(
     sampleId: string,
     patientId: string
 ): string {
-    return `${buildPatientUrl(
+    return getWsiViewerRuntime().buildPageUrl('patient', {
         studyId,
-        patientId
-    )}&sampleId=${encodeURIComponent(sampleId)}`;
+        caseId: patientId,
+        sampleId,
+    });
 }
 
 export function getStainBadge(
