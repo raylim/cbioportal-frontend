@@ -1,5 +1,6 @@
 import {
     action,
+    comparer,
     computed,
     IReactionDisposer,
     makeObservable,
@@ -22,6 +23,7 @@ import {
     StudySlidesPage,
     StudySlidesRequest,
     StudySlideStainGroup,
+    STUDY_SLIDE_STAIN_GROUPS,
 } from './studySlidesApi';
 
 import { getStudyViewResourceTableTabId } from 'pages/studyView/StudyViewPageTabs';
@@ -138,6 +140,47 @@ export function studySlidesViewFromUrl(
     };
 }
 
+/** The tab's own list filters, on top of the study-view cohort. */
+export interface StudySlideListFilters {
+    stainGroups: StudySlideStainGroup[];
+    matchLevels: StudySlideMatchLevel[];
+    search: string;
+}
+
+/** The patient and list filters a study-view URL names for the Pathology Slides tab. */
+export function studySlidesUrlState(query: {
+    wsiStudyId?: string;
+    wsiPatientId?: string;
+    wsiStain?: string;
+    wsiMatch?: string;
+    wsiSearch?: string;
+}): {
+    selection: StudySlidePatientRef | undefined;
+    filters: StudySlideListFilters;
+} {
+    const list = (value: string | undefined) =>
+        (value || '').split(',').filter(Boolean);
+    return {
+        selection:
+            query.wsiStudyId && query.wsiPatientId
+                ? { studyId: query.wsiStudyId, patientId: query.wsiPatientId }
+                : undefined,
+        filters: {
+            stainGroups: list(
+                query.wsiStain
+            ).filter((group): group is StudySlideStainGroup =>
+                STUDY_SLIDE_STAIN_GROUPS.includes(group as StudySlideStainGroup)
+            ),
+            matchLevels: list(
+                query.wsiMatch
+            ).filter((level): level is StudySlideMatchLevel =>
+                STUDY_SLIDE_MATCH_LEVELS.includes(level as StudySlideMatchLevel)
+            ),
+            search: (query.wsiSearch || '').trim(),
+        },
+    };
+}
+
 export interface StudyPathologySlidesStoreOptions {
     /** The study-view cohort; the list reloads when it changes. */
     getFilters: () => StudyViewFilter;
@@ -150,6 +193,10 @@ export interface StudyPathologySlidesStoreOptions {
     initialView?: StudySlidesView;
     /** Called when the user switches between the viewer and the slide table. */
     onViewChange?: (view: StudySlidesView) => void;
+    /** The list's own filters to start with, such as ones restored from the URL. */
+    initialSlideFilters?: StudySlideListFilters;
+    /** Called when the list's own filters change. */
+    onSlideFiltersChange?: (filters: StudySlideListFilters) => void;
     fetchPage?: (request: StudySlidesRequest) => Promise<StudySlidesPage>;
     fetchFacets?: (
         request: StudySlideFacetsRequest
@@ -221,6 +268,11 @@ export class StudyPathologySlidesStore {
         this.pageSize = options.pageSize || STUDY_SLIDES_PAGE_SIZE;
         this.selected = options.initialSelection;
         this.followSelection = !!options.initialSelection;
+        if (options.initialSlideFilters) {
+            this.stainGroups = options.initialSlideFilters.stainGroups;
+            this.matchLevels = options.initialSlideFilters.matchLevels;
+            this.search = this.searchText = options.initialSlideFilters.search;
+        }
         makeObservable(this);
         this.disposers.push(
             reaction(
@@ -228,6 +280,16 @@ export class StudyPathologySlidesStore {
                 () => this.restartList()
             )
         );
+        const onSlideFiltersChange = options.onSlideFiltersChange;
+        if (onSlideFiltersChange) {
+            this.disposers.push(
+                reaction(
+                    () => this.slideFilters,
+                    filters => onSlideFiltersChange(filters),
+                    { equals: comparer.structural }
+                )
+            );
+        }
     }
 
     /** Whether the queried studies have any pathology slides. */
@@ -501,6 +563,43 @@ export class StudyPathologySlidesStore {
         this.matchLevels = [];
         this.searchText = '';
         this.applySearch();
+    }
+
+    @computed get slideFilters(): StudySlideListFilters {
+        return {
+            stainGroups: this.stainGroups.slice(),
+            matchLevels: this.matchLevels.slice(),
+            search: this.search,
+        };
+    }
+
+    /**
+     * Takes the patient and list filters from the URL, e.g. after Back or
+     * Forward, without reporting them back as changes.
+     */
+    @action.bound
+    followUrl(
+        selection: StudySlidePatientRef | undefined,
+        filters: StudySlideListFilters
+    ) {
+        if (!comparer.structural(filters, this.slideFilters)) {
+            this.stainGroups = filters.stainGroups;
+            this.matchLevels = filters.matchLevels;
+            this.searchText = filters.search;
+            this.search = filters.search;
+            this.restartList();
+        }
+        if (selection && !isSamePatient(selection, this.selected)) {
+            this.selected = {
+                studyId: selection.studyId,
+                patientId: selection.patientId,
+            };
+            this.selectedIndex = undefined;
+            this.requestedSlideKey = undefined;
+            // Reload to find the patient's place in the list.
+            this.followSelection = true;
+            this.reloadCount += 1;
+        }
     }
 
     @computed get hasSlideFilters(): boolean {

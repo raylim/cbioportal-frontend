@@ -1,17 +1,18 @@
 import * as React from 'react';
 import { observer } from 'mobx-react';
 import { Nav, NavItem } from 'react-bootstrap';
-import { pluralize } from 'cbioportal-frontend-commons';
+import { DefaultTooltip, pluralize } from 'cbioportal-frontend-commons';
 import {
     useWsiPanelFlag,
     WSI_FONT_FAMILY,
-    WSI_SECTION_TITLE_STYLE,
+    WSI_NAV_COLLAPSED_KEY,
     WSI_STAIN_COLORS,
     WSI_THEME,
     WsiCollapsedRail,
     WsiIconButton,
-    WsiPanelHideButton,
     wsiListItemStyle,
+    WsiPanelHeader,
+    WsiRailSection,
     WsiStainDot,
 } from 'cbioportal-wsi-viewer';
 import { PatientViewPageTabs } from 'pages/patientView/PatientViewPageTabIds';
@@ -108,29 +109,37 @@ const PatientRow: React.FunctionComponent<{
             >
                 <span
                     style={{
-                        fontSize: 12,
+                        fontSize: 13,
                         fontWeight: 600,
                         color: selected ? C.blueDark : C.text,
                     }}
                 >
                     {patient.patientId}
                 </span>
-                <span style={{ fontSize: 11, whiteSpace: 'nowrap' }}>
+                <span style={{ fontSize: 12, whiteSpace: 'nowrap' }}>
                     {STUDY_SLIDE_STAIN_GROUPS.filter(
                         group => patient.stainGroupCounts[group] > 0
                     ).map(group => (
-                        <span
+                        <DefaultTooltip
                             key={group}
-                            title={`${group}: ${patient.stainGroupCounts[group]}`}
-                            style={{ marginLeft: 6, color: C.muted }}
+                            trigger={['hover']}
+                            placement="top"
+                            overlay={
+                                <span>{`${group}: ${patient.stainGroupCounts[group]}`}</span>
+                            }
                         >
-                            <WsiStainDot color={WSI_STAIN_COLORS[group]} />
-                            {patient.stainGroupCounts[group]}
-                        </span>
+                            <span
+                                aria-label={`${group}: ${patient.stainGroupCounts[group]}`}
+                                style={{ marginLeft: 6, color: C.muted }}
+                            >
+                                <WsiStainDot color={WSI_STAIN_COLORS[group]} />
+                                {patient.stainGroupCounts[group]}
+                            </span>
+                        </DefaultTooltip>
                     ))}
                 </span>
             </div>
-            <div style={{ fontSize: 11, color: C.muted, marginTop: 1 }}>
+            <div style={{ fontSize: 12, color: C.muted, marginTop: 1 }}>
                 {count(patient.slideCount, 'slide')}
             </div>
         </li>
@@ -268,36 +277,22 @@ const PatientPanel: React.FunctionComponent<{
                     }}
                 />
             )}
+            <WsiPanelHeader
+                title="Patients"
+                detail={page.totalPatients.toLocaleString()}
+                detailTestId="study-slides-patient-count"
+                side="left"
+                hideLabel="Hide patient list (\)"
+                onHide={onHide}
+                hideTestId="study-slides-hide"
+            />
             <div
                 style={{
-                    padding: '9px 12px 8px',
+                    padding: '4px 12px 8px',
                     borderBottom: `1px solid ${C.border}`,
                     flexShrink: 0,
                 }}
             >
-                <div
-                    style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                    }}
-                >
-                    <div style={WSI_SECTION_TITLE_STYLE}>
-                        Patients{' '}
-                        <span
-                            data-testid="study-slides-patient-count"
-                            style={{ fontWeight: 400, letterSpacing: 0 }}
-                        >
-                            {page.totalPatients.toLocaleString()}
-                        </span>
-                    </div>
-                    <WsiPanelHideButton
-                        side="left"
-                        label="Hide patient list (\)"
-                        onClick={onHide}
-                        testId="study-slides-hide"
-                    />
-                </div>
                 <div
                     data-testid="study-slides-summary"
                     style={{ fontSize: 12, color: C.muted, marginTop: 2 }}
@@ -519,6 +514,11 @@ const StudySlidesViewerView: React.FunctionComponent<StudyPathologySlidesTabProp
         const [listCollapsed, setListCollapsed] = useWsiPanelFlag(
             PATIENT_LIST_COLLAPSED_KEY
         );
+        // The tab owns the slide list's hidden state too, so that with both
+        // lists hidden it can hand its rail to the viewer as one rail.
+        const [navCollapsed, setNavCollapsed] = useWsiPanelFlag(
+            WSI_NAV_COLLAPSED_KEY
+        );
 
         React.useEffect(() => {
             if (!isActive) {
@@ -576,6 +576,32 @@ const StudySlidesViewerView: React.FunctionComponent<StudyPathologySlidesTabProp
 
         const selected = store.selected;
         const innerHeight = height - 2;
+        const patientsRail: WsiRailSection = {
+            title: 'Patients',
+            detail: page.totalPatients.toLocaleString(),
+            expandLabel: 'Show patient list (\\)',
+            onExpand: () => setListCollapsed(false),
+            testId: 'study-slides-rail',
+            controls: (
+                <>
+                    <WsiIconButton
+                        icon="fa-chevron-up"
+                        label="Previous patient ([)"
+                        disabled={!store.hasPrevious}
+                        onClick={store.selectPrevious}
+                        testId="study-slides-rail-previous"
+                    />
+                    <WsiIconButton
+                        icon="fa-chevron-down"
+                        label="Next patient (])"
+                        disabled={!store.hasNext}
+                        onClick={store.selectNext}
+                        testId="study-slides-rail-next"
+                    />
+                </>
+            ),
+        };
+        const railInViewer = listCollapsed && navCollapsed && !!selected;
 
         return (
             <div
@@ -592,29 +618,17 @@ const StudySlidesViewerView: React.FunctionComponent<StudyPathologySlidesTabProp
                     background: '#fff',
                 }}
             >
-                {listCollapsed ? (
+                {railInViewer ? null : listCollapsed ? (
                     <WsiCollapsedRail
                         side="left"
-                        title="Patients"
-                        showLabel="Show patient list (\)"
-                        onExpand={() => setListCollapsed(false)}
+                        title={patientsRail.title}
+                        detail={patientsRail.detail}
+                        showLabel={patientsRail.expandLabel}
+                        onExpand={patientsRail.onExpand}
                         background={C.navBg}
-                        testId="study-slides-rail"
+                        testId={patientsRail.testId}
                     >
-                        <WsiIconButton
-                            icon="fa-chevron-up"
-                            label="Previous patient ([)"
-                            disabled={!store.hasPrevious}
-                            onClick={store.selectPrevious}
-                            testId="study-slides-rail-previous"
-                        />
-                        <WsiIconButton
-                            icon="fa-chevron-down"
-                            label="Next patient (])"
-                            disabled={!store.hasNext}
-                            onClick={store.selectNext}
-                            testId="study-slides-rail-next"
-                        />
+                        {patientsRail.controls}
                     </WsiCollapsedRail>
                 ) : (
                     <PatientPanel
@@ -645,6 +659,11 @@ const StudySlidesViewerView: React.FunctionComponent<StudyPathologySlidesTabProp
                                 store.matchLevels
                             )}
                             requestedSlideKey={store.requestedSlideKey}
+                            navCollapsed={navCollapsed}
+                            onNavCollapsedChange={setNavCollapsed}
+                            leadingRailSections={
+                                railInViewer ? [patientsRail] : undefined
+                            }
                         />
                     ) : (
                         <div

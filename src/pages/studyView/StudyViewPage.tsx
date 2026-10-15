@@ -10,6 +10,7 @@ import {
     IReactionDisposer,
     makeObservable,
     observable,
+    reaction,
 } from 'mobx';
 import {
     StudyViewPageStore,
@@ -91,10 +92,15 @@ import {
 } from 'shared/lib/customTabs/customTabHelpers';
 import { VirtualStudyModal } from 'pages/studyView/virtualStudy/VirtualStudyModal';
 import { PlotsTabWrapper } from 'pages/studyView/StudyViewPlotsTabWrapper';
-import { hashUrlState } from 'cbioportal-wsi-viewer';
+import {
+    capWsiViewerHeight,
+    readWsiHashFilters,
+    writeOnlyWsiHashFilters,
+} from 'cbioportal-wsi-viewer';
 import WindowStore from 'shared/components/window/WindowStore';
 import {
     StudyPathologySlidesStore,
+    studySlidesUrlState,
     studySlidesViewFromUrl,
 } from './tabs/pathologySlides/StudyPathologySlidesStore';
 import { StudyPathologySlidesTab } from './tabs/pathologySlides/StudyPathologySlidesTab';
@@ -177,6 +183,7 @@ export default class StudyViewPage extends React.Component<
     >();
     private resourceTableStoreDisposer: IReactionDisposer | null = null;
     private legacyTabRedirectDisposer: IReactionDisposer | null = null;
+    private slidesUrlDisposer: IReactionDisposer | null = null;
 
     @observable showCustomSelectTooltip = false;
     @observable showAlterationFilterTooltip = false;
@@ -200,6 +207,8 @@ export default class StudyViewPage extends React.Component<
         setWindowVariable('studyViewPageStore', this.store);
 
         const { wsiStudyId, wsiPatientId, wsiView } = this.urlWrapper.query;
+        const slideListUrlState = () =>
+            studySlidesUrlState(this.urlWrapper.query);
         const initialSlidesView = studySlidesViewFromUrl(
             this.urlWrapper.tabId,
             wsiView
@@ -212,14 +221,28 @@ export default class StudyViewPage extends React.Component<
                 wsiStudyId && wsiPatientId
                     ? { studyId: wsiStudyId, patientId: wsiPatientId }
                     : undefined,
+            initialSlideFilters: slideListUrlState().filters,
             onSelectionChange: patient => {
-                // The viewer's #wsi: hash names the previous patient's slide.
-                hashUrlState.clear();
-                this.urlWrapper.setWsiPatient(patient);
+                // Moving to another patient is a step Back can return to; the
+                // first patient shown is not. The viewer's #wsi: hash names the
+                // previous patient's slide, so the new entry keeps only the
+                // slide list's filters.
+                const filters = readWsiHashFilters();
+                this.urlWrapper.setWsiPatient(
+                    patient,
+                    !!this.urlWrapper.query.wsiPatientId
+                );
+                writeOnlyWsiHashFilters(filters);
             },
+            onSlideFiltersChange: filters =>
+                this.urlWrapper.setWsiSlideFilters(filters),
             initialView: initialSlidesView.view,
             onViewChange: view => this.urlWrapper.setWsiView(view),
         });
+        // Back and Forward restore the patient and list filters in the URL.
+        this.slidesUrlDisposer = reaction(slideListUrlState, state =>
+            this.pathologySlidesStore.followUrl(state.selection, state.filters)
+        );
         if (initialSlidesView.redirectToSlidesTab) {
             this.urlWrapper.setTab(StudyViewPageTabKeyEnum.PATHOLOGY_SLIDES);
             this.urlWrapper.setWsiView('table');
@@ -564,8 +587,8 @@ export default class StudyViewPage extends React.Component<
 
     /** Opens a slide table row in the Pathology Slides viewer. */
     private openSlideTableRow = (row: IResourceTableRow) => {
-        // A #wsi: hash slide would win over the requested one.
-        hashUrlState.clear();
+        // A #wsi: hash slide or list filter would win over the requested slide.
+        writeOnlyWsiHashFilters({});
         this.pathologySlidesStore.openSlide(
             {
                 studyId: row.studyId,
@@ -1027,10 +1050,13 @@ export default class StudyViewPage extends React.Component<
                                                         .currentTab as string) ===
                                                     StudyViewPageTabKeyEnum.PATHOLOGY_SLIDES
                                                 }
-                                                height={Math.max(
-                                                    480,
-                                                    WindowStore.size.height -
-                                                        300
+                                                height={capWsiViewerHeight(
+                                                    Math.max(
+                                                        480,
+                                                        WindowStore.size
+                                                            .height - 300
+                                                    ),
+                                                    WindowStore.size.width
                                                 )}
                                                 userName={
                                                     this.props.appStore.userName
@@ -1451,6 +1477,7 @@ export default class StudyViewPage extends React.Component<
         if (this.legacyTabRedirectDisposer) {
             this.legacyTabRedirectDisposer();
         }
+        this.slidesUrlDisposer?.();
     }
 
     render() {

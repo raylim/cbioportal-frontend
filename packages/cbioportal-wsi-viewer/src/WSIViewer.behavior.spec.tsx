@@ -1398,6 +1398,29 @@ describe('WSIViewer — loadHierarchy', () => {
         assert.isFalse(inst.loading);
     });
 
+    it("drops another patient's slide and viewport from the hash, keeping the filters", async () => {
+        // As after a host moves to another patient with the old hash in the URL.
+        window.location.hash =
+            'wsi:slide=other-patient-slide&x=1&y=2&z=3.000000&stain=hne';
+        setFetchMock(
+            jest.fn().mockResolvedValue({
+                ok: true,
+                json: () =>
+                    Promise.resolve(
+                        makeWireHierarchy([
+                            makeSlide({ can_serve_tiles: false }),
+                        ])
+                    ),
+            })
+        );
+
+        const inst = makeInstance('P-XYZ');
+        await loadHierarchyFor(inst);
+
+        expect(window.location.hash).toBe('#wsi:stain=hne');
+        window.location.hash = '';
+    });
+
     it('populates hierarchy and clears loading on successful response', async () => {
         // Provide a hierarchy with no servable slides to avoid triggering
         // mountOSD (which requires a real DOM container and OSD canvas).
@@ -2114,7 +2137,7 @@ describe('WSIViewer — URL hash state', () => {
             },
         };
 
-        window.history.replaceState(null, '', '/patient/P-1#old');
+        window.history.replaceState(null, '', '/patient/P-1#wsi:slide=old');
 
         await controllerOf(inst).copyViewLink();
 
@@ -2401,21 +2424,56 @@ describe('WSIViewer — open handler (mountOSD integration)', () => {
 
     it('treats a loaded tile as viewer-ready when no draw event is emitted', async () => {
         window.location.hash = '';
+        // WebGL-backed renderers can load the image successfully without
+        // delivering OpenSeadragon's tile-drawn event.
+        mockViewer.drawer = { getType: () => 'webgl' };
+        let updateViewportCb: (() => void) | null = null;
+        const addHandler = mockViewer.addHandler.getMockImplementation();
+        mockViewer.addHandler.mockImplementation(
+            (event: string, cb: (event?: any) => void) => {
+                if (event === 'update-viewport') updateViewportCb = cb;
+                addHandler(event, cb);
+            }
+        );
         const slide = makeSlide({ slide_key: '42' });
         const inst = await runMount(slide);
         const controller = controllerOf(inst);
         (inst as any).spinnerVisible = true;
+        (inst as any).thumbnailPreviewUrl = 'blob:preview';
         controller.loadingStart = Date.now() - 1000;
 
         capturedOpenCb!();
         expect((inst as any).tilesReady).toBe(false);
 
-        // WebGL-backed renderers can load the image successfully without
-        // delivering OpenSeadragon's tile-drawn event.
         capturedTileLoadedCb!();
 
         expect((inst as any).tilesReady).toBe(true);
         expect((inst as any).spinnerVisible).toBe(false);
+        // The preview stays until the redraw that draws the loaded tile, then
+        // goes, rather than staying under the slide where zooming out shows it.
+        expect((inst as any).thumbnailPreviewUrl).toBe('blob:preview');
+        updateViewportCb!();
+        expect((inst as any).thumbnailPreviewUrl).toBeNull();
+    });
+
+    it('drops the preview later when a canvas renderer never draws a tile', async () => {
+        window.location.hash = '';
+        const slide = makeSlide({ slide_key: '42' });
+        const inst = await runMount(slide);
+        const controller = controllerOf(inst);
+        (inst as any).thumbnailPreviewUrl = 'blob:preview';
+        controller.loadingStart = Date.now() - 1000;
+        jest.useFakeTimers();
+        try {
+            capturedOpenCb!();
+            capturedTileLoadedCb!();
+            expect((inst as any).thumbnailPreviewUrl).toBe('blob:preview');
+
+            jest.advanceTimersByTime(1500);
+            expect((inst as any).thumbnailPreviewUrl).toBeNull();
+        } finally {
+            jest.useRealTimers();
+        }
     });
 
     it('surfaces a retryable error when no tile becomes ready', async () => {
