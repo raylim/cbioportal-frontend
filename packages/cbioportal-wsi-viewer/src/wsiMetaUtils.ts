@@ -10,6 +10,7 @@ import {
 import { blockName, formatSpecimenLabel } from './wsiSpecimenUtils';
 import { wsiStainKind } from './wsiSlideUtils';
 import { WSI_STAIN_COLORS } from './wsiTheme';
+import { getWsiViewerRuntime } from './wsiViewerConfig';
 import { WsiSampleTimeline } from './wsiSampleTimeline';
 
 function freezeMetaRows(rows: MetaRow[]): MetaRow[] {
