@@ -74,6 +74,7 @@ jest.mock('openseadragon', () => {
         element: document.createElement('div'),
         destroy: jest.fn(),
         update: jest.fn(),
+        addTiledImage: jest.fn(),
     }));
     return OSD;
 });
@@ -1300,6 +1301,8 @@ describe('WSIViewer — pathology filter updates', () => {
         });
         (controller as any).osdViewer = { destroy: jest.fn() };
         (controller as any).osdSlideMounted = true;
+        // The active slide's first tile is ready.
+        (controller as any).nativeTileReadySeq = (controller as any).mountSeq;
 
         const beginSpy = jest.spyOn(inst as any, 'beginSlideSelection');
         const mountSpy = jest
@@ -1396,6 +1399,29 @@ describe('WSIViewer — loadHierarchy', () => {
 
         assert.include(inst.error, 'Network failure');
         assert.isFalse(inst.loading);
+    });
+
+    it("drops another patient's slide and viewport from the hash, keeping the filters", async () => {
+        // As after a host moves to another patient with the old hash in the URL.
+        window.location.hash =
+            'wsi:slide=other-patient-slide&x=1&y=2&z=3.000000&stain=hne';
+        setFetchMock(
+            jest.fn().mockResolvedValue({
+                ok: true,
+                json: () =>
+                    Promise.resolve(
+                        makeWireHierarchy([
+                            makeSlide({ can_serve_tiles: false }),
+                        ])
+                    ),
+            })
+        );
+
+        const inst = makeInstance('P-XYZ');
+        await loadHierarchyFor(inst);
+
+        expect(window.location.hash).toBe('#wsi:stain=hne');
+        window.location.hash = '';
     });
 
     it('populates hierarchy and clears loading on successful response', async () => {
@@ -2114,7 +2140,7 @@ describe('WSIViewer — URL hash state', () => {
             },
         };
 
-        window.history.replaceState(null, '', '/patient/P-1#old');
+        window.history.replaceState(null, '', '/patient/P-1#wsi:slide=old');
 
         await controllerOf(inst).copyViewLink();
 
@@ -2208,6 +2234,8 @@ describe('WSIViewer — open handler (mountOSD integration)', () => {
         mockViewer = {
             destroy: jest.fn(),
             viewport: mockViewport,
+            // The navigator mirrors the open main image.
+            world: { getItemAt: jest.fn(() => ({ source: {} })) },
             addOnceHandler: jest.fn(),
             addHandler: jest.fn(),
             removeHandler: jest.fn(),
