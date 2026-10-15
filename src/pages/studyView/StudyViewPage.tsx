@@ -174,7 +174,7 @@ export default class StudyViewPage extends React.Component<
     @observable private toolbarLeft: number = 0;
 
     private readonly resourceTableStore = new ResourceTableStore({
-        hideResource: isHiddenFromResourceViews,
+        hideResource: isHiddenFromStudyResourceTable,
     });
     private readonly resourceTableStores = new Map<
         string,
@@ -784,9 +784,7 @@ export default class StudyViewPage extends React.Component<
     readonly resourceTabs = MakeMobxView({
         await: () => [this.resourceTableStore.tabs],
         render: () => {
-            const apiTabs = (this.resourceTableStore.tabs.result || []).filter(
-                tab => !isHiddenFromStudyResourceTable(tab.resourceId)
-            );
+            const apiTabs = this.resourceTableStore.visibleTabs;
             if (apiTabs.length === 0) {
                 return [] as JSX.Element[];
             }

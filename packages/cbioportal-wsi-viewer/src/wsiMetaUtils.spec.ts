@@ -1,9 +1,14 @@
 import {
     buildPathRows,
+    buildSampleUrl,
     buildSeqRows,
     buildWsiRows,
     stainValue,
 } from './wsiMetaUtils';
+import {
+    configureWsiViewerRuntime,
+    resetWsiViewerRuntime,
+} from './wsiViewerConfig';
 import { MatchLevel, Sample, Slide, TileMetadata } from './wsiViewerTypes';
 
 const slide: Slide = {
