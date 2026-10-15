@@ -422,13 +422,13 @@ describe('studySlidesViewFromUrl', () => {
     let savedTileServerUrl: unknown;
 
     beforeEach(() => {
-        savedTileServerUrl = (getServerConfig() as any).msk_wsi_tile_server_url;
-        (getServerConfig() as any).msk_wsi_tile_server_url =
+        savedTileServerUrl = (getServerConfig() as any).wsi_tile_server_url;
+        (getServerConfig() as any).wsi_tile_server_url =
             'https://slides.example.com';
     });
 
     afterEach(() => {
-        (getServerConfig() as any).msk_wsi_tile_server_url = savedTileServerUrl;
+        (getServerConfig() as any).wsi_tile_server_url = savedTileServerUrl;
     });
 
     it('restores the slide table view from wsiView=table', () => {
@@ -452,7 +452,7 @@ describe('studySlidesViewFromUrl', () => {
     });
 
     it('keeps the old slide table tab without a slide viewer', () => {
-        (getServerConfig() as any).msk_wsi_tile_server_url = '';
+        (getServerConfig() as any).wsi_tile_server_url = '';
         expect(
             studySlidesViewFromUrl('resourceTable_WSI_SAMPLE', undefined)
         ).toEqual({ view: 'viewer', redirectToSlidesTab: false });

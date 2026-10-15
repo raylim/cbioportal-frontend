@@ -73,7 +73,7 @@ describe('legacy H&E resource policy', () => {
         assert.isTrue(isHiddenFromResourceViews('WSI_PATIENT'));
         assert.isFalse(isHiddenFromResourceViews('OTHER'));
 
-        (getServerConfig() as any).msk_wsi_tile_server_url = '';
+        (getServerConfig() as any).wsi_tile_server_url = '';
         assert.isFalse(isHiddenFromStudyResourceTable('WSI_SAMPLE'));
         assert.isTrue(isHiddenFromStudyResourceTable('WSI_PATIENT'));
     });
