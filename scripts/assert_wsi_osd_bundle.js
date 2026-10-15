@@ -5,6 +5,10 @@ const path = require('path');
 // library name alone is not enough: the webpack runtime in an initial bundle
 // names the wsi-openseadragon chunk.
 const OPENSEADRAGON_MARKER = '[Viewer.addTiledImage]';
+// OpenSeadragon defines its version object once per bundled copy.
+const OSD_LIBRARY_MARKER = /versionStr\s*:\s*["'`]\d/;
+// A class name from the Annotorious annotation layer.
+const ANNOTORIOUS_MARKER = 'a9s-annotationlayer';
 
 function containsOpenSeadragon(bundle) {
     return bundle.includes(OPENSEADRAGON_MARKER);
@@ -69,6 +73,36 @@ function assertWsiOsdBundle(options = {}) {
     if (!containsOpenSeadragon(fs.readFileSync(osdBundlePath, 'utf8'))) {
         throw new Error(
             `Expected OpenSeadragon in the wsi-openseadragon chunk ${osdBundlePath}`
+        );
+    }
+
+    // The viewer and Annotorious both import OpenSeadragon. Each copy
+    // outside the OpenSeadragon bundle doubles its download.
+    const osdLibraryCopies = fs
+        .readdirSync(reactAppDir)
+        .filter(name => name.endsWith('.js'))
+        .filter(name =>
+            OSD_LIBRARY_MARKER.test(
+                fs.readFileSync(path.join(reactAppDir, name), 'utf8')
+            )
+        );
+    if (osdLibraryCopies.length > 1) {
+        throw new Error(
+            `Expected one copy of OpenSeadragon in ${reactAppDir}, found it in ${osdLibraryCopies.join(
+                ', '
+            )}`
+        );
+    }
+
+    // Annotorious is only needed by viewers with annotations enabled.
+    const initialAnnotoriousBundles = bundleEntries.filter(({ bundle }) =>
+        bundle.includes(ANNOTORIOUS_MARKER)
+    );
+    if (initialAnnotoriousBundles.length) {
+        throw new Error(
+            `Expected Annotorious in an asynchronous chunk, but it is in ${initialAnnotoriousBundles
+                .map(({ bundlePath }) => path.basename(bundlePath))
+                .join(', ')}`
         );
     }
 

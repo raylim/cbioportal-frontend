@@ -159,6 +159,7 @@ export interface IServerConfig {
      * origin such as /wsi). Empty or unset hides the slide viewer.
      */
     msk_wsi_tile_server_url: string | null;
+    msk_wsi_annotation_api_url: string | null;
     query_product_limit: number;
     clinical_attribute_product_limit: number;
     dat_method: string;

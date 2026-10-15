@@ -15,6 +15,16 @@ export interface WsiViewerConfig {
      * global `fetch` when unset. OpenSeadragon loads tiles itself.
      */
     fetchImpl?: typeof fetch;
+    /**
+     * Annotation authoring against the annotation service at `apiUrl`,
+     * authorized with study-scoped portal tokens. Off when unset.
+     */
+    annotations?: WsiAnnotationsConfig;
+}
+
+export interface WsiAnnotationsConfig {
+    /** Annotation service base URL, without a trailing slash. */
+    apiUrl: string;
 }
 
 /** Services read by the viewer's module-level caches and controller. */
@@ -22,6 +32,7 @@ export interface WsiViewerRuntime {
     buildApiUrl: (path: string) => string;
     fetchImpl: typeof fetch;
     osdPrefixUrl?: string;
+    annotations?: WsiAnnotationsConfig;
 }
 
 // Resolves the global at call time so a replaced `window.fetch` is used.
@@ -45,6 +56,7 @@ export function configureWsiViewerRuntime(config: WsiViewerConfig): void {
         buildApiUrl: config.buildApiUrl,
         fetchImpl: config.fetchImpl ?? globalFetch,
         osdPrefixUrl: config.osdPrefixUrl,
+        annotations: config.annotations,
     };
 }
 
