@@ -182,7 +182,7 @@ export function tabs(
                                         .clinicalEvents.result
                                 }
                                 showPathologySlides={
-                                    !!getServerConfig().msk_wsi_tile_server_url
+                                    !!getServerConfig().wsi_tile_server_url
                                 }
                                 sampleManager={sampleManager}
                                 width={WindowStore.size.width}
