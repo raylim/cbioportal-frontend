@@ -157,7 +157,7 @@ export async function installFoundationMocks(
             'frontendConfig',
             JSON.stringify({
                 serverConfig: {
-                    msk_wsi_tile_server_url: '/wsi',
+                    wsi_tile_server_url: '/wsi',
                 },
             })
         );
@@ -174,7 +174,7 @@ export async function installFoundationMocks(
             body: JSON.stringify({
                 app_name: 'wsi-foundation-smoke',
                 authenticationMethod: 'none',
-                msk_wsi_tile_server_url: '/wsi',
+                wsi_tile_server_url: '/wsi',
                 msk_wsi_annotation_api_url: annotationApiUrl,
                 msk_wsi_agent_enabled: Boolean(options.enableAgent),
             }),

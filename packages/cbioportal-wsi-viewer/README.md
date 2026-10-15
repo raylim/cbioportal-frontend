@@ -22,6 +22,7 @@ OpenSeadragon is not in either entry. The viewer loads it on the first slide ope
 
    configureWsiViewerRuntime({
        buildApiUrl: path => buildCBioPortalAPIUrl(path), // adds the portal's context path
+       buildPageUrl: (path, query) => buildCBioPortalPageUrl(path, query), // optional: sidebar patient/sample links (default: root-relative)
        osdPrefixUrl: '/reactapp/osd-images/', // optional: OpenSeadragon button images
        // fetchImpl: …                  // optional (default: the global fetch)
    });
@@ -50,7 +51,7 @@ The cBioPortal app does both in `src/shared/components/wsiViewer/wsiAppConfig.ts
 | Prop | Purpose |
 | --- | --- |
 | `studyId`, `patientId` | The patient whose slides are shown. Changing `patientId` reloads the viewer in place |
-| `tileServerUrl` | Tile-server base URL (e.g. the portal's `msk.wsi.tile_server.url`) |
+| `tileServerUrl` | Tile-server base URL (e.g. the portal's `wsi.tile_server.url`) |
 | `authScope` | Subject used to isolate protected in-memory caches, normally the user name |
 | `height` | Viewer height in pixels |
 | `requestedSlideKey` | Slide to open, as from a `slideKey` viewer link. A `#wsi:` hash with a viewport takes precedence |

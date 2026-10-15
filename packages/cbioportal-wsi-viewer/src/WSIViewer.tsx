@@ -764,6 +764,9 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
         }
 
         if (requiresHierarchyReload) {
+            // A queued click belongs to the old hierarchy; firing it after
+            // the reload would open the previous patient's slide.
+            this.cancelPendingSlideSelection();
             this.controller.dispose();
             // The viewport is restored only for a hash slide of this patient,
             // e.g. after Back to an earlier patient.
