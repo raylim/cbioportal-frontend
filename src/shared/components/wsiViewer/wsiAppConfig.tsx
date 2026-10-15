@@ -42,6 +42,8 @@ export function buildWsiMolecularServices(): WsiMolecularServices {
 export function buildWsiViewerConfig(): WsiViewerConfig {
     return {
         buildApiUrl: (path: string) => buildCBioPortalAPIUrl(path),
+        buildPageUrl: (path: string, query: Record<string, string>) =>
+            buildCBioPortalPageUrl(path, query),
         osdPrefixUrl: WSI_OSD_PREFIX_URL,
         molecular: buildWsiMolecularServices(),
     };
