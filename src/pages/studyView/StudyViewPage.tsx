@@ -1054,7 +1054,7 @@ export default class StudyViewPage extends React.Component<
                                                 }
                                                 tileServerUrl={
                                                     getServerConfig()
-                                                        .msk_wsi_tile_server_url!
+                                                        .wsi_tile_server_url!
                                                 }
                                                 isActive={
                                                     (this.store

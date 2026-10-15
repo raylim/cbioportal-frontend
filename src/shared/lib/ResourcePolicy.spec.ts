@@ -17,17 +17,17 @@ describe('legacy H&E resource policy', () => {
     let savedTileServerUrl: unknown;
 
     beforeEach(() => {
-        savedTileServerUrl = (getServerConfig() as any).msk_wsi_tile_server_url;
-        (getServerConfig() as any).msk_wsi_tile_server_url =
+        savedTileServerUrl = (getServerConfig() as any).wsi_tile_server_url;
+        (getServerConfig() as any).wsi_tile_server_url =
             'https://slides.example.com';
     });
 
     afterEach(() => {
-        (getServerConfig() as any).msk_wsi_tile_server_url = savedTileServerUrl;
+        (getServerConfig() as any).wsi_tile_server_url = savedTileServerUrl;
     });
 
     it('returns false for an empty tile server URL', () => {
-        (getServerConfig() as any).msk_wsi_tile_server_url = '';
+        (getServerConfig() as any).wsi_tile_server_url = '';
         assert.isFalse(isWsiTileServerConfigured());
     });
 
@@ -59,7 +59,7 @@ describe('legacy H&E resource policy', () => {
     });
 
     it('keeps legacy H&E resources visible when no tile server is configured', () => {
-        (getServerConfig() as any).msk_wsi_tile_server_url = '';
+        (getServerConfig() as any).wsi_tile_server_url = '';
         assert.isFalse(shouldHideLegacyHeResourceTab('MSK_HNE'));
         assert.isFalse(shouldHideLegacyHeResource({ resourceId: 'MSK_HNE' }));
     });
@@ -73,7 +73,7 @@ describe('legacy H&E resource policy', () => {
         assert.isTrue(isHiddenFromResourceViews('WSI_PATIENT'));
         assert.isFalse(isHiddenFromResourceViews('OTHER'));
 
-        (getServerConfig() as any).msk_wsi_tile_server_url = '';
+        (getServerConfig() as any).wsi_tile_server_url = '';
         assert.isFalse(isHiddenFromStudyResourceTable('WSI_SAMPLE'));
         assert.isTrue(isHiddenFromStudyResourceTable('WSI_PATIENT'));
     });

@@ -136,7 +136,7 @@ async function installStudySlidesMocks(page: Page): Promise<StudySlidesMocks> {
         sessionServiceEnabled: true,
         user_display_name: 'wsi-study-slides-user',
         skin_hide_download_controls: 'HIDE_ALL',
-        msk_wsi_tile_server_url: '/wsi',
+        wsi_tile_server_url: '/wsi',
     };
     await page.addInitScript(config => {
         const win = window as any;
