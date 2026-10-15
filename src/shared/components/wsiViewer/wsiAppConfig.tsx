@@ -2,7 +2,7 @@ import * as React from 'react';
 import { DownloadControlOption } from 'cbioportal-frontend-commons';
 import { WsiViewerConfig, WsiViewerProps } from 'cbioportal-wsi-viewer';
 import { getServerConfig } from 'config/config';
-import { buildCBioPortalAPIUrl } from 'shared/api/urls';
+import { buildCBioPortalAPIUrl, buildCBioPortalPageUrl } from 'shared/api/urls';
 import LoadingIndicator from 'shared/components/loadingIndicator/LoadingIndicator';
 import { useWsiClinicalRows, WsiPatientClinicalData } from './wsiClinicalRows';
 
@@ -17,6 +17,8 @@ export function buildWsiViewerConfig(): WsiViewerConfig {
     const annotationApiUrl = getServerConfig().msk_wsi_annotation_api_url?.trim();
     return {
         buildApiUrl: (path: string) => buildCBioPortalAPIUrl(path),
+        buildPageUrl: (path: string, query: Record<string, string>) =>
+            buildCBioPortalPageUrl(path, query),
         osdPrefixUrl: WSI_OSD_PREFIX_URL,
         annotations: annotationApiUrl
             ? { apiUrl: annotationApiUrl.replace(/\/+$/, '') }
