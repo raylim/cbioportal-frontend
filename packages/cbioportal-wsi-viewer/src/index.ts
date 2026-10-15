@@ -3,6 +3,7 @@
 export * from './wsiViewerTypes';
 export {
     configureWsiViewerRuntime,
+    WsiAgentConfig,
     WsiAnnotationsConfig,
     WsiViewerConfig,
 } from './wsiViewerConfig';
