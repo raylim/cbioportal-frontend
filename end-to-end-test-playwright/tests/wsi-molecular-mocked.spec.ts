@@ -81,7 +81,7 @@ async function installMolecularMocks(
             body: JSON.stringify({
                 app_name: 'wsi-molecular-smoke',
                 authenticationMethod: 'none',
-                msk_wsi_tile_server_url: '/wsi',
+                wsi_tile_server_url: '/wsi',
                 show_oncokb: options.enrichment === true,
                 show_civic: options.enrichment === true,
             }),
