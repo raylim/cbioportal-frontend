@@ -89,7 +89,10 @@ import {
     buildCustomTabs,
     prepareCustomTabConfigurations,
 } from 'shared/lib/customTabs/customTabHelpers';
-import { isHiddenFromResourceViews } from 'shared/lib/ResourcePolicy';
+import {
+    isHiddenFromStudyResourceTable,
+    shouldHideLegacyHeResourceTab,
+} from 'shared/lib/ResourcePolicy';
 import { VirtualStudyModal } from 'pages/studyView/virtualStudy/VirtualStudyModal';
 import { PlotsTabWrapper } from 'pages/studyView/StudyViewPlotsTabWrapper';
 import { ResourceTableStore } from 'shared/components/resourceTable/ResourceTableStore';
@@ -509,8 +512,10 @@ export default class StudyViewPage extends React.Component<
     }
 
     @computed get visibleResourceDefinitions() {
+        // Legacy H&E resources give way to the slide viewer, so a study with
+        // only those has no Files & Links tab.
         return (this.store.resourceDefinitions.result || []).filter(
-            d => !isHiddenFromResourceViews(d.resourceId)
+            d => !shouldHideLegacyHeResourceTab(d.resourceId)
         );
     }
 
@@ -685,7 +690,7 @@ export default class StudyViewPage extends React.Component<
         await: () => [this.resourceTableStore.tabs],
         render: () => {
             const apiTabs = (this.resourceTableStore.tabs.result || []).filter(
-                tab => !isHiddenFromResourceViews(tab.resourceId)
+                tab => !isHiddenFromStudyResourceTable(tab.resourceId)
             );
             if (apiTabs.length === 0) {
                 return [] as JSX.Element[];
