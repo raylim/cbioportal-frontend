@@ -89,10 +89,7 @@ import {
     buildCustomTabs,
     prepareCustomTabConfigurations,
 } from 'shared/lib/customTabs/customTabHelpers';
-import {
-    isHiddenFromStudyResourceTable,
-    shouldHideLegacyHeResourceTab,
-} from 'shared/lib/ResourcePolicy';
+import { isHiddenFromStudyResourceTable } from 'shared/lib/ResourcePolicy';
 import { VirtualStudyModal } from 'pages/studyView/virtualStudy/VirtualStudyModal';
 import { PlotsTabWrapper } from 'pages/studyView/StudyViewPlotsTabWrapper';
 import { ResourceTableStore } from 'shared/components/resourceTable/ResourceTableStore';
@@ -514,10 +511,11 @@ export default class StudyViewPage extends React.Component<
     }
 
     @computed get visibleResourceDefinitions() {
-        // Legacy H&E resources give way to the slide viewer, so a study with
-        // only those has no Files & Links tab.
+        // The resources the resource table lists, so a study whose resources are
+        // all hidden from it (legacy H&E, slides the viewer shows) has no Files
+        // & Links tab.
         return (this.store.resourceDefinitions.result || []).filter(
-            d => !shouldHideLegacyHeResourceTab(d.resourceId)
+            d => !isHiddenFromStudyResourceTable(d.resourceId)
         );
     }
 
