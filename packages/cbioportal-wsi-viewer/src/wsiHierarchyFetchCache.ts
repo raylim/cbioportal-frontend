@@ -40,6 +40,11 @@ function normalizeV2Hierarchy(
         reference_sample_id: payload.referenceSampleId,
         samples: payload.sampleGroups.map(group => ({
             sample_id: group.sampleId ?? 'UNMATCHED',
+            cancer_type: '',
+            cancer_type_detailed: '',
+            oncotree_code: '',
+            primary_site: '',
+            sample_type: '',
             parts: group.parts.map(part => ({
                 part_number: part.partNumber,
                 part_type: part.partType,
