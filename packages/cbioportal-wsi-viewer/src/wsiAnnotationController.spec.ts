@@ -32,7 +32,7 @@ function apiAnnotation(
     };
 }
 
-const SLIDE_KEY = '0123456789abcdef0123456789abcdef';
+const SLIDE_KEY = '0123456789ab';
 
 describe('WsiAnnotationController', () => {
     const token = jest.fn().mockResolvedValue('annotation-token');
