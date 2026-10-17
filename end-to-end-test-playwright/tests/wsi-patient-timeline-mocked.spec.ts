@@ -9,10 +9,10 @@ import {
 /** A second sequenced sample, with a later slide on a different part. */
 const LATER_SAMPLE_ID = 'wsi-foundation-smoke-sample-2';
 
-/** Opaque 32-hex slide keys, as the backend publishes them. */
-const HNE_KEY = '11111111111111111111111111111111';
-const IHC_KEY = '22222222222222222222222222222222';
-const LATER_KEY = '44444444444444444444444444444444';
+/** Opaque 12-hex slide keys, as the backend publishes them. */
+const HNE_KEY = '111111111111';
+const IHC_KEY = '222222222222';
+const LATER_KEY = '444444444444';
 const ALL_KEYS = [HNE_KEY, IHC_KEY, LATER_KEY];
 
 const BLOCK_SPECIMEN_KEY = 'block::1::A1';
