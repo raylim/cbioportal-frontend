@@ -10,6 +10,7 @@ import { configureWsiViewerRuntime } from './wsiViewerConfig';
 import { Sample, Slide, TileMetadata } from './wsiViewerTypes';
 
 jest.mock('./wsiAuth', () => ({
+    ...jest.requireActual('./wsiAuth'),
     getWsiSlideAccess: jest.fn(),
 }));
 jest.mock('./wsiThumbnailFetchCache', () => ({
@@ -129,6 +130,8 @@ function makeHarness() {
         setSpinnerVisible: jest.fn(),
         setTilesReady: jest.fn(),
         setThumbnailPreview: jest.fn(),
+        setMutationDataStatus: jest.fn(),
+        runSampleEnrichment: jest.fn(() => Promise.resolve()),
         getSelectedSlide: () => selected,
         getSelectedSample: () => ({ sample_id: 'S-1' } as Sample),
         getSelectedMeta: () => meta,

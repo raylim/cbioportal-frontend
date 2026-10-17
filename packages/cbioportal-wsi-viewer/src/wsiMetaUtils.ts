@@ -172,7 +172,15 @@ export function buildPathRows(
             ? buildSampleUrl(studyId, sample.sample_id, patientId)
             : undefined;
     const blockLbl = normalizeBlockLabel(slide.block_label, slide.block_number);
-    const sampleTip = blockLbl ? `Block: ${blockLbl}` : undefined;
+    let sampleTip: string | undefined;
+    if (blockLbl) {
+        sampleTip = `Block: ${blockLbl}`;
+    }
+    if (sample.sample_type) {
+        sampleTip = `${sampleTip ? `${sampleTip}\n` : ''}Type: ${
+            sample.sample_type
+        }`;
+    }
 
     // De-identified exports replace the part description with a "Specimen <n>" ordinal, which
     // names no anatomical site and repeats the Specimen row.
@@ -199,7 +207,7 @@ export function buildPathRows(
         {
             label: 'Sample',
             labelTip: sampleTip
-                ? 'Click for cBioPortal sample view — hover for block info'
+                ? 'Click for cBioPortal sample view — hover for block/type info'
                 : 'Tumor sample identifier',
             value: isUnmatchedSample
                 ? 'Unmatched pathology slides'
@@ -237,5 +245,39 @@ export function buildPathRows(
         });
     }
 
+    return freezeMetaRows(rows);
+}
+
+export function buildSeqRows(sample: Sample, sampleUrl?: string): MetaRow[] {
+    const rows: MetaRow[] = [];
+    if (sample.tumor_purity) {
+        rows.push({
+            label: 'Tumor purity',
+            labelTip: 'Estimated fraction of tumor cells in this sample',
+            value: `${sample.tumor_purity}%`,
+        });
+    }
+    if (sample.tmb_score) {
+        rows.push({
+            label: 'TMB',
+            labelTip:
+                'Tumor mutational burden — click to view mutations in cBioPortal',
+            value: `${sample.tmb_score} mut/Mb`,
+            href: sampleUrl,
+        });
+    }
+    if (sample.msi_type) {
+        rows.push({
+            label: 'MSI',
+            labelTip: 'Microsatellite instability status',
+            value: sample.msi_type,
+        });
+    }
+    if (
+        sample.metastatic_site &&
+        sample.metastatic_site.toLowerCase() !== 'not applicable'
+    ) {
+        rows.push({ label: 'Metastatic site', value: sample.metastatic_site });
+    }
     return freezeMetaRows(rows);
 }

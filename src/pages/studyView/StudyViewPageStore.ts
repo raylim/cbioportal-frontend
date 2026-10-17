@@ -421,6 +421,7 @@ export enum StudyViewPageTabDescriptions {
     CN_SEGMENTS = 'CN Segments',
     PLOTS = 'Plots',
     EMBEDDINGS = 'Similarity Maps',
+    PATHOLOGY_SLIDES = 'Pathology Slides',
 }
 
 const DEFAULT_CHART_NAME = 'Custom Data';
@@ -472,6 +473,12 @@ export type StudyViewURLQuery = {
     id?: string;
     studyId?: string;
     resourceUrl?: string; // for open resource tabs
+    wsiStudyId?: string; // patient shown in the Pathology Slides tab
+    wsiPatientId?: string;
+    wsiView?: string; // 'table' when the Pathology Slides tab shows its slide table
+    wsiStain?: string; // the Pathology Slides tab's list filters (comma-separated)
+    wsiMatch?: string;
+    wsiSearch?: string;
     cancer_study_id?: string;
     filterJson?: string;
     filterAttributeId?: string;
@@ -9311,7 +9318,33 @@ export class StudyViewPageStore
                     );
                 }
             }
-            return _.uniq(filterAttributes);
+
+            const linkedAttributeGroups = [
+                ['WSI_SLIDE_COUNT', 'WSI_HNE_SLIDE', 'WSI_IHC_SLIDE'],
+            ];
+            const selectedAttributeIds = new Set(
+                filterAttributes.map(attr => attr.clinicalAttributeId)
+            );
+
+            linkedAttributeGroups.forEach(group => {
+                if (
+                    group.some(attributeId =>
+                        selectedAttributeIds.has(attributeId)
+                    )
+                ) {
+                    queriedAttributes.forEach(attr => {
+                        if (
+                            group.includes(attr.clinicalAttributeId) &&
+                            !selectedAttributeIds.has(attr.clinicalAttributeId)
+                        ) {
+                            filterAttributes.push(attr);
+                            selectedAttributeIds.add(attr.clinicalAttributeId);
+                        }
+                    });
+                }
+            });
+
+            return _.uniqBy(filterAttributes, attr => attr.clinicalAttributeId);
         },
         onError: () => {},
         default: [],
