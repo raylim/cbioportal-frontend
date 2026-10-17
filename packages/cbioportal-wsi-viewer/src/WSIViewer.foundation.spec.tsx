@@ -166,7 +166,7 @@ describe('WSIViewer foundation behavior', () => {
     });
 
     it('sends the slide key as slide_id and never an image ID, barcode or source', async () => {
-        const slideKey = '0123456789abcdef0123456789abcdef';
+        const slideKey = '0123456789ab';
         const instance = makeInstance({ studyId: 'coad_msk_2025' });
         const slide = {
             ...testSlide(slideKey),

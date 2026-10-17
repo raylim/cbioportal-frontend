@@ -261,7 +261,7 @@ describe('WSI access capability', () => {
     });
 
     it('fingerprints a slide access by its slide key and pyramid shape', () => {
-        const slideKey = '0123456789abcdef0123456789abcdef';
+        const slideKey = '0123456789ab';
         const access = {
             slideKey,
             accessToken: 'header.payload.signature',
