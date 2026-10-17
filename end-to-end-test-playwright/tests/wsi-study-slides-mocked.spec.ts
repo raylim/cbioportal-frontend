@@ -70,9 +70,9 @@ const patients = patientIds.map(patientId => {
     };
 });
 
-/** An opaque 32-hex slide key per patient, as the backend publishes them. */
+/** An opaque 12-hex slide key per patient, as the backend publishes them. */
 function slideKeyFor(patientId: string) {
-    return (patientIds.indexOf(patientId) + 1).toString(16).padStart(32, '0');
+    return (patientIds.indexOf(patientId) + 1).toString(16).padStart(12, '0');
 }
 
 function hierarchyFor(patientId: string) {
@@ -316,7 +316,7 @@ if (process.env.PW_SUITE === 'wsi') {
             expect(mocks.accessRequests.length).toBeGreaterThan(0);
             for (const accessUrl of mocks.accessRequests) {
                 const params = new URL(accessUrl).searchParams;
-                expect(params.get('slideKey')).toMatch(/^[0-9a-f]{32}$/);
+                expect(params.get('slideKey')).toMatch(/^[0-9a-f]{12}$/);
                 expect([...params.keys()]).toEqual(['slideKey']);
             }
 

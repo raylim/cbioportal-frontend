@@ -79,7 +79,7 @@ describe('legacy H&E resource policy', () => {
     });
 
     it('reads the slide key from a slide row link', () => {
-        const key = '0123456789abcdef0123456789abcdef';
+        const key = '0123456789ab';
         assert.equal(
             slideKeyFromSlideUrl(
                 `https://portal.example.org/wsi/patient/P-1?studyId=s&slideKey=${key}`
@@ -92,6 +92,10 @@ describe('legacy H&E resource policy', () => {
             )
         );
         assert.isUndefined(slideKeyFromSlideUrl('?slideKey=short'));
+        // A retired 32-hex key is not a slide key.
+        assert.isUndefined(
+            slideKeyFromSlideUrl(`?slideKey=${key}0123456789abcdef0123`)
+        );
         assert.isUndefined(slideKeyFromSlideUrl(undefined));
     });
 
