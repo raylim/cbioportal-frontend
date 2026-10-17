@@ -38,7 +38,7 @@ export function shouldHideLegacyHeResourceTab(
 export function slideKeyFromSlideUrl(
     url: string | undefined
 ): string | undefined {
-    const match = /[?&]slideKey=([0-9a-f]{32})(?:&|#|$)/.exec(url || '');
+    const match = /[?&]slideKey=([0-9a-f]{12})(?:&|#|$)/.exec(url || '');
     return match ? match[1] : undefined;
 }
 
