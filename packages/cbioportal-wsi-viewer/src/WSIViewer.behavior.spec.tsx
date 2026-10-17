@@ -1432,6 +1432,29 @@ describe('WSIViewer — loadHierarchy', () => {
         assert.isFalse(inst.loading);
     });
 
+    it("drops another patient's slide and viewport from the hash, keeping the filters", async () => {
+        // As after a host moves to another patient with the old hash in the URL.
+        window.location.hash =
+            'wsi:slide=other-patient-slide&x=1&y=2&z=3.000000&stain=hne';
+        setFetchMock(
+            jest.fn().mockResolvedValue({
+                ok: true,
+                json: () =>
+                    Promise.resolve(
+                        makeWireHierarchy([
+                            makeSlide({ can_serve_tiles: false }),
+                        ])
+                    ),
+            })
+        );
+
+        const inst = makeInstance('P-XYZ');
+        await loadHierarchyFor(inst);
+
+        expect(window.location.hash).toBe('#wsi:stain=hne');
+        window.location.hash = '';
+    });
+
     it('populates hierarchy and clears loading on successful response', async () => {
         // Provide a hierarchy with no servable slides to avoid triggering
         // mountOSD (which requires a real DOM container and OSD canvas).
@@ -2148,7 +2171,7 @@ describe('WSIViewer — URL hash state', () => {
             },
         };
 
-        window.history.replaceState(null, '', '/patient/P-1#old');
+        window.history.replaceState(null, '', '/patient/P-1#wsi:slide=old');
 
         await controllerOf(inst).copyViewLink();
 
