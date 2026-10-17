@@ -17,9 +17,12 @@ import ServerDrivenTable, {
 } from 'shared/components/serverDrivenTable/ServerDrivenTable';
 import TabbedTableLayout from 'shared/components/tabbedTable/TabbedTableLayout';
 import {
-    getPatientViewUrlWithPathname,
-    getSampleViewUrlWithPathname,
-} from 'shared/api/urls';
+    isWsiResourceId,
+    patientViewPathForResource,
+    slideStainFilterForColumnFilters,
+    slideStainFilterQuery,
+} from 'shared/lib/ResourcePolicy';
+import { buildCBioPortalPageUrl } from 'shared/api/urls';
 import {
     ResourceColumnFilter,
     ResourceColumnInfo,
@@ -474,14 +477,31 @@ export class ResourceDataTable extends React.Component<
         );
     }
 
+    /**
+     * The patient view link of a row's patient or sample; slide rows open Pathology Slides with the
+     * table's stain group filter.
+     */
+    private rowCaseUrl(
+        row: IResourceTableRow,
+        caseQuery: { caseId: string } | { sampleId: string }
+    ) {
+        const stainFilter = isWsiResourceId(row.resourceId)
+            ? slideStainFilterForColumnFilters(this.props.store.filters)
+            : undefined;
+        return buildCBioPortalPageUrl(
+            patientViewPathForResource(row.resourceId),
+            {
+                studyId: row.studyId,
+                ...caseQuery,
+                ...slideStainFilterQuery(stainFilter),
+            }
+        );
+    }
+
     private renderPatientId = (row: IResourceTableRow) => {
         const href =
             row.studyId && row.patientStableId
-                ? getPatientViewUrlWithPathname(
-                      row.studyId,
-                      row.patientStableId,
-                      'patient/filesAndLinks'
-                  )
+                ? this.rowCaseUrl(row, { caseId: row.patientStableId })
                 : undefined;
         return this.renderLinkOrText(row.patientId, href);
     };
@@ -489,11 +509,7 @@ export class ResourceDataTable extends React.Component<
     private renderSampleId = (row: IResourceTableRow) => {
         const href =
             row.studyId && row.sampleStableId
-                ? getSampleViewUrlWithPathname(
-                      row.studyId,
-                      row.sampleStableId,
-                      'patient/filesAndLinks'
-                  )
+                ? this.rowCaseUrl(row, { sampleId: row.sampleStableId })
                 : undefined;
         return this.renderLinkOrText(row.sampleId, href);
     };
