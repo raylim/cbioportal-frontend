@@ -33,8 +33,16 @@ import {
 } from './wsiViewerController';
 import { loadOpenSeadragon } from './wsiOpenSeadragonLoader';
 import { clearPatientHierarchyCache } from './wsiHierarchyFetchCache';
-import { clearWsiSlideAccess } from './wsiAuth';
+import { clearWsiSlideAccess, getAnnotationAccessToken } from './wsiAuth';
 import { clearWsiThumbnailFetchCache } from './wsiThumbnailFetchCache';
+import { WsiAnnotationController } from './wsiAnnotationController';
+import {
+    WsiAnnotationDrawPreview,
+    WsiAnnotationLayersPanel,
+    WsiAnnotationPanel,
+    WsiAnnotationTooltip,
+    WsiAnnotationToolbar,
+} from './wsiAnnotationControls';
 import {
     chooseScaleBar,
     formatMagnification,
@@ -108,6 +116,8 @@ export interface WsiViewerProps {
     showDownload?: boolean;
     /** Indicator shown while the hierarchy loads. */
     renderLoading?: () => React.ReactNode;
+    /** Annotation service base URL; annotation authoring is off when unset. */
+    annotationApiUrl?: string | null;
     /**
      * Hides the slide list. Unset, the viewer keeps the user's choice in
      * browser storage.
@@ -208,6 +218,7 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
     private resizeStartWidth = 0;
     private isResizingSidebar = false;
     private controller: WsiViewerController;
+    private annotationController: WsiAnnotationController;
     @observable private requestedSlideNoticeDismissed = false;
     private slideSelectionTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -311,6 +322,15 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
             props.initialMatchFilter ||
             getInitialMatchFilter(props.pathologyFilter);
         this.linkoutScopeActive = !!props.pathologyFilter;
+        this.annotationController = new WsiAnnotationController(
+            props.annotationApiUrl,
+            props.studyId,
+            () =>
+                getAnnotationAccessToken(
+                    this.props.studyId,
+                    this.props.authScope
+                )
+        );
         this.controller = new WsiViewerController(
             this.createControllerHost(),
             loadOpenSeadragon
@@ -439,6 +459,15 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
             updateCursorPos: (x, y) => this.handleCursorMove(x, y),
             clearCursorPos: () => this.clearCursorPos(),
             setViewScale: scale => this.setViewScale(scale),
+            onSlideSelectionStarted: slide =>
+                this.annotationController.beginSlide(slide.slide_key),
+            onViewerOpened: (viewer, openSeadragon, slide) =>
+                this.annotationController.attachViewer(
+                    viewer,
+                    openSeadragon,
+                    slide.slide_key
+                ),
+            onViewerDestroyed: () => this.annotationController.detachViewer(),
             reportInitialSlideLoadPerformance: metric =>
                 this.reportInitialSlideLoadPerformance(metric),
         };
@@ -560,6 +589,22 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
             clearWsiThumbnailFetchCache();
         }
 
+        if (
+            authScopeChanged ||
+            prev.studyId !== this.props.studyId ||
+            prev.annotationApiUrl !== this.props.annotationApiUrl
+        ) {
+            // A hierarchy reload begins the slide again, so only drop the
+            // previous context's annotations here.
+            if (requiresHierarchyReload) {
+                this.annotationController.invalidatePendingRequests();
+            }
+            this.annotationController.setContext(
+                this.props.annotationApiUrl,
+                this.props.studyId
+            );
+        }
+
         if (pathologyFilterChanged) {
             this.linkoutScopeActive = !!this.props.pathologyFilter;
             this.matchFilter =
@@ -605,6 +650,7 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
             this.hierarchy = null; // stops the prefetchSlideMetadata loop
         })();
         this.controller.dispose();
+        this.annotationController.detachViewer();
         this.handleSidebarResizeEnd();
     }
 
@@ -1048,6 +1094,11 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
                         background: C.stageBg,
                     }}
                 >
+                    {this.props.annotationApiUrl && (
+                        <WsiAnnotationToolbar
+                            controller={this.annotationController}
+                        />
+                    )}
                     {selectedSlide && thumbnailPreviewUrl && (
                         <img
                             data-testid="wsi-thumbnail-preview"
@@ -1230,6 +1281,16 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
                             showDownload={!!this.props.showDownload}
                         />
                     )}
+                    {this.props.annotationApiUrl && (
+                        <WsiAnnotationTooltip
+                            controller={this.annotationController}
+                        />
+                    )}
+                    {this.props.annotationApiUrl && (
+                        <WsiAnnotationDrawPreview
+                            controller={this.annotationController}
+                        />
+                    )}
                 </div>
 
                 {this.metadataCollapsed ? (
@@ -1281,6 +1342,28 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
                             wsiRows={this.selectedWsiRows}
                             showPathology={!!(selectedSlide && selectedSample)}
                             pathRows={this.selectedPathRows}
+                            annotationLayersPanel={
+                                this.props.annotationApiUrl &&
+                                this.annotationController.visible ? (
+                                    <WsiAnnotationLayersPanel
+                                        controller={this.annotationController}
+                                    />
+                                ) : null
+                            }
+                            annotationPanel={
+                                this.props.annotationApiUrl &&
+                                this.annotationController.visible ? (
+                                    <WsiAnnotationPanel
+                                        controller={this.annotationController}
+                                    />
+                                ) : null
+                            }
+                            annotationPanelTitle={
+                                'Annotations (' +
+                                this.annotationController
+                                    .visibleAnnotationCount +
+                                ')'
+                            }
                             clinicalRows={this.selectedClinicalRows}
                             onHide={this.hideMetadata}
                         />
