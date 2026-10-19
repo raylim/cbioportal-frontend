@@ -9,6 +9,7 @@ import {
 } from './wsiViewerTypes';
 import {
     getOrderedServableSlidesForSampleReadOnly,
+    hierarchySlides,
     matchesMatchFilter,
     matchesWsiStainFilter,
     sampleHasMultiplePartDescriptions,
@@ -31,6 +32,7 @@ import {
 } from './wsiSampleTimeline';
 import { scheduleThumbnailRequest } from './thumbnailRequestLimiter';
 import { getWsiSlideAccess } from './wsiAuth';
+import { revokeObjectUrl } from './wsiCacheUtils';
 import {
     fetchWsiThumbnailBlob,
     parseMaxAgeMs,
@@ -71,7 +73,6 @@ export interface WsiNavPanelProps {
 }
 
 const INITIAL_VISIBLE_SAMPLE_LIMIT = 6;
-/** Height of a slide in the tray; the label end is about a third of a real slide's length. */
 /** Fits the label end's four lines (61px) with its padding and border. */
 const SLIDE_HEIGHT = 74;
 const SLIDE_LABEL_WIDTH = 128;
@@ -267,20 +268,9 @@ function WsiNavPanelComponent({
     }, [deferOffscreenSamples, filteredSampleEntries, selectedSlideId]);
     /** Why no slide is listed when the patient has none to show at all. */
     const emptyPatientMessage = React.useMemo(() => {
-        let slides = 0;
-        let viewable = 0;
-        hierarchy.samples.forEach(sample =>
-            sample.parts.forEach(part =>
-                part.blocks.forEach(block =>
-                    block.slides.forEach(slide => {
-                        slides += 1;
-                        if (slide.can_serve_tiles) viewable += 1;
-                    })
-                )
-            )
-        );
-        if (slides === 0) return 'No pathology slides for this patient';
-        if (viewable === 0)
+        const slides = hierarchySlides(hierarchy);
+        if (slides.length === 0) return 'No pathology slides for this patient';
+        if (!slides.some(slide => slide.can_serve_tiles))
             return 'No viewable pathology slides for this patient';
         return undefined;
     }, [hierarchy]);
@@ -670,7 +660,6 @@ function SampleNode({
     const [open, setOpen] = React.useState(
         containsSelectedSlide || sampleIndex === 0
     );
-    const servableSlides = open || containsSelectedSlide ? filteredSlides : [];
     const visibleSlideCount = filteredSlides.length;
 
     // A slide selected in this sample (e.g. from a link or Back) opens it,
@@ -802,7 +791,7 @@ function SampleNode({
             </div>
             {open && (
                 <div style={{ padding: '0 10px 8px' }}>
-                    {servableSlides.map(({ slide, blockLabel }) => (
+                    {filteredSlides.map(({ slide, blockLabel }) => (
                         <SlideItem
                             key={slide.slide_key}
                             slide={slide}
@@ -1093,6 +1082,10 @@ function WsiSlideThumbnail({
     const objectUrlRef = React.useRef<string | null>(null);
     const [source, setSource] = React.useState<string | null>(null);
     const [hidden, setHidden] = React.useState(false);
+    const releaseObjectUrl = () => {
+        revokeObjectUrl(objectUrlRef.current);
+        objectUrlRef.current = null;
+    };
 
     React.useEffect(() => {
         setSource(null);
@@ -1103,14 +1096,6 @@ function WsiSlideThumbnail({
         let retryTimer: ReturnType<typeof setTimeout> | null = null;
         let attempt = 0;
         let loadThumbnail: () => void;
-
-        const revokeObjectUrl = () => {
-            const objectUrl = objectUrlRef.current;
-            objectUrlRef.current = null;
-            if (objectUrl && typeof URL.revokeObjectURL === 'function') {
-                URL.revokeObjectURL(objectUrl);
-            }
-        };
 
         const scheduleRetry = (delayMs: number | null) => {
             if (cancelled || delayMs === null) {
@@ -1154,12 +1139,10 @@ function WsiSlideThumbnail({
                 .then(blob => {
                     const nextObjectUrl = URL.createObjectURL(blob);
                     if (cancelled) {
-                        if (typeof URL.revokeObjectURL === 'function') {
-                            URL.revokeObjectURL(nextObjectUrl);
-                        }
+                        revokeObjectUrl(nextObjectUrl);
                         return;
                     }
-                    revokeObjectUrl();
+                    releaseObjectUrl();
                     objectUrlRef.current = nextObjectUrl;
                     setSource(nextObjectUrl);
                 })
@@ -1209,7 +1192,7 @@ function WsiSlideThumbnail({
             if (retryTimer) {
                 clearTimeout(retryTimer);
             }
-            revokeObjectUrl();
+            releaseObjectUrl();
         };
     }, [slideKey, studyId, tileServerBase]);
 
@@ -1243,14 +1226,7 @@ function WsiSlideThumbnail({
                         display: 'block',
                     }}
                     onError={() => {
-                        const objectUrl = objectUrlRef.current;
-                        objectUrlRef.current = null;
-                        if (
-                            objectUrl &&
-                            typeof URL.revokeObjectURL === 'function'
-                        ) {
-                            URL.revokeObjectURL(objectUrl);
-                        }
+                        releaseObjectUrl();
                         setSource(null);
                         setHidden(true);
                     }}
