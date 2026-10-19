@@ -6,7 +6,6 @@ import {
     isWsiResourceId,
     isWsiTileServerConfigured,
     patientViewPathForResource,
-    shouldHideLegacyHeResource,
     shouldHideLegacyHeResourceTab,
     slideStainFilterForColumnFilters,
     slideStainFilterQuery,
@@ -40,27 +39,9 @@ describe('legacy H&E resource policy', () => {
         assert.isFalse(shouldHideLegacyHeResourceTab('OTHER'));
     });
 
-    it('hides legacy H&E resources by id only', () => {
-        assert.isTrue(shouldHideLegacyHeResource({ resourceId: 'MSK_HNE' }));
-        assert.isTrue(
-            shouldHideLegacyHeResource({
-                resourceDefinition: { resourceId: 'HE' } as any,
-            })
-        );
-        assert.isFalse(
-            shouldHideLegacyHeResource({
-                resourceDefinition: {
-                    resourceId: 'OTHER',
-                    displayName: 'H&E Slides',
-                } as any,
-            })
-        );
-    });
-
     it('keeps legacy H&E resources visible when no tile server is configured', () => {
         (getServerConfig() as any).wsi_tile_server_url = '';
         assert.isFalse(shouldHideLegacyHeResourceTab('MSK_HNE'));
-        assert.isFalse(shouldHideLegacyHeResource({ resourceId: 'MSK_HNE' }));
     });
 
     it('lists the slide table in study view and no slide resources in the patient view', () => {
