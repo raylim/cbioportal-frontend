@@ -42,8 +42,8 @@ describe('WSIViewer foundation behavior', () => {
         ).toBeGreaterThan(0);
 
         action(() => {
-            instance.loading = false;
-            instance.error = 'Hierarchy unavailable';
+            instance.viewerState.loading = false;
+            instance.viewerState.error = 'Hierarchy unavailable';
         })();
         const error = TestRenderer.create(instance.render());
         expect(JSON.stringify(error.toJSON())).toContain(
@@ -61,8 +61,8 @@ describe('WSIViewer foundation behavior', () => {
         function loadedInstance(requestedSlideKey?: string) {
             const instance = makeInstance({ requestedSlideKey });
             action(() => {
-                instance.hierarchy = hierarchyOf(slides());
-                instance.loading = false;
+                instance.viewerState.hierarchy = hierarchyOf(slides());
+                instance.viewerState.loading = false;
             })();
             return instance;
         }
@@ -109,7 +109,7 @@ describe('WSIViewer foundation behavior', () => {
                 requestedSlideKey: 'slide-x',
             });
             action(() => {
-                instance.hierarchy = hierarchyOf([
+                instance.viewerState.hierarchy = hierarchyOf([
                     testSlide('slide-a'),
                     testSlide('slide-x', false),
                 ]);
@@ -127,8 +127,10 @@ describe('WSIViewer foundation behavior', () => {
         function scopedInstance(pathologyFilter?: Record<string, string>) {
             const instance = makeInstance({ pathologyFilter });
             action(() => {
-                instance.hierarchy = hierarchyOf([testSlide('slide-a')]);
-                instance.loading = false;
+                instance.viewerState.hierarchy = hierarchyOf([
+                    testSlide('slide-a'),
+                ]);
+                instance.viewerState.loading = false;
             })();
             return instance;
         }
@@ -173,10 +175,10 @@ describe('WSIViewer foundation behavior', () => {
             image_id: 'leaked-image-id',
             barcode: 'S00-12345 A1',
         };
-        instance.hierarchy = hierarchyOf([slide]);
-        instance.selectedSlide = slide;
-        instance.selectedSample = instance.hierarchy.samples[0];
-        instance.selectedMeta = {
+        instance.viewerState.hierarchy = hierarchyOf([slide]);
+        instance.viewerState.selectedSlide = slide;
+        instance.viewerState.selectedSample = instance.viewerState.hierarchy.samples[0];
+        instance.viewerState.selectedMeta = {
             dimensions: { width: 1000, height: 800 },
             levels: 2,
             level_dimensions: [
@@ -221,13 +223,13 @@ describe('WSIViewer foundation behavior', () => {
         const instance = makeInstance();
         const slideA = testSlide('slide-a');
         const slideB = testSlide('slide-b');
-        instance.hierarchy = hierarchyOf([slideA, slideB]);
-        instance.selectedSlide = slideA;
-        instance.selectedSample = instance.hierarchy.samples[0];
-        instance.selectedMeta = { dimensions: { width: 1000, height: 800 } };
+        instance.viewerState.hierarchy = hierarchyOf([slideA, slideB]);
+        instance.viewerState.selectedSlide = slideA;
+        instance.viewerState.selectedSample = instance.viewerState.hierarchy.samples[0];
+        instance.viewerState.selectedMeta = { dimensions: { width: 1000, height: 800 } };
         const controller = {
             selectSlideAndWait: jest.fn(async (slide: any) => {
-                instance.selectedSlide = slide;
+                instance.viewerState.selectedSlide = slide;
                 return { status: 'ready', slideKey: slide.slide_key };
             }),
             goToCoordinates: jest.fn(() => true),
@@ -303,7 +305,7 @@ describe('WSIViewer foundation behavior', () => {
 
         expect(controller.selectSlideAndWait).toHaveBeenCalledWith(
             slideB,
-            instance.hierarchy.samples[0]
+            instance.viewerState.hierarchy.samples[0]
         );
         expect(controller.goToCoordinates).toHaveBeenCalledWith(40, 50);
         expect(controller.setZoom).toHaveBeenCalledWith(2);
@@ -313,10 +315,10 @@ describe('WSIViewer foundation behavior', () => {
         const instance = makeInstance();
         const slideA = testSlide('slide-a');
         const slideB = testSlide('slide-b');
-        instance.hierarchy = hierarchyOf([slideA, slideB]);
-        instance.selectedSlide = slideA;
-        instance.selectedSample = instance.hierarchy.samples[0];
-        instance.selectedMeta = { dimensions: { width: 1000, height: 800 } };
+        instance.viewerState.hierarchy = hierarchyOf([slideA, slideB]);
+        instance.viewerState.selectedSlide = slideA;
+        instance.viewerState.selectedSample = instance.viewerState.hierarchy.samples[0];
+        instance.viewerState.selectedMeta = { dimensions: { width: 1000, height: 800 } };
         const controller = {
             selectSlideAndWait: jest.fn(async () => ({
                 status: 'failed',
@@ -373,10 +375,10 @@ describe('WSIViewer foundation behavior', () => {
         const instance = makeInstance();
         const slideA = testSlide('slide-a');
         const slideB = testSlide('slide-b');
-        instance.hierarchy = hierarchyOf([slideA, slideB]);
-        instance.selectedSlide = slideA;
-        instance.selectedSample = instance.hierarchy.samples[0];
-        instance.selectedMeta = { dimensions: { width: 1000, height: 800 } };
+        instance.viewerState.hierarchy = hierarchyOf([slideA, slideB]);
+        instance.viewerState.selectedSlide = slideA;
+        instance.viewerState.selectedSample = instance.viewerState.hierarchy.samples[0];
+        instance.viewerState.selectedMeta = { dimensions: { width: 1000, height: 800 } };
         let resolveCapture!: (viewport: any) => void;
         instance.controller = {
             captureAgentViewportAfterDraw: jest.fn(
@@ -385,7 +387,7 @@ describe('WSIViewer foundation behavior', () => {
         } as any;
 
         const contextPromise = (instance as any).getAgentContext();
-        instance.selectedSlide = slideB;
+        instance.viewerState.selectedSlide = slideB;
         resolveCapture({
             slide_width: 1000,
             slide_height: 800,

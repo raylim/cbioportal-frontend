@@ -32,6 +32,7 @@ import {
     WsiViewerController,
     WsiViewerControllerHost,
 } from './wsiViewerController';
+import { WsiViewerState } from './wsiViewerState';
 import { loadOpenSeadragon } from './wsiOpenSeadragonLoader';
 import { clearPatientHierarchyCache } from './wsiHierarchyFetchCache';
 import {
@@ -48,11 +49,7 @@ import {
     WsiAnnotationTooltip,
     WsiAnnotationToolbar,
 } from './wsiAnnotationControls';
-import {
-    chooseScaleBar,
-    formatMagnification,
-    nativeObjectivePower,
-} from './wsiScaleUtils';
+import { chooseScaleBar, formatMagnification } from './wsiScaleUtils';
 import {
     buildWsiAgentEmbeddingContext,
     buildWsiAgentSlideMetadata,
@@ -171,16 +168,6 @@ function DefaultLoadingIndicator() {
     );
 }
 
-/** What the status bar reads from the viewer. */
-interface StatusBarViewerState {
-    coordInputX: string;
-    coordInputY: string;
-    cursorPos: { x: number; y: number } | null;
-    viewScale: number | null;
-    readonly selectedMpp?: { x: number; y: number };
-    readonly selectedObjectivePower?: number;
-}
-
 function getInitialMatchFilter(
     pathologyFilter?: PathologySlideFilter
 ): PathologySlideMatchFilter {
@@ -196,20 +183,7 @@ function getInitialMatchFilter(
  */
 @observer
 export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
-    @observable private hierarchy: PatientHierarchy | null = null;
-    @observable private selectedSlide: Slide | null = null;
-    @observable private selectedSample: Sample | null = null;
-    @observable private selectedMeta: TileMetadata | null = null;
-    @observable private loading = true;
-    @observable private error: string | null = null;
-    /** True once OSD has loaded the first tile; used to release deferred
-     *  sidebar content after the initial viewer work settles. */
-    @observable private tilesReady = false;
-    /** Separate flag that controls spinner visibility; set true on slide select,
-     *  set false once the viewer opens AND at least MIN_SPINNER_MS have elapsed,
-     *  so viewport setup isn't delayed by the spinner. */
-    @observable private spinnerVisible = false;
-    @observable private thumbnailPreviewUrl: string | null = null;
+    private readonly viewerState = new WsiViewerState();
     @observable private stainFilter: WsiStainFilter = 'all';
     @observable private matchFilter: PathologySlideMatchFilter = 'all';
     @observable private linkoutScopeActive = false;
@@ -220,13 +194,6 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
     @observable private storedMetadataCollapsed = readWsiPanelFlag(
         WSI_METADATA_COLLAPSED_KEY
     );
-    /** Coordinate bar — input field values */
-    @observable coordInputX = '';
-    @observable coordInputY = '';
-    /** Current cursor position in image pixels (null when viewer not ready or cursor outside) */
-    @observable cursorPos: { x: number; y: number } | null = null;
-    /** Screen pixels per image pixel at the current zoom. */
-    @observable viewScale: number | null = null;
 
     private viewerContainerRef = React.createRef<HTMLDivElement>();
     private resizeStartX = 0;
@@ -301,10 +268,10 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
         void this.controller.retrySelectedSlide();
     };
     private readonly handleChangeX = action((v: string) => {
-        this.coordInputX = v;
+        this.viewerState.coordInputX = v;
     });
     private readonly handleChangeY = action((v: string) => {
-        this.coordInputY = v;
+        this.viewerState.coordInputY = v;
     });
     private readonly handleCopyLink = () => this.controller.copyViewLink();
     private readonly handleDownload = () => this.controller.downloadView();
@@ -346,6 +313,7 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
         );
         this.controller = new WsiViewerController(
             this.createControllerHost(),
+            this.viewerState,
             loadOpenSeadragon
         );
     }
@@ -416,56 +384,16 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
     private createControllerHost(): WsiViewerControllerHost {
         return {
             getProps: () => this.controllerProps,
-            resetHierarchyLoadState: () => this.resetHierarchyLoadState(),
-            setHierarchy: hierarchy => {
-                this.hierarchy = hierarchy;
-            },
-            setLoading: loading => {
-                this.loading = loading;
-            },
-            setError: error => {
-                this.error = error;
-            },
-            getHierarchy: () => this.hierarchy,
             getServableSlides: () => this.servableSlides,
             getStainFilter: () => this.stainFilter,
             getTileServerBase: () => this.tileServerBase,
             getViewerContainerElement: () => this.viewerContainerRef.current,
             chooseInitialServableSlide: allSlides =>
                 this.chooseInitialServableSlide(allSlides),
-            beginSlideSelection: (slide, sample) =>
-                this.beginSlideSelection(slide, sample),
-            setSelectedMeta: meta => {
-                this.selectedMeta = meta;
-            },
-            setSpinnerVisible: spinnerVisible => {
-                this.spinnerVisible = spinnerVisible;
-            },
-            setTilesReady: tilesReady => {
-                this.tilesReady = tilesReady;
-            },
-            setThumbnailPreview: action(objectUrl => {
-                this.thumbnailPreviewUrl = objectUrl;
-            }),
-            getSelectedSlide: () => this.selectedSlide,
-            getSelectedSample: () => this.selectedSample,
-            getSelectedMeta: () => this.selectedMeta,
-            clearSelectedSlide: () => {
-                this.annotationController.invalidatePendingRequests();
-                this.clearSelection();
-            },
-            getPatientId: () => this.hierarchy?.patient_id,
-            setCoordInputs: (x, y) => this.setCoordInputs(x, y),
-            getCoordInputs: () => ({
-                x: this.coordInputX,
-                y: this.coordInputY,
-            }),
-            updateCursorPos: (x, y) => this.handleCursorMove(x, y),
-            clearCursorPos: () => this.clearCursorPos(),
-            setViewScale: scale => this.setViewScale(scale),
-            onSlideSelectionStarted: slide => {
-                this.annotationController.beginSlide(slide.slide_key);
-            },
+            onSelectionCleared: () =>
+                this.annotationController.invalidatePendingRequests(),
+            onSlideSelectionStarted: slide =>
+                this.annotationController.beginSlide(slide.slide_key),
             onViewerOpened: (viewer, openSeadragon, slide) =>
                 this.annotationController.attachViewer(
                     viewer,
@@ -532,7 +460,7 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
 
     private async selectSlideFromHash(): Promise<void> {
         const hashState = hashUrlState.read();
-        if (!hashState || !this.hierarchy) return;
+        if (!hashState || !this.viewerState.hierarchy) return;
 
         const preferredSlideKeys = this.preferredSlideKeys;
         const matching = this.servableSlides.find(
@@ -543,7 +471,10 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
         );
         if (!matching) return;
 
-        if (this.selectedSlide?.slide_key === matching.slide.slide_key) {
+        if (
+            this.viewerState.selectedSlide?.slide_key ===
+            matching.slide.slide_key
+        ) {
             this.controller.restoreCurrentViewportFromHash();
             return;
         }
@@ -576,7 +507,7 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
             prev.studyId !== this.props.studyId ||
             prev.tileServerUrl !== this.props.tileServerUrl ||
             prev.patientId !== this.props.patientId ||
-            (pathologyFilterChanged && !this.hierarchy);
+            (pathologyFilterChanged && !this.viewerState.hierarchy);
         const stainFilterChanged =
             prev.initialStainFilter !== this.props.initialStainFilter;
 
@@ -652,7 +583,7 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
         }
         this.cancelPendingSlideSelection();
         action(() => {
-            this.hierarchy = null; // stops the prefetchSlideMetadata loop
+            this.viewerState.hierarchy = null; // stops the prefetchSlideMetadata loop
         })();
         this.controller.dispose();
         this.annotationController.invalidatePendingRequests();
@@ -660,28 +591,6 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
     }
 
     // ---- data loading ----
-
-    @action.bound
-    private resetHierarchyLoadState() {
-        this.loading = true;
-        this.error = null;
-        this.hierarchy = null;
-        this.clearSelection();
-        this.coordInputX = '';
-        this.coordInputY = '';
-    }
-
-    @action.bound
-    private clearSelection() {
-        this.selectedSlide = null;
-        this.selectedSample = null;
-        this.selectedMeta = null;
-        this.tilesReady = false;
-        this.spinnerVisible = false;
-        this.thumbnailPreviewUrl = null;
-        this.cursorPos = null;
-        this.viewScale = null;
-    }
 
     private get controllerProps() {
         return {
@@ -699,24 +608,28 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
         getAgentAccessToken(this.props.studyId, this.props.authScope);
 
     private readonly getAgentContext = async (): Promise<WsiAgentContext | null> => {
-        if (!this.selectedSlide || !this.selectedSample || !this.selectedMeta) {
+        if (
+            !this.viewerState.selectedSlide ||
+            !this.viewerState.selectedSample ||
+            !this.viewerState.selectedMeta
+        ) {
             return null;
         }
-        const slideKey = this.selectedSlide.slide_key;
-        const sampleId = this.selectedSample.sample_id;
+        const slideKey = this.viewerState.selectedSlide.slide_key;
+        const sampleId = this.viewerState.selectedSample.sample_id;
         const studyId = this.props.studyId;
         const patientId = this.props.patientId;
-        const width = this.selectedMeta.dimensions.width;
-        const height = this.selectedMeta.dimensions.height;
+        const width = this.viewerState.selectedMeta.dimensions.width;
+        const height = this.viewerState.selectedMeta.dimensions.height;
         const viewport = await this.controller.captureAgentViewportAfterDraw();
         if (
             !viewport ||
             this.props.studyId !== studyId ||
             this.props.patientId !== patientId ||
-            this.selectedSlide?.slide_key !== slideKey ||
-            this.selectedSample?.sample_id !== sampleId ||
-            this.selectedMeta?.dimensions.width !== width ||
-            this.selectedMeta?.dimensions.height !== height
+            this.viewerState.selectedSlide?.slide_key !== slideKey ||
+            this.viewerState.selectedSample?.sample_id !== sampleId ||
+            this.viewerState.selectedMeta?.dimensions.width !== width ||
+            this.viewerState.selectedMeta?.dimensions.height !== height
         ) {
             return null;
         }
@@ -725,13 +638,15 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
             patient_id: patientId,
             sample_id: sampleId,
             slide_id: slideKey,
-            stain_name: this.selectedSlide.stain_name,
+            stain_name: this.viewerState.selectedSlide.stain_name,
             match_level: this.activePathologyFilter?.matchLevel,
             filters: {
                 stain: this.stainFilter,
                 match: this.matchFilter,
             },
-            slide_metadata: buildWsiAgentSlideMetadata(this.selectedMeta),
+            slide_metadata: buildWsiAgentSlideMetadata(
+                this.viewerState.selectedMeta
+            ),
             patient_context: {},
             existing_annotations: this.annotationController.annotations.map(
                 annotation => ({
@@ -778,7 +693,7 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
     }
 
     private slideMatchesAgentFilters(entry: { slide: Slide; sample: Sample }) {
-        if (!this.hierarchy) return false;
+        if (!this.viewerState.hierarchy) return false;
         const preferredSlideKeys = this.preferredSlideKeys;
         if (
             preferredSlideKeys &&
@@ -828,7 +743,7 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
                 entry.sample
             );
             return selection.status === 'ready' &&
-                this.selectedSlide?.slide_key === slideKey
+                this.viewerState.selectedSlide?.slide_key === slideKey
                 ? { success: true, detail: 'Slide selected.' }
                 : {
                       success: false,
@@ -1080,9 +995,9 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
     /** Slides the active linkout scope allows; undefined when unscoped. */
     @computed private get preferredSlideKeys(): Set<string> | undefined {
         const filter = this.activePathologyFilter;
-        return this.hierarchy && filter
+        return this.viewerState.hierarchy && filter
             ? getServableSlideIdsForPathologyFilterReadOnly(
-                  this.hierarchy,
+                  this.viewerState.hierarchy,
                   filter
               )
             : undefined;
@@ -1103,15 +1018,15 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
 
     @action.bound
     private applyPathologyFilterFromSourceHierarchy() {
-        const hierarchy = this.hierarchy;
+        const hierarchy = this.viewerState.hierarchy;
         if (!hierarchy) {
             return;
         }
 
         const preferredSlideKeys = this.preferredSlideKeys;
         if (preferredSlideKeys) {
-            const currentSlideKey = this.selectedSlide?.slide_key;
-            const currentSampleId = this.selectedSample?.sample_id;
+            const currentSlideKey = this.viewerState.selectedSlide?.slide_key;
+            const currentSampleId = this.viewerState.selectedSample?.sample_id;
             const currentSample = hierarchy.samples.find(
                 sample => sample.sample_id === currentSampleId
             );
@@ -1126,16 +1041,16 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
                 currentSlideKey &&
                 firstMatchingSlide?.slide_key === currentSlideKey
             ) {
-                this.selectedSlide = firstMatchingSlide;
-                this.selectedSample = currentSample!;
+                this.viewerState.selectedSlide = firstMatchingSlide;
+                this.viewerState.selectedSample = currentSample!;
                 return;
             }
             void this.reselectSlideForPathologyFilter(preferredSlideKeys);
             return;
         }
 
-        const currentSlideKey = this.selectedSlide?.slide_key;
-        const currentSampleId = this.selectedSample?.sample_id;
+        const currentSlideKey = this.viewerState.selectedSlide?.slide_key;
+        const currentSampleId = this.viewerState.selectedSample?.sample_id;
         if (!currentSlideKey || !currentSampleId) {
             void this.reselectSlideForCurrentFilters();
             return;
@@ -1153,8 +1068,8 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
             : undefined;
 
         if (matchingSample && matchingSlide) {
-            this.selectedSlide = matchingSlide;
-            this.selectedSample = matchingSample;
+            this.viewerState.selectedSlide = matchingSlide;
+            this.viewerState.selectedSample = matchingSample;
             return;
         }
 
@@ -1165,7 +1080,7 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
         preferredSlideKeys: Set<string>
     ): Promise<void> {
         const servableSlides = this.servableSlides;
-        if (!this.hierarchy || !servableSlides.length) {
+        if (!this.viewerState.hierarchy || !servableSlides.length) {
             return;
         }
 
@@ -1182,8 +1097,9 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
         }
 
         if (
-            this.selectedSlide?.slide_key === next.slide.slide_key &&
-            this.selectedSample?.sample_id === next.sample.sample_id
+            this.viewerState.selectedSlide?.slide_key ===
+                next.slide.slide_key &&
+            this.viewerState.selectedSample?.sample_id === next.sample.sample_id
         ) {
             return;
         }
@@ -1208,44 +1124,8 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
         });
     }
 
-    @action.bound
-    private handleCursorMove(x: number, y: number) {
-        // Zoomed in, many mouse moves land on the same image pixel.
-        if (this.cursorPos?.x === x && this.cursorPos.y === y) return;
-        this.cursorPos = { x, y };
-    }
-
-    @action.bound
-    private beginSlideSelection(slide: Slide, sample: Sample) {
-        this.selectedSlide = slide;
-        this.selectedSample = sample;
-        this.selectedMeta = null;
-        this.tilesReady = false;
-        this.spinnerVisible = true;
-        this.error = null;
-    }
-
-    @action.bound
-    private clearCursorPos() {
-        this.cursorPos = null;
-    }
-
-    /** Skips changes too small to move the scale bar or magnification. */
-    @action.bound
-    private setViewScale(scale: number | null) {
-        const current = this.viewScale;
-        if (
-            scale !== null &&
-            current !== null &&
-            Math.abs(scale - current) / current < 0.002
-        ) {
-            return;
-        }
-        this.viewScale = scale;
-    }
-
     private async reselectPreferredSampleSlide(): Promise<void> {
-        if (!this.hierarchy || !this.servableSlides.length) {
+        if (!this.viewerState.hierarchy || !this.servableSlides.length) {
             return;
         }
 
@@ -1255,8 +1135,9 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
         }
 
         if (
-            this.selectedSlide?.slide_key === next.slide.slide_key &&
-            this.selectedSample?.sample_id === next.sample.sample_id
+            this.viewerState.selectedSlide?.slide_key ===
+                next.slide.slide_key &&
+            this.viewerState.selectedSample?.sample_id === next.sample.sample_id
         ) {
             return;
         }
@@ -1278,7 +1159,7 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
         sample: Sample;
     } | null {
         const servableSlides = this.servableSlides;
-        if (!this.hierarchy || !servableSlides.length) {
+        if (!this.viewerState.hierarchy || !servableSlides.length) {
             return null;
         }
 
@@ -1302,15 +1183,9 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
         return matchingSlides[0];
     }
 
-    @action.bound
-    private setCoordInputs(x: string, y: string) {
-        this.coordInputX = x;
-        this.coordInputY = y;
-    }
-
     @computed get servableSlides(): Array<{ slide: Slide; sample: Sample }> {
-        if (!this.hierarchy) return [];
-        return [...this.hierarchy.samples]
+        if (!this.viewerState.hierarchy) return [];
+        return [...this.viewerState.hierarchy.samples]
             .sort(compareSamplesForNavigation)
             .flatMap(sample =>
                 getOrderedServableSlidesForSampleReadOnly(
@@ -1324,7 +1199,7 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
         const requestedSlideKey = this.props.requestedSlideKey;
         return (
             !!requestedSlideKey &&
-            !!this.hierarchy &&
+            !!this.viewerState.hierarchy &&
             !this.servableSlides.some(
                 entry => entry.slide.slide_key === requestedSlideKey
             )
@@ -1340,7 +1215,7 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
     @computed get selectedClinicalRows(): WsiClinicalRow[] | undefined {
         const rows = this.props.clinicalRows;
         if (!rows) return undefined;
-        const sampleId = this.selectedSample?.sample_id;
+        const sampleId = this.viewerState.selectedSample?.sample_id;
         return rows.filter(row => !row.sampleId || row.sampleId === sampleId);
     }
 
@@ -1348,31 +1223,27 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
         return this.props.tileServerUrl.replace(/\/$/, '');
     }
 
-    /** The scan's microns per pixel; a scanner that recorded none reports 0. */
-    get selectedMpp(): { x: number; y: number } | undefined {
-        const mpp = this.selectedMeta?.mpp;
-        return mpp && mpp.x > 0 && mpp.y > 0 ? mpp : undefined;
-    }
-
-    get selectedObjectivePower(): number | undefined {
-        return nativeObjectivePower(this.selectedMeta);
-    }
-
     @computed
     private get selectedWsiRows(): MetaRow[] {
-        return this.selectedMeta
-            ? buildWsiRows(this.selectedSlide, this.selectedMeta)
+        return this.viewerState.selectedMeta
+            ? buildWsiRows(
+                  this.viewerState.selectedSlide,
+                  this.viewerState.selectedMeta
+              )
             : [];
     }
 
     @computed
     private get selectedPathRows(): MetaRow[] {
-        if (!this.selectedSlide || !this.selectedSample) {
+        if (
+            !this.viewerState.selectedSlide ||
+            !this.viewerState.selectedSample
+        ) {
             return [];
         }
         return buildPathRows(
-            this.selectedSlide,
-            this.selectedSample,
+            this.viewerState.selectedSlide,
+            this.viewerState.selectedSample,
             this.props.patientId,
             this.props.studyId
         );
@@ -1382,7 +1253,7 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
 
     /** The hidden slide list's rail, led by the host's own hidden panels. */
     private renderNavRail() {
-        const { selectedSlide, hierarchy } = this;
+        const { selectedSlide, hierarchy } = this.viewerState;
         return (
             <WsiCollapsedRail
                 side="left"
@@ -1411,9 +1282,8 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
             selectedSlide,
             selectedSample,
             thumbnailPreviewUrl,
-            stainFilter,
-            matchFilter,
-        } = this;
+        } = this.viewerState;
+        const { stainFilter, matchFilter } = this;
         const showClearFilters =
             !!this.activePathologyFilter ||
             !!this.props.preferredSampleId ||
@@ -1475,7 +1345,7 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
                         stainFilter={stainFilter}
                         matchFilter={matchFilter}
                         showClearFilters={showClearFilters}
-                        deferOffscreenSamples={!this.tilesReady}
+                        deferOffscreenSamples={!this.viewerState.tilesReady}
                         onFilterChange={this.handleFilterChange}
                         onMatchFilterChange={this.handleMatchFilterChange}
                         onClearFilters={this.handleClearFilters}
@@ -1603,7 +1473,7 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
                                 </button>
                             </div>
                         )}
-                    {this.spinnerVisible && selectedSlide && (
+                    {this.viewerState.spinnerVisible && selectedSlide && (
                         <div
                             data-testid="wsi-loading-spinner"
                             style={{
@@ -1672,9 +1542,9 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
                             </span>
                         </div>
                     )}
-                    {this.tilesReady && (
+                    {this.viewerState.tilesReady && (
                         <ViewerStatusBar
-                            viewer={this}
+                            viewer={this.viewerState}
                             onChangeX={this.handleChangeX}
                             onChangeY={this.handleChangeY}
                             onGo={this.handleGoToCoordinates}
@@ -1746,7 +1616,9 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
                         {/* Right metadata sidebar */}
                         <WsiMetaSidebar
                             width={this.sidebarWidth}
-                            showImageProperties={!!this.selectedMeta}
+                            showImageProperties={
+                                !!this.viewerState.selectedMeta
+                            }
                             wsiRows={this.selectedWsiRows}
                             showPathology={!!(selectedSlide && selectedSample)}
                             pathRows={this.selectedPathRows}
@@ -1820,7 +1692,7 @@ const overlayStyle: React.CSSProperties = {
 // ---- ViewerStatusBar ----
 
 interface ViewerStatusBarProps {
-    viewer: StatusBarViewerState;
+    viewer: WsiViewerState;
     onChangeX: (v: string) => void;
     onChangeY: (v: string) => void;
     onGo: () => void;

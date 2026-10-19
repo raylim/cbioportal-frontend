@@ -260,7 +260,7 @@ describe('WSIViewer — servableSlides', () => {
             slide_key: 'B',
             can_serve_tiles: false,
         });
-        inst.hierarchy = makeHierarchy([servable, notServable]);
+        inst.viewerState.hierarchy = makeHierarchy([servable, notServable]);
 
         const result: any[] = inst.servableSlides;
         assert.equal(result.length, 1);
@@ -270,7 +270,10 @@ describe('WSIViewer — servableSlides', () => {
     it('deduplicates repeated servable entries for the same slide within a sample', () => {
         const inst = makeInstance('P-1');
         const duplicated = makeSlide({ slide_key: 'A', can_serve_tiles: true });
-        inst.hierarchy = makeHierarchy([duplicated, { ...duplicated }]);
+        inst.viewerState.hierarchy = makeHierarchy([
+            duplicated,
+            { ...duplicated },
+        ]);
 
         const result: any[] = inst.servableSlides;
         assert.equal(result.length, 1);
@@ -279,7 +282,7 @@ describe('WSIViewer — servableSlides', () => {
 
     it('returns empty array when all slides have can_serve_tiles=false', () => {
         const inst = makeInstance('P-1');
-        inst.hierarchy = makeHierarchy([
+        inst.viewerState.hierarchy = makeHierarchy([
             makeSlide({ can_serve_tiles: false }),
             makeSlide({ can_serve_tiles: false }),
         ]);
@@ -303,7 +306,10 @@ describe('WSIViewer — servableSlides', () => {
         const part2 = makePart([block3]);
         const sample2 = makeSample('S-002', [part2]);
 
-        inst.hierarchy = { patient_id: 'P-1', samples: [sample1, sample2] };
+        inst.viewerState.hierarchy = {
+            patient_id: 'P-1',
+            samples: [sample1, sample2],
+        };
 
         const result: any[] = inst.servableSlides;
         assert.equal(result.length, 3);
@@ -316,7 +322,7 @@ describe('WSIViewer — servableSlides', () => {
     it('attaches the correct sample to each slide entry', () => {
         const inst = makeInstance('P-1');
         const slide = makeSlide({ slide_key: 'X', can_serve_tiles: true });
-        inst.hierarchy = makeHierarchy([slide]);
+        inst.viewerState.hierarchy = makeHierarchy([slide]);
 
         const result: any[] = inst.servableSlides;
         assert.equal(result[0].sample.sample_id, 'S-123456-T01');
@@ -333,7 +339,7 @@ describe('WSIViewer — servableSlides', () => {
             makePart([makeBlock([makeSlide({ slide_key: 'other-slide' })])]),
         ]);
         inst.props = { ...inst.props, preferredSampleId: 'S-preferred' };
-        inst.hierarchy = {
+        inst.viewerState.hierarchy = {
             patient_id: 'P-1',
             samples: [preferredSample, otherSample],
         };
@@ -358,7 +364,7 @@ describe('WSIViewer — servableSlides', () => {
             makePart([makeBlock([makeSlide({ slide_key: 'other-slide' })])]),
         ]);
         inst.props = { ...inst.props, preferredSampleId: 'S-preferred' };
-        inst.hierarchy = {
+        inst.viewerState.hierarchy = {
             patient_id: 'P-1',
             samples: [preferredSample, otherSample],
         };
@@ -409,7 +415,7 @@ describe('WSIViewer — servableSlides', () => {
                 specimenKey: 'block::matching',
             },
         };
-        inst.hierarchy = {
+        inst.viewerState.hierarchy = {
             patient_id: 'P-1',
             samples: [matchingSample, otherSample],
         };
@@ -436,10 +442,10 @@ describe('WSIViewer — componentWillUnmount', () => {
     it('sets hierarchy to null to cancel any running prefetch loop', () => {
         const { renderer, inst } = renderViewer();
         mobxAction(() => {
-            inst.hierarchy = makeHierarchy([makeSlide()]);
+            inst.viewerState.hierarchy = makeHierarchy([makeSlide()]);
         })();
         assert.isNotNull(
-            inst.hierarchy,
+            inst.viewerState.hierarchy,
             'precondition: hierarchy should be set'
         );
 
@@ -447,12 +453,12 @@ describe('WSIViewer — componentWillUnmount', () => {
             renderer.unmount();
         });
 
-        assert.isNull(inst.hierarchy);
+        assert.isNull(inst.viewerState.hierarchy);
     });
 
     it('does not throw when called before hierarchy is loaded', () => {
         const { renderer, inst } = renderViewer();
-        assert.isNull(inst.hierarchy);
+        assert.isNull(inst.viewerState.hierarchy);
         assert.doesNotThrow(() =>
             act(() => {
                 renderer.unmount();
@@ -471,11 +477,11 @@ describe('WSIViewer — componentWillUnmount', () => {
 
         act(() => {
             mobxAction(() => {
-                inst.loading = false;
-                inst.hierarchy = hierarchy;
-                inst.selectedSample = sample;
-                inst.selectedSlide = slide;
-                inst.selectedMeta = makeTileMetadata({
+                inst.viewerState.loading = false;
+                inst.viewerState.hierarchy = hierarchy;
+                inst.viewerState.selectedSample = sample;
+                inst.viewerState.selectedSlide = slide;
+                inst.viewerState.selectedMeta = makeTileMetadata({
                     dimensions: { width: 1000, height: 800 },
                     levels: 1,
                     level_dimensions: [{ width: 1000, height: 800 }],
@@ -483,7 +489,7 @@ describe('WSIViewer — componentWillUnmount', () => {
                     tile_size: 256,
                     mpp: { x: 0.25, y: 0.25 },
                 });
-                inst.tilesReady = true;
+                inst.viewerState.tilesReady = true;
             })();
         });
 
@@ -491,7 +497,7 @@ describe('WSIViewer — componentWillUnmount', () => {
         renderSpy.mockClear();
 
         act(() => {
-            inst.handleCursorMove(10, 20);
+            inst.viewerState.setCursorPos(10, 20);
         });
 
         expect(renderSpy).not.toHaveBeenCalled();
@@ -511,9 +517,7 @@ describe('WSIViewer — pathology filter updates', () => {
                 block_number: blockNumber,
                 block_label: `A${blockNumber}`,
                 stain_name: isHne ? 'H&E' : 'CD3',
-                is_hne: isHne,
-                is_ihc: !isHne,
-                slide_type: isHne ? 'H&E' : 'IHC',
+                stain_kind: isHne ? 'hne' : 'ihc',
             });
         // Hierarchy order differs from the expected display order.
         const sample = makeSample('S-1', [
@@ -537,7 +541,7 @@ describe('WSIViewer — pathology filter updates', () => {
             tileServerUrl: TILE_SERVER_URL,
             height: 500,
         });
-        inst.hierarchy = { patient_id: 'P-XYZ', samples: [sample] };
+        inst.viewerState.hierarchy = { patient_id: 'P-XYZ', samples: [sample] };
 
         expect(
             (inst as any).servableSlides.map(
@@ -660,7 +664,7 @@ describe('WSIViewer — pathology filter updates', () => {
             patient_id: 'P-XYZ',
             samples: [sample],
         };
-        inst.hierarchy = hierarchy;
+        inst.viewerState.hierarchy = hierarchy;
         inst.stainFilter = 'hne';
         window.location.hash =
             '#wsi:slide=linked-unmatched&x=10&y=20&z=1.000000';
@@ -753,9 +757,9 @@ describe('WSIViewer — pathology filter updates', () => {
             patient_id: 'P-XYZ',
             samples: [sample],
         };
-        inst.hierarchy = sourceHierarchy as any;
-        inst.selectedSample = sample;
-        inst.selectedSlide = sample.parts[0].blocks[0].slides[0];
+        inst.viewerState.hierarchy = sourceHierarchy as any;
+        inst.viewerState.selectedSample = sample;
+        inst.viewerState.selectedSlide = sample.parts[0].blocks[0].slides[0];
 
         const controller = controllerOf(inst);
         const disposeSpy = jest.spyOn(controller, 'dispose');
@@ -802,8 +806,7 @@ describe('WSIViewer — pathology filter updates', () => {
             sample_id: 'S-1',
             match_level: 'BLOCK',
             specimen_key: 'block::1::A1',
-            is_hne: true,
-            is_ihc: false,
+            stain_kind: 'hne',
         });
         const ihc = makeSlide({
             slide_key: 'ihc-slide',
@@ -812,8 +815,7 @@ describe('WSIViewer — pathology filter updates', () => {
             specimen_key: 'block::1::A1',
             stain_name: 'IHC',
             stain_group: 'IHC',
-            is_hne: false,
-            is_ihc: true,
+            stain_kind: 'ihc',
         });
         const sample = makeSample('S-1', [makePart([makeBlock([hne, ihc])])]);
         const inst = new (WSIViewer as any)({
@@ -827,12 +829,12 @@ describe('WSIViewer — pathology filter updates', () => {
                 specimenKey: 'block::1::A1',
             },
         });
-        inst.hierarchy = {
+        inst.viewerState.hierarchy = {
             patient_id: 'P-XYZ',
             samples: [sample],
         };
-        inst.selectedSample = sample;
-        inst.selectedSlide = hne;
+        inst.viewerState.selectedSample = sample;
+        inst.viewerState.selectedSlide = hne;
         const selectSlideSpy = jest
             .spyOn(controllerOf(inst), 'selectSlide')
             .mockResolvedValue(undefined);
@@ -881,9 +883,9 @@ describe('WSIViewer — pathology filter updates', () => {
             patient_id: 'P-XYZ',
             samples: [sample],
         };
-        inst.hierarchy = sourceHierarchy as any;
-        inst.selectedSample = sample;
-        inst.selectedSlide = sample.parts[0].blocks[0].slides[0];
+        inst.viewerState.hierarchy = sourceHierarchy as any;
+        inst.viewerState.selectedSample = sample;
+        inst.viewerState.selectedSlide = sample.parts[0].blocks[0].slides[0];
 
         const getOrderedSlidesSpy = jest.spyOn(
             wsiSlideUtils,
@@ -902,9 +904,9 @@ describe('WSIViewer — pathology filter updates', () => {
         (inst as any).applyPathologyFilterFromSourceHierarchy();
 
         expect(getOrderedSlidesSpy).toHaveBeenCalledTimes(1);
-        expect(inst.selectedSlide?.slide_key).toBe('block-slide');
-        expect(inst.selectedSample?.sample_id).toBe('S-1');
-        expect(inst.hierarchy).toEqual(sourceHierarchy);
+        expect(inst.viewerState.selectedSlide?.slide_key).toBe('block-slide');
+        expect(inst.viewerState.selectedSample?.sample_id).toBe('S-1');
+        expect(inst.viewerState.hierarchy).toEqual(sourceHierarchy);
     });
 
     it('reselects from the loaded hierarchy when only the preferred sample changes', () => {
@@ -920,12 +922,12 @@ describe('WSIViewer — pathology filter updates', () => {
         const sample2 = makeSample('S-2', [
             makePart([makeBlock([makeSlide({ slide_key: 'slide-2' })], '1')]),
         ]);
-        inst.hierarchy = {
+        inst.viewerState.hierarchy = {
             patient_id: 'P-XYZ',
             samples: [sample1, sample2],
         };
-        inst.selectedSample = sample1;
-        inst.selectedSlide = sample1.parts[0].blocks[0].slides[0];
+        inst.viewerState.selectedSample = sample1;
+        inst.viewerState.selectedSlide = sample1.parts[0].blocks[0].slides[0];
 
         const controller = controllerOf(inst);
         const disposeSpy = jest.spyOn(controller, 'dispose');
@@ -969,8 +971,7 @@ describe('WSIViewer — pathology filter updates', () => {
                         makeSlide({ slide_key: 'hne-slide' }),
                         makeSlide({
                             slide_key: 'ihc-slide',
-                            is_hne: false,
-                            is_ihc: true,
+                            stain_kind: 'ihc',
                             stain_name: 'IHC',
                             stain_group: 'IHC',
                         }),
@@ -979,12 +980,12 @@ describe('WSIViewer — pathology filter updates', () => {
                 ),
             ]),
         ]);
-        inst.hierarchy = {
+        inst.viewerState.hierarchy = {
             patient_id: 'P-XYZ',
             samples: [sample],
         };
-        inst.selectedSample = sample;
-        inst.selectedSlide = sample.parts[0].blocks[0].slides[1];
+        inst.viewerState.selectedSample = sample;
+        inst.viewerState.selectedSlide = sample.parts[0].blocks[0].slides[1];
 
         const controller = controllerOf(inst);
         const disposeSpy = jest.spyOn(controller, 'dispose');
@@ -1022,12 +1023,12 @@ describe('WSIViewer — pathology filter updates', () => {
                 ),
             ]),
         ]);
-        inst.hierarchy = {
+        inst.viewerState.hierarchy = {
             patient_id: 'P-XYZ',
             samples: [sample],
         };
-        inst.selectedSample = sample;
-        inst.selectedSlide = sample.parts[0].blocks[0].slides[1];
+        inst.viewerState.selectedSample = sample;
+        inst.viewerState.selectedSlide = sample.parts[0].blocks[0].slides[1];
         inst.matchFilter = 'all';
 
         const controller = controllerOf(inst);
@@ -1072,12 +1073,12 @@ describe('WSIViewer — pathology filter updates', () => {
                 ),
             ]),
         ]);
-        inst.hierarchy = {
+        inst.viewerState.hierarchy = {
             patient_id: 'P-XYZ',
             samples: [sample],
         };
-        inst.selectedSample = sample;
-        inst.selectedSlide = sample.parts[0].blocks[0].slides[0];
+        inst.viewerState.selectedSample = sample;
+        inst.viewerState.selectedSlide = sample.parts[0].blocks[0].slides[0];
 
         const controller = controllerOf(inst);
         const disposeSpy = jest.spyOn(controller, 'dispose');
@@ -1125,12 +1126,12 @@ describe('WSIViewer — pathology filter updates', () => {
                 ),
             ]),
         ]);
-        inst.hierarchy = {
+        inst.viewerState.hierarchy = {
             patient_id: 'P-XYZ',
             samples: [sample],
         };
-        inst.selectedSample = sample;
-        inst.selectedSlide = sample.parts[0].blocks[0].slides[1];
+        inst.viewerState.selectedSample = sample;
+        inst.viewerState.selectedSlide = sample.parts[0].blocks[0].slides[1];
         inst.matchFilter = 'all';
 
         const controller = controllerOf(inst);
@@ -1167,12 +1168,12 @@ describe('WSIViewer — pathology filter updates', () => {
                 ),
             ]),
         ]);
-        inst.hierarchy = {
+        inst.viewerState.hierarchy = {
             patient_id: 'P-XYZ',
             samples: [sample],
         };
-        inst.selectedSample = sample;
-        inst.selectedSlide = sample.parts[0].blocks[0].slides[0];
+        inst.viewerState.selectedSample = sample;
+        inst.viewerState.selectedSlide = sample.parts[0].blocks[0].slides[0];
 
         const controller = controllerOf(inst);
         const clearSelectedSlideSpy = jest.spyOn(
@@ -1200,12 +1201,12 @@ describe('WSIViewer — pathology filter updates', () => {
         const sample = makeSample('S-1', [
             makePart([makeBlock([makeSlide({ slide_key: 'slide-1' })], '1')]),
         ]);
-        inst.hierarchy = {
+        inst.viewerState.hierarchy = {
             patient_id: 'P-XYZ',
             samples: [sample],
         };
-        inst.selectedSample = sample;
-        inst.selectedSlide = sample.parts[0].blocks[0].slides[0];
+        inst.viewerState.selectedSample = sample;
+        inst.viewerState.selectedSlide = sample.parts[0].blocks[0].slides[0];
 
         const controller = controllerOf(inst);
         const disposeSpy = jest.spyOn(controller, 'dispose');
@@ -1255,12 +1256,12 @@ describe('WSIViewer — pathology filter updates', () => {
         const sample = makeSample('S-1', [
             makePart([makeBlock([makeSlide({ slide_key: 'hne-slide' })], '1')]),
         ]);
-        inst.hierarchy = {
+        inst.viewerState.hierarchy = {
             patient_id: 'P-XYZ',
             samples: [sample],
         };
-        inst.selectedSample = sample;
-        inst.selectedSlide = sample.parts[0].blocks[0].slides[0];
+        inst.viewerState.selectedSample = sample;
+        inst.viewerState.selectedSlide = sample.parts[0].blocks[0].slides[0];
         inst.stainFilter = 'all';
         inst.matchFilter = 'all';
 
@@ -1302,7 +1303,7 @@ describe('WSIViewer — pathology filter updates', () => {
                 ),
             ]),
         ]);
-        inst.hierarchy = {
+        inst.viewerState.hierarchy = {
             patient_id: 'P-XYZ',
             samples: [sample],
         };
@@ -1324,9 +1325,9 @@ describe('WSIViewer — pathology filter updates', () => {
         const slide = sample.parts[0].blocks[0].slides[0];
         const controller = controllerOf(inst);
 
-        inst.selectedSample = sample;
-        inst.selectedSlide = slide;
-        inst.selectedMeta = makeTileMetadata({
+        inst.viewerState.selectedSample = sample;
+        inst.viewerState.selectedSlide = slide;
+        inst.viewerState.selectedMeta = makeTileMetadata({
             dimensions: { width: 1000, height: 800 },
             levels: 1,
             level_dimensions: [{ width: 1000, height: 800 }],
@@ -1338,7 +1339,10 @@ describe('WSIViewer — pathology filter updates', () => {
         // The active slide's first tile is ready.
         (controller as any).nativeTileReadySeq = (controller as any).mountSeq;
 
-        const beginSpy = jest.spyOn(inst as any, 'beginSlideSelection');
+        const beginSpy = jest.spyOn(
+            (inst as any).viewerState,
+            'beginSlideSelection'
+        );
         const mountSpy = jest
             .spyOn(controller as any, 'mountOSD')
             .mockResolvedValue(undefined);
@@ -1369,10 +1373,10 @@ describe('WSIViewer — sidebar row caching', () => {
 
         act(() => {
             mobxAction(() => {
-                inst.hierarchy = hierarchy;
-                inst.selectedSample = sample;
-                inst.selectedSlide = slide;
-                inst.selectedMeta = makeTileMetadata({
+                inst.viewerState.hierarchy = hierarchy;
+                inst.viewerState.selectedSample = sample;
+                inst.viewerState.selectedSlide = slide;
+                inst.viewerState.selectedMeta = makeTileMetadata({
                     dimensions: { width: 1000, height: 800 },
                     levels: 1,
                     level_dimensions: [{ width: 1000, height: 800 }],
@@ -1380,7 +1384,7 @@ describe('WSIViewer — sidebar row caching', () => {
                     tile_size: 256,
                     mpp: { x: 0.25, y: 0.25 },
                 });
-                inst.spinnerVisible = false;
+                inst.viewerState.spinnerVisible = false;
             })();
         });
 
@@ -1390,7 +1394,7 @@ describe('WSIViewer — sidebar row caching', () => {
 
         act(() => {
             mobxAction(() => {
-                inst.spinnerVisible = true;
+                inst.viewerState.spinnerVisible = true;
             })();
         });
 
@@ -1420,9 +1424,9 @@ describe('WSIViewer — loadHierarchy', () => {
         const inst = makeInstance('P-1');
         await loadHierarchyFor(inst);
 
-        assert.isNotNull(inst.error, 'error should be set');
-        assert.include(inst.error, '502');
-        assert.isFalse(inst.loading);
+        assert.isNotNull(inst.viewerState.error, 'error should be set');
+        assert.include(inst.viewerState.error, '502');
+        assert.isFalse(inst.viewerState.loading);
     });
 
     it('sets error and clears loading when fetch rejects (network error)', async () => {
@@ -1431,8 +1435,8 @@ describe('WSIViewer — loadHierarchy', () => {
         const inst = makeInstance('P-1');
         await loadHierarchyFor(inst);
 
-        assert.include(inst.error, 'Network failure');
-        assert.isFalse(inst.loading);
+        assert.include(inst.viewerState.error, 'Network failure');
+        assert.isFalse(inst.viewerState.loading);
     });
 
     it('populates hierarchy and clears loading on successful response', async () => {
@@ -1451,9 +1455,9 @@ describe('WSIViewer — loadHierarchy', () => {
         const inst = makeInstance('P-XYZ');
         await loadHierarchyFor(inst);
 
-        assert.isNull(inst.error);
-        assert.isFalse(inst.loading);
-        assert.equal(inst.hierarchy?.patient_id, 'P-XYZ');
+        assert.isNull(inst.viewerState.error);
+        assert.isFalse(inst.viewerState.loading);
+        assert.equal(inst.viewerState.hierarchy?.patient_id, 'P-XYZ');
     });
 
     it('clears previous hierarchy and error before re-fetching', async () => {
@@ -1462,7 +1466,7 @@ describe('WSIViewer — loadHierarchy', () => {
         const inst = makeInstance('P-1');
         await loadHierarchyFor(inst);
         assert.isNotNull(
-            inst.error,
+            inst.viewerState.error,
             'precondition: error set after first call'
         );
 
@@ -1478,8 +1482,8 @@ describe('WSIViewer — loadHierarchy', () => {
         );
         await loadHierarchyFor(inst);
 
-        assert.isNull(inst.error);
-        assert.isNotNull(inst.hierarchy);
+        assert.isNull(inst.viewerState.error);
+        assert.isNotNull(inst.viewerState.hierarchy);
     });
 
     it('bumps mountSeq to invalidate stale in-flight OSD mounts', async () => {
@@ -1603,16 +1607,19 @@ describe('WSIViewer — loadHierarchy', () => {
 
         await loadHierarchyFor(inst);
 
-        expect(inst.hierarchy.samples).toHaveLength(1);
-        expect(inst.hierarchy.samples[0].parts[0].blocks).toHaveLength(2);
+        expect(inst.viewerState.hierarchy.samples).toHaveLength(1);
         expect(
-            inst.hierarchy.samples[0].parts[0].blocks.flatMap((block: any) =>
-                block.slides.map((slide: Slide) => slide.slide_key)
+            inst.viewerState.hierarchy.samples[0].parts[0].blocks
+        ).toHaveLength(2);
+        expect(
+            inst.viewerState.hierarchy.samples[0].parts[0].blocks.flatMap(
+                (block: any) =>
+                    block.slides.map((slide: Slide) => slide.slide_key)
             )
         ).toEqual(['matched-1', 'unmatched-1']);
         expect(inst.matchFilter).toBe('unmatched');
         expect(
-            inst.hierarchy.samples[0].parts[0].blocks.flatMap(
+            inst.viewerState.hierarchy.samples[0].parts[0].blocks.flatMap(
                 (block: any) => block.slides
             )
         ).toEqual([
@@ -1714,7 +1721,7 @@ describe('WSIViewer — loadHierarchy', () => {
 
         await loadHierarchyFor(inst);
 
-        expect(inst.hierarchy?.patient_id).toBe('P-1');
+        expect(inst.viewerState.hierarchy?.patient_id).toBe('P-1');
         expect(selectSlideSpy).toHaveBeenCalledWith(
             expect.objectContaining({ slide_key: 'cached-slide' }),
             expect.objectContaining({ sample_id: 'S-123456-T01' })
@@ -1872,8 +1879,8 @@ describe('WSIViewer — loadHierarchy', () => {
 
         await loadHierarchyFor(inst);
 
-        expect(inst.error).toContain('OSD init error');
-        expect(inst.error).toContain('OSD chunk failed');
+        expect(inst.viewerState.error).toContain('OSD init error');
+        expect(inst.viewerState.error).toContain('OSD chunk failed');
     });
 });
 
@@ -1892,7 +1899,7 @@ describe('WSIViewer — prefetchSlideMetadata cancellation', () => {
         const inst = makeInstance('P-1');
         const controller = controllerOf(inst);
         const slide = makeSlide({ slide_key: 'AAA', can_serve_tiles: true });
-        inst.hierarchy = makeHierarchy([slide]);
+        inst.viewerState.hierarchy = makeHierarchy([slide]);
         registerTestSlideAccess('study', 'P-123', 'AAA');
 
         setFetchMock(
@@ -1918,13 +1925,12 @@ describe('WSIViewer — prefetchSlideMetadata cancellation', () => {
             makeSlide({
                 slide_key: 'BBB',
                 can_serve_tiles: true,
-                is_hne: true,
+                stain_kind: 'hne',
             }),
             makeSlide({
                 slide_key: 'CCC',
                 can_serve_tiles: true,
-                is_hne: false,
-                is_ihc: true,
+                stain_kind: 'ihc',
                 stain_name: 'IHC',
             }),
         ];
@@ -1932,13 +1938,12 @@ describe('WSIViewer — prefetchSlideMetadata cancellation', () => {
             makeSlide({
                 slide_key: 'AAA',
                 can_serve_tiles: true,
-                is_hne: true,
+                stain_kind: 'hne',
             }),
             makeSlide({
                 slide_key: 'DDD',
                 can_serve_tiles: true,
-                is_hne: false,
-                is_ihc: true,
+                stain_kind: 'ihc',
                 stain_name: 'IHC',
             }),
         ];
@@ -1948,11 +1953,11 @@ describe('WSIViewer — prefetchSlideMetadata cancellation', () => {
         const otherSample = makeSample('S-other', [
             makePart([makeBlock(otherSampleSlides)]),
         ]);
-        inst.hierarchy = {
+        inst.viewerState.hierarchy = {
             patient_id: 'P-1',
             samples: [otherSample, selectedSample],
         };
-        inst.selectedSample = selectedSample;
+        inst.viewerState.selectedSample = selectedSample;
         inst.stainFilter = 'hne';
 
         const order: string[] = [];
@@ -2006,14 +2011,14 @@ describe('WSIViewer — prefetchSlideMetadata cancellation', () => {
             block_number: '5',
             block_label: 'A5',
         });
-        inst.hierarchy = makeHierarchy([
+        inst.viewerState.hierarchy = makeHierarchy([
             duplicateSlideA,
             duplicateSlideB,
             slideB,
             slideC,
             slideD,
         ]);
-        inst.selectedSample = inst.hierarchy.samples[0];
+        inst.viewerState.selectedSample = inst.viewerState.hierarchy.samples[0];
 
         const order: string[] = [];
         const deferred = new Map<string, ReturnType<typeof deferredPromise>>();
@@ -2056,16 +2061,16 @@ describe('WSIViewer — prefetchSlideMetadata cancellation', () => {
 describe('WSIViewer — goToCoordinates', () => {
     it('does nothing when osdViewer is null', () => {
         const inst = makeInstance('P-1');
-        inst.coordInputX = '100';
-        inst.coordInputY = '200';
+        inst.viewerState.coordInputX = '100';
+        inst.viewerState.coordInputY = '200';
         // Should not throw
         controllerOf(inst).goToCoordinates();
     });
 
     it('calls viewport.imageToViewportCoordinates and panTo with parsed coords', () => {
         const inst = makeInstance('P-1');
-        inst.coordInputX = '500';
-        inst.coordInputY = '750';
+        inst.viewerState.coordInputX = '500';
+        inst.viewerState.coordInputY = '750';
 
         const mockVpPoint = { x: 0.5, y: 0.75 };
         const mockViewport = {
@@ -2089,8 +2094,8 @@ describe('WSIViewer — goToCoordinates', () => {
 
     it('does nothing when coord inputs are empty strings', () => {
         const inst = makeInstance('P-1');
-        inst.coordInputX = '';
-        inst.coordInputY = '';
+        inst.viewerState.coordInputX = '';
+        inst.viewerState.coordInputY = '';
 
         const mockViewport = {
             imageToViewportCoordinates: jest.fn(),
@@ -2106,8 +2111,8 @@ describe('WSIViewer — goToCoordinates', () => {
 
     it('does nothing when coord inputs are non-numeric', () => {
         const inst = makeInstance('P-1');
-        inst.coordInputX = 'abc';
-        inst.coordInputY = 'xyz';
+        inst.viewerState.coordInputX = 'abc';
+        inst.viewerState.coordInputY = 'xyz';
 
         const mockViewport = {
             imageToViewportCoordinates: jest.fn(),
@@ -2135,7 +2140,7 @@ describe('WSIViewer — URL hash state', () => {
 
     it('copyViewLink copies the current viewport hash instead of the stale URL', async () => {
         const inst = makeInstance('P-1');
-        inst.selectedSlide = makeSlide({ slide_key: '12345' });
+        inst.viewerState.selectedSlide = makeSlide({ slide_key: '12345' });
 
         const writeText = jest.fn().mockResolvedValue(undefined);
         Object.assign(navigator, {
@@ -2288,7 +2293,7 @@ describe('WSIViewer — open handler (mountOSD integration)', () => {
             studyId: 'study-1',
             ...props,
         });
-        inst.selectedSlide = slide;
+        inst.viewerState.selectedSlide = slide;
         registerTestSlideAccess(
             String(props.studyId ?? 'study-1'),
             'P-XYZ',
@@ -2409,18 +2414,18 @@ describe('WSIViewer — open handler (mountOSD integration)', () => {
                 })
             );
             expect(createObjectURL).toHaveBeenCalledTimes(1);
-            expect((inst as any).thumbnailPreviewUrl).toBe(
+            expect((inst as any).viewerState.thumbnailPreviewUrl).toBe(
                 'blob:published-thumb'
             );
 
             capturedOpenCb!();
             capturedTileLoadedCb!();
-            expect((inst as any).thumbnailPreviewUrl).toBe(
+            expect((inst as any).viewerState.thumbnailPreviewUrl).toBe(
                 'blob:published-thumb'
             );
 
             capturedTileDrawnCb!();
-            expect((inst as any).thumbnailPreviewUrl).toBeNull();
+            expect((inst as any).viewerState.thumbnailPreviewUrl).toBeNull();
             expect(revokeObjectURL).toHaveBeenCalledWith(
                 'blob:published-thumb'
             );
@@ -2454,22 +2459,24 @@ describe('WSIViewer — open handler (mountOSD integration)', () => {
         const slide = makeSlide({ slide_key: '42' });
         const inst = await runMount(slide);
         const controller = controllerOf(inst);
-        (inst as any).spinnerVisible = true;
-        (inst as any).thumbnailPreviewUrl = 'blob:preview';
+        (inst as any).viewerState.spinnerVisible = true;
+        (inst as any).viewerState.thumbnailPreviewUrl = 'blob:preview';
         controller.loadingStart = Date.now() - 1000;
 
         capturedOpenCb!();
-        expect((inst as any).tilesReady).toBe(false);
+        expect((inst as any).viewerState.tilesReady).toBe(false);
 
         capturedTileLoadedCb!();
 
-        expect((inst as any).tilesReady).toBe(true);
-        expect((inst as any).spinnerVisible).toBe(false);
+        expect((inst as any).viewerState.tilesReady).toBe(true);
+        expect((inst as any).viewerState.spinnerVisible).toBe(false);
         // The preview stays until the redraw that draws the loaded tile, then
         // goes, rather than staying under the slide where zooming out shows it.
-        expect((inst as any).thumbnailPreviewUrl).toBe('blob:preview');
+        expect((inst as any).viewerState.thumbnailPreviewUrl).toBe(
+            'blob:preview'
+        );
         updateViewportCb!();
-        expect((inst as any).thumbnailPreviewUrl).toBeNull();
+        expect((inst as any).viewerState.thumbnailPreviewUrl).toBeNull();
     });
 
     it('drops the preview later when a canvas renderer never draws a tile', async () => {
@@ -2477,16 +2484,18 @@ describe('WSIViewer — open handler (mountOSD integration)', () => {
         const slide = makeSlide({ slide_key: '42' });
         const inst = await runMount(slide);
         const controller = controllerOf(inst);
-        (inst as any).thumbnailPreviewUrl = 'blob:preview';
+        (inst as any).viewerState.thumbnailPreviewUrl = 'blob:preview';
         controller.loadingStart = Date.now() - 1000;
         jest.useFakeTimers();
         try {
             capturedOpenCb!();
             capturedTileLoadedCb!();
-            expect((inst as any).thumbnailPreviewUrl).toBe('blob:preview');
+            expect((inst as any).viewerState.thumbnailPreviewUrl).toBe(
+                'blob:preview'
+            );
 
             jest.advanceTimersByTime(1500);
-            expect((inst as any).thumbnailPreviewUrl).toBeNull();
+            expect((inst as any).viewerState.thumbnailPreviewUrl).toBeNull();
         } finally {
             jest.useRealTimers();
         }
@@ -2502,9 +2511,11 @@ describe('WSIViewer — open handler (mountOSD integration)', () => {
 
             jest.advanceTimersByTime(185_000);
 
-            expect((inst as any).error).toContain('Slide tiles did not load');
-            expect((inst as any).spinnerVisible).toBe(false);
-            expect((inst as any).tilesReady).toBe(true);
+            expect((inst as any).viewerState.error).toContain(
+                'Slide tiles did not load'
+            );
+            expect((inst as any).viewerState.spinnerVisible).toBe(false);
+            expect((inst as any).viewerState.tilesReady).toBe(true);
         } finally {
             jest.useRealTimers();
         }
@@ -2518,12 +2529,14 @@ describe('WSIViewer — open handler (mountOSD integration)', () => {
         try {
             capturedOpenCb!();
             jest.advanceTimersByTime(185_000);
-            expect((inst as any).error).toContain('Slide tiles did not load');
+            expect((inst as any).viewerState.error).toContain(
+                'Slide tiles did not load'
+            );
 
             capturedTileDrawnCb!();
 
-            expect((inst as any).error).toBeNull();
-            expect((inst as any).tilesReady).toBe(true);
+            expect((inst as any).viewerState.error).toBeNull();
+            expect((inst as any).viewerState.tilesReady).toBe(true);
         } finally {
             jest.useRealTimers();
         }
@@ -2562,7 +2575,7 @@ describe('WSIViewer — open handler (mountOSD integration)', () => {
         const inst = await runMount(slide);
         const controller = controllerOf(inst);
 
-        inst.selectedSample = makeSample('S-123456-T01', [
+        inst.viewerState.selectedSample = makeSample('S-123456-T01', [
             makePart([makeBlock([slide])]),
         ]);
 
@@ -2667,7 +2680,7 @@ describe('WSIViewer — open handler (mountOSD integration)', () => {
         const slide = makeSlide({ slide_key: '42' });
         const inst = await runMount(slide, { studyId: 'study-1' });
         const controller = controllerOf(inst);
-        inst.hierarchy = makeHierarchy([slide]);
+        inst.viewerState.hierarchy = makeHierarchy([slide]);
         controller.initialSlideKey = '42';
         controller.hierarchyLoadSeq = 1;
         controller.loadingStart = Date.now() - 1000;
@@ -2710,7 +2723,7 @@ describe('WSIViewer — open handler (mountOSD integration)', () => {
         const slide = makeSlide({ slide_key: '42' });
         const inst = await runMount(slide, { studyId: 'study-1' });
         const controller = controllerOf(inst);
-        inst.hierarchy = makeHierarchy([slide]);
+        inst.viewerState.hierarchy = makeHierarchy([slide]);
         controller.initialSlideKey = '42';
         controller.hierarchyLoadSeq = 1;
         controller.loadingStart = Date.now() - 1000;
@@ -2868,7 +2881,7 @@ describe('WSIViewer — open handler (mountOSD integration)', () => {
             const inst = makeInstance('P-1');
             await loadHierarchyFor(inst);
 
-            expect(inst.selectedMeta).toMatchObject({
+            expect(inst.viewerState.selectedMeta).toMatchObject({
                 max_zoom: 6,
                 tile_size: 256,
             });
