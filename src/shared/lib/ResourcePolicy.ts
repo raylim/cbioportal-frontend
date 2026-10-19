@@ -1,8 +1,8 @@
-import { ResourceData } from 'cbioportal-ts-api-client';
 import { WsiStainFilter } from 'cbioportal-wsi-viewer';
 import { getServerConfig } from 'config/config';
 import { PatientViewPageTabs } from 'pages/patientView/PatientViewPageTabIds';
 import { PathologySlideSettings } from 'pages/patientView/PatientViewUrlWrapper';
+import { isNonEmptyString } from './ResourceUtils';
 
 // H&E slide resources that the native viewer replaces. Every H&E resource on
 // the public and MSK portals uses one of these IDs.
@@ -13,10 +13,6 @@ const LEGACY_HE_RESOURCE_IDS = new Set(['HE', 'MSK_HNE']);
 // allowlisted public slide fields.
 const WSI_RESOURCE_IDS = new Set(['WSI_SAMPLE', 'WSI_PATIENT']);
 export const STUDY_SLIDE_TABLE_RESOURCE_ID = 'WSI_SAMPLE';
-
-function isNonEmptyString(value: string | null | undefined): boolean {
-    return (value?.trim().length ?? 0) > 0;
-}
 
 export function isWsiResourceId(resourceId: string | undefined): boolean {
     return !!resourceId && WSI_RESOURCE_IDS.has(resourceId);
@@ -40,14 +36,6 @@ export function slideKeyFromSlideUrl(
 ): string | undefined {
     const match = /[?&]slideKey=([0-9a-f]{12})(?:&|#|$)/.exec(url || '');
     return match ? match[1] : undefined;
-}
-
-export function shouldHideLegacyHeResource(
-    resource?: Partial<ResourceData>
-): boolean {
-    return shouldHideLegacyHeResourceTab(
-        resource?.resourceId || resource?.resourceDefinition?.resourceId
-    );
 }
 
 /**
