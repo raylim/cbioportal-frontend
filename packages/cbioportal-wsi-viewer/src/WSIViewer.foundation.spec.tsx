@@ -177,7 +177,8 @@ describe('WSIViewer foundation behavior', () => {
         };
         instance.viewerState.hierarchy = hierarchyOf([slide]);
         instance.viewerState.selectedSlide = slide;
-        instance.viewerState.selectedSample = instance.viewerState.hierarchy.samples[0];
+        instance.viewerState.selectedSample =
+            instance.viewerState.hierarchy.samples[0];
         instance.viewerState.selectedMeta = {
             dimensions: { width: 1000, height: 800 },
             levels: 2,
@@ -225,8 +226,11 @@ describe('WSIViewer foundation behavior', () => {
         const slideB = testSlide('slide-b');
         instance.viewerState.hierarchy = hierarchyOf([slideA, slideB]);
         instance.viewerState.selectedSlide = slideA;
-        instance.viewerState.selectedSample = instance.viewerState.hierarchy.samples[0];
-        instance.viewerState.selectedMeta = { dimensions: { width: 1000, height: 800 } };
+        instance.viewerState.selectedSample =
+            instance.viewerState.hierarchy.samples[0];
+        instance.viewerState.selectedMeta = {
+            dimensions: { width: 1000, height: 800 },
+        };
         const controller = {
             selectSlideAndWait: jest.fn(async (slide: any) => {
                 instance.viewerState.selectedSlide = slide;
@@ -317,8 +321,11 @@ describe('WSIViewer foundation behavior', () => {
         const slideB = testSlide('slide-b');
         instance.viewerState.hierarchy = hierarchyOf([slideA, slideB]);
         instance.viewerState.selectedSlide = slideA;
-        instance.viewerState.selectedSample = instance.viewerState.hierarchy.samples[0];
-        instance.viewerState.selectedMeta = { dimensions: { width: 1000, height: 800 } };
+        instance.viewerState.selectedSample =
+            instance.viewerState.hierarchy.samples[0];
+        instance.viewerState.selectedMeta = {
+            dimensions: { width: 1000, height: 800 },
+        };
         const controller = {
             selectSlideAndWait: jest.fn(async () => ({
                 status: 'failed',
@@ -377,8 +384,11 @@ describe('WSIViewer foundation behavior', () => {
         const slideB = testSlide('slide-b');
         instance.viewerState.hierarchy = hierarchyOf([slideA, slideB]);
         instance.viewerState.selectedSlide = slideA;
-        instance.viewerState.selectedSample = instance.viewerState.hierarchy.samples[0];
-        instance.viewerState.selectedMeta = { dimensions: { width: 1000, height: 800 } };
+        instance.viewerState.selectedSample =
+            instance.viewerState.hierarchy.samples[0];
+        instance.viewerState.selectedMeta = {
+            dimensions: { width: 1000, height: 800 },
+        };
         let resolveCapture!: (viewport: any) => void;
         instance.controller = {
             captureAgentViewportAfterDraw: jest.fn(
