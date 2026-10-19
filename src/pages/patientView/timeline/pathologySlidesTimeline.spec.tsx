@@ -47,9 +47,22 @@ const TestPortal = (Portal as unknown) as React.ComponentType<
 >;
 
 const SAMPLE = 'P-0000081-T02-IM6';
-// As written by pdm's generate_pathology_timeline_files.py.
-const LINKOUT =
-    '/patient/wsiHESlides?studyId=mskimpact&caseId=P-0000081&stainFilter=hne&matchLevel=PART&specimenKey=sk_0123456789abcdef&sampleId=P-0000081-T02-IM6';
+/** A LINKOUT as written by pdm's generate_pathology_timeline_files.py. */
+function pdmLinkout(matchLevel: string, sampleId?: string): string {
+    const params = new URLSearchParams({
+        studyId: 'mskimpact',
+        caseId: 'P-0000081',
+        ...(sampleId ? { sampleId } : {}),
+        pathologySlideSettings: JSON.stringify({
+            stainFilter: 'hne',
+            matchLevel,
+            specimenKey: 'sk_0123456789abcdef',
+        }),
+    });
+    return `/patient/wsiHESlides?${params.toString()}`;
+}
+
+const LINKOUT = pdmLinkout('PART', SAMPLE);
 
 /** Attributes of a pathology timeline file row. */
 interface SlideRow {
@@ -65,10 +78,7 @@ interface SlideRow {
 const UNMATCHED: Partial<SlideRow> = {
     matchLevel: 'Unmatched',
     sampleId: 'Unmatched',
-    linkout: LINKOUT.replace('&sampleId=P-0000081-T02-IM6', '').replace(
-        'matchLevel=PART',
-        'matchLevel=Unmatched'
-    ),
+    linkout: pdmLinkout('Unmatched'),
 };
 
 /** A PATHOLOGY SLIDES clinical event imported from the timeline file. */
@@ -412,7 +422,10 @@ describe('PATHOLOGY SLIDES timeline track', () => {
         fireEvent.click(
             screen.getByRole('link', { name: /Open H&E slides for Unmatched/ })
         );
-        expect(location()?.search).toContain('matchLevel=Unmatched');
+        const settings = new URLSearchParams(location()?.search).get(
+            'pathologySlideSettings'
+        );
+        expect(JSON.parse(settings!).matchLevel).toBe('Unmatched');
     });
 });
 

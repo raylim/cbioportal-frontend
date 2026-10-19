@@ -112,7 +112,7 @@ const hierarchy = {
 
 /**
  * LINKOUT as pdm's generate_pathology_timeline_files.py writes it: the
- * Pathology Slides tab with top-level scope params.
+ * Pathology Slides tab with its scope in the `pathologySlideSettings` node.
  */
 function pdmLinkout(
     stainFilter: string,
@@ -123,10 +123,12 @@ function pdmLinkout(
     const params = new URLSearchParams({
         studyId: STUDY_ID,
         caseId: PATIENT_ID,
-        stainFilter,
-        matchLevel,
-        specimenKey,
         sampleId,
+        pathologySlideSettings: JSON.stringify({
+            stainFilter,
+            matchLevel,
+            specimenKey,
+        }),
     });
     return `/patient/wsiHESlides?${params.toString()}`;
 }
@@ -404,42 +406,6 @@ if (process.env.PW_SUITE === 'wsi') {
                 })
                 .toContain(HNE_KEY);
             expectAccessWithinLinkedSample(accessRequests);
-        });
-
-        test('legacy flat params scope the Pathology Slides tab like the nested node', async ({
-            page,
-        }) => {
-            const accessRequests: string[] = [];
-            await installPatientPageMocks(page, accessRequests);
-            const legacy = new URLSearchParams({
-                studyId: STUDY_ID,
-                caseId: PATIENT_ID,
-                sampleId: SAMPLE_ID,
-                stainFilter: 'hne',
-                matchLevel: 'BLOCK',
-                specimenKey: BLOCK_SPECIMEN_KEY,
-            });
-            await page.goto(`/patient/wsiHESlides?${legacy.toString()}`);
-            await expectListedSlides(page, [HNE_KEY]);
-            await expect
-                .poll(() => accessedSlideKeys(accessRequests), {
-                    timeout: 30000,
-                })
-                .toContain(HNE_KEY);
-            expectAccessWithinLinkedSample(accessRequests);
-
-            // A lone legacy stain filter, and the same scope as a node.
-            await page.goto(
-                `/patient/wsiHESlides?studyId=${STUDY_ID}&caseId=${PATIENT_ID}&stainFilter=ihc`
-            );
-            await expectListedSlides(page, [IHC_KEY]);
-            const nested = new URLSearchParams({
-                studyId: STUDY_ID,
-                caseId: PATIENT_ID,
-                pathologySlideSettings: JSON.stringify({ stainFilter: 'ihc' }),
-            });
-            await page.goto(`/patient/wsiHESlides?${nested.toString()}`);
-            await expectListedSlides(page, [IHC_KEY]);
         });
     });
 }
