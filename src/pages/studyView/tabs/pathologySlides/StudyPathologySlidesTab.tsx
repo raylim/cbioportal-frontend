@@ -659,6 +659,7 @@ const StudySlidesViewerView: React.FunctionComponent<StudyPathologySlidesTabProp
                                 store.matchLevels
                             )}
                             requestedSlideKey={store.requestedSlideKey}
+                            hidden={!isActive}
                             navCollapsed={navCollapsed}
                             onNavCollapsedChange={setNavCollapsed}
                             leadingRailSections={
