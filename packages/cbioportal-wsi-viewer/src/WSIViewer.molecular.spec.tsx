@@ -109,8 +109,7 @@ function makeSlide(overrides: Partial<Slide> = {}): Slide {
         slide_key: '1000',
         stain_name: 'H&E',
         stain_group: 'Histology',
-        is_hne: true,
-        is_ihc: false,
+        stain_kind: 'hne',
         magnification: '20x',
         file_size_bytes: '100000000',
         can_serve_tiles: true,
@@ -180,14 +179,19 @@ function makeWireHierarchy(slides: Slide[], patientId = 'P-123'): any {
                                     slideKey: slide.slide_key,
                                     stainName: slide.stain_name,
                                     stainGroup: slide.stain_group,
-                                    isHne: slide.is_hne,
-                                    isIhc: slide.is_ihc,
+                                    isHne: slide.stain_kind === 'hne',
+                                    isIhc: slide.stain_kind === 'ihc',
                                     magnification: slide.magnification,
                                     fileSizeBytes: Number(
                                         slide.file_size_bytes
                                     ),
                                     canServeTiles: slide.can_serve_tiles,
-                                    slideType: slide.slide_type || null,
+                                    slideType: {
+                                        hne: 'H&E',
+                                        ihc: 'IHC',
+                                        other: 'Other',
+                                        unknown: 'Unknown',
+                                    }[slide.stain_kind],
                                     sampleId: sample.sample_id,
                                     matchLevel: slide.match_level || 'BLOCK',
                                     specimenKey:
@@ -299,10 +303,10 @@ describe('WSIViewer — cached sidebar data', () => {
 
         act(() => {
             mobxAction(() => {
-                inst.hierarchy = hierarchy;
-                inst.selectedSample = sample;
-                inst.selectedSlide = slide;
-                inst.selectedMeta = {
+                inst.viewerState.hierarchy = hierarchy;
+                inst.viewerState.selectedSample = sample;
+                inst.viewerState.selectedSlide = slide;
+                inst.viewerState.selectedMeta = {
                     dimensions: { width: 1000, height: 800 },
                     levels: 1,
                     level_dimensions: [{ width: 1000, height: 800 }],
@@ -348,10 +352,11 @@ describe('WSIViewer — cached sidebar data', () => {
 
         act(() => {
             mobxAction(() => {
-                inst.hierarchy = hierarchy;
-                inst.selectedSample = inst.hierarchy.samples[0];
-                inst.selectedSlide =
-                    inst.hierarchy.samples[0].parts[0].blocks[0].slides[0];
+                inst.viewerState.hierarchy = hierarchy;
+                inst.viewerState.selectedSample =
+                    inst.viewerState.hierarchy.samples[0];
+                inst.viewerState.selectedSlide =
+                    inst.viewerState.hierarchy.samples[0].parts[0].blocks[0].slides[0];
             })();
         });
 
@@ -396,10 +401,10 @@ describe('WSIViewer — cached sidebar data', () => {
 
         act(() => {
             mobxAction(() => {
-                inst.hierarchy = hierarchy;
-                inst.selectedSample = sample;
-                inst.selectedSlide = slide;
-                inst.selectedMeta = meta;
+                inst.viewerState.hierarchy = hierarchy;
+                inst.viewerState.selectedSample = sample;
+                inst.viewerState.selectedSlide = slide;
+                inst.viewerState.selectedMeta = meta;
             })();
         });
 
@@ -430,7 +435,10 @@ describe('WSIViewer — cached sidebar data', () => {
         };
 
         const inst = makeInstance('https://tiles.example.com/patient/P-1');
-        inst.hierarchy = makeHierarchy([makeSlide({ slide_key: 'A' })], 'P-1');
+        inst.viewerState.hierarchy = makeHierarchy(
+            [makeSlide({ slide_key: 'A' })],
+            'P-1'
+        );
         const updateSpy = jest.spyOn(inst as any, 'updateHierarchy');
 
         act(() => {
@@ -459,11 +467,11 @@ describe('WSIViewer — cached sidebar data', () => {
             slide_key: 'block-slide',
             sample_id: 'S-1',
             match_level: 'BLOCK',
-            slide_type: 'H&E',
+            stain_kind: 'hne',
         });
         const hierarchy = makeHierarchy([slide], 'P-1');
         hierarchy.samples[0].sample_id = 'S-1';
-        inst.hierarchy = hierarchy;
+        inst.viewerState.hierarchy = hierarchy;
 
         act(() => {
             (inst as any).updateHierarchy(hierarchy);
@@ -471,7 +479,7 @@ describe('WSIViewer — cached sidebar data', () => {
 
         expect(
             wsiSlideUtils.getServableSlideIdsForPathologyFilterReadOnly(
-                inst.hierarchy,
+                inst.viewerState.hierarchy,
                 { sampleId: 'S-1', matchLevel: 'BLOCK' }
             )
         ).toEqual(new Set(['block-slide']));
@@ -480,15 +488,15 @@ describe('WSIViewer — cached sidebar data', () => {
     it('keeps hierarchy identity stable across an enrichment refresh', () => {
         const inst = makeInstance('https://tiles.example.com/patient/P-1');
         const hierarchy = makeHierarchy([makeSlide({ slide_key: 'A' })], 'P-1');
-        inst.hierarchy = hierarchy;
-        const currentHierarchy = inst.hierarchy;
+        inst.viewerState.hierarchy = hierarchy;
+        const currentHierarchy = inst.viewerState.hierarchy;
         const initialVersion = (inst as any).hierarchyDataVersion;
 
         act(() => {
             (inst as any).updateHierarchy(currentHierarchy);
         });
 
-        expect(inst.hierarchy).toBe(currentHierarchy);
+        expect(inst.viewerState.hierarchy).toBe(currentHierarchy);
         expect((inst as any).hierarchyDataVersion).toBe(initialVersion + 1);
     });
 
@@ -501,10 +509,10 @@ describe('WSIViewer — cached sidebar data', () => {
 
         act(() => {
             mobxAction(() => {
-                inst.hierarchy = hierarchy;
-                inst.selectedSample = sample;
-                inst.selectedSlide = slide;
-                inst.tilesReady = false;
+                inst.viewerState.hierarchy = hierarchy;
+                inst.viewerState.selectedSample = sample;
+                inst.viewerState.selectedSlide = slide;
+                inst.viewerState.tilesReady = false;
             })();
         });
 
@@ -513,7 +521,7 @@ describe('WSIViewer — cached sidebar data', () => {
 
         act(() => {
             mobxAction(() => {
-                inst.tilesReady = true;
+                inst.viewerState.tilesReady = true;
             })();
         });
 
@@ -542,10 +550,10 @@ describe('WSIViewer — cached sidebar data', () => {
 
         act(() => {
             mobxAction(() => {
-                inst.hierarchy = hierarchy;
-                inst.selectedSample = unmatched;
-                inst.selectedSlide = slide;
-                inst.tilesReady = true;
+                inst.viewerState.hierarchy = hierarchy;
+                inst.viewerState.selectedSample = unmatched;
+                inst.viewerState.selectedSlide = slide;
+                inst.viewerState.tilesReady = true;
             })();
         });
 
@@ -657,7 +665,7 @@ describe('WSIViewer — sample enrichment scheduling', () => {
         const inst = makeInstance('https://tiles.example.com/patient/P-1');
         const hierarchyA = makeEnrichmentHierarchy('P-A');
         const hierarchyB = makeEnrichmentHierarchy('P-B');
-        inst.hierarchy = hierarchyA;
+        inst.viewerState.hierarchy = hierarchyA;
 
         const frequency = deferredPromise<{
             counts: Array<{
@@ -705,7 +713,7 @@ describe('WSIViewer — sample enrichment scheduling', () => {
         expect(frequencySpy).toHaveBeenCalledTimes(1);
         expect(annotationSpy).toHaveBeenCalledTimes(1);
 
-        inst.hierarchy = hierarchyB;
+        inst.viewerState.hierarchy = hierarchyB;
         frequency.resolve({
             counts: [
                 {
@@ -727,7 +735,7 @@ describe('WSIViewer — sample enrichment scheduling', () => {
         await Promise.resolve();
         await Promise.resolve();
 
-        const nextDetail = inst.hierarchy.samples[0]
+        const nextDetail = inst.viewerState.hierarchy.samples[0]
             .oncogenic_mutation_details![0];
         expect(nextDetail.cohortFrequency).toBeUndefined();
         expect(nextDetail.oncogenic).toBeUndefined();
@@ -752,7 +760,7 @@ describe('WSIViewer — sample enrichment scheduling', () => {
                 proteinEnd: 175,
             },
         ];
-        inst.hierarchy = hierarchy;
+        inst.viewerState.hierarchy = hierarchy;
 
         const frequencySpy = jest
             .spyOn(wsiCbioportalDataUtils, 'fetchMutationFrequencyDataReadOnly')
@@ -788,7 +796,8 @@ describe('WSIViewer — sample enrichment scheduling', () => {
         await (inst as any).fetchAndMergeOncoKbAnnotations(() => true);
         expect(annotationSpy).toHaveBeenCalledTimes(1);
 
-        const detail = inst.hierarchy.samples[0].oncogenic_mutation_details![0];
+        const detail = inst.viewerState.hierarchy.samples[0]
+            .oncogenic_mutation_details![0];
         expect(detail.cohortFrequency).toBe(0.5);
         expect(detail.oncogenic).toBe('Oncogenic');
 
@@ -899,11 +908,14 @@ describe('WSIViewer — sample enrichment scheduling', () => {
 
     it('skips mutation hierarchy updates when no mutation data and no existing mutation text are available', async () => {
         const inst = makeInstance('https://tiles.example.com/patient/P-1');
-        inst.hierarchy = makeHierarchy([makeSlide({ slide_key: 'A' })], 'P-1');
+        inst.viewerState.hierarchy = makeHierarchy(
+            [makeSlide({ slide_key: 'A' })],
+            'P-1'
+        );
         const sampleIdentifiers = [
             {
                 studyId: 'study-1',
-                sampleId: inst.hierarchy.samples[0].sample_id,
+                sampleId: inst.viewerState.hierarchy.samples[0].sample_id,
             },
         ];
         const originalFetch = (global as any).fetch;
@@ -941,11 +953,14 @@ describe('WSIViewer — sample enrichment scheduling', () => {
 
     it('retries a transient mutation profile response before giving up', async () => {
         const inst = makeInstance('https://tiles.example.com/patient/P-1');
-        inst.hierarchy = makeHierarchy([makeSlide({ slide_key: 'A' })], 'P-1');
+        inst.viewerState.hierarchy = makeHierarchy(
+            [makeSlide({ slide_key: 'A' })],
+            'P-1'
+        );
         const sampleIdentifiers = [
             {
                 studyId: 'study-1',
-                sampleId: inst.hierarchy.samples[0].sample_id,
+                sampleId: inst.viewerState.hierarchy.samples[0].sample_id,
             },
         ];
         clearMolecularProfileIdCache();
@@ -990,10 +1005,12 @@ describe('WSIViewer — sample enrichment scheduling', () => {
             clearWsiCbioportalRequestCaches();
         }
 
-        expect(inst.hierarchy.samples[0].oncogenic_mutations).toBe(
+        expect(inst.viewerState.hierarchy.samples[0].oncogenic_mutations).toBe(
             'TP53 p.R175H'
         );
-        expect(inst.hierarchy.samples[0].oncogenic_mutation_details).toEqual([
+        expect(
+            inst.viewerState.hierarchy.samples[0].oncogenic_mutation_details
+        ).toEqual([
             expect.objectContaining({
                 token: 'TP53 p.R175H',
                 type: 'Missense',
@@ -1004,11 +1021,14 @@ describe('WSIViewer — sample enrichment scheduling', () => {
 
     it('reports an error after mutation retries are exhausted', async () => {
         const inst = makeInstance('https://tiles.example.com/patient/P-1');
-        inst.hierarchy = makeHierarchy([makeSlide({ slide_key: 'A' })], 'P-1');
+        inst.viewerState.hierarchy = makeHierarchy(
+            [makeSlide({ slide_key: 'A' })],
+            'P-1'
+        );
         const sampleIdentifiers = [
             {
                 studyId: 'study-1',
-                sampleId: inst.hierarchy.samples[0].sample_id,
+                sampleId: inst.viewerState.hierarchy.samples[0].sample_id,
             },
         ];
         clearMolecularProfileIdCache();
