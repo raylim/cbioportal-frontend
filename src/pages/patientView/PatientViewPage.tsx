@@ -1,5 +1,8 @@
 import * as React from 'react';
-import { isHiddenFromResourceViews } from 'shared/lib/ResourcePolicy';
+import {
+    isHiddenFromResourceViews,
+    isWsiTileServerConfigured,
+} from 'shared/lib/ResourcePolicy';
 import _ from 'lodash';
 import { DiscreteCopyNumberData, ResourceData } from 'cbioportal-ts-api-client';
 import {
@@ -380,7 +383,7 @@ export class PatientViewPageInner extends React.Component<
      */
     @computed
     get shouldShowPathologySlides(): boolean {
-        if (!getServerConfig().wsi_tile_server_url) {
+        if (!isWsiTileServerConfigured()) {
             return false;
         }
         if (this.urlWrapper.activeTabId === PatientViewPageTabs.WSIHESlides) {
