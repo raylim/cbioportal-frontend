@@ -135,10 +135,11 @@ describe('WSIViewer foundation behavior', () => {
             const slide = testSlide('slide-a');
             const instance = makeInstance({ sampleTimelines });
             action(() => {
-                instance.hierarchy = hierarchyOf([slide]);
-                instance.loading = false;
-                instance.selectedSlide = slide;
-                instance.selectedSample = instance.hierarchy.samples[0];
+                instance.viewerState.hierarchy = hierarchyOf([slide]);
+                instance.viewerState.loading = false;
+                instance.viewerState.selectedSlide = slide;
+                instance.viewerState.selectedSample =
+                    instance.viewerState.hierarchy.samples[0];
             })();
             return TestRenderer.create(instance.render());
         }

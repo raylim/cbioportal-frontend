@@ -786,7 +786,9 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
             this.viewerState.selectedSample,
             this.props.patientId,
             this.props.studyId,
-            this.props.sampleTimelines?.get(this.selectedSample.sample_id)
+            this.props.sampleTimelines?.get(
+                this.viewerState.selectedSample.sample_id
+            )
         );
     }
 
