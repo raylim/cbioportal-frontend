@@ -533,7 +533,7 @@ describe('StudyPathologySlidesTab', () => {
         store.dispose();
     });
 
-    it('filters by specimen match and passes one level to the viewer', async () => {
+    it('filters by match level and passes one level to the viewer', async () => {
         const requests: StudySlidesRequest[] = [];
         const { store } = renderTab(async r => {
             requests.push(r);
