@@ -302,7 +302,7 @@ export const StudySlidesFilterSection: React.FunctionComponent<{
             {!collapsed && (
                 <div data-testid="study-slides-filters">
                     <MultiSelectChips
-                        label="Specimen match"
+                        label="Match"
                         chipTestIdPrefix="study-slides-match"
                         chips={STUDY_SLIDE_MATCH_LEVELS.map(level => ({
                             key: level,
