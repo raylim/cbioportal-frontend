@@ -29,6 +29,7 @@ import {
     WsiSampleTimeline,
     WsiSampleTimelineMap,
 } from './wsiSampleTimeline';
+import { partDisplayName } from './wsiSpecimenUtils';
 import { scheduleThumbnailRequest } from './thumbnailRequestLimiter';
 import { getWsiSlideAccess } from './wsiAuth';
 import { revokeObjectUrl, withAbort } from './wsiCacheUtils';
@@ -865,7 +866,7 @@ function SlideItem({
     const mag = slide.magnification || '';
     const sz = fmtFileSize(slide.file_size_bytes);
     const partDesc = multiPart
-        ? abbreviatePartDesc(slide.part_description)
+        ? abbreviatePartDesc(partDisplayName(slide))
         : null;
     const blockMeaning = !partDesc ? decodeBlockCode(blockLabel) : null;
     const stainLabel = cleanStain(slide.stain_name);
@@ -890,8 +891,9 @@ function SlideItem({
     const tooltipLines: string[] = [];
     if (slide.stain_name) tooltipLines.push(`Stain: ${slide.stain_name}`);
     if (blockLabel) tooltipLines.push(`Block: ${blockLabel}`);
-    if (slide.part_description) {
-        tooltipLines.push(`Part: ${slide.part_description}`);
+    const partName = partDisplayName(slide);
+    if (partName) {
+        tooltipLines.push(`Part: ${partName.replace(/^Part /, '')}`);
     }
     if (mag) tooltipLines.push(`Magnification: ${mag}`);
     if (sz !== '—') tooltipLines.push(`Size: ${sz}`);
