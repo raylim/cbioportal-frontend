@@ -207,6 +207,27 @@ describe('StudyPathologySlidesTab', () => {
         store.dispose();
     });
 
+    it('tells the viewer when the tab is hidden', async () => {
+        const { store, view } = renderTab(async r => pageFor(r));
+        await settle();
+        expect(mockViewer).toHaveBeenLastCalledWith(
+            expect.objectContaining({ hidden: false })
+        );
+
+        view.rerender(
+            <StudyPathologySlidesTab
+                store={store}
+                tileServerUrl="https://tiles.example"
+                isActive={false}
+                height={600}
+            />
+        );
+        expect(mockViewer).toHaveBeenLastCalledWith(
+            expect.objectContaining({ hidden: true })
+        );
+        store.dispose();
+    });
+
     it('ignores the shortcuts while typing or when the tab is hidden', async () => {
         const { store, view } = renderTab(async r => pageFor(r));
         await settle();
