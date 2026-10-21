@@ -692,7 +692,6 @@ export function tabs(
                             pageComponent.patientViewPageStore.sampleManager
                                 .result!
                         }
-                        openResource={pageComponent.openResource}
                     />
                 </div>
             </MSKTab>
