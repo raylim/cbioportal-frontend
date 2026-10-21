@@ -404,7 +404,7 @@ if (process.env.PW_SUITE === 'wsi') {
             );
         });
 
-        test('filters by clinical values from the search and by specimen match', async ({
+        test('filters by clinical values from the search and by match level', async ({
             page,
         }) => {
             const mocks = await installStudySlidesMocks(page);

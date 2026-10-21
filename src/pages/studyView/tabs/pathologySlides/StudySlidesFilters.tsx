@@ -246,7 +246,7 @@ export const StudySlidesSearch: React.FunctionComponent<{
                                         >
                                             {option.kind === 'clinical'
                                                 ? option.displayName
-                                                : 'Specimen match'}
+                                                : 'Match'}
                                         </span>
                                     </span>
                                     <span
