@@ -125,7 +125,7 @@ const MATCH_LABELS: Record<string, { text: string; tooltip: string }> = {
     PART: {
         text: 'Part',
         tooltip:
-            'The slide comes from the same specimen part as the sequenced sample; the sequenced block is not confirmed',
+            'The slide comes from the same part as the sequenced sample; the sequenced block is not confirmed',
     },
 };
 
@@ -172,7 +172,7 @@ export interface PathologySlideTooltipContent {
 /**
  * Timeline tooltip content for one PATHOLOGY SLIDES event, e.g.
  * "Pathology slides · H&E · Part-matched" followed by Sample, Procedure,
- * Specimen and Slides lines.
+ * Part and Slides lines.
  */
 export function buildPathologySlideTooltipContent(
     event: PathologySlideEvent,
@@ -213,7 +213,7 @@ export function buildPathologySlideTooltipContent(
     }
     const specimen = attribute(event, 'SPECIMEN');
     if (specimen) {
-        lines.push({ label: 'Specimen', value: specimen });
+        lines.push({ label: 'Part', value: specimen });
     }
     const viewable = countAttribute(event, 'IMAGE_COUNT');
     const total = Math.max(
