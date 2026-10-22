@@ -17,6 +17,7 @@ import {
     IResourceTableTab,
     toResourceTableRows,
 } from 'shared/lib/ResourceTableUtils';
+import { resourceSearchTermForQuery } from 'shared/lib/ResourcePolicy';
 import {
     PatientIdentifier,
     Sample,
@@ -197,6 +198,13 @@ export class ResourceTableStore {
      * The cohort-scoped request, without paging. Both fetches start from this; only the rows
      * fetch adds pageNumber/pageSize, so turning a page does not re-run the metadata fetch.
      */
+    /** The search sent to the backend; see resourceSearchTermForQuery. */
+    @computed private get querySearchTerm(): string | undefined {
+        return this.searchTerm
+            ? resourceSearchTermForQuery(this.activeResourceId, this.searchTerm)
+            : undefined;
+    }
+
     @computed private get baseQuery() {
         return {
             studyIds: this.studyIds,
@@ -204,7 +212,7 @@ export class ResourceTableStore {
             sampleIdentifiers: this.sampleIdentifiers,
             sortBy: this.sortBy,
             direction: this.sortDirection,
-            search: this.searchTerm || undefined,
+            search: this.querySearchTerm,
             filters: this.filters.length > 0 ? this.filters : undefined,
         };
     }
@@ -323,7 +331,7 @@ export class ResourceTableStore {
             ),
             sortBy: this.sortBy,
             direction: this.sortDirection,
-            search: this.searchTerm || undefined,
+            search: this.querySearchTerm,
             filters: this.filters.length > 0 ? this.filters : undefined,
         });
         return toResourceTableRows(result);
