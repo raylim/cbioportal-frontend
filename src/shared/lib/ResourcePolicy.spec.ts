@@ -117,14 +117,14 @@ describe('legacy H&E resource policy', () => {
 });
 
 describe('slide ID display', () => {
-    it('shows a slide table slide key as a dashed Slide ID', () => {
+    it('shows a slide table slide key as a WSI- Slide ID', () => {
         assert.equal(
             resourceMetadataDisplayValue(
                 'WSI_SAMPLE',
                 'slide_key',
                 '1234094d6bc6'
             ),
-            '1234-094d-6bc6'
+            'WSI-1234-094d-6bc6'
         );
     });
 
@@ -139,12 +139,20 @@ describe('slide ID display', () => {
         );
     });
 
-    it('searches a slide table for the bare key of a pasted Slide ID', () => {
-        assert.equal(
-            resourceSearchTermForQuery('WSI_SAMPLE', '1234-094D-6bc6'),
-            '1234094d6bc6'
-        );
-    });
+    it.each([
+        'WSI-1234-094D-6bc6',
+        'wsi-1234-094d-6bc6',
+        '1234-094d-6bc6',
+        'WSI-1234094d6bc6',
+    ])(
+        'searches a slide table for the bare key of a pasted Slide ID %p',
+        term => {
+            assert.equal(
+                resourceSearchTermForQuery('WSI_SAMPLE', term),
+                '1234094d6bc6'
+            );
+        }
+    );
 
     it('leaves other searches unchanged', () => {
         assert.equal(
@@ -158,6 +166,10 @@ describe('slide ID display', () => {
         assert.equal(
             resourceSearchTermForQuery('NOTES', '1234-094d-6bc6'),
             '1234-094d-6bc6'
+        );
+        assert.equal(
+            resourceSearchTermForQuery('NOTES', 'WSI-1234-094d-6bc6'),
+            'WSI-1234-094d-6bc6'
         );
     });
 });

@@ -111,7 +111,7 @@ describe('ResourceDataTable metadata columns', () => {
         );
     });
 
-    it('shows slide keys dashed and downloads them bare', () => {
+    it('shows slide keys as WSI- Slide IDs and downloads them bare', () => {
         const [slideId] = columns({
             columns: [
                 metadataColumn({ id: 'metadata:slide_key', label: 'Slide ID' }),
@@ -123,7 +123,7 @@ describe('ResourceDataTable metadata columns', () => {
         };
 
         const cell: any = slideId.render(slideRow);
-        assert.equal(cell.props.children, '1234-094d-6bc6');
+        assert.equal(cell.props.children, 'WSI-1234-094d-6bc6');
         assert.equal(slideId.download!(slideRow), '1234094d6bc6');
     });
 

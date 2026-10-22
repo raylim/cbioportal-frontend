@@ -115,7 +115,7 @@ export function slideStainFilterQuery(
 
 const SLIDE_KEY_METADATA_KEY = 'slide_key';
 
-/** A metadata value as a resource table cell shows it: slide keys read as dashed Slide IDs. */
+/** A metadata value as a resource table cell shows it: slide keys read as WSI- Slide IDs. */
 export function resourceMetadataDisplayValue(
     resourceId: string | undefined,
     metadataKey: string,
@@ -127,8 +127,8 @@ export function resourceMetadataDisplayValue(
 }
 
 /**
- * The search the backend runs for a resource table's search box: in a slide table, a pasted dashed
- * Slide ID searches for the bare slide key it stands for.
+ * The search the backend runs for a resource table's search box: in a slide table, a pasted Slide ID
+ * (WSI-1234-094d-6bc6, with or without the prefix or dashes) searches for the bare slide key it stands for.
  */
 export function resourceSearchTermForQuery(
     resourceId: string | undefined,
