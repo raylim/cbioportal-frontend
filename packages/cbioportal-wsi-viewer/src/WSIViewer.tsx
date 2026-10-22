@@ -1,6 +1,13 @@
 import * as React from 'react';
 import { observer } from 'mobx-react';
-import { observable, action, computed, makeObservable } from 'mobx';
+import {
+    observable,
+    action,
+    computed,
+    makeObservable,
+    reaction,
+    IReactionDisposer,
+} from 'mobx';
 import { DefaultTooltip } from 'cbioportal-frontend-commons';
 import {
     PathologySlideFilter,
@@ -23,7 +30,11 @@ import {
 import { chooseInitialServableSlide } from './wsiInitialSlideUtils';
 import { MetaRow, WsiMetaSidebar } from './wsiMetaSidebar';
 import { buildPathRows, buildWsiRows } from './wsiMetaUtils';
-import { hashUrlState } from './wsiViewStateUtils';
+import {
+    hashUrlState,
+    readWsiHashFilters,
+    writeWsiHashFilters,
+} from './wsiViewStateUtils';
 import { compareSamplesForNavigation } from './wsiNavUtils';
 import { WsiNavPanel } from './wsiNavPanel';
 import {
@@ -233,8 +244,38 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
         }, SLIDE_SELECTION_DEBOUNCE_MS);
     };
     private readonly handleHashChange = () => {
+        // A hidden viewer (another tab is shown) keeps its filters: that
+        // tab's history entries don't carry them.
+        if (!this.props.hidden && window.location.hash.startsWith('#wsi:')) {
+            this.applyFiltersFromHash();
+        }
         void this.selectSlideFromHash();
     };
+    private disposeFilterUrlSync: IReactionDisposer | null = null;
+
+    /** Takes the list's filters from the hash, e.g. after Back or Forward. */
+    @action.bound
+    private applyFiltersFromHash() {
+        const filters = readWsiHashFilters();
+        const stain = filters.stain ?? 'all';
+        const match = filters.match ?? 'all';
+        if (stain === this.stainFilter && match === this.matchFilter) {
+            return;
+        }
+        this.cancelPendingSlideSelection();
+        this.stainFilter = stain;
+        this.matchFilter = match;
+        if (!hashUrlState.read()) {
+            void this.reselectSlideForCurrentFilters();
+        }
+    }
+
+    /** Keeps the list's filters in the hash, so a copied link carries them. */
+    private writeFiltersToUrl() {
+        if (!this.props.hidden) {
+            writeWsiHashFilters(this.stainFilter, this.matchFilter);
+        }
+    }
     private unsubscribeUrlState: (() => void) | null = null;
     private readonly handleRetryViewer = () => {
         void this.controller.retrySelectedSlide();
@@ -274,6 +315,14 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
             props.initialMatchFilter ||
             getInitialMatchFilter(props.pathologyFilter);
         this.linkoutScopeActive = !!props.pathologyFilter;
+        // Filters in a shared link's hash win over the host's initial ones.
+        const hashFilters = readWsiHashFilters();
+        if (hashFilters.stain) {
+            this.stainFilter = hashFilters.stain;
+        }
+        if (hashFilters.match) {
+            this.matchFilter = hashFilters.match;
+        }
         this.controller = new WsiViewerController(
             this.createControllerHost(),
             this.viewerState,
@@ -371,6 +420,13 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
         if (typeof document !== 'undefined') {
             document.addEventListener('keydown', this.handlePanelKey);
         }
+        if (this.stainFilter !== 'all' || this.matchFilter !== 'all') {
+            this.writeFiltersToUrl();
+        }
+        this.disposeFilterUrlSync = reaction(
+            () => [this.stainFilter, this.matchFilter],
+            () => this.writeFiltersToUrl()
+        );
         void this.controller.loadHierarchy();
     }
 
@@ -485,7 +541,9 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
             // the reload would open the previous patient's slide.
             this.cancelPendingSlideSelection();
             this.controller.dispose();
-            void this.controller.loadHierarchy(false);
+            // The viewport is restored only for a hash slide of this patient,
+            // e.g. after Back to an earlier patient.
+            void this.controller.loadHierarchy(true);
         } else if (pathologyFilterChanged) {
             this.applyPathologyFilterFromSourceHierarchy();
         } else if (initialMatchFilterChanged || stainFilterChanged) {
@@ -498,6 +556,8 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
     componentWillUnmount() {
         this.unsubscribeUrlState?.();
         this.unsubscribeUrlState = null;
+        this.disposeFilterUrlSync?.();
+        this.disposeFilterUrlSync = null;
         if (typeof document !== 'undefined') {
             document.removeEventListener(
                 'visibilitychange',

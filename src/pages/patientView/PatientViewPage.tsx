@@ -5,6 +5,10 @@ import {
 } from 'shared/lib/ResourcePolicy';
 import _ from 'lodash';
 import { DiscreteCopyNumberData } from 'cbioportal-ts-api-client';
+import {
+    readWsiHashFilters,
+    writeOnlyWsiHashFilters,
+} from 'cbioportal-wsi-viewer';
 import { PaginationControls } from '../../shared/components/paginationControls/PaginationControls';
 import { IColumnVisibilityDef } from 'shared/components/columnVisibilityControls/ColumnVisibilityControls';
 import {
@@ -400,6 +404,14 @@ export class PatientViewPageInner extends React.Component<
 
     @action.bound
     handlePatientClick(id: string) {
+        // The slide viewer's #wsi: hash names this patient's slide; the next
+        // patient's entry keeps only the slide list's filters.
+        const wsiFilters = readWsiHashFilters();
+        this.movePatient(id);
+        writeOnlyWsiHashFilters(wsiFilters);
+    }
+
+    private movePatient(id: string) {
         let values = id.split(':');
         if (values.length == 2) {
             this.urlWrapper.updateURL({
