@@ -111,6 +111,22 @@ describe('ResourceDataTable metadata columns', () => {
         );
     });
 
+    it('shows slide keys dashed and downloads them bare', () => {
+        const [slideId] = columns({
+            columns: [
+                metadataColumn({ id: 'metadata:slide_key', label: 'Slide ID' }),
+            ] as ResourceColumnInfo[],
+        });
+        const slideRow: any = {
+            resourceId: 'WSI_SAMPLE',
+            metadata: { slide_key: '1234094d6bc6' },
+        };
+
+        const cell: any = slideId.render(slideRow);
+        assert.equal(cell.props.children, '1234-094d-6bc6');
+        assert.equal(slideId.download!(slideRow), '1234094d6bc6');
+    });
+
     it('renders the metadata value for its own key', () => {
         const cols = columns({
             columns: [
