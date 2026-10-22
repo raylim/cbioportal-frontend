@@ -19,6 +19,7 @@ import TabbedTableLayout from 'shared/components/tabbedTable/TabbedTableLayout';
 import {
     isWsiResourceId,
     patientViewPathForResource,
+    resourceMetadataDisplayValue,
     slideStainFilterForColumnFilters,
     slideStainFilterQuery,
 } from 'shared/lib/ResourcePolicy';
@@ -222,7 +223,18 @@ export class ResourceDataTable extends React.Component<
         return this.createColumn(
             `metadata:${metadataKey}`,
             label,
-            row => <span>{row.metadata[metadataKey] || NOT_AVAILABLE}</span>,
+            row => (
+                <span>
+                    {row.metadata[metadataKey]
+                        ? resourceMetadataDisplayValue(
+                              row.resourceId,
+                              metadataKey,
+                              row.metadata[metadataKey]
+                          )
+                        : NOT_AVAILABLE}
+                </span>
+            ),
+            // Downloads keep the stored value (a bare slide key), as links and the API do.
             row => row.metadata[metadataKey] || NOT_AVAILABLE,
             overrides
         );
