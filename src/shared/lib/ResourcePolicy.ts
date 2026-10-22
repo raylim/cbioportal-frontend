@@ -1,4 +1,8 @@
-import { WsiStainFilter } from 'cbioportal-wsi-viewer';
+import {
+    formatSlideId,
+    slideKeyFromSlideId,
+    WsiStainFilter,
+} from 'cbioportal-wsi-viewer';
 import { getServerConfig } from 'config/config';
 import { PatientViewPageTabs } from 'pages/patientView/PatientViewPageTabIds';
 import { PathologySlideSettings } from 'pages/patientView/PatientViewUrlWrapper';
@@ -121,4 +125,28 @@ export function slideStainFilterQuery(
     return stainFilter
         ? { pathologySlideSettings: JSON.stringify(settings) }
         : {};
+}
+
+const SLIDE_KEY_METADATA_KEY = 'slide_key';
+
+/** A metadata value as a resource table cell shows it: slide keys read as dashed Slide IDs. */
+export function resourceMetadataDisplayValue(
+    resourceId: string | undefined,
+    metadataKey: string,
+    value: string
+): string {
+    return isWsiResourceId(resourceId) && metadataKey === SLIDE_KEY_METADATA_KEY
+        ? formatSlideId(value)
+        : value;
+}
+
+/**
+ * The search the backend runs for a resource table's search box: in a slide table, a pasted dashed
+ * Slide ID searches for the bare slide key it stands for.
+ */
+export function resourceSearchTermForQuery(
+    resourceId: string | undefined,
+    term: string
+): string {
+    return (isWsiResourceId(resourceId) && slideKeyFromSlideId(term)) || term;
 }

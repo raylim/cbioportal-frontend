@@ -6,6 +6,8 @@ import {
     isWsiResourceId,
     isWsiTileServerConfigured,
     patientViewPathForResource,
+    resourceMetadataDisplayValue,
+    resourceSearchTermForQuery,
     slideKeyFromSlideUrl,
     shouldHideLegacyHeResourceTab,
     slideStainFilterForColumnFilters,
@@ -138,5 +140,51 @@ describe('legacy H&E resource policy', () => {
         assert.isTrue(isWsiResourceId('WSI_PATIENT'));
         assert.isFalse(isWsiResourceId('HE'));
         assert.isFalse(isWsiResourceId(undefined));
+    });
+});
+
+describe('slide ID display', () => {
+    it('shows a slide table slide key as a dashed Slide ID', () => {
+        assert.equal(
+            resourceMetadataDisplayValue(
+                'WSI_SAMPLE',
+                'slide_key',
+                '1234094d6bc6'
+            ),
+            '1234-094d-6bc6'
+        );
+    });
+
+    it('leaves other columns and other resources unchanged', () => {
+        assert.equal(
+            resourceMetadataDisplayValue('WSI_SAMPLE', 'stain_name', 'H&E'),
+            'H&E'
+        );
+        assert.equal(
+            resourceMetadataDisplayValue('NOTES', 'slide_key', '1234094d6bc6'),
+            '1234094d6bc6'
+        );
+    });
+
+    it('searches a slide table for the bare key of a pasted Slide ID', () => {
+        assert.equal(
+            resourceSearchTermForQuery('WSI_SAMPLE', '1234-094D-6bc6'),
+            '1234094d6bc6'
+        );
+    });
+
+    it('leaves other searches unchanged', () => {
+        assert.equal(
+            resourceSearchTermForQuery('WSI_SAMPLE', 'P-0000012-T06-IM7'),
+            'P-0000012-T06-IM7'
+        );
+        assert.equal(
+            resourceSearchTermForQuery('WSI_SAMPLE', '1234094d6bc6'),
+            '1234094d6bc6'
+        );
+        assert.equal(
+            resourceSearchTermForQuery('NOTES', '1234-094d-6bc6'),
+            '1234-094d-6bc6'
+        );
     });
 });

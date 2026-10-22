@@ -14,6 +14,7 @@ export {
     WsiHashViewport,
 } from './wsiViewStateUtils';
 export { fetchWsiPatientHierarchy } from './wsiHierarchyFetchCache';
+export { formatSlideId, slideKeyFromSlideId } from './wsiSlideId';
 export { createPromiseCache, PromiseCache } from './wsiCacheUtils';
 export * from './wsiTheme';
 export {
