@@ -118,4 +118,24 @@ describe('PatientWsiSlidesTab', () => {
         expect(props.initialStainFilter).toBeUndefined();
         expect(props.preferredSampleId).toBe('P-1-T01');
     });
+
+    it('passes the clinical events to the viewer', () => {
+        const clinicalEvents = [
+            {
+                eventType: 'SEQUENCING',
+                startNumberOfDaysSinceDiagnosis: 0,
+                attributes: [{ key: 'SAMPLE_ID', value: 'P-1-T01' }],
+            },
+        ] as any[];
+        render(
+            <PatientWsiSlidesTab
+                {...baseProps}
+                query={{}}
+                clinicalEvents={clinicalEvents}
+            />
+        );
+        const props =
+            mockEntryPoint.mock.calls[mockEntryPoint.mock.calls.length - 1][0];
+        expect(props.clinicalEvents).toBe(clinicalEvents);
+    });
 });
