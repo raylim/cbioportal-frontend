@@ -18,6 +18,7 @@ import {
     formatSpecimenLabel,
     realPartDescription,
 } from './wsiSpecimenUtils';
+import { formatSlideId } from './wsiSlideId';
 import { WSI_STAIN_COLORS } from './wsiTheme';
 import { nativeObjectivePower } from './wsiScaleUtils';
 import { getWsiViewerRuntime } from './wsiViewerConfig';
@@ -249,7 +250,7 @@ export function buildPathRows(
             label: 'Slide ID',
             labelTip:
                 'De-identified slide ID, the same one shown in the study slide table and used in slide links',
-            value: slide.slide_key,
+            value: formatSlideId(slide.slide_key),
         });
     }
 
