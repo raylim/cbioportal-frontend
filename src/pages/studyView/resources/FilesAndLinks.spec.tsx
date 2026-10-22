@@ -1,6 +1,6 @@
 import { getServerConfig } from 'config/config';
 import { ResourceTableStore } from 'shared/components/resourceTable/ResourceTableStore';
-import { isHiddenFromResourceViews as isHiddenFromFilesAndLinks } from 'shared/lib/ResourcePolicy';
+import { isHiddenFromStudyResourceTable as isHiddenFromFilesAndLinks } from 'shared/lib/ResourcePolicy';
 
 describe('Files & Links resource filtering', () => {
     let savedTileServerUrl: unknown;
@@ -13,9 +13,9 @@ describe('Files & Links resource filtering', () => {
         (getServerConfig() as any).wsi_tile_server_url = savedTileServerUrl;
     });
 
-    it('always leaves out the slide resources', () => {
+    it('lists the slide table but not the patient slide resource', () => {
         (getServerConfig() as any).wsi_tile_server_url = '';
-        expect(isHiddenFromFilesAndLinks('WSI_SAMPLE')).toBe(true);
+        expect(isHiddenFromFilesAndLinks('WSI_SAMPLE')).toBe(false);
         expect(isHiddenFromFilesAndLinks('WSI_PATIENT')).toBe(true);
         expect(isHiddenFromFilesAndLinks('MSK_HNE')).toBe(false);
         expect(isHiddenFromFilesAndLinks('OTHER')).toBe(false);
