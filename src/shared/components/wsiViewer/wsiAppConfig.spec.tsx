@@ -55,6 +55,17 @@ describe('buildWsiViewerConfig', () => {
         delete mockServerConfig.user_display_name;
         expect(wsiAuthScope()).toBe('anonymousUser');
     });
+
+    it('enables annotations only when an annotation service is configured', () => {
+        expect(buildWsiViewerConfig().annotations).toBeUndefined();
+        mockServerConfig.msk_wsi_annotation_api_url = '  ';
+        expect(buildWsiViewerConfig().annotations).toBeUndefined();
+        mockServerConfig.msk_wsi_annotation_api_url =
+            'https://annotations.example/wsi/';
+        expect(buildWsiViewerConfig().annotations).toEqual({
+            apiUrl: 'https://annotations.example/wsi',
+        });
+    });
 });
 
 describe('AppWsiViewer', () => {
