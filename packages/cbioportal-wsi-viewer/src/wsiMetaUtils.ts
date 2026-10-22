@@ -13,11 +13,7 @@ import {
     formatDaysSinceDiagnosis,
     normalizeBlockLabel,
 } from './wsiNavUtils';
-import {
-    blockName,
-    formatSpecimenLabel,
-    realPartDescription,
-} from './wsiSpecimenUtils';
+import { blockName, realPartDescription } from './wsiSpecimenUtils';
 import { formatSlideId } from './wsiSlideId';
 import { WSI_STAIN_COLORS } from './wsiTheme';
 import { nativeObjectivePower } from './wsiScaleUtils';
@@ -141,29 +137,10 @@ export function buildWsiRows(
     return freezeMetaRows(rows);
 }
 
-function specimenTooltip(
-    slide: Pick<
-        Slide,
-        'part_number' | 'part_description' | 'block_label' | 'block_number'
-    >
-): string | undefined {
-    const description = realPartDescription(slide.part_description);
-    const part = slide.part_number
-        ? `part ${slide.part_number}${description ? ` (${description})` : ''}`
-        : description;
-    const block = slide.block_label || slide.block_number;
-    if (!part && !block) {
-        return undefined;
-    }
-    return `Cut from ${[block ? `block ${blockName(block)}` : null, part]
-        .filter(Boolean)
-        .join(' of ')}`;
-}
-
 /**
  * Pathology rows for the selected slide. Patient and study context is left
  * to the host page and the Clinical section; these rows describe the slide
- * and the specimen it was cut from.
+ * and the part and block it was cut from.
  */
 export function buildPathRows(
     slide: Slide,
@@ -179,18 +156,12 @@ export function buildPathRows(
         sample.sample_id && !isUnmatchedSample
             ? buildSampleUrl(studyId, sample.sample_id, patientId)
             : undefined;
-    const blockLbl = normalizeBlockLabel(slide.block_label, slide.block_number);
-    const sampleTip = blockLbl ? `Block: ${blockLbl}` : undefined;
+    const block = normalizeBlockLabel(slide.block_label, slide.block_number);
 
     // A generated "Part <n>" description names no anatomical site and repeats the Part row.
     const partDesc = realPartDescription(slide.part_description);
+    const part = slide.part_number || partDesc;
     const matchLevel = slide.match_level;
-    const hasSpecimenDetails = !!(
-        slide.part_number ||
-        slide.part_description ||
-        slide.block_label ||
-        slide.block_number
-    );
 
     const rows: MetaRow[] = [
         {
@@ -201,14 +172,13 @@ export function buildPathRows(
         },
         {
             label: 'Sample',
-            labelTip: sampleTip
-                ? 'Click for cBioPortal sample view — hover for block info'
+            labelTip: sampleUrl
+                ? 'Click for cBioPortal sample view'
                 : 'Tumor sample identifier',
             value: isUnmatchedSample
                 ? 'Unmatched pathology slides'
                 : sample.sample_id || '—',
             href: sampleUrl,
-            valueTip: sampleTip,
         },
     ];
     const timeline = isUnmatchedSample
@@ -217,12 +187,18 @@ export function buildPathRows(
     if (timeline) {
         rows.push(timeline);
     }
-    if (matchLevel && hasSpecimenDetails) {
+    if (part) {
         rows.push({
             label: 'Part',
             labelTip: 'Pathology part containing this slide',
-            value: formatSpecimenLabel({ ...slide, match_level: matchLevel }),
-            valueTip: specimenTooltip(slide),
+            value: part,
+        });
+    }
+    if (block) {
+        rows.push({
+            label: 'Block',
+            labelTip: 'Tissue block this slide was cut from',
+            value: blockName(block),
         });
     }
     if (matchLevel === 'BLOCK' || matchLevel === 'PART') {
