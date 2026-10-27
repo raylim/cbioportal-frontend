@@ -1,5 +1,9 @@
 import { test, expect, Page } from '../fixtures';
-import { routeSlideAccess, routeTilePixels } from './wsi-foundation-mocks';
+import {
+    routeSlideAccess,
+    routeTilePixels,
+    tileMetadata,
+} from './wsi-foundation-mocks';
 import { studySlidesPageFor } from '../../src/pages/studyView/tabs/pathologySlides/studySlidesTestServer';
 import { StudySlidesRequest } from '../../src/pages/studyView/tabs/pathologySlides/studySlidesApi';
 
@@ -52,50 +56,46 @@ function slideKeyFor(patientId: string) {
     return (patientIds.indexOf(patientId) + 1).toString(16).padStart(12, '0');
 }
 
-function hierarchyFor(patientId: string) {
-    return {
-        referenceSampleId: `${patientId}-S`,
-        sampleGroups: [
-            {
-                sampleId: `${patientId}-S`,
-                parts: [
-                    {
-                        partNumber: '1',
-                        partType: '',
-                        partDescription: 'Contract specimen',
-                        subspecialty: '',
-                        blocks: [
-                            {
-                                blockNumber: 'A1',
-                                blockLabel: 'A1',
-                                slides: [
-                                    {
-                                        slideKey: slideKeyFor(patientId),
-                                        stainName: 'H&E initial',
-                                        stainGroup: 'H&E',
-                                        isHne: true,
-                                        isIhc: false,
-                                        magnification: '',
-                                        fileSizeBytes: null,
-                                        canServeTiles: true,
-                                        slideType: 'H&E',
-                                        sampleId: `${patientId}-S`,
-                                        matchLevel: 'BLOCK',
-                                        specimenKey: 'block::1::A1',
-                                    },
-                                ],
-                            },
-                        ],
-                    },
-                ],
+/** A patient's one WSI_SAMPLE slide row, as the resource table API returns it. */
+function slideRowsFor(patientId: string) {
+    return [
+        {
+            studyId: STUDY_ID,
+            resourceId: 'WSI_SAMPLE',
+            patientId,
+            sampleId: `${patientId}-S`,
+            metadata: {
+                slide_key: slideKeyFor(patientId),
+                reference_sample_id: `${patientId}-S`,
+                part_key: 'part:1',
+                part_number: '1',
+                part_description: 'Contract specimen',
+                block_key: 'block:A1',
+                block_number: 'A1',
+                block_label: 'A1',
+                stain_name: 'H&E initial',
+                stain_group: 'H&E',
+                is_hne: true,
+                is_ihc: false,
+                slide_type: 'H&E',
+                can_serve_tiles: true,
+                match_level: 'BLOCK',
+                specimen_key: 'block::1::A1',
+                wsi_serving: {
+                    sealed_source: 'sealed',
+                    tile_metadata_json: tileMetadata,
+                    thumbnail_width: 128,
+                    thumbnail_height: 96,
+                    thumbnail_content_type: 'image/png',
+                },
             },
-        ],
-    };
+        },
+    ];
 }
 
 interface StudySlidesMocks {
     studySlidesRequests: StudySlidesRequest[];
-    hierarchyPatients: string[];
+    slideRowPatients: string[];
     /** Every slide access request URL. */
     accessRequests: string[];
 }
@@ -103,7 +103,7 @@ interface StudySlidesMocks {
 async function installStudySlidesMocks(page: Page): Promise<StudySlidesMocks> {
     const mocks: StudySlidesMocks = {
         studySlidesRequests: [],
-        hierarchyPatients: [],
+        slideRowPatients: [],
         accessRequests: [],
     };
     const serverConfig = {
@@ -180,15 +180,24 @@ async function installStudySlidesMocks(page: Page): Promise<StudySlidesMocks> {
             });
         }
     );
-    await page.route(`**/api/wsi/v2/hierarchy/${STUDY_ID}/*`, route => {
-        const patientId = decodeURIComponent(
-            new URL(route.request().url()).pathname.split('/').pop() || ''
-        );
-        mocks.hierarchyPatients.push(patientId);
+    // The viewer lists a patient's slides from the WSI_SAMPLE and WSI_PATIENT
+    // resource rows; every patient here has one WSI_SAMPLE slide.
+    await page.route('**/api/resource-table/query/fetch', route => {
+        const query = route.request().postDataJSON();
+        const patientId: string =
+            query?.patientIdentifiers?.[0]?.patientId || '';
+        if (query?.resourceId !== 'WSI_SAMPLE') {
+            return route.fulfill({
+                status: 200,
+                contentType: 'application/json',
+                body: JSON.stringify([]),
+            });
+        }
+        mocks.slideRowPatients.push(patientId);
         return route.fulfill({
             status: 200,
             contentType: 'application/json',
-            body: JSON.stringify(hierarchyFor(patientId)),
+            body: JSON.stringify(slideRowsFor(patientId)),
         });
     });
     await routeSlideAccess(

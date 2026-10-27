@@ -1452,15 +1452,9 @@ describe('WSIViewer — loadHierarchy', () => {
         window.location.hash =
             'wsi:slide=other-patient-slide&x=1&y=2&z=3.000000&stain=hne';
         setFetchMock(
-            jest.fn().mockResolvedValue({
-                ok: true,
-                json: () =>
-                    Promise.resolve(
-                        makeWireHierarchy([
-                            makeSlide({ can_serve_tiles: false }),
-                        ])
-                    ),
-            })
+            rowsFetchMock(
+                makeLoadedHierarchy([makeSlide({ can_serve_tiles: false })])
+            )
         );
 
         const inst = makeInstance('P-XYZ');
