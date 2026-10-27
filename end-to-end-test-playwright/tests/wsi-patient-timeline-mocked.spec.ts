@@ -241,10 +241,10 @@ async function installPatientPageMocks(page: Page, accessRequests: string[]) {
     );
 }
 
-/** The slide key of each slide access request. */
+/** The serving key (the slide key) of each slide access request. */
 function accessedSlideKeys(accessRequests: string[]): string[] {
     return accessRequests.map(
-        url => new URL(url).searchParams.get('slideKey') || ''
+        url => new URL(url).searchParams.get('key') || ''
     );
 }
 
