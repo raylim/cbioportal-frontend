@@ -13,9 +13,10 @@ describe('Files & Links resource filtering', () => {
         (getServerConfig() as any).wsi_tile_server_url = savedTileServerUrl;
     });
 
-    it('lists the slide table but not the patient slide resource', () => {
+    it('lists the slide table but not the slide resources the viewer reads', () => {
         (getServerConfig() as any).wsi_tile_server_url = '';
-        expect(isHiddenFromFilesAndLinks('WSI_SAMPLE')).toBe(false);
+        expect(isHiddenFromFilesAndLinks('WSI_SLIDES')).toBe(false);
+        expect(isHiddenFromFilesAndLinks('WSI_SAMPLE')).toBe(true);
         expect(isHiddenFromFilesAndLinks('WSI_PATIENT')).toBe(true);
         expect(isHiddenFromFilesAndLinks('MSK_HNE')).toBe(false);
         expect(isHiddenFromFilesAndLinks('OTHER')).toBe(false);
