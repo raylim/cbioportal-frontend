@@ -12,6 +12,7 @@ export {
 // Type-only: the component itself is in the viewer entry.
 export { WsiViewerProps } from './WsiViewerEntry';
 export {
+    clearWsiHashFromCurrentUrl,
     hashUrlState,
     readWsiHashFilters,
     readWsiHashState,
