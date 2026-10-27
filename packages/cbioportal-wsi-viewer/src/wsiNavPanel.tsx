@@ -54,6 +54,11 @@ export interface WsiNavPanelProps {
     sampleIdFilter?: string;
     slideIdFilter?: Set<string>;
     linkoutScopeActive?: boolean;
+    /**
+     * Shows the "Sample …" chip for a sample scope. The host turns it off
+     * when its own sample control already shows (and clears) that scope.
+     */
+    showSampleScope?: boolean;
     matchFilter?: PathologySlideMatchFilter;
     showClearFilters?: boolean;
     deferOffscreenSamples?: boolean;
@@ -189,6 +194,7 @@ function WsiNavPanelComponent({
     sampleIdFilter,
     slideIdFilter,
     linkoutScopeActive = false,
+    showSampleScope = true,
     matchFilter = 'all',
     showClearFilters = false,
     deferOffscreenSamples = false,
@@ -360,10 +366,12 @@ function WsiNavPanelComponent({
 
     // With no filter to offer, no scope and no count, the area under the
     // header would be an empty bar.
+    const sampleScopeChip =
+        !!sampleIdFilter && linkoutScopeActive && showSampleScope;
     const hasFilterBlock =
         stainChoices.length > 0 ||
         matchChoices.length > 0 ||
-        (!!sampleIdFilter && linkoutScopeActive) ||
+        sampleScopeChip ||
         showClearFilters ||
         !!slideCountText;
 
@@ -426,7 +434,7 @@ function WsiNavPanelComponent({
                             />
                         </WsiFilterRow>
                     )}
-                    {sampleIdFilter && linkoutScopeActive && (
+                    {sampleScopeChip && (
                         <div
                             data-testid="wsi-sample-scope"
                             style={{

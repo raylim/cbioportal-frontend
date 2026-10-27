@@ -11,6 +11,7 @@ export {
     WsiSampleTimelineMap,
 } from './wsiSampleTimeline';
 export {
+    clearWsiHashFromCurrentUrl,
     hashUrlState,
     readWsiHashState,
     WsiHashState,
