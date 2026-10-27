@@ -104,7 +104,8 @@ function slideRowsFor(patientId: string) {
                 can_serve_tiles: true,
                 match_level: 'BLOCK',
                 specimen_key: 'block::1::A1',
-                wsi_serving: {
+                serving: {
+                    key: slideKeyFor(patientId),
                     sealed_source: 'sealed',
                     tile_metadata_json: tileMetadata,
                     thumbnail_width: 128,
@@ -287,7 +288,8 @@ async function installStudySlidesMocks(page: Page): Promise<StudySlidesMocks> {
     await routeSlideAccess(
         page,
         STUDY_ID,
-        (patientId, slideKey) => slideKey === slideKeyFor(patientId),
+        (resourceId, patientId, key) =>
+            resourceId === 'WSI_SAMPLE' && key === slideKeyFor(patientId),
         mocks.accessRequests
     );
     await routeTilePixels(page);
@@ -321,12 +323,12 @@ if (process.env.PW_SUITE === 'wsi') {
             expect(
                 mocks.studySlidesRequests[0].studyViewFilter.studyIds
             ).toEqual([STUDY_ID]);
-            // Slides are addressed only by their opaque key.
+            // Slides are addressed only by their opaque key and patient.
             expect(mocks.accessRequests.length).toBeGreaterThan(0);
             for (const accessUrl of mocks.accessRequests) {
                 const params = new URL(accessUrl).searchParams;
-                expect(params.get('slideKey')).toMatch(/^[0-9a-f]{12}$/);
-                expect([...params.keys()]).toEqual(['slideKey']);
+                expect(params.get('key')).toMatch(/^[0-9a-f]{12}$/);
+                expect([...params.keys()]).toEqual(['key', 'patientId']);
             }
 
             await page.getByTestId('study-slides-next').click();
