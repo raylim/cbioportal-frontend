@@ -96,8 +96,8 @@ export default class StudyViewURLWrapper extends URLWrapper<
         );
     }
 
-    public setResourceUrl(resourceUrl: string) {
-        this.updateURL({ resourceUrl });
+    public setResourceUrl(resourceUrl: string, replace = false) {
+        this.updateURL({ resourceUrl }, undefined, false, replace);
     }
 
     /** Records the Pathology Slides tab's view; the viewer is the default. */
