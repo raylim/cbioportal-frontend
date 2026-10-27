@@ -4,6 +4,7 @@
 import * as React from 'react';
 import { render } from '@testing-library/react';
 import PatientWsiSlidesTab, {
+    resetOpeningWsiSlidesLink,
     wsiSlidesTabScopeFromQuery,
 } from './PatientWsiSlidesTab';
 
@@ -84,6 +85,7 @@ describe('PatientWsiSlidesTab', () => {
     afterEach(() => {
         mockEntryPoint.mockClear();
         window.history.replaceState(null, '', '/');
+        resetOpeningWsiSlidesLink();
     });
 
     const baseProps = {
@@ -109,6 +111,23 @@ describe('PatientWsiSlidesTab', () => {
         );
     });
 
+    it('leaves the sample scope to the page sample filter', () => {
+        render(
+            <PatientWsiSlidesTab
+                {...baseProps}
+                query={{ sampleId: 'P-1-T01' }}
+            />
+        );
+        expect(mockEntryPoint).toHaveBeenLastCalledWith(
+            expect.objectContaining({
+                pathologyFilter: expect.objectContaining({
+                    sampleId: 'P-1-T01',
+                }),
+                hostShowsSampleScope: true,
+            })
+        );
+    });
+
     it('lets a hash slide deep link take precedence', () => {
         window.history.replaceState(null, '', '/#wsi:slide=slide-9');
         render(<PatientWsiSlidesTab {...baseProps} query={LINK_QUERY} />);
@@ -117,5 +136,41 @@ describe('PatientWsiSlidesTab', () => {
         expect(props.pathologyFilter).toBeUndefined();
         expect(props.initialStainFilter).toBeUndefined();
         expect(props.preferredSampleId).toBe('P-1-T01');
+    });
+
+    it('scopes to a newly picked sample even though the hash names the previous slide', () => {
+        window.history.replaceState(null, '', '/#wsi:slide=slide-9');
+        const first = render(
+            <PatientWsiSlidesTab
+                {...baseProps}
+                query={{ sampleId: 'P-1-T02' }}
+            />
+        );
+        expect(
+            mockEntryPoint.mock.calls[mockEntryPoint.mock.calls.length - 1][0]
+                .pathologyFilter
+        ).toBeUndefined();
+        // The patient view remounts the tab for the new sample.
+        first.unmount();
+
+        render(
+            <PatientWsiSlidesTab
+                {...baseProps}
+                query={{ sampleId: 'P-1-T01' }}
+            />
+        );
+
+        expect(mockEntryPoint).toHaveBeenLastCalledWith(
+            expect.objectContaining({
+                preferredSampleId: 'P-1-T01',
+                pathologyFilter: {
+                    sampleId: 'P-1-T01',
+                    matchLevel: undefined,
+                    specimenKey: undefined,
+                },
+            })
+        );
+        // The stale slide is dropped from the URL, so a reload keeps the scope.
+        expect(window.location.hash).toBe('');
     });
 });
