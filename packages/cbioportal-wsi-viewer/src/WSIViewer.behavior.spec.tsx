@@ -132,10 +132,15 @@ function rowsFetchMock(hierarchy: PatientHierarchy) {
     );
 }
 
-// Slide access is requested by slide key for a slide a loaded hierarchy
-// published for the patient.
-function testAccessUrl(studyId: string, patientId: string, slideKey: string) {
-    return `http://localhost/api/wsi/v2/resources/${studyId}/${patientId}/access?slideKey=${slideKey}`;
+// Slide access is requested from the slide's resource with its serving key,
+// for a slide a loaded hierarchy published for the patient.
+function testAccessUrl(
+    studyId: string,
+    patientId: string,
+    key: string,
+    resourceId = 'WSI_SAMPLE'
+) {
+    return `http://localhost/api/resources/${studyId}/${resourceId}/access?key=${key}&patientId=${patientId}`;
 }
 
 const TILE_SERVER_URL = 'https://tiles.example.com';
@@ -1663,7 +1668,7 @@ describe('WSIViewer — loadHierarchy', () => {
                     return {
                         ok: true,
                         json: async () =>
-                            makeAccessPayload({ slideKey: 'bootstrap-slide' }),
+                            makeAccessPayload({ key: 'bootstrap-slide' }),
                     } as Response;
                 }
                 throw new Error(`Unexpected fetch ${url}`);
@@ -1810,7 +1815,7 @@ describe('WSIViewer — loadHierarchy', () => {
                         Promise.resolve(
                             isSlideRowsRequest(url)
                                 ? slideRowsFor(mockHierarchy, init)
-                                : makeAccessPayload({ slideKey: 'A' })
+                                : makeAccessPayload({ key: 'A' })
                         ),
                 })
             )
@@ -1847,7 +1852,7 @@ describe('WSIViewer — loadHierarchy', () => {
                         Promise.resolve(
                             isSlideRowsRequest(url)
                                 ? slideRowsFor(mockHierarchy, init)
-                                : makeAccessPayload({ slideKey: 'A' })
+                                : makeAccessPayload({ key: 'A' })
                         ),
                 })
             )
@@ -1886,8 +1891,7 @@ describe('WSIViewer — prefetchSlideMetadata cancellation', () => {
         setFetchMock(
             jest.fn().mockResolvedValue({
                 ok: true,
-                json: () =>
-                    Promise.resolve(makeAccessPayload({ slideKey: 'AAA' })),
+                json: () => Promise.resolve(makeAccessPayload({ key: 'AAA' })),
             })
         );
 
@@ -2208,7 +2212,7 @@ describe('WSIViewer — open handler (mountOSD integration)', () => {
             json: () =>
                 Promise.resolve(
                     makeAccessPayload({
-                        slideKey: '42',
+                        key: '42',
                         tileMetadata: metaMock,
                     })
                 ),
@@ -2358,7 +2362,7 @@ describe('WSIViewer — open handler (mountOSD integration)', () => {
             json: () =>
                 Promise.resolve(
                     makeAccessPayload({
-                        slideKey: '42',
+                        key: '42',
                         tileMetadata: metaMock,
                     })
                 ),
@@ -2530,7 +2534,7 @@ describe('WSIViewer — open handler (mountOSD integration)', () => {
             json: () =>
                 Promise.resolve(
                     makeAccessPayload({
-                        slideKey: '42',
+                        key: '42',
                         tileMetadata: metaMock,
                     })
                 ),
@@ -2787,13 +2791,11 @@ describe('WSIViewer — open handler (mountOSD integration)', () => {
         const preloadFetchMock = jest
             .fn()
             .mockImplementation((url: string, init?: RequestInit) => {
-                if (url.includes('/wsi/v2/resources/')) {
+                if (url.includes('/api/resources/')) {
                     return Promise.resolve({
                         ok: true,
                         json: () =>
-                            Promise.resolve(
-                                makeAccessPayload({ slideKey: '42' })
-                            ),
+                            Promise.resolve(makeAccessPayload({ key: '42' })),
                     });
                 }
                 return Promise.resolve(rowsResponse(hierarchy, init));
@@ -2813,13 +2815,11 @@ describe('WSIViewer — open handler (mountOSD integration)', () => {
                 if (url === rowsUrl) {
                     return Promise.resolve(rowsResponse(hierarchy, init));
                 }
-                if (url.includes('/wsi/v2/resources/')) {
+                if (url.includes('/api/resources/')) {
                     return Promise.resolve({
                         ok: true,
                         json: () =>
-                            Promise.resolve(
-                                makeAccessPayload({ slideKey: '42' })
-                            ),
+                            Promise.resolve(makeAccessPayload({ key: '42' })),
                     });
                 }
                 return Promise.reject(new Error('unexpected metadata fetch'));
