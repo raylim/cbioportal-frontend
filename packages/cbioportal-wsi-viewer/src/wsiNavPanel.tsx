@@ -51,10 +51,10 @@ export interface WsiNavPanelProps {
     slideIdFilter?: Set<string>;
     linkoutScopeActive?: boolean;
     /**
-     * Shows the "Sample …" chip for a sample scope. The host turns it off
-     * when its own sample control already shows (and clears) that scope.
+     * The host owns the sample scope (its own sample control shows and
+     * widens it): no "Sample …" chip, and the filter counts are the sample's.
      */
-    showSampleScope?: boolean;
+    hostOwnsSampleScope?: boolean;
     matchFilter?: PathologySlideMatchFilter;
     showClearFilters?: boolean;
     deferOffscreenSamples?: boolean;
@@ -189,7 +189,7 @@ function WsiNavPanelComponent({
     sampleIdFilter,
     slideIdFilter,
     linkoutScopeActive = false,
-    showSampleScope = true,
+    hostOwnsSampleScope = false,
     matchFilter = 'all',
     showClearFilters = false,
     deferOffscreenSamples = false,
@@ -306,12 +306,22 @@ function WsiNavPanelComponent({
             : undefined;
     const hiddenSampleCount =
         filteredSampleEntries.length - sampleEntries.length;
+    // A link scope widens to the whole patient once a filter is picked, so
+    // its counts are the patient's; a host-owned sample scope stays put.
+    const facetSampleId =
+        hostOwnsSampleScope && linkoutScopeActive ? sampleIdFilter : undefined;
     const facetSlides = React.useMemo(
         () =>
-            unscopedSampleEntries.flatMap(entry =>
-                entry.filteredSlides.map(({ slide }) => slide)
-            ),
-        [unscopedSampleEntries]
+            unscopedSampleEntries
+                .filter(
+                    entry =>
+                        !facetSampleId ||
+                        entry.sample.sample_id === facetSampleId
+                )
+                .flatMap(entry =>
+                    entry.filteredSlides.map(({ slide }) => slide)
+                ),
+        [facetSampleId, unscopedSampleEntries]
     );
     const chips: Array<{
         key: WsiStainFilter;
@@ -364,7 +374,7 @@ function WsiNavPanelComponent({
     // With no filter to offer, no scope and no count, the area under the
     // header would be an empty bar.
     const sampleScopeChip =
-        !!sampleIdFilter && linkoutScopeActive && showSampleScope;
+        !!sampleIdFilter && linkoutScopeActive && !hostOwnsSampleScope;
     const hasFilterBlock =
         stainChoices.length > 0 ||
         matchChoices.length > 0 ||

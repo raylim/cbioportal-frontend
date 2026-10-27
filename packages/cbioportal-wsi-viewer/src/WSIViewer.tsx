@@ -2079,7 +2079,7 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
                         sampleIdFilter={this.scopedSampleId}
                         slideIdFilter={this.preferredSlideKeys}
                         linkoutScopeActive={this.linkoutScopeActive}
-                        showSampleScope={!this.props.hostOwnsSampleScope}
+                        hostOwnsSampleScope={this.props.hostOwnsSampleScope}
                         stainFilter={stainFilter}
                         matchFilter={matchFilter}
                         showClearFilters={showClearFilters}
