@@ -187,8 +187,10 @@ test.describe('WSI molecular child contract', () => {
                 const parsed = new URL(url);
                 return (
                     parsed.pathname.endsWith(
-                        `/api/wsi/v2/resources/${STUDY_ID}/${PATIENT_ID}/access`
-                    ) && parsed.searchParams.get('slideKey') === SLIDE_KEY
+                        `/api/resources/${STUDY_ID}/WSI_SAMPLE/access`
+                    ) &&
+                    parsed.searchParams.get('key') === SLIDE_KEY &&
+                    parsed.searchParams.get('patientId') === PATIENT_ID
                 );
             })
         ).toBe(true);
