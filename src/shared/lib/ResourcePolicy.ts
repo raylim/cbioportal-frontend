@@ -11,12 +11,17 @@ import { isNonEmptyString } from './ResourceUtils';
 // H&E slide resources that the native viewer replaces. Every H&E resource on
 // the public and MSK portals uses one of these IDs.
 const LEGACY_HE_RESOURCE_IDS = new Set(['HE', 'MSK_HNE']);
-// Whole-slide images are stored as these resources, one row per slide. The
-// patient view reaches slides through its Pathology Slides tab; study view
-// lists WSI_SAMPLE as its slide table, which the backend serves with only the
-// allowlisted public slide fields.
-const WSI_RESOURCE_IDS = new Set(['WSI_SAMPLE', 'WSI_PATIENT']);
-export const STUDY_SLIDE_TABLE_RESOURCE_ID = 'WSI_SAMPLE';
+// Whole-slide images are stored as the WSI_SAMPLE and WSI_PATIENT resources,
+// one row per slide, which the viewer reads; the patient view reaches slides
+// through its Pathology Slides tab. Study view lists WSI_SLIDES as its slide
+// table: every viewable slide of the study, which the backend serves with only
+// the allowlisted public slide fields (no tile serving data).
+export const STUDY_SLIDE_TABLE_RESOURCE_ID = 'WSI_SLIDES';
+const WSI_RESOURCE_IDS = new Set([
+    'WSI_SAMPLE',
+    'WSI_PATIENT',
+    STUDY_SLIDE_TABLE_RESOURCE_ID,
+]);
 
 export function isWsiResourceId(resourceId: string | undefined): boolean {
     return !!resourceId && WSI_RESOURCE_IDS.has(resourceId);
@@ -55,7 +60,7 @@ export function isHiddenFromResourceViews(resourceId: string): boolean {
 
 /**
  * Resources study view's resource table leaves out. WSI_PATIENT never shows; the slide table
- * (WSI_SAMPLE) shows as its own tab only without the slide viewer. With the viewer configured,
+ * (WSI_SLIDES) shows as its own tab only without the slide viewer. With the viewer configured,
  * the Pathology Slides tab shows the slide table as one of its views instead.
  */
 export function isHiddenFromStudyResourceTable(resourceId: string): boolean {

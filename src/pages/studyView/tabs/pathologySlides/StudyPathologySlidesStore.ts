@@ -45,6 +45,11 @@ export function isSamePatient(
 /** The tab's two views: patients beside the viewer, or the cohort's slide table. */
 export type StudySlidesView = 'viewer' | 'table';
 
+// The slide table's own resource tab, and the one it had while WSI_SAMPLE was the slide table.
+const SLIDE_TABLE_TAB_IDS = [STUDY_SLIDE_TABLE_RESOURCE_ID, 'WSI_SAMPLE'].map(
+    getStudyViewResourceTableTabId
+);
+
 /**
  * The Pathology Slides view a study-view URL asks for: `wsiView=table`, or an old link to the
  * slide table's own resource tab, which then redirects to the Pathology Slides table view.
@@ -54,8 +59,8 @@ export function studySlidesViewFromUrl(
     wsiView: string | undefined
 ): { view: StudySlidesView; redirectToSlidesTab: boolean } {
     const redirectToSlidesTab =
-        tabId ===
-            getStudyViewResourceTableTabId(STUDY_SLIDE_TABLE_RESOURCE_ID) &&
+        !!tabId &&
+        SLIDE_TABLE_TAB_IDS.includes(tabId) &&
         isWsiTileServerConfigured();
     return {
         view: wsiView === 'table' || redirectToSlidesTab ? 'table' : 'viewer',
