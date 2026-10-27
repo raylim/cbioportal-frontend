@@ -1,6 +1,7 @@
 import { test, expect, Page } from '../fixtures';
 import {
     installFoundationMocks,
+    makeSlideRow,
     STUDY_ID,
     PATIENT_ID,
     SAMPLE_ID,
@@ -18,97 +19,54 @@ const ALL_KEYS = [HNE_KEY, IHC_KEY, LATER_KEY];
 const BLOCK_SPECIMEN_KEY = 'block::1::A1';
 const PART_SPECIMEN_KEY = 'part::2';
 
-function slide(
+function slideRow(
     slideKey: string,
     stain: 'H&E' | 'IHC',
     sampleId: string,
     matchLevel: 'BLOCK' | 'PART',
-    specimenKey: string
+    specimenKey: string,
+    part: { number: string; description: string; block: string }
 ) {
-    return {
+    return makeSlideRow(
         slideKey,
-        stainName: stain === 'IHC' ? 'IHC PD-L1' : 'H&E initial',
-        stainGroup: stain,
-        isHne: stain === 'H&E',
-        isIhc: stain === 'IHC',
-        magnification: '',
-        fileSizeBytes: null,
-        canServeTiles: true,
-        slideType: stain,
+        stain === 'IHC' ? 'IHC PD-L1' : 'H&E initial',
+        stain,
         sampleId,
-        matchLevel,
-        specimenKey,
-    };
+        {
+            part_key: `part:${part.number}`,
+            part_number: part.number,
+            part_description: part.description,
+            block_key: `block:${part.block}`,
+            block_number: part.block,
+            block_label: part.block,
+            is_hne: stain === 'H&E',
+            is_ihc: stain === 'IHC',
+            slide_type: stain,
+            match_level: matchLevel,
+            specimen_key: specimenKey,
+        }
+    );
 }
+
+const PART_1 = { number: '1', description: 'Primary specimen', block: 'A1' };
+const PART_2 = { number: '2', description: 'Recurrence specimen', block: 'B1' };
 
 /**
  * Sample 1, block A1: an H&E and an IHC slide. Sample 2, part 2: an H&E
- * slide. The hierarchy carries no timing; the timeline file does.
+ * slide. The slide rows carry no timing; the timeline file does.
  */
-const hierarchy = {
-    referenceSampleId: SAMPLE_ID,
-    sampleGroups: [
-        {
-            sampleId: SAMPLE_ID,
-            parts: [
-                {
-                    partNumber: '1',
-                    partType: '',
-                    partDescription: 'Primary specimen',
-                    subspecialty: '',
-                    blocks: [
-                        {
-                            blockNumber: 'A1',
-                            blockLabel: 'A1',
-                            slides: [
-                                slide(
-                                    HNE_KEY,
-                                    'H&E',
-                                    SAMPLE_ID,
-                                    'BLOCK',
-                                    BLOCK_SPECIMEN_KEY
-                                ),
-                                slide(
-                                    IHC_KEY,
-                                    'IHC',
-                                    SAMPLE_ID,
-                                    'BLOCK',
-                                    BLOCK_SPECIMEN_KEY
-                                ),
-                            ],
-                        },
-                    ],
-                },
-            ],
-        },
-        {
-            sampleId: LATER_SAMPLE_ID,
-            parts: [
-                {
-                    partNumber: '2',
-                    partType: '',
-                    partDescription: 'Recurrence specimen',
-                    subspecialty: '',
-                    blocks: [
-                        {
-                            blockNumber: 'B1',
-                            blockLabel: 'B1',
-                            slides: [
-                                slide(
-                                    LATER_KEY,
-                                    'H&E',
-                                    LATER_SAMPLE_ID,
-                                    'PART',
-                                    PART_SPECIMEN_KEY
-                                ),
-                            ],
-                        },
-                    ],
-                },
-            ],
-        },
-    ],
-};
+const slideRows = [
+    slideRow(HNE_KEY, 'H&E', SAMPLE_ID, 'BLOCK', BLOCK_SPECIMEN_KEY, PART_1),
+    slideRow(IHC_KEY, 'IHC', SAMPLE_ID, 'BLOCK', BLOCK_SPECIMEN_KEY, PART_1),
+    slideRow(
+        LATER_KEY,
+        'H&E',
+        LATER_SAMPLE_ID,
+        'PART',
+        PART_SPECIMEN_KEY,
+        PART_2
+    ),
+];
 
 /**
  * LINKOUT as pdm's generate_pathology_timeline_files.py writes it: the
@@ -270,7 +228,7 @@ async function installPatientPageMocks(page: Page, accessRequests: string[]) {
         }
         return route.fulfill(json([]));
     });
-    await installFoundationMocks(page, { accessRequests, hierarchy });
+    await installFoundationMocks(page, { accessRequests, slideRows });
     await page.route(
         new RegExp(
             `/api/studies/${STUDY_ID}/patients/${PATIENT_ID}/samples(\\?.*)?$`
