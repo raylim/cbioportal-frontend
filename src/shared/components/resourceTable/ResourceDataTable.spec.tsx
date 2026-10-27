@@ -122,7 +122,7 @@ describe('ResourceDataTable metadata columns', () => {
             ] as ResourceColumnInfo[],
         });
         const slideRow: any = {
-            resourceId: 'WSI_SAMPLE',
+            resourceId: 'WSI_SLIDES',
             metadata: { slide_key: '1234094d6bc6' },
         };
 

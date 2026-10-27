@@ -49,15 +49,18 @@ describe('legacy H&E resource policy', () => {
 
     it('lists the slide table in study view and no slide resources in the patient view', () => {
         // With the viewer configured, the Pathology Slides tab shows the slide table.
+        assert.isTrue(isHiddenFromStudyResourceTable('WSI_SLIDES'));
         assert.isTrue(isHiddenFromStudyResourceTable('WSI_SAMPLE'));
         assert.isTrue(isHiddenFromStudyResourceTable('WSI_PATIENT'));
         assert.isFalse(isHiddenFromStudyResourceTable('OTHER'));
+        assert.isTrue(isHiddenFromResourceViews('WSI_SLIDES'));
         assert.isTrue(isHiddenFromResourceViews('WSI_SAMPLE'));
         assert.isTrue(isHiddenFromResourceViews('WSI_PATIENT'));
         assert.isFalse(isHiddenFromResourceViews('OTHER'));
 
         (getServerConfig() as any).wsi_tile_server_url = '';
-        assert.isFalse(isHiddenFromStudyResourceTable('WSI_SAMPLE'));
+        assert.isFalse(isHiddenFromStudyResourceTable('WSI_SLIDES'));
+        assert.isTrue(isHiddenFromStudyResourceTable('WSI_SAMPLE'));
         assert.isTrue(isHiddenFromStudyResourceTable('WSI_PATIENT'));
     });
 
@@ -84,7 +87,7 @@ describe('legacy H&E resource policy', () => {
 
     it('links slide rows to Pathology Slides and other rows to Files & Links', () => {
         assert.equal(
-            patientViewPathForResource('WSI_SAMPLE'),
+            patientViewPathForResource('WSI_SLIDES'),
             'patient/wsiHESlides'
         );
         assert.equal(
@@ -138,6 +141,7 @@ describe('legacy H&E resource policy', () => {
     it('recognises the whole-slide image resource ids', () => {
         assert.isTrue(isWsiResourceId('WSI_SAMPLE'));
         assert.isTrue(isWsiResourceId('WSI_PATIENT'));
+        assert.isTrue(isWsiResourceId('WSI_SLIDES'));
         assert.isFalse(isWsiResourceId('HE'));
         assert.isFalse(isWsiResourceId(undefined));
     });
@@ -147,7 +151,7 @@ describe('slide ID display', () => {
     it('shows a slide table slide key as a WSI- Slide ID', () => {
         assert.equal(
             resourceMetadataDisplayValue(
-                'WSI_SAMPLE',
+                'WSI_SLIDES',
                 'slide_key',
                 '1234094d6bc6'
             ),
@@ -157,7 +161,7 @@ describe('slide ID display', () => {
 
     it('leaves other columns and other resources unchanged', () => {
         assert.equal(
-            resourceMetadataDisplayValue('WSI_SAMPLE', 'stain_name', 'H&E'),
+            resourceMetadataDisplayValue('WSI_SLIDES', 'stain_name', 'H&E'),
             'H&E'
         );
         assert.equal(
@@ -175,7 +179,7 @@ describe('slide ID display', () => {
         'searches a slide table for the bare key of a pasted Slide ID %p',
         term => {
             assert.equal(
-                resourceSearchTermForQuery('WSI_SAMPLE', term),
+                resourceSearchTermForQuery('WSI_SLIDES', term),
                 '1234094d6bc6'
             );
         }
@@ -183,11 +187,11 @@ describe('slide ID display', () => {
 
     it('leaves other searches unchanged', () => {
         assert.equal(
-            resourceSearchTermForQuery('WSI_SAMPLE', 'P-0000012-T06-IM7'),
+            resourceSearchTermForQuery('WSI_SLIDES', 'P-0000012-T06-IM7'),
             'P-0000012-T06-IM7'
         );
         assert.equal(
-            resourceSearchTermForQuery('WSI_SAMPLE', '1234094d6bc6'),
+            resourceSearchTermForQuery('WSI_SLIDES', '1234094d6bc6'),
             '1234094d6bc6'
         );
         assert.equal(

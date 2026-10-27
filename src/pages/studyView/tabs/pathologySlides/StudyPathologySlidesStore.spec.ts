@@ -620,6 +620,10 @@ describe('studySlidesViewFromUrl', () => {
 
     it("redirects the slide table's old resource tab to the table view", () => {
         expect(
+            studySlidesViewFromUrl('resourceTable_WSI_SLIDES', undefined)
+        ).toEqual({ view: 'table', redirectToSlidesTab: true });
+        // The tab the slide table had before it got its own resource id.
+        expect(
             studySlidesViewFromUrl('resourceTable_WSI_SAMPLE', undefined)
         ).toEqual({ view: 'table', redirectToSlidesTab: true });
         expect(
@@ -630,7 +634,7 @@ describe('studySlidesViewFromUrl', () => {
     it('keeps the old slide table tab without a slide viewer', () => {
         (getServerConfig() as any).wsi_tile_server_url = '';
         expect(
-            studySlidesViewFromUrl('resourceTable_WSI_SAMPLE', undefined)
+            studySlidesViewFromUrl('resourceTable_WSI_SLIDES', undefined)
         ).toEqual({ view: 'viewer', redirectToSlidesTab: false });
     });
 });
