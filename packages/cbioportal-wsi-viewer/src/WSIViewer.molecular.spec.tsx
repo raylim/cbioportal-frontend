@@ -16,6 +16,7 @@ import {
 } from './wsiCbioportalDataUtils';
 import { clearWsiSlideAccess } from './wsiAuth';
 import { clearWsiThumbnailFetchCache } from './wsiThumbnailFetchCache';
+import { slideRowsFor } from './wsiTestFixtures';
 import { PatientHierarchy, Block, Part, Sample, Slide } from './wsiViewerTypes';
 import {
     configureWsiViewerRuntime,
@@ -154,56 +155,6 @@ function makeHierarchy(slides: Slide[], patientId = 'P-123'): PatientHierarchy {
     const part = makePart([block]);
     const sample = makeSample('S-123456-T01', [part]);
     return { patient_id: patientId, samples: [sample] };
-}
-
-function makeWireHierarchy(slides: Slide[], patientId = 'P-123'): any {
-    const block = makeBlock(slides);
-    const part = makePart([block]);
-    const sample = makeSample('S-123456-T01', [part]);
-    return {
-        referenceSampleId: sample.sample_id,
-        sampleGroups: [
-            {
-                sampleId: sample.sample_id,
-                parts: [
-                    {
-                        partNumber: part.part_number,
-                        partType: part.part_type,
-                        partDescription: part.part_description,
-                        subspecialty: part.subspecialty,
-                        blocks: [
-                            {
-                                blockNumber: block.block_number,
-                                blockLabel: block.block_label,
-                                slides: slides.map(slide => ({
-                                    slideKey: slide.slide_key,
-                                    stainName: slide.stain_name,
-                                    stainGroup: slide.stain_group,
-                                    isHne: slide.stain_kind === 'hne',
-                                    isIhc: slide.stain_kind === 'ihc',
-                                    magnification: slide.magnification,
-                                    fileSizeBytes: Number(
-                                        slide.file_size_bytes
-                                    ),
-                                    canServeTiles: slide.can_serve_tiles,
-                                    slideType: {
-                                        hne: 'H&E',
-                                        ihc: 'IHC',
-                                        other: 'Other',
-                                        unknown: 'Unknown',
-                                    }[slide.stain_kind],
-                                    sampleId: sample.sample_id,
-                                    matchLevel: slide.match_level || 'BLOCK',
-                                    specimenKey:
-                                        slide.specimen_key || 'specimen-1',
-                                })),
-                            },
-                        ],
-                    },
-                ],
-            },
-        ],
-    };
 }
 
 function viewerPropsForUrl(url: string) {
@@ -589,15 +540,16 @@ describe('WSIViewer — loadHierarchy enrichment', () => {
                 cb(0);
                 return 0;
             };
-            const mockHierarchy = makeWireHierarchy(
+            const mockHierarchy = makeHierarchy(
                 [makeSlide({ slide_key: 'A', can_serve_tiles: true })],
                 'P-XYZ'
             );
             setFetchMock(
-                jest.fn().mockResolvedValue({
+                jest.fn(async (_input: unknown, init?: RequestInit) => ({
                     ok: true,
-                    json: () => Promise.resolve(mockHierarchy),
-                })
+                    json: () =>
+                        Promise.resolve(slideRowsFor(mockHierarchy, init)),
+                }))
             );
 
             const inst = new (WSIViewer as any)({

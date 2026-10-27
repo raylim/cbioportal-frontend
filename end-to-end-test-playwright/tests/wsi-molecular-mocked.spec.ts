@@ -8,45 +8,6 @@ import {
 
 const SAMPLE_ID = 'wsi-foundation-smoke-sample';
 
-const molecularHierarchy = {
-    referenceSampleId: SAMPLE_ID,
-    sampleGroups: [
-        {
-            sampleId: SAMPLE_ID,
-            parts: [
-                {
-                    partNumber: '1',
-                    partType: '',
-                    partDescription: 'Molecular specimen',
-                    subspecialty: '',
-                    blocks: [
-                        {
-                            blockNumber: 'A1',
-                            blockLabel: 'A1',
-                            slides: [
-                                {
-                                    slideKey: SLIDE_KEY,
-                                    stainName: 'H&E initial',
-                                    stainGroup: 'H&E (Initial)',
-                                    isHne: true,
-                                    isIhc: false,
-                                    magnification: '',
-                                    fileSizeBytes: null,
-                                    canServeTiles: true,
-                                    slideType: 'H&E',
-                                    sampleId: SAMPLE_ID,
-                                    matchLevel: 'BLOCK',
-                                    specimenKey: 'block::1::A1',
-                                },
-                            ],
-                        },
-                    ],
-                },
-            ],
-        },
-    ],
-};
-
 async function installMolecularMocks(
     page: import('@playwright/test').Page,
     options: { enrichment?: boolean } = {}
@@ -136,15 +97,6 @@ async function installMolecularMocks(
             })
         );
     }
-    await page.route(
-        `**/api/wsi/v2/hierarchy/${STUDY_ID}/${PATIENT_ID}`,
-        route =>
-            route.fulfill({
-                status: 200,
-                contentType: 'application/json',
-                body: JSON.stringify(molecularHierarchy),
-            })
-    );
     await page.route(`**/api/studies/${STUDY_ID}/samples**`, route =>
         route.fulfill({
             status: 200,
