@@ -29,6 +29,7 @@ function patient(patientId: string, stain = 'H&E'): StudySlidePatient {
         studyId: STUDY,
         patientId,
         slideCount: 1,
+        sampleCount: 1,
         stainGroupCounts: {
             'H&E': stain === 'H&E' ? 1 : 0,
             IHC: stain === 'IHC' ? 1 : 0,
