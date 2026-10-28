@@ -48,6 +48,7 @@ const PATIENTS: StudySlidePatient[] = ['P-1', 'P-2', 'P-3'].map(id => ({
     studyId: 'study',
     patientId: id,
     slideCount: 2,
+    sampleCount: 1,
     stainGroupCounts: { 'H&E': 1, IHC: 1, Other: 0, Unknown: 0 },
 }));
 
@@ -156,7 +157,7 @@ describe('StudyPathologySlidesTab', () => {
         expect(rows).toHaveLength(3);
         expect(within(rows[1]).getByLabelText('H&E: 1')).toBeTruthy();
         expect(within(rows[1]).getByLabelText('IHC: 1')).toBeTruthy();
-        expect(within(rows[1]).getByText('2 slides')).toBeTruthy();
+        expect(within(rows[1]).getByText('2 slides · 1 sample')).toBeTruthy();
         expect(screen.getByTestId('study-slides-position').textContent).toBe(
             'P-1 · 1 of 3'
         );

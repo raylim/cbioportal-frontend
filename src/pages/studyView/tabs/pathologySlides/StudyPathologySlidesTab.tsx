@@ -140,7 +140,10 @@ const PatientRow: React.FunctionComponent<{
                 </span>
             </div>
             <div style={{ fontSize: 12, color: C.muted, marginTop: 1 }}>
-                {count(patient.slideCount, 'slide')}
+                {`${count(patient.slideCount, 'slide')} · ${count(
+                    patient.sampleCount,
+                    'sample'
+                )}`}
             </div>
         </li>
     );
@@ -419,7 +422,10 @@ const PatientNav: React.FunctionComponent<{
             />
             {listed && (
                 <span style={{ color: C.muted }}>
-                    {count(listed.slideCount, 'slide')}
+                    {`${count(listed.slideCount, 'slide')} · ${count(
+                        listed.sampleCount,
+                        'sample'
+                    )}`}
                 </span>
             )}
             <span style={{ color: C.border }}>|</span>

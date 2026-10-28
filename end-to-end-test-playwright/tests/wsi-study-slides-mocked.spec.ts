@@ -70,6 +70,7 @@ const patients = patientIds.map(patientId => {
         studyId: STUDY_ID,
         patientId,
         slideCount: counts['H&E'] + counts.IHC,
+        sampleCount: 1,
         stainGroupCounts: counts,
     };
 });
