@@ -34,6 +34,8 @@ export interface StudySlidePatient {
     studyId: string;
     patientId: string;
     slideCount: number;
+    /** The samples the listed slides are matched to; unmatched slides have none. */
+    sampleCount: number;
     stainGroupCounts: StudySlideStainCounts;
 }
 
