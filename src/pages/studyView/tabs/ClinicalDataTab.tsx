@@ -28,7 +28,6 @@ import { IProgressIndicatorItem } from '../../../shared/components/progressIndic
 import autobind from 'autobind-decorator';
 import { WindowWidthBox } from '../../../shared/components/WindowWidthBox/WindowWidthBox';
 import { getServerConfig } from 'config/config';
-import { getClinicalAttributeDisplayName } from 'shared/lib/ClinicalAttributeDisplay';
 import { StudyViewPageTabKeyEnum } from '../StudyViewPageTabs';
 import { computed, makeObservable, observable } from 'mobx';
 import {
@@ -46,12 +45,6 @@ class ClinicalDataTabTableComponent extends LazyMobXTable<{
 }> {}
 
 const CLINICAL_DATA_RECORD_LIMIT = 500;
-
-const HIDDEN_CLINICAL_ATTRIBUTE_IDS = new Set([
-    'WSI_TIMEPOINT_BIN',
-    'WSI_TIMEPOINT_DAYS',
-    'WSI_TIMEPOINT_SOURCE',
-]);
 
 const WSI_PATIENT_SLIDE_COLUMNS = [
     {
@@ -89,67 +82,6 @@ const WSI_PATIENT_SLIDE_COLUMNS = [
 const WSI_PATIENT_SLIDE_ATTRIBUTE_IDS = new Set<string>(
     WSI_PATIENT_SLIDE_COLUMNS.map(column => column.attributeId)
 );
-
-const WSI_SAMPLE_TO_PATIENT_SLIDE_ATTRIBUTES = [
-    ['WSI_SAMPLE_SLIDE_COUNT', 'WSI_PATIENT_SLIDE_COUNT'],
-    [
-        'WSI_SAMPLE_PART_MATCHED_SLIDE_COUNT',
-        'WSI_PATIENT_PART_MATCHED_SLIDE_COUNT',
-    ],
-    [
-        'WSI_SAMPLE_BLOCK_MATCHED_SLIDE_COUNT',
-        'WSI_PATIENT_BLOCK_MATCHED_SLIDE_COUNT',
-    ],
-] as const;
-
-export function addPatientWsiSlideCounts(
-    rows: Array<{ [attributeId: string]: string }>,
-    allowSampleAggregation = true
-): Array<{ [attributeId: string]: string }> {
-    if (!allowSampleAggregation) {
-        return rows;
-    }
-
-    const totalsByPatient = new Map<string, Record<string, number>>();
-
-    rows.forEach(row => {
-        const patientKey = `${row.studyId || ''}::${row.patientId || ''}`;
-        if (!row.patientId) return;
-        const totals = totalsByPatient.get(patientKey) || {};
-        WSI_SAMPLE_TO_PATIENT_SLIDE_ATTRIBUTES.forEach(
-            ([sampleAttributeId, patientAttributeId]) => {
-                const sampleCount = Number(row[sampleAttributeId]);
-                if (Number.isFinite(sampleCount)) {
-                    totals[patientAttributeId] =
-                        (totals[patientAttributeId] || 0) + sampleCount;
-                }
-            }
-        );
-        totalsByPatient.set(patientKey, totals);
-    });
-
-    return rows.map(row => {
-        const totals = totalsByPatient.get(
-            `${row.studyId || ''}::${row.patientId || ''}`
-        );
-        if (!totals) return row;
-        return {
-            ...row,
-            ...Object.fromEntries(
-                Object.entries(totals)
-                    .filter(([attributeId]) => {
-                        const directValue = row[attributeId];
-                        return (
-                            directValue === undefined ||
-                            directValue === '' ||
-                            !Number.isFinite(Number(directValue))
-                        );
-                    })
-                    .map(([attributeId, value]) => [attributeId, String(value)])
-            ),
-        };
-    });
-}
 
 type SortCriteria = {
     field: string | undefined;
@@ -192,10 +124,7 @@ export async function fetchClinicalDataForStudyViewClinicalDataTab(
 
     return {
         totalItems: sampleClinicalDataResponse.totalItems,
-        data: addPatientWsiSlideCounts(
-            _.values(aggregatedSampleClinicalData),
-            false
-        ),
+        data: _.values(aggregatedSampleClinicalData),
     };
 }
 
@@ -388,9 +317,6 @@ export class ClinicalDataTab extends React.Component<
                 ) => {
                     if (
                         chartMeta.clinicalAttribute !== undefined &&
-                        !HIDDEN_CLINICAL_ATTRIBUTE_IDS.has(
-                            chartMeta.clinicalAttribute.clinicalAttributeId
-                        ) &&
                         !WSI_PATIENT_SLIDE_ATTRIBUTE_IDS.has(
                             chartMeta.clinicalAttribute.clinicalAttributeId
                         )
@@ -398,16 +324,12 @@ export class ClinicalDataTab extends React.Component<
                         acc.push({
                             ...this.getDefaultColumnConfig(
                                 getUniqueKey(chartMeta.clinicalAttribute),
-                                getClinicalAttributeDisplayName(
-                                    chartMeta.clinicalAttribute
-                                ),
+                                chartMeta.clinicalAttribute.displayName,
                                 chartMeta.clinicalAttribute.datatype ===
                                     DataType.NUMBER
                             ),
                             tooltip: getClinicalAttributeOverlay(
-                                getClinicalAttributeDisplayName(
-                                    chartMeta.clinicalAttribute
-                                ),
+                                chartMeta.clinicalAttribute.displayName,
                                 chartMeta.description
                                     ? chartMeta.description
                                     : '',
