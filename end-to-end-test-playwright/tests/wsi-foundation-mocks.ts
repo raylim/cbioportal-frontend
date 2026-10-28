@@ -179,8 +179,8 @@ export async function installFoundationMocks(
                 app_name: 'wsi-foundation-smoke',
                 authenticationMethod: 'none',
                 wsi_tile_server_url: '/wsi',
-                msk_wsi_annotation_api_url: annotationApiUrl,
-                msk_wsi_agent_enabled: Boolean(options.enableAgent),
+                wsi_annotation_api_url: annotationApiUrl,
+                wsi_agent_enabled: Boolean(options.enableAgent),
             }),
         })
     );
