@@ -20,7 +20,7 @@ function isEnabled(value: unknown): boolean {
 /** Viewer services from the portal configuration, installed at startup. */
 export function buildWsiViewerConfig(): WsiViewerConfig {
     const serverConfig = getServerConfig();
-    const annotationApiUrl = serverConfig.msk_wsi_annotation_api_url?.trim();
+    const annotationApiUrl = serverConfig.wsi_annotation_api_url?.trim();
     return {
         buildApiUrl: (path: string) => buildCBioPortalAPIUrl(path),
         buildPageUrl: (path: string, query: Record<string, string>) =>
@@ -29,7 +29,7 @@ export function buildWsiViewerConfig(): WsiViewerConfig {
         annotations: annotationApiUrl
             ? { apiUrl: annotationApiUrl.replace(/\/+$/, '') }
             : undefined,
-        agent: isEnabled(serverConfig.msk_wsi_agent_enabled)
+        agent: isEnabled(serverConfig.wsi_agent_enabled)
             ? { enabled: true }
             : undefined,
     };
