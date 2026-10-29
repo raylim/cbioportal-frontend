@@ -1,6 +1,6 @@
 import * as React from 'react';
 import _ from 'lodash';
-import { DiscreteCopyNumberData, ResourceData } from 'cbioportal-ts-api-client';
+import { DiscreteCopyNumberData } from 'cbioportal-ts-api-client';
 import { PaginationControls } from '../../shared/components/paginationControls/PaginationControls';
 import { IColumnVisibilityDef } from 'shared/components/columnVisibilityControls/ColumnVisibilityControls';
 import {
@@ -12,7 +12,15 @@ import {
     buildCohortIdsFromNavCaseIds,
 } from './clinicalInformation/PatientViewPageStore';
 import { inject, observer } from 'mobx-react';
-import { action, computed, observable, makeObservable, toJS } from 'mobx';
+import {
+    action,
+    autorun,
+    computed,
+    IReactionDisposer,
+    observable,
+    makeObservable,
+    toJS,
+} from 'mobx';
 import { default as PatientViewMutationTable } from './mutation/PatientViewMutationTable';
 import { MSKTab } from '../../shared/components/MSKTabs/MSKTabs';
 import ValidationAlert from 'shared/components/ValidationAlert';
@@ -45,11 +53,29 @@ import PatientViewGenePanelModal from './PatientViewGenePanelModal/PatientViewGe
 import {
     extractResourceIdFromTabId,
     getPatientViewResourceTabId,
+    getPatientViewResourceTableTabId,
     PatientViewPageTabs,
     patientViewTabs,
 } from './PatientViewPageTabs';
 import { MakeMobxView } from '../../shared/components/MobxView';
-import ResourceTab from '../../shared/components/resources/ResourceTab';
+import { ResourceTableStore } from 'shared/components/resourceTable/ResourceTableStore';
+import ResourceDataTable from 'shared/components/resourceTable/ResourceDataTable';
+import ResourceViewerTab from 'shared/components/resourceViewer/ResourceViewerTab';
+import resourceViewerStyles from 'shared/components/resourceViewer/styles.module.scss';
+import {
+    fetchResourceTableMetadata,
+    ResourceTableTab,
+} from 'shared/api/resourceTableClient';
+import {
+    hasMetadataColumns,
+    parseOpenResources,
+    redirectForViewerOnly,
+    serializeOpenResources,
+    viewerToAdopt,
+} from './resourceViewerTabs';
+import { ResourceViewerStore } from 'shared/components/resourceViewer/ResourceViewerStore';
+import { getResourceConfig } from 'shared/lib/ResourceConfig';
+import { IResourceTableRow } from 'shared/lib/ResourceTableUtils';
 import { isFusion } from '../../shared/lib/MutationUtils';
 import { Mutation } from 'cbioportal-ts-api-client';
 import {
@@ -154,6 +180,17 @@ export class PatientViewPageInner extends React.Component<
 
     public patientViewPageStore: PatientViewPageStore;
 
+    readonly resourceTableStore = new ResourceTableStore();
+    private readonly resourceTableStores = new Map<
+        string,
+        ResourceTableStore
+    >();
+    private resourceTableStoreDisposer: IReactionDisposer | null = null;
+    private readonly resourceViewerStores = new Map<
+        string,
+        ResourceViewerStore
+    >();
+
     constructor(props: IPatientViewPageProps) {
         super(props);
         makeObservable(this);
@@ -190,18 +227,153 @@ export class PatientViewPageInner extends React.Component<
 
         getBrowserWindow().patientViewPageStore = this.pageStore;
 
-        this.setOpenResourceTabs();
-
         this.mergeMutationTableOncoKbIcons = getOncoKbIconStyleFromLocalStorage().mergeIcons;
     }
 
-    setOpenResourceTabs() {
-        const openResourceId =
-            this.urlWrapper.activeTabId &&
-            extractResourceIdFromTabId(this.urlWrapper.activeTabId);
-        if (openResourceId) {
-            this.pageStore.setResourceTabOpen(openResourceId, true);
+    /**
+     * Resources whose viewer tab is open beside their table. Kept in the URL rather than on the
+     * page, so the tabs survive switching to another tab, the remount when the page changes
+     * between patient and sample mode, and being shared as a link.
+     */
+    @computed get openResourceIds(): string[] {
+        return parseOpenResources(this.urlWrapper.query.openResources);
+    }
+
+    private viewerOnlyRedirectDisposer: IReactionDisposer | null = null;
+
+    componentDidMount() {
+        this.viewerOnlyRedirectDisposer = autorun(() => {
+            const presence = this.resourceMetadataPresence.result;
+            if (!presence) {
+                return;
+            }
+            const activeTabId = this.urlWrapper.activeTabId || '';
+            const target = redirectForViewerOnly(
+                activeTabId,
+                Object.keys(presence).filter(id => !presence[id])
+            );
+            if (target) {
+                this.urlWrapper.setActiveTab(target, true);
+                return;
+            }
+            // A viewer reached by a link joins the open set, so it stays when the user moves on.
+            const adopt = viewerToAdopt(
+                activeTabId,
+                presence,
+                this.openResourceIds
+            );
+            if (adopt) {
+                this.urlWrapper.updateURL(
+                    {
+                        openResources: serializeOpenResources(
+                            _.union(this.openResourceIds, [adopt])
+                        ),
+                    },
+                    undefined,
+                    false,
+                    true
+                );
+            }
+        });
+
+        this.resourceTableStoreDisposer = autorun(() => {
+            const context = this.resourceContext;
+            if (!context) return;
+            const { studyIds, patientIdentifiers, sampleIdentifiers } = context;
+            this.resourceTableStore.setContext(
+                studyIds,
+                patientIdentifiers,
+                sampleIdentifiers
+            );
+            this.resourceTableStores.forEach(store =>
+                store.setContext(
+                    studyIds,
+                    patientIdentifiers,
+                    sampleIdentifiers
+                )
+            );
+            this.resourceViewerStores.forEach(store =>
+                store.setContext(
+                    studyIds,
+                    patientIdentifiers,
+                    sampleIdentifiers
+                )
+            );
+        });
+    }
+
+    componentWillUnmount() {
+        if (this.resourceTableStoreDisposer) {
+            this.resourceTableStoreDisposer();
         }
+        if (this.viewerOnlyRedirectDisposer) {
+            this.viewerOnlyRedirectDisposer();
+        }
+    }
+
+    /** The patient and samples every resource request is scoped to, once the samples load. */
+    @computed get resourceContext() {
+        const samples = this.pageStore.samples.result;
+        if (!samples) {
+            return undefined;
+        }
+        const studyId = this.pageStore.studyId;
+        return {
+            studyIds: [studyId],
+            patientIdentifiers: [
+                { studyId, patientId: this.pageStore.patientId },
+            ],
+            sampleIdentifiers: samples.map(s => ({
+                studyId,
+                sampleId: s.sampleId,
+            })),
+        };
+    }
+
+    getOrCreateResourceStore(resourceId: string): ResourceTableStore {
+        let store = this.resourceTableStores.get(resourceId);
+        if (!store) {
+            store = new ResourceTableStore();
+            store.setSelectedResourceId(resourceId);
+            this.resourceTableStores.set(resourceId, store);
+
+            const context = this.resourceContext;
+            if (context) {
+                store.setContext(
+                    context.studyIds,
+                    context.patientIdentifiers,
+                    context.sampleIdentifiers
+                );
+            }
+        }
+        return store;
+    }
+
+    private getOrCreateViewerStore(
+        resourceId: string,
+        totalCount: number
+    ): ResourceViewerStore {
+        let store = this.resourceViewerStores.get(resourceId);
+        if (!store) {
+            store = new ResourceViewerStore();
+            this.resourceViewerStores.set(resourceId, store);
+
+            const context = this.resourceContext;
+            if (context) {
+                store.setContext(
+                    context.studyIds,
+                    context.patientIdentifiers,
+                    context.sampleIdentifiers
+                );
+            }
+        }
+        store.setResource(resourceId, totalCount);
+        return store;
+    }
+
+    @computed get hasNewResourceTabs(): boolean {
+        const tabs = this.resourceTableStore.tabs.result;
+        return !!tabs && tabs.length > 0;
     }
 
     @action.bound
@@ -284,10 +456,9 @@ export class PatientViewPageInner extends React.Component<
             return true;
         }
 
-        if (this.pageStore.resourceIdToResourceData.isComplete) {
-            return _.some(
-                this.pageStore.resourceIdToResourceData.result,
-                data => data.length > 0
+        if (this.pageStore.resourceTableTabs.isComplete) {
+            return this.pageStore.resourceTableTabs.result.some(
+                tab => tab.totalCount > 0
             );
         } else {
             return false;
@@ -299,16 +470,6 @@ export class PatientViewPageInner extends React.Component<
         return (
             this.pageStore.pathologyReport.isComplete &&
             this.pageStore.pathologyReport.result.length > 0
-        );
-    }
-
-    @computed
-    get hideTissueImageTab() {
-        return (
-            this.pageStore.hasTissueImageIFrameUrl.isPending ||
-            this.pageStore.hasTissueImageIFrameUrl.isError ||
-            (this.pageStore.hasTissueImageIFrameUrl.isComplete &&
-                !this.pageStore.hasTissueImageIFrameUrl.result)
         );
     }
 
@@ -465,70 +626,164 @@ export class PatientViewPageInner extends React.Component<
         }
     }
 
-    readonly resourceTabs = MakeMobxView({
+    /**
+     * Whether each resource's rows carry metadata, which decides between a table tab and a
+     * viewer tab. A resource whose check fails keeps its table.
+     */
+    readonly resourceMetadataPresence = remoteData<{
+        [resourceId: string]: boolean;
+    }>({
         await: () => [
-            this.pageStore.resourceDefinitions,
-            this.pageStore.resourceIdToResourceData,
+            this.resourceTableStore.tabs,
+            this.pageStore.samples,
+            // In sample mode the patient id is derived from the sample.
+            ...(this.pageStore.pageMode === 'sample'
+                ? [this.pageStore.derivedPatientId]
+                : []),
         ],
-        render: () => {
-            const openDefinitions = this.pageStore.resourceDefinitions.result!.filter(
-                d => this.pageStore.isResourceTabOpen(d.resourceId)
+        invoke: async () => {
+            const tabs = this.resourceTableStore.tabs.result || [];
+            const query = {
+                ...this.resourceContext!,
+                pageNumber: 0,
+                pageSize: 0,
+            };
+            const entries = await Promise.all(
+                tabs.map(async tab => {
+                    try {
+                        const metadata = await fetchResourceTableMetadata({
+                            ...query,
+                            resourceId: tab.resourceId,
+                        });
+                        return [
+                            tab.resourceId,
+                            hasMetadataColumns(metadata),
+                        ] as [string, boolean];
+                    } catch {
+                        return [tab.resourceId, true] as [string, boolean];
+                    }
+                })
             );
-            const sorted = _.sortBy(openDefinitions, d => d.priority);
-            const resourceDataById = this.pageStore.resourceIdToResourceData
-                .result!;
-
-            const tabs: JSX.Element[] = sorted.reduce((list, def) => {
-                const data = resourceDataById[def.resourceId];
-                if (data && data.length > 0) {
-                    list.push(
-                        <MSKTab
-                            key={getPatientViewResourceTabId(def.resourceId)}
-                            id={getPatientViewResourceTabId(def.resourceId)}
-                            linkText={def.displayName}
-                            onClickClose={this.closeResourceTab}
-                        >
-                            <ResourceTab
-                                resourceDisplayName={def.displayName}
-                                resourceData={resourceDataById[def.resourceId]}
-                                urlWrapper={this.urlWrapper}
-                            />
-                        </MSKTab>
-                    );
-                }
-                return list;
-            }, [] as JSX.Element[]);
-            return tabs;
+            return _.fromPairs(entries);
         },
     });
 
-    @action.bound
-    openResource(resource: ResourceData) {
-        // first we make the resource tab visible
-        this.pageStore.setResourceTabOpen(resource.resourceId, true);
-        // next, navigate to that tab
-        this.urlWrapper.setActiveTab(
-            getPatientViewResourceTabId(resource.resourceId)
+    readonly resourceTabs = MakeMobxView({
+        await: () => [
+            this.resourceTableStore.tabs,
+            this.resourceMetadataPresence,
+        ],
+        render: () => {
+            const presence = this.resourceMetadataPresence.result || {};
+            return _.flatMap(this.resourceTableStore.tabs.result || [], tab => {
+                const resourceId = tab.resourceId;
+                if (!presence[resourceId]) {
+                    // Nothing for a table to show but links, so the viewer is the tab.
+                    return [this.renderViewerTab(tab, false)];
+                }
+                const tabs = [
+                    <MSKTab
+                        key={getPatientViewResourceTableTabId(resourceId)}
+                        id={getPatientViewResourceTableTabId(resourceId)}
+                        linkText={tab.label}
+                    >
+                        <ResourceDataTable
+                            store={this.getOrCreateResourceStore(resourceId)}
+                            scopedResourceId={resourceId}
+                            hideTabs={true}
+                            onOpenResource={this.openResourceViewer}
+                        />
+                    </MSKTab>,
+                ];
+                if (
+                    this.openResourceIds.includes(resourceId) ||
+                    this.urlWrapper.activeTabId ===
+                        getPatientViewResourceTabId(resourceId)
+                ) {
+                    tabs.push(this.renderViewerTab(tab, true));
+                }
+                return tabs;
+            });
+        },
+    });
+
+    private renderViewerTab(tab: ResourceTableTab, closable: boolean) {
+        const resourceId = tab.resourceId;
+        const definition = this.pageStore.resourceIdToDefinition[resourceId];
+
+        return (
+            <MSKTab
+                key={getPatientViewResourceTabId(resourceId)}
+                id={getPatientViewResourceTabId(resourceId)}
+                linkText={closable ? `${tab.label} Viewer` : tab.label}
+                onClickClose={closable ? this.closeResourceTab : undefined}
+                className={resourceViewerStyles.fullWidthTab}
+                // Keeps the frame alive while the user looks at another tab, so a slide keeps
+                // its zoom and a Minerva story its channel group.
+                unmountOnHide={false}
+            >
+                <ResourceViewerTab
+                    store={this.getOrCreateViewerStore(
+                        resourceId,
+                        tab.totalCount
+                    )}
+                    resourceDisplayName={tab.label}
+                    fillWindowHeight={true}
+                    iframeErrorMessage={
+                        definition
+                            ? getResourceConfig(definition).iframeErrorMessage
+                            : undefined
+                    }
+                    isActive={
+                        this.urlWrapper.activeTabId ===
+                        getPatientViewResourceTabId(resourceId)
+                    }
+                    urlItem={this.urlWrapper.query.resourceUrl}
+                    onSelect={(url, replace) =>
+                        this.urlWrapper.setResourceUrl(url, replace)
+                    }
+                />
+            </MSKTab>
         );
-        // finally, within that tab, navigate to the specific target link, e.g. if there are multiple for the same resource
-        this.urlWrapper.setResourceUrl(resource.url);
+    }
+
+    @action.bound
+    openResourceViewer(row: IResourceTableRow) {
+        // One URL change, so opening a viewer is one step back, not two. The item is matched
+        // on content, so a shared link still resolves when the rows around it change.
+        this.urlWrapper.setActiveTabWith(
+            getPatientViewResourceTabId(row.resourceId),
+            {
+                resourceUrl: row.url,
+                openResources: serializeOpenResources(
+                    _.union(this.openResourceIds, [row.resourceId])
+                ),
+            }
+        );
     }
 
     @action.bound
     closeResourceTab(tabId: string) {
         const resourceId = extractResourceIdFromTabId(tabId);
-        if (resourceId) {
-            // hide the resource tab
-            this.pageStore.setResourceTabOpen(resourceId, false);
-
-            // then, if we were currently on that tab..
-            if (
-                this.urlWrapper.activeTabId ===
-                getPatientViewResourceTabId(resourceId)
-            ) {
-                // ..navigate to the files & links tab
-                this.urlWrapper.setActiveTab(PatientViewPageTabs.FilesAndLinks);
-            }
+        if (!resourceId) {
+            return;
+        }
+        const openResources = serializeOpenResources(
+            _.without(this.openResourceIds, resourceId)
+        );
+        if (
+            this.urlWrapper.activeTabId ===
+            getPatientViewResourceTabId(resourceId)
+        ) {
+            this.urlWrapper.setActiveTabWith(
+                getPatientViewResourceTableTabId(resourceId),
+                {
+                    openResources,
+                    resourceUrl: undefined,
+                }
+            );
+        } else {
+            this.urlWrapper.updateURL({ openResources });
         }
     }
 
@@ -627,6 +882,9 @@ export class PatientViewPageInner extends React.Component<
             studyId: navCaseIds[currentIndex].studyId,
             caseId: navCaseIds[currentIndex].patientId,
             sampleId: undefined,
+            // The open viewers and their item belong to the patient being left.
+            openResources: undefined,
+            resourceUrl: undefined,
         });
     }
 
