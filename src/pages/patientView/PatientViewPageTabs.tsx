@@ -55,9 +55,14 @@ export enum PatientViewPageTabs {
 }
 
 export const PatientViewResourceTabPrefix = 'openResource_';
+export const PatientViewResourceTableTabPrefix = 'resourceTable_';
 
 export function getPatientViewResourceTabId(resourceId: string) {
     return `${PatientViewResourceTabPrefix}${resourceId}`;
+}
+
+export function getPatientViewResourceTableTabId(resourceId: string) {
+    return `${PatientViewResourceTableTabPrefix}${resourceId}`;
 }
 
 export function extractResourceIdFromTabId(tabId: string) {
@@ -68,6 +73,24 @@ export function extractResourceIdFromTabId(tabId: string) {
         return undefined;
     }
 }
+
+export function extractResourceIdFromTableTabId(tabId: string) {
+    const match = new RegExp(`${PatientViewResourceTableTabPrefix}(.*)`).exec(
+        tabId
+    );
+    if (match) {
+        return match[1];
+    } else {
+        return undefined;
+    }
+}
+
+/** The tabs that show Patient Page Help. */
+const TABS_WITH_HELP: string[] = [
+    PatientViewPageTabs.Summary,
+    PatientViewPageTabs.PathwayMapper,
+    PatientViewPageTabs.ClinicalData,
+];
 
 export function patientViewTabs(
     pageInstance: PatientViewPageInner,
@@ -83,7 +106,11 @@ export function patientViewTabs(
             className="mainTabs"
             getPaginationWidth={WindowStore.getWindowWidth}
             contentWindowExtra={
-                <HelpWidget path={urlWrapper.routing.location.pathname} />
+                TABS_WITH_HELP.includes(urlWrapper.activeTabId) ? (
+                    <HelpWidget path={urlWrapper.routing.location.pathname} />
+                ) : (
+                    undefined
+                )
             }
         >
             {tabs(pageInstance, sampleManager, urlWrapper)}
@@ -581,7 +608,7 @@ export function tabs(
         </MSKTab>
     );
 
-    if (pageComponent.shouldShowResources)
+    if (pageComponent.shouldShowResources && !pageComponent.hasNewResourceTabs)
         tabs.push(
             <MSKTab
                 key={4}
@@ -595,7 +622,6 @@ export function tabs(
                             pageComponent.patientViewPageStore.sampleManager
                                 .result!
                         }
-                        openResource={pageComponent.openResource}
                     />
                 </div>
             </MSKTab>
