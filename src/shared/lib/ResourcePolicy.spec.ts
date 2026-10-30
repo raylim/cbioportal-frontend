@@ -8,6 +8,7 @@ import {
     patientViewPathForResource,
     resourceMetadataDisplayValue,
     resourceSearchTermForQuery,
+    slideKeyFromSlideUrl,
     shouldHideLegacyHeResourceTab,
     slideStainFilterForColumnFilters,
     slideStainFilterQuery,
@@ -47,7 +48,8 @@ describe('legacy H&E resource policy', () => {
     });
 
     it('lists the slide table in study view and no slide resources in the patient view', () => {
-        assert.isFalse(isHiddenFromStudyResourceTable('WSI_SLIDES'));
+        // With the viewer configured, the Pathology Slides tab shows the slide table.
+        assert.isTrue(isHiddenFromStudyResourceTable('WSI_SLIDES'));
         assert.isTrue(isHiddenFromStudyResourceTable('WSI_SAMPLE'));
         assert.isTrue(isHiddenFromStudyResourceTable('WSI_PATIENT'));
         assert.isFalse(isHiddenFromStudyResourceTable('OTHER'));
@@ -55,6 +57,32 @@ describe('legacy H&E resource policy', () => {
         assert.isTrue(isHiddenFromResourceViews('WSI_SAMPLE'));
         assert.isTrue(isHiddenFromResourceViews('WSI_PATIENT'));
         assert.isFalse(isHiddenFromResourceViews('OTHER'));
+
+        (getServerConfig() as any).wsi_tile_server_url = '';
+        assert.isFalse(isHiddenFromStudyResourceTable('WSI_SLIDES'));
+        assert.isTrue(isHiddenFromStudyResourceTable('WSI_SAMPLE'));
+        assert.isTrue(isHiddenFromStudyResourceTable('WSI_PATIENT'));
+    });
+
+    it('reads the slide key from a slide row link', () => {
+        const key = '0123456789ab';
+        assert.equal(
+            slideKeyFromSlideUrl(
+                `https://portal.example.org/wsi/patient/P-1?studyId=s&slideKey=${key}`
+            ),
+            key
+        );
+        assert.isUndefined(
+            slideKeyFromSlideUrl(
+                'https://portal.example.org/wsi/patient/P-1?studyId=s'
+            )
+        );
+        assert.isUndefined(slideKeyFromSlideUrl('?slideKey=short'));
+        // A retired 32-hex key is not a slide key.
+        assert.isUndefined(
+            slideKeyFromSlideUrl(`?slideKey=${key}0123456789abcdef0123`)
+        );
+        assert.isUndefined(slideKeyFromSlideUrl(undefined));
     });
 
     it('links slide rows to Pathology Slides and other rows to Files & Links', () => {
