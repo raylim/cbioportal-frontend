@@ -7,6 +7,7 @@ import {
     getWsiSlideSource,
     getWsiSourceFingerprint,
     registerWsiSlideSources,
+    wsiSlideRegistryGeneration,
 } from './wsiAuth';
 import {
     makeTileMetadata,
@@ -33,8 +34,6 @@ function hierarchy(
                                     resource_id: 'WSI_SAMPLE',
                                     serving_key: slideKey,
                                     sealed_source: TEST_SEALED_SOURCE,
-                                    thumbnail_width: 1024,
-                                    thumbnail_height: 768,
                                     tile_metadata: makeTileMetadata(),
                                     ...slideOverrides,
                                 })),
@@ -60,8 +59,6 @@ describe('WSI slide sources', () => {
             slideKey: 'slide-1',
             servingKey: 'slide-1',
             sealedSource: TEST_SEALED_SOURCE,
-            thumbnailWidth: 1024,
-            thumbnailHeight: 768,
             tileMetadata: makeTileMetadata(),
         });
         expect(global.fetch).not.toHaveBeenCalled();
@@ -120,6 +117,41 @@ describe('WSI slide sources', () => {
         );
     });
 
+    it('skips registration captured before a clear', () => {
+        const generation = wsiSlideRegistryGeneration();
+        clearWsiSlideSources('other-study');
+
+        expect(
+            registerWsiSlideSources(
+                'study-1',
+                hierarchy(['slide-1']),
+                generation
+            )
+        ).toBe(false);
+        expect(() => getWsiSlideSource('study-1', 'slide-1')).toThrow(
+            'WSI resource selection is unavailable'
+        );
+
+        expect(
+            registerWsiSlideSources(
+                'study-1',
+                hierarchy(['slide-1']),
+                wsiSlideRegistryGeneration()
+            )
+        ).toBe(true);
+        expect(getWsiSlideSource('study-1', 'slide-1').slideKey).toBe(
+            'slide-1'
+        );
+    });
+
+    it('does not advance the generation when registering', () => {
+        const generation = wsiSlideRegistryGeneration();
+        registerWsiSlideSources('study-1', hierarchy(['slide-1']));
+        registerWsiSlideSources('study-1', hierarchy(['slide-2']));
+
+        expect(wsiSlideRegistryGeneration()).toBe(generation);
+    });
+
     it('forgets the slides of one study only', () => {
         registerWsiSlideSources('study-1', hierarchy(['slide-1']));
         registerWsiSlideSources('study-2', hierarchy(['slide-1']));
@@ -147,21 +179,6 @@ describe('WSI slide sources', () => {
             );
         }
     );
-
-    it('keeps the thumbnail size optional', () => {
-        registerWsiSlideSources(
-            'study-1',
-            hierarchy(['slide-1'], {
-                thumbnail_width: undefined,
-                thumbnail_height: undefined,
-            })
-        );
-
-        const source = getWsiSlideSource('study-1', 'slide-1');
-
-        expect(source.thumbnailWidth).toBeUndefined();
-        expect(source.thumbnailHeight).toBeUndefined();
-    });
 
     it('fingerprints a slide source by its slide key and pyramid shape', () => {
         const slideKey = '0123456789ab';
