@@ -22,7 +22,10 @@ describe('ResourceDataTable metadata columns', () => {
         ...overrides,
     });
 
-    const tableWith = (store: Partial<ResourceTableStore>) =>
+    const tableWith = (
+        store: Partial<ResourceTableStore>,
+        props: { onViewRow?: () => void } = {}
+    ) =>
         new ResourceDataTable({
             store: {
                 columns: [],
@@ -32,6 +35,7 @@ describe('ResourceDataTable metadata columns', () => {
                 rowsForDisplay: [],
                 ...store,
             } as any,
+            ...props,
         });
 
     const columns = (store: Partial<ResourceTableStore>) =>
@@ -111,6 +115,22 @@ describe('ResourceDataTable metadata columns', () => {
         );
     });
 
+    it('shows slide keys as WSI- Slide IDs and downloads them bare', () => {
+        const [slideId] = columns({
+            columns: [
+                metadataColumn({ id: 'metadata:slide_key', label: 'Slide ID' }),
+            ] as ResourceColumnInfo[],
+        });
+        const slideRow: any = {
+            resourceId: 'WSI_SLIDES',
+            metadata: { slide_key: '1234094d6bc6' },
+        };
+
+        const cell: any = slideId.render(slideRow);
+        assert.equal(cell.props.children, 'WSI-1234-094d-6bc6');
+        assert.equal(slideId.download!(slideRow), '1234094d6bc6');
+    });
+
     it('renders the metadata value for its own key', () => {
         const cols = columns({
             columns: [
@@ -122,6 +142,41 @@ describe('ResourceDataTable metadata columns', () => {
             cols[0].download!({ metadata: { stain: 'HE' } } as any),
             'HE'
         );
+    });
+
+    it('shows View for rows the page opens itself, and the link otherwise', () => {
+        const store = {
+            columns: [],
+            facets: {},
+            facetRanges: {},
+            distinctValueCounts: {},
+            rowsForDisplay: [],
+        } as any;
+        const opened: string[] = [];
+        const viewing = new ResourceDataTable({
+            store,
+            onViewRow: row => opened.push(row.url),
+        });
+        const view = mount(
+            <div>
+                {viewing.tableColumns
+                    .find(c => c.id === 'link')!
+                    .render({ url: '/wsi?slideKey=abc' } as any)}
+            </div>
+        );
+        view.find('[data-testid="resource-row-view"]').simulate('click');
+        assert.deepEqual(opened, ['/wsi?slideKey=abc']);
+
+        const linking = new ResourceDataTable({ store });
+        const link = mount(
+            <div>
+                {linking.tableColumns
+                    .find(c => c.id === 'link')!
+                    .render({ url: 'https://example.org/x' } as any)}
+            </div>
+        );
+        assert.equal(link.find('[data-testid="resource-row-view"]').length, 0);
+        assert.equal(link.find('a').prop('href'), 'https://example.org/x');
     });
 
     const headerText = (store: Partial<ResourceTableStore>) => {
@@ -275,6 +330,12 @@ describe('ResourceDataTable metadata columns', () => {
 
         assert.isDefined(link);
         assert.equal(link!.name, 'Link');
+        assert.equal(
+            tableWith({}, { onViewRow: () => {} }).tableColumns.find(
+                c => c.id === 'link'
+            )!.name,
+            'Viewer'
+        );
         assert.equal(
             link!.download!({ url: 'https://example.com/slide.dcm' } as any),
             'https://example.com/slide.dcm'

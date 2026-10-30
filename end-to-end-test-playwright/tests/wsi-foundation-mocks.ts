@@ -38,6 +38,10 @@ export interface FoundationMockOptions {
     ingressStatus?: number;
     /** Which requests the ingress refuses (default: all). */
     ingressRefuses?: IngressRefusal;
+    /** Configures the annotation service at the tile server origin. */
+    enableAnnotations?: boolean;
+    /** Enables the research assistant, which implies annotations. */
+    enableAgent?: boolean;
 }
 
 /** The tile-server requests a refusing ingress applies to. */
@@ -171,6 +175,8 @@ export async function installFoundationMocks(
 ): Promise<string[]> {
     const enrichmentRequests: string[] = [];
     const slideRows = makeSlideRows(!!options.includeSecondSlide);
+    const annotationApiUrl =
+        options.enableAnnotations || options.enableAgent ? '/wsi' : '';
     await page.addInitScript(() => {
         window.localStorage.setItem(
             'frontendConfig',
@@ -194,6 +200,8 @@ export async function installFoundationMocks(
                 app_name: 'wsi-foundation-smoke',
                 authenticationMethod: 'none',
                 wsi_tile_server_url: '/wsi',
+                wsi_annotation_api_url: annotationApiUrl,
+                wsi_agent_enabled: Boolean(options.enableAgent),
             }),
         })
     );
@@ -211,6 +219,22 @@ export async function installFoundationMocks(
                 : [];
         return route.fulfill(json(rows));
     });
+    // The viewer reads the smoke patient's portal samples and sample
+    // clinical data for its molecular tables; it has none.
+    await page.route(`**/api/studies/${STUDY_ID}/samples**`, route =>
+        route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify([]),
+        })
+    );
+    await page.route('**/api/clinical-data/fetch**', route =>
+        route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify([]),
+        })
+    );
     await page.route(`**/api/studies/${STUDY_ID}/molecular-profiles**`, route =>
         route.fulfill({
             status: 200,

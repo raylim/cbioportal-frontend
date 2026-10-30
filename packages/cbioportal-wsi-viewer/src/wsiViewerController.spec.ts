@@ -16,6 +16,7 @@ import { WsiViewerState } from './wsiViewerState';
 import { Sample, Slide, TileMetadata } from './wsiViewerTypes';
 
 jest.mock('./wsiAuth', () => ({
+    ...jest.requireActual('./wsiAuth'),
     getWsiSlideSource: jest.fn(),
 }));
 jest.mock('./wsiThumbnailFetchCache', () => ({
@@ -124,6 +125,8 @@ function makeHarness() {
         getTileServerBase: () => 'https://tiles.example.com',
         getViewerContainerElement: () => container,
         chooseInitialServableSlide: () => undefined,
+        setMutationDataStatus: jest.fn(),
+        runSampleEnrichment: jest.fn(() => Promise.resolve()),
         reportInitialSlideLoadPerformance: jest.fn(),
     };
     const viewers: FakeViewer[] = [];

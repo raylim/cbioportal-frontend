@@ -94,9 +94,42 @@ export default class ExtendedRouterStore extends RouterStore {
             URL.format({
                 pathname: path,
                 query: newQuery,
-                hash: this.location.hash,
+                hash: this.currentHash,
             })
         );
+    }
+
+    /**
+     * The hash to keep when rebuilding the URL. The slide viewer writes its
+     * `#wsi:` view state straight to the browser history, which leaves the
+     * router's copy stale, so that state is taken from the browser. Any
+     * other hash (e.g. a study filter, or bookmark settings the app has
+     * already read and removed from its copy) stays as the router has it.
+     */
+    private get currentHash(): string {
+        const routerHash = this.location.hash || '';
+        if (typeof window === 'undefined') {
+            return routerHash;
+        }
+        // The router's paths leave out the portal's base path; its history
+        // adds it back.
+        const history = (this as any).history;
+        const routerPage =
+            typeof history?.createHref === 'function'
+                ? history.createHref({
+                      pathname: this.location.pathname,
+                      search: this.location.search,
+                  })
+                : this.location.pathname + this.location.search;
+        if (window.location.pathname + window.location.search !== routerPage) {
+            return routerHash;
+        }
+        const isViewerHash = (hash: string) =>
+            hash === '' || hash.startsWith('#wsi:');
+        const liveHash = window.location.hash;
+        return isViewerHash(routerHash) && isViewerHash(liveHash)
+            ? liveHash
+            : routerHash;
     }
 
     @computed get query() {
