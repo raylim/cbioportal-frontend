@@ -47,6 +47,10 @@ import { loadOpenSeadragon } from './wsiOpenSeadragonLoader';
 import { clearPatientHierarchyCache } from './wsiHierarchyFetchCache';
 import { clearWsiSlideSources } from './wsiAuth';
 import { clearWsiThumbnailFetchCache } from './wsiThumbnailFetchCache';
+import {
+    checkWsiTileServerOrigin,
+    normalizeWsiTileServerBase,
+} from './wsiUrls';
 import { chooseScaleBar, formatMagnification } from './wsiScaleUtils';
 import {
     WSI_FONT_FAMILY,
@@ -428,6 +432,7 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
         if (typeof document !== 'undefined') {
             document.addEventListener('keydown', this.handlePanelKey);
         }
+        checkWsiTileServerOrigin(this.props.tileServerUrl);
         if (this.stainFilter !== 'all' || this.matchFilter !== 'all') {
             this.writeFiltersToUrl();
         }
@@ -517,6 +522,10 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
 
         if (prev.hidden !== this.props.hidden) {
             this.updateControllerVisibility();
+        }
+
+        if (prev.tileServerUrl !== this.props.tileServerUrl) {
+            checkWsiTileServerOrigin(this.props.tileServerUrl);
         }
 
         if (requestedSlideKeyChanged) {
@@ -850,7 +859,7 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
     }
 
     @computed get tileServerBase(): string {
-        return this.props.tileServerUrl.replace(/\/$/, '');
+        return normalizeWsiTileServerBase(this.props.tileServerUrl);
     }
 
     @computed
