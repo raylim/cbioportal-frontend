@@ -1616,11 +1616,9 @@ describe('WSIViewer — loadHierarchy', () => {
         await loadHierarchyFor(inst);
 
         // Sample enrichment (clinical data, molecular profiles) also fetches;
-        // only the slide rows and slide access requests are checked here.
+        // only the slide rows requests are checked here.
         const calls = (global as any).fetch.mock.calls.filter(
-            ([url]: [string]) =>
-                isSlideRowsRequest(url) ||
-                url === testAccessUrl('study', 'P-XYZ', 'bootstrap-slide')
+            ([url]: [string]) => isSlideRowsRequest(url)
         );
         expect(calls.map(([url]: [string]) => url)).toEqual([
             '/api/resource-table/query/fetch',

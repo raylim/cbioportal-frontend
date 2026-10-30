@@ -181,19 +181,8 @@ test.describe('WSI molecular child contract', () => {
             portalRequests.some(url => url.includes('/api/mutations/fetch'))
         ).toBe(true);
         expect(enrichmentRequests).toEqual([]);
-        expect(accessRequests.length).toBeGreaterThan(0);
-        expect(
-            accessRequests.every(url => {
-                const parsed = new URL(url);
-                return (
-                    parsed.pathname.endsWith(
-                        `/api/resources/${STUDY_ID}/WSI_SAMPLE/access`
-                    ) &&
-                    parsed.searchParams.get('key') === SLIDE_KEY &&
-                    parsed.searchParams.get('patientId') === PATIENT_ID
-                );
-            })
-        ).toBe(true);
+        // Tiles are served from the resource row: no slide access request.
+        expect(accessRequests).toEqual([]);
         expect(errors).toEqual([]);
     });
 
