@@ -12,9 +12,15 @@ function renderWsiLoading() {
     return <LoadingIndicator isLoading={true} center={true} size="big" />;
 }
 
+/** A boolean frontend property, which may arrive as a string. */
+function isEnabled(value: unknown): boolean {
+    return value === true || value === 'true';
+}
+
 /** Viewer services from the portal configuration, installed at startup. */
 export function buildWsiViewerConfig(): WsiViewerConfig {
-    const annotationApiUrl = getServerConfig().wsi_annotation_api_url?.trim();
+    const serverConfig = getServerConfig();
+    const annotationApiUrl = serverConfig.wsi_annotation_api_url?.trim();
     return {
         buildApiUrl: (path: string) => buildCBioPortalAPIUrl(path),
         buildPageUrl: (path: string, query: Record<string, string>) =>
@@ -22,6 +28,9 @@ export function buildWsiViewerConfig(): WsiViewerConfig {
         osdPrefixUrl: WSI_OSD_PREFIX_URL,
         annotations: annotationApiUrl
             ? { apiUrl: annotationApiUrl.replace(/\/+$/, '') }
+            : undefined,
+        agent: isEnabled(serverConfig.wsi_agent_enabled)
+            ? { enabled: true }
             : undefined,
     };
 }

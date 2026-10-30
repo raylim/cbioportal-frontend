@@ -194,6 +194,17 @@ export function getWsiSlideSource(
     };
 }
 
+/**
+ * Identifies the pixels a slide source serves, so that an agent proposal made
+ * against one capture is not applied to another: the opaque slide key and the
+ * tile pyramid's shape. The sealed source is opaque to the browser, so it is
+ * not part of the fingerprint.
+ */
+export function getWsiSourceFingerprint(source: WsiSlideSource): string {
+    const meta = source.tileMetadata;
+    return `wsi-v3:${source.slideKey}:${meta.dimensions.width}x${meta.dimensions.height}:${meta.levels}:${meta.tile_size}`;
+}
+
 /** Services that accept a study-scoped portal access token. */
 export type WsiAccessTokenPurpose = 'annotations' | 'agent';
 
@@ -278,6 +289,13 @@ export function getAnnotationAccessToken(
     authScope = 'anonymousUser'
 ): Promise<string> {
     return getWsiPurposeAccessToken(studyId, 'annotations', authScope);
+}
+
+export function getAgentAccessToken(
+    studyId: string,
+    authScope = 'anonymousUser'
+): Promise<string> {
+    return getWsiPurposeAccessToken(studyId, 'agent', authScope);
 }
 
 /** Forgets purpose tokens for one study, or for every study. */

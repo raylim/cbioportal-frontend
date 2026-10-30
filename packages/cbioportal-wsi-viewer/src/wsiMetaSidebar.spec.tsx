@@ -61,6 +61,7 @@ describe('WsiMetaSidebar collapsible sections', () => {
                 clinicalRows={[{ label: 'Sex', value: 'Female' }]}
                 annotationLayersPanel={<span>layer list</span>}
                 annotationPanel={<span>annotation list</span>}
+                agentPanel={<span>assistant</span>}
             />
         );
     }
@@ -82,6 +83,7 @@ describe('WsiMetaSidebar collapsible sections', () => {
         'clinical',
         'annotationLayers',
         'annotations',
+        'researchAssistant',
     ])('collapses and expands the %s section', id => {
         const renderer = renderSidebar();
         expect(toggle(renderer, id).props['aria-expanded']).toBe(true);
