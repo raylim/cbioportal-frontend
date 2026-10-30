@@ -13,6 +13,7 @@ import {
     makeSample,
     makeSlide,
     makeTileMetadata,
+    registerTestSlide,
     slideRowsFor,
 } from './wsiTestFixtures';
 import { PatientHierarchy, WsiResourceRow } from './wsiViewerTypes';
@@ -287,11 +288,10 @@ describe('buildPatientHierarchy', () => {
                 resource_id: 'WSI_PATIENT',
                 serving_key: 'slide-1',
                 sealed_source: 'sealed',
-                thumbnail_width: 1024,
-                thumbnail_height: 768,
                 tile_metadata: tileMetadata,
             })
         );
+        expect(servable).not.toHaveProperty('thumbnail_width');
         expect(notServable.can_serve_tiles).toBe(false);
         expect(notServable.resource_id).toBe('WSI_PATIENT');
         expect(notServable.serving_key).toBeUndefined();
@@ -378,8 +378,6 @@ describe('wsiHierarchyFetchCache slide registration', () => {
             slideKey: 'slide-1',
             servingKey: 'slide-1',
             sealedSource: TEST_SEALED_SOURCE,
-            thumbnailWidth: 1024,
-            thumbnailHeight: 768,
             tileMetadata: makeTileMetadata(),
         });
         // Only the slide rows are requested: no per-slide access request.
@@ -408,6 +406,70 @@ describe('wsiHierarchyFetchCache slide registration', () => {
         expect(() => getWsiSlideSource(STUDY, 'slide-1')).toThrow(
             'WSI slide cannot serve tiles'
         );
+    });
+
+    /** Holds the slide rows responses until `release` is called. */
+    function holdRows(): () => void {
+        let release!: () => void;
+        const released = new Promise<void>(resolve => (release = resolve));
+        const respond = fetchMock.getMockImplementation()!;
+        fetchMock.mockImplementation((url: string, init?: RequestInit) =>
+            released.then(() => respond(url, init))
+        );
+        return release;
+    }
+
+    it('does not register a response that arrives after the slides were cleared', async () => {
+        const release = holdRows();
+        const pending = fetchWsiPatientHierarchy(STUDY, PATIENT, 'user-a');
+
+        // E.g. the user changed: everything registered so far is forgotten.
+        clearWsiSlideSources();
+        release();
+        await pending;
+
+        expect(() => getWsiSlideSource(STUDY, 'slide-1')).toThrow(
+            'WSI resource selection is unavailable'
+        );
+
+        // A later call made after the clear registers the cached hierarchy.
+        await fetchWsiPatientHierarchy(STUDY, PATIENT, 'user-a');
+        expect(getWsiSlideSource(STUDY, 'slide-1').slideKey).toBe('slide-1');
+        expect(rowsCalls()).toBe(2);
+    });
+
+    it('does not register a response for a caller that aborted', async () => {
+        const release = holdRows();
+        const controller = new AbortController();
+        const pending = fetchWsiPatientHierarchy(
+            STUDY,
+            PATIENT,
+            'user-a',
+            controller.signal
+        );
+
+        controller.abort();
+        await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+        release();
+        await new Promise(resolve => setTimeout(resolve, 0));
+
+        expect(() => getWsiSlideSource(STUDY, 'slide-1')).toThrow(
+            'WSI resource selection is unavailable'
+        );
+    });
+
+    it('registers a response that arrives after another patient registered', async () => {
+        const release = holdRows();
+        const pending = fetchWsiPatientHierarchy(STUDY, PATIENT, 'user-a');
+
+        // Registering a hierarchy replaces only its own patient's slides and
+        // does not invalidate requests in flight.
+        registerTestSlide(STUDY, 'P-2', 'slide-2');
+        release();
+        await pending;
+
+        expect(getWsiSlideSource(STUDY, 'slide-1').slideKey).toBe('slide-1');
+        expect(getWsiSlideSource(STUDY, 'slide-2').slideKey).toBe('slide-2');
     });
 
     it('forgets the slides with the whole hierarchy cache', async () => {
