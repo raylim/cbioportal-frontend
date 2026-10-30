@@ -235,11 +235,17 @@ beforeEach(() => {
 });
 
 describe('WSIViewer — tileServerBase', () => {
-    it('drops a trailing slash', () => {
-        const inst = makeInstance('P-1', {
-            tileServerUrl: 'https://tiles.example.com/api/v1/',
-        });
-        assert.equal(inst.tileServerBase, 'https://tiles.example.com/api/v1');
+    it('ends in exactly one slash', () => {
+        for (const tileServerUrl of [
+            'https://tiles.example.com/api/v1',
+            'https://tiles.example.com/api/v1/',
+        ]) {
+            const inst = makeInstance('P-1', { tileServerUrl });
+            assert.equal(
+                inst.tileServerBase,
+                'https://tiles.example.com/api/v1/'
+            );
+        }
     });
 });
 
@@ -2110,7 +2116,7 @@ describe('WSIViewer — open handler (mountOSD integration)', () => {
             expect(fetchMock).toHaveBeenCalledWith(
                 `https://tiles.example.com/thumbnails?studyId=study-1&key=42&enc=${encodeURIComponent(
                     TEST_SEALED_SOURCE
-                )}&tw=1024&th=768&width=128&height=96`,
+                )}&width=128&height=96`,
                 expect.objectContaining({ cache: 'default' })
             );
             expect(fetchMock.mock.calls[0][1]!.headers).toBeUndefined();
