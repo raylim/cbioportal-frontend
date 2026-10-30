@@ -1,9 +1,5 @@
 import { test, expect, Page } from '../fixtures';
-import {
-    routeSlideAccess,
-    routeTilePixels,
-    tileMetadata,
-} from './wsi-foundation-mocks';
+import { pixel, tileMetadata, TileServerRequest } from './wsi-foundation-mocks';
 import { studySlidesPageFor } from '../../src/pages/studyView/tabs/pathologySlides/studySlidesTestServer';
 import { StudySlidesRequest } from '../../src/pages/studyView/tabs/pathologySlides/studySlidesApi';
 
@@ -98,15 +94,15 @@ function slideRowsFor(patientId: string) {
 interface StudySlidesMocks {
     studySlidesRequests: StudySlidesRequest[];
     slideRowPatients: string[];
-    /** Every slide access request URL. */
-    accessRequests: string[];
+    /** Every tile and thumbnail request. */
+    tileServerRequests: TileServerRequest[];
 }
 
 async function installStudySlidesMocks(page: Page): Promise<StudySlidesMocks> {
     const mocks: StudySlidesMocks = {
         studySlidesRequests: [],
         slideRowPatients: [],
-        accessRequests: [],
+        tileServerRequests: [],
     };
     const serverConfig = {
         authenticationMethod: 'none',
@@ -202,14 +198,20 @@ async function installStudySlidesMocks(page: Page): Promise<StudySlidesMocks> {
             body: JSON.stringify(slideRowsFor(patientId)),
         });
     });
-    await routeSlideAccess(
-        page,
-        STUDY_ID,
-        (resourceId, patientId, key) =>
-            resourceId === 'WSI_SAMPLE' && key === slideKeyFor(patientId),
-        mocks.accessRequests
-    );
-    await routeTilePixels(page);
+    for (const pattern of ['**/wsi/tiles/**', '**/wsi/thumbnails**']) {
+        await page.route(pattern, route => {
+            const request = route.request();
+            mocks.tileServerRequests.push({
+                url: request.url(),
+                headers: request.headers(),
+            });
+            return route.fulfill({
+                status: 200,
+                contentType: 'image/png',
+                body: pixel,
+            });
+        });
+    }
     return mocks;
 }
 
@@ -240,12 +242,16 @@ if (process.env.PW_SUITE === 'wsi') {
             expect(
                 mocks.studySlidesRequests[0].studyViewFilter.studyIds
             ).toEqual([STUDY_ID]);
-            // Slides are addressed only by their opaque key and patient.
-            expect(mocks.accessRequests.length).toBeGreaterThan(0);
-            for (const accessUrl of mocks.accessRequests) {
-                const params = new URL(accessUrl).searchParams;
+            // Pixels are requested by study, opaque key and sealed source only.
+            await expect
+                .poll(() => mocks.tileServerRequests.length, { timeout: 30000 })
+                .toBeGreaterThan(0);
+            for (const { url, headers } of mocks.tileServerRequests) {
+                const params = new URL(url).searchParams;
+                expect(params.get('studyId')).toBe(STUDY_ID);
                 expect(params.get('key')).toMatch(/^[0-9a-f]{12}$/);
-                expect([...params.keys()]).toEqual(['key', 'patientId']);
+                expect(params.get('enc')).toBe('sealed');
+                expect(headers.authorization).toBeUndefined();
             }
 
             await page.getByTestId('study-slides-next').click();
