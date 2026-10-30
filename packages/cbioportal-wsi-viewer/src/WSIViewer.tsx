@@ -48,6 +48,10 @@ import {
     WsiAnnotationTooltip,
     WsiAnnotationToolbar,
 } from './wsiAnnotationControls';
+import {
+    checkWsiTileServerOrigin,
+    normalizeWsiTileServerBase,
+} from './wsiUrls';
 import { chooseScaleBar, formatMagnification } from './wsiScaleUtils';
 import {
     WSI_FONT_FAMILY,
@@ -412,6 +416,7 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
         if (typeof document !== 'undefined') {
             document.addEventListener('keydown', this.handlePanelKey);
         }
+        checkWsiTileServerOrigin(this.props.tileServerUrl);
         void this.controller.loadHierarchy();
     }
 
@@ -494,6 +499,10 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
 
         if (prev.hidden !== this.props.hidden) {
             this.updateControllerVisibility();
+        }
+
+        if (prev.tileServerUrl !== this.props.tileServerUrl) {
+            checkWsiTileServerOrigin(this.props.tileServerUrl);
         }
 
         if (requestedSlideKeyChanged) {
@@ -841,7 +850,7 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
     }
 
     @computed get tileServerBase(): string {
-        return this.props.tileServerUrl.replace(/\/$/, '');
+        return normalizeWsiTileServerBase(this.props.tileServerUrl);
     }
 
     @computed
