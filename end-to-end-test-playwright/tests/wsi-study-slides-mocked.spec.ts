@@ -251,6 +251,8 @@ if (process.env.PW_SUITE === 'wsi') {
                 expect(params.get('studyId')).toBe(STUDY_ID);
                 expect(params.get('key')).toMatch(/^[0-9a-f]{12}$/);
                 expect(params.get('enc')).toBe('sealed');
+                expect(params.get('tw')).toBeNull();
+                expect(params.get('th')).toBeNull();
                 expect(headers.authorization).toBeUndefined();
             }
 
