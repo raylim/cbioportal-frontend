@@ -14,7 +14,7 @@ import {
     clearMolecularProfileIdCache,
     clearWsiCbioportalRequestCaches,
 } from './wsiCbioportalDataUtils';
-import { clearWsiSlideAccess } from './wsiAuth';
+import { clearWsiSlideSources } from './wsiAuth';
 import { clearWsiThumbnailFetchCache } from './wsiThumbnailFetchCache';
 import { slideRowsFor } from './wsiTestFixtures';
 import { PatientHierarchy, Block, Part, Sample, Slide } from './wsiViewerTypes';
@@ -232,7 +232,7 @@ beforeEach(() => {
     clearPatientHierarchyCache();
     clearMolecularProfileIdCache();
     clearWsiThumbnailFetchCache();
-    clearWsiSlideAccess();
+    clearWsiSlideSources();
 });
 
 describe('WSIViewer — cached sidebar data', () => {
@@ -561,9 +561,6 @@ describe('WSIViewer — loadHierarchy enrichment', () => {
             });
             const controller = controllerOf(inst);
             jest.spyOn(controller, 'selectSlide').mockResolvedValue(undefined);
-            const prefetchSpy = jest
-                .spyOn(controller as any, 'prefetchSlideMetadata')
-                .mockResolvedValue(undefined);
             const enrichSpy = jest
                 .spyOn(controller as any, 'enrichSamplesFromCbioportal')
                 .mockResolvedValue(undefined);
@@ -571,7 +568,6 @@ describe('WSIViewer — loadHierarchy enrichment', () => {
             await loadHierarchyFor(inst);
 
             expect(controller.selectSlide).toHaveBeenCalledTimes(1);
-            expect(prefetchSpy).not.toHaveBeenCalled();
             expect(enrichSpy).not.toHaveBeenCalled();
             jest.advanceTimersByTime(0);
             expect(enrichSpy).toHaveBeenCalledWith(controller.hierarchyLoadSeq);
