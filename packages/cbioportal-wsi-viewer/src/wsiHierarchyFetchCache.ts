@@ -14,6 +14,7 @@ import {
     clearWsiSlideSources,
     normalizeWsiAuthScope,
     registerWsiSlideSources,
+    wsiSlideRegistryGeneration,
 } from './wsiAuth';
 import { getWsiViewerRuntime } from './wsiViewerConfig';
 import { createPromiseCache, withAbort } from './wsiCacheUtils';
@@ -49,31 +50,14 @@ function stainKind(metadata: Record<string, unknown>): WsiStainKind {
     return UNCONFIRMED_SLIDE_TYPES.has(stored) ? 'unknown' : 'other';
 }
 
-function positiveInteger(value: unknown): number | undefined {
-    return typeof value === 'number' && Number.isInteger(value) && value > 0
-        ? value
-        : undefined;
-}
-
 /** The serving block of a slide that can serve tiles. */
 function serving(
     metadata: Record<string, unknown>
-):
-    | Pick<
-          Slide,
-          | 'serving_key'
-          | 'sealed_source'
-          | 'thumbnail_width'
-          | 'thumbnail_height'
-          | 'tile_metadata'
-      >
-    | undefined {
+): Pick<Slide, 'serving_key' | 'sealed_source' | 'tile_metadata'> | undefined {
     const value = metadata.serving as
         | {
               key?: unknown;
               sealed_source?: unknown;
-              thumbnail_width?: unknown;
-              thumbnail_height?: unknown;
               tile_metadata_json?: TileMetadata;
           }
         | null
@@ -88,18 +72,9 @@ function serving(
     ) {
         return undefined;
     }
-    const thumbnailWidth = positiveInteger(value.thumbnail_width);
-    const thumbnailHeight = positiveInteger(value.thumbnail_height);
     return {
         serving_key: value.key,
         sealed_source: value.sealed_source,
-        // Both or neither: the tile server reads the stored size as a pair.
-        ...(thumbnailWidth && thumbnailHeight
-            ? {
-                  thumbnail_width: thumbnailWidth,
-                  thumbnail_height: thumbnailHeight,
-              }
-            : {}),
         tile_metadata: value.tile_metadata_json,
     };
 }
@@ -253,7 +228,11 @@ async function requestHierarchy(
  * Loads one patient's hierarchy from the portal through the cache the viewer
  * reads, so a viewer opened later for the same patient and `authScope` reuses
  * this request. Every returned hierarchy (network or cached) registers the
- * slides that tile and thumbnail requests may name.
+ * slides that tile and thumbnail requests may name, unless the caller aborted
+ * or the registry was cleared (e.g. for a change of user) since the call.
+ *
+ * Registered slides outlive the cache entry: a viewer showing a hierarchy
+ * whose entry expired still opens its slides.
  */
 export function fetchWsiPatientHierarchy(
     studyId: string,
@@ -264,11 +243,14 @@ export function fetchWsiPatientHierarchy(
     const key = [normalizeWsiAuthScope(authScope), studyId, patientId].join(
         '::'
     );
+    const generation = wsiSlideRegistryGeneration();
     return withAbort(
         hierarchyCache
             .get(key, () => requestHierarchy(studyId, patientId))
             .then(hierarchy => {
-                registerWsiSlideSources(studyId, hierarchy);
+                if (!signal?.aborted) {
+                    registerWsiSlideSources(studyId, hierarchy, generation);
+                }
                 return hierarchy;
             }),
         signal
