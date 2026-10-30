@@ -2,9 +2,11 @@ import { test, expect, Page } from '../fixtures';
 import {
     installFoundationMocks,
     makeSlideRow,
+    sealedSourceFor,
     STUDY_ID,
     PATIENT_ID,
     SAMPLE_ID,
+    TileServerRequest,
 } from './wsi-foundation-mocks';
 
 /** A second sequenced sample, with a later slide on a different part. */
@@ -204,7 +206,11 @@ const samples = [SAMPLE_ID, LATER_SAMPLE_ID].map(sampleId => ({
  * API answers empty, the patient has two samples, and the clinical events
  * include the PATHOLOGY SLIDES events of the pdm pathology timeline file.
  */
-async function installPatientPageMocks(page: Page, accessRequests: string[]) {
+async function installPatientPageMocks(
+    page: Page,
+    accessRequests: string[],
+    tileServerRequests: TileServerRequest[]
+) {
     // Registered first, so the specific routes below take precedence.
     await page.route('**/api/**', route => {
         const pathname = new URL(route.request().url()).pathname;
@@ -228,7 +234,11 @@ async function installPatientPageMocks(page: Page, accessRequests: string[]) {
         }
         return route.fulfill(json([]));
     });
-    await installFoundationMocks(page, { accessRequests, slideRows });
+    await installFoundationMocks(page, {
+        accessRequests,
+        tileServerRequests,
+        slideRows,
+    });
     await page.route(
         new RegExp(
             `/api/studies/${STUDY_ID}/patients/${PATIENT_ID}/samples(\\?.*)?$`
@@ -241,24 +251,27 @@ async function installPatientPageMocks(page: Page, accessRequests: string[]) {
     );
 }
 
-/** The serving key (the slide key) of each slide access request. */
-function accessedSlideKeys(accessRequests: string[]): string[] {
-    return accessRequests.map(
-        url => new URL(url).searchParams.get('key') || ''
+/** The slide key each tile or thumbnail request names. */
+function requestedSlideKeys(requests: TileServerRequest[]): string[] {
+    return requests.map(
+        request => new URL(request.url).searchParams.get('key') || ''
     );
 }
 
 /**
- * Slide access is requested only for the linked sample's slides: the opened
- * slide plus the viewer's metadata prefetch, which covers the selected
- * sample regardless of the stain filter. The other sample's slide is never
- * requested.
+ * The tile server is asked only for the linked sample's slides, each named by
+ * study, key and sealed source with no Authorization header (the session
+ * cookie authorizes it). The other sample's slide is never requested.
  */
-function expectAccessWithinLinkedSample(accessRequests: string[]) {
-    const keys = accessedSlideKeys(accessRequests);
-    expect(keys).not.toContain(LATER_KEY);
-    for (const key of keys) {
+function expectTilesWithinLinkedSample(requests: TileServerRequest[]) {
+    expect(requestedSlideKeys(requests)).not.toContain(LATER_KEY);
+    for (const request of requests) {
+        const url = new URL(request.url);
+        const key = url.searchParams.get('key') || '';
         expect([HNE_KEY, IHC_KEY]).toContain(key);
+        expect(url.searchParams.get('studyId')).toBe(STUDY_ID);
+        expect(url.searchParams.get('enc')).toBe(sealedSourceFor(key));
+        expect(request.headers.authorization).toBeUndefined();
     }
 }
 
@@ -321,7 +334,12 @@ if (process.env.PW_SUITE === 'wsi') {
             page,
         }) => {
             const accessRequests: string[] = [];
-            await installPatientPageMocks(page, accessRequests);
+            const tileServerRequests: TileServerRequest[] = [];
+            await installPatientPageMocks(
+                page,
+                accessRequests,
+                tileServerRequests
+            );
             await page.goto(
                 `/patient/summary?studyId=${STUDY_ID}&caseId=${PATIENT_ID}`
             );
@@ -340,7 +358,7 @@ if (process.env.PW_SUITE === 'wsi') {
             // The link is the event's LINKOUT, as the timeline file has it.
             expect(await link.getAttribute('href')).toBe(HNE_LINKOUT);
             // No slide is opened while the Summary tab is showing.
-            expect(accessRequests).toEqual([]);
+            expect(tileServerRequests).toEqual([]);
 
             // Enter the tooltip so it stays open, then follow the link.
             const linkBox = await link.boundingBox();
@@ -359,11 +377,13 @@ if (process.env.PW_SUITE === 'wsi') {
                 page.getByTestId(`wsi-slide-item-${HNE_KEY}`)
             ).toHaveAttribute('aria-current', 'true', { timeout: 30000 });
             await expect
-                .poll(() => accessedSlideKeys(accessRequests), {
+                .poll(() => requestedSlideKeys(tileServerRequests), {
                     timeout: 30000,
                 })
                 .toContain(HNE_KEY);
-            expectAccessWithinLinkedSample(accessRequests);
+            expectTilesWithinLinkedSample(tileServerRequests);
+            // The retired slide access endpoint is never called.
+            expect(accessRequests).toEqual([]);
         });
     });
 }

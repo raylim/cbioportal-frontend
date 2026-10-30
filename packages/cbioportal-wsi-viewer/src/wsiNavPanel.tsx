@@ -6,6 +6,7 @@ import {
     Sample,
     Slide,
     WsiStainFilter,
+    WsiSlideSource,
 } from './wsiViewerTypes';
 import {
     getOrderedServableSlidesForSampleReadOnly,
@@ -31,8 +32,8 @@ import {
 } from './wsiSampleTimeline';
 import { partDisplayName } from './wsiSpecimenUtils';
 import { scheduleThumbnailRequest } from './thumbnailRequestLimiter';
-import { getWsiSlideAccess } from './wsiAuth';
-import { revokeObjectUrl, withAbort } from './wsiCacheUtils';
+import { getWsiSlideSource } from './wsiAuth';
+import { revokeObjectUrl } from './wsiCacheUtils';
 import {
     fetchWsiThumbnailBlob,
     parseMaxAgeMs,
@@ -1145,27 +1146,26 @@ function WsiSlideThumbnail({
             const requestController = new AbortController();
             controller = requestController;
             const signal = requestController.signal;
-            // Access is a shared portal request, so only the tile-server
-            // download waits for one of the limited thumbnail slots.
-            void withAbort(
-                getWsiSlideAccess(studyId, slideKey, false, authScope),
+            let source: WsiSlideSource;
+            try {
+                source = getWsiSlideSource(studyId, slideKey);
+            } catch (_) {
+                // Not a slide the loaded hierarchy can serve.
+                setHidden(true);
+                return;
+            }
+            void scheduleThumbnailRequest(
+                () =>
+                    fetchWsiThumbnailBlob(
+                        tileServerBase,
+                        studyId,
+                        source,
+                        signal,
+                        requestAttempt > 1 ? 'reload' : 'default',
+                        authScope
+                    ),
                 signal
             )
-                .then(access =>
-                    scheduleThumbnailRequest(
-                        () =>
-                            fetchWsiThumbnailBlob(
-                                tileServerBase,
-                                studyId,
-                                slideKey,
-                                access,
-                                signal,
-                                requestAttempt > 1 ? 'reload' : 'default',
-                                authScope
-                            ),
-                        signal
-                    )
-                )
                 .then(blob => {
                     const nextObjectUrl = URL.createObjectURL(blob);
                     if (cancelled) {
