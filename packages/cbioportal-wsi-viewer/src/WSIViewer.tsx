@@ -34,7 +34,11 @@ import {
 import { WsiViewerState } from './wsiViewerState';
 import { loadOpenSeadragon } from './wsiOpenSeadragonLoader';
 import { clearPatientHierarchyCache } from './wsiHierarchyFetchCache';
-import { clearWsiSlideAccess, getAnnotationAccessToken } from './wsiAuth';
+import {
+    clearWsiPurposeAccessTokens,
+    clearWsiSlideSources,
+    getAnnotationAccessToken,
+} from './wsiAuth';
 import { clearWsiThumbnailFetchCache } from './wsiThumbnailFetchCache';
 import { WsiAnnotationController } from './wsiAnnotationController';
 import {
@@ -136,7 +140,8 @@ export interface WsiViewerProps {
     onMetadataCollapsedChange?: (collapsed: boolean) => void;
     /**
      * The host hides the viewer without unmounting it (e.g. an inactive
-     * tab). Background work such as token refresh pauses meanwhile.
+     * tab). Meanwhile the panel shortcuts are off and OpenSeadragon ignores
+     * the collapsed container's size.
      */
     hidden?: boolean;
     /**
@@ -497,7 +502,8 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
 
         if (authScopeChanged) {
             clearPatientHierarchyCache();
-            clearWsiSlideAccess();
+            clearWsiSlideSources();
+            clearWsiPurposeAccessTokens();
             clearWsiThumbnailFetchCache();
         }
 
@@ -559,7 +565,7 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
         }
         this.cancelPendingSlideSelection();
         action(() => {
-            this.viewerState.hierarchy = null; // stops the prefetchSlideMetadata loop
+            this.viewerState.hierarchy = null;
         })();
         this.controller.dispose();
         this.annotationController.detachViewer();
