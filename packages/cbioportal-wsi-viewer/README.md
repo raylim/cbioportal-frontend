@@ -37,7 +37,7 @@ OpenSeadragon is not in either entry. The viewer loads it on the first slide ope
        <WsiViewer
            studyId="mskimpact"
            patientId="P-0000689"
-           tileServerUrl="https://portal.example.org/wsi"
+           tileServerUrl="/wsi"        // same-origin with the portal
            authScope={userName}        // isolates the in-memory caches per user
            height={720}
        />
@@ -51,7 +51,7 @@ The cBioPortal app does both in `src/shared/components/wsiViewer/wsiAppConfig.ts
 | Prop | Purpose |
 | --- | --- |
 | `studyId`, `patientId` | The patient whose slides are shown. Changing `patientId` reloads the viewer in place |
-| `tileServerUrl` | Tile-server base URL (e.g. the portal's `wsi.tile_server.url`) |
+| `tileServerUrl` | Tile-server base URL, the portal's `wsi_tile_server_url`. It must be same-origin with the portal, e.g. `/wsi` on the portal host (see [Portal contract](#portal-contract)). A trailing slash is optional |
 | `authScope` | Subject used to isolate protected in-memory caches, normally the user name |
 | `height` | Viewer height in pixels |
 | `requestedSlideKey` | Slide to open, as from a `slideKey` viewer link. A `#wsi:` hash with a viewport takes precedence |
@@ -69,11 +69,15 @@ The viewer talks to the cBioPortal backend and tile server only:
 | --- | --- |
 | `POST {api}/api/resource-table/query/fetch` (`WSI_SAMPLE`, `WSI_PATIENT`) | The patient's slide rows. The viewer groups them into samples → parts → blocks → slides; no rows means no slides |
 | `{tileServerUrl}/tiles/zxy/{z}/{x}/{y}?studyId=…&key=…&enc=…` | One tile of a slide |
-| `{tileServerUrl}/thumbnails?studyId=…&key=…&enc=…&tw=…&th=…&width=…&height=…` | A slide's thumbnail, `width`×`height` from the stored `tw`×`th` one |
+| `{tileServerUrl}/thumbnails?studyId=…&key=…&enc=…&width=…&height=…` | A slide's thumbnail, at most `width`×`height`; the tile server sizes it from the stored one |
 
-Slides are rows of the `WSI_SAMPLE`/`WSI_PATIENT` resources, one per slide, written by the data provider's pipeline. A row's `metadata` carries the slide's fields and, for a slide that can serve tiles, `serving` with its key (`serving.key`, equal to `slide_key`), sealed source (`serving.sealed_source`), stored thumbnail size (`serving.thumbnail_width`/`thumbnail_height`) and tile metadata (`serving.tile_metadata_json`). Tile and thumbnail requests name the slide by `studyId`, `key` and `enc` (the sealed source), all URL-encoded; the viewer never sends the source image id, and never displays the sealed source. Only the tile server can open the sealed source.
+Slides are rows of the `WSI_SAMPLE`/`WSI_PATIENT` resources, one per slide, written by the data provider's pipeline. A row's `metadata` carries the slide's fields and, for a slide that can serve tiles, `serving` with its key (`serving.key`, equal to `slide_key`), sealed source (`serving.sealed_source`) and tile metadata (`serving.tile_metadata_json`). Tile and thumbnail requests name the slide by `studyId`, `key` and `enc` (the sealed source), all URL-encoded; the viewer never sends the source image id, and never displays the sealed source. Only the tile server can open the sealed source.
 
-Access is checked in front of the tile server, not by the viewer: tile and thumbnail requests are same-origin and carry the portal session cookie, and the ingress allows them only if that session can read the study (`GET {api}/api/studies/{studyId}`). No token or `Authorization` header is sent. A 401/403 means the session expired or lacks access to the study; the viewer then shows its error state, asking the user to reload or sign in again.
+Access is checked in front of the tile server, not by the viewer: tile and thumbnail requests carry the portal session cookie, and the ingress allows them only if that session can read the study (`GET {api}/api/studies/{studyId}`). No token or `Authorization` header is sent.
+
+So `wsi_tile_server_url` must be same-origin with the portal, such as `/wsi` on the portal host. Thumbnails are fetched with `credentials: 'same-origin'` and tiles with OpenSeadragon's XHR without credentials, so a cross-origin tile server never receives the cookie and the ingress refuses every request. The viewer logs a `console.error` once when the configured URL is cross-origin.
+
+Only the ingress answers 401/403, meaning the session expired or lacks access to the study; the tile server answers its own refusals (a source it will not open, an `enc` that does not match the `key`) with 404. A tile answered 401/403 puts the viewer in its error state, asking the user to reload or sign in again. A failed thumbnail never fails the slide: the slide list retries or hides it, and the slide opens without its preview.
 
 The viewer stores the selected slide and viewport in the URL hash (`#wsi:slide=…&x=…&y=…&z=…`) so a view can be shared.
 

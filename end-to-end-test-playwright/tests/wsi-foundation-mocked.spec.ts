@@ -7,8 +7,6 @@ import {
     SECOND_SLIDE_KEY,
     CLINICAL_CANCER_TYPE,
     sealedSourceFor,
-    THUMBNAIL_HEIGHT,
-    THUMBNAIL_WIDTH,
     TileServerRequest,
 } from './wsi-foundation-mocks';
 
@@ -37,8 +35,9 @@ function expectSlideAddressedByKey(
         expect(url.searchParams.get('studyId')).toBe(STUDY_ID);
         expect(url.searchParams.get('enc')).toBe(sealedSourceFor(key));
         if (url.pathname.endsWith('/thumbnails')) {
-            expect(url.searchParams.get('tw')).toBe(String(THUMBNAIL_WIDTH));
-            expect(url.searchParams.get('th')).toBe(String(THUMBNAIL_HEIGHT));
+            // The tile server sizes thumbnails itself.
+            expect(url.searchParams.has('tw')).toBe(false);
+            expect(url.searchParams.has('th')).toBe(false);
         } else {
             expect(url.pathname).toMatch(/\/wsi\/tiles\/zxy\/\d+\/\d+\/\d+$/);
         }
@@ -295,19 +294,18 @@ if (process.env.PW_SUITE === 'wsi') {
             expect(accessRequests).toEqual([]);
         });
 
-        // The thumbnail preview fails the slide at once; refused tiles fail
-        // it on their own when thumbnails still load.
-        for (const [status, tilesOnly] of [
-            [401, false],
-            [403, false],
-            [401, true],
+        // Only refused tiles fail the slide; thumbnails may load or not.
+        for (const [status, refuses] of [
+            [401, 'all'],
+            [403, 'all'],
+            [401, 'tiles'],
         ] as const) {
-            test(`asks to sign in again when the tile server answers ${status}${
-                tilesOnly ? ' for tiles' : ''
+            test(`asks to sign in again when the ingress answers ${status}${
+                refuses === 'tiles' ? ' for tiles' : ''
             }`, async ({ page }) => {
                 await installFoundationMocks(page, {
-                    tileServerStatus: status,
-                    tileServerStatusTilesOnly: tilesOnly,
+                    ingressStatus: status,
+                    ingressRefuses: refuses,
                 });
 
                 await page.goto(
@@ -322,5 +320,55 @@ if (process.env.PW_SUITE === 'wsi') {
                 ).toBeVisible();
             });
         }
+
+        test('opens the slide when the ingress refuses only its thumbnails', async ({
+            page,
+        }) => {
+            const tileResponses: number[] = [];
+            await page.addInitScript(() => {
+                (window as any).__wsiInitialSlidePerformance = [];
+                window.addEventListener(
+                    'wsi-initial-slide-performance',
+                    event => {
+                        (window as any).__wsiInitialSlidePerformance.push(
+                            (event as CustomEvent).detail
+                        );
+                    }
+                );
+            });
+            page.on('response', response => {
+                if (/\/wsi\/tiles\//.test(new URL(response.url()).pathname)) {
+                    tileResponses.push(response.status());
+                }
+            });
+            await installFoundationMocks(page, {
+                ingressStatus: 403,
+                ingressRefuses: 'thumbnails',
+            });
+
+            await page.goto(`/wsi/patient/${PATIENT_ID}?studyId=${STUDY_ID}`);
+
+            await expect
+                .poll(
+                    () =>
+                        page.evaluate(
+                            () =>
+                                (window as any).__wsiInitialSlidePerformance
+                                    .length
+                        ),
+                    { timeout: 30000 }
+                )
+                .toBeGreaterThan(0);
+            const performance = await page.evaluate(
+                () => (window as any).__wsiInitialSlidePerformance.slice(-1)[0]
+            );
+            expect(performance.outcome).toBe('success');
+            expect(tileResponses.length).toBeGreaterThan(0);
+            expect(tileResponses.every(status => status === 200)).toBe(true);
+            await expect(page.getByTestId('wsi-viewer-error')).toHaveCount(0);
+            await expect(
+                page.getByRole('button', { name: 'Zoom in' })
+            ).toBeVisible();
+        });
     });
 }
