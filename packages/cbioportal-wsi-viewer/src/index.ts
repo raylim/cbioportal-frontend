@@ -7,7 +7,10 @@ export { WsiViewerProps } from './WsiViewerEntry';
 export {
     clearWsiHashFromCurrentUrl,
     hashUrlState,
+    readWsiHashFilters,
     readWsiHashState,
+    writeOnlyWsiHashFilters,
+    WsiHashFilters,
     WsiHashState,
     WsiHashViewport,
 } from './wsiViewStateUtils';

@@ -138,6 +138,8 @@ export class WsiViewerController {
     private thumbnailPreviewObjectUrl: string | null = null;
     private nativeTileReadySeq: number | null = null;
     private nativeTileDrawnSeq: number | null = null;
+    /** Whether a slide has been shown since the hierarchy loaded. */
+    private slideShownForHierarchy = false;
     /** Whether the renderer raises tile-drawn, which clears the preview. */
     private tileDrawnClearsPreview = false;
     private mountSeq = 0;
@@ -228,7 +230,9 @@ export class WsiViewerController {
         this.hierarchyAbortController = null;
         this.cancelNavigatorSchedule();
         this.destroyViewer();
-        hashUrlState.clear();
+        // The hash stays: Back may have restored this patient's slide there.
+        // A hash slide of another patient is dropped when the next patient
+        // loads, and hosts drop it when they move to a patient.
     }
 
     private cancelNavigatorSchedule() {
@@ -430,6 +434,7 @@ export class WsiViewerController {
         this.hierarchyAbortController = abortController;
         this.resetMount();
         this.initialSlideKey = undefined;
+        this.slideShownForHierarchy = false;
         this.cancelNavigatorSchedule();
         this.initialSlideLoadStartedAt = Date.now();
         this.state.resetForHierarchyLoad();
@@ -455,6 +460,17 @@ export class WsiViewerController {
             this.state.loading = false;
 
             const allSlides = this.host.getServableSlides();
+            // A hash slide from another patient (the host navigated with the
+            // old hash in the URL) must not lend its viewport to this one.
+            const hashState = hashUrlState.read();
+            if (
+                hashState &&
+                !allSlides.some(
+                    entry => entry.slide.slide_key === hashState.slideId
+                )
+            ) {
+                hashUrlState.clear();
+            }
             const first = this.host.chooseInitialServableSlide(allSlides);
             if (first) {
                 this.restoreHashViewportForNextSelection = restoreHashViewport;
@@ -574,7 +590,14 @@ export class WsiViewerController {
     ): Promise<void> {
         this.cancelActiveMount();
         this.state.beginSlideSelection(slide, sample);
-        writeSelectedSlideState(hashUrlState, slide.slide_key);
+        // Only moving between this patient's slides is a step for Back; the
+        // first slide shown, even one replacing a stale link's, is not.
+        writeSelectedSlideState(
+            hashUrlState,
+            slide.slide_key,
+            this.slideShownForHierarchy
+        );
+        this.slideShownForHierarchy = true;
         if (notifyHost) this.host.onSlideSelectionStarted?.(slide);
         this.loadingStart = Date.now();
         const seq = this.mountSeq;
