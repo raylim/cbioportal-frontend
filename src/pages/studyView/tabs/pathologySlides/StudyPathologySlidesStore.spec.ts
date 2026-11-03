@@ -12,6 +12,8 @@ import {
     studySlidesViewFromUrl,
 } from './StudyPathologySlidesStore';
 import {
+    StudySlideFacets,
+    StudySlideFacetsRequest,
     StudySlidePatient,
     StudySlidesPage,
     StudySlidesRequest,
@@ -295,13 +297,16 @@ describe('StudyPathologySlidesStore', () => {
         }
     });
 
-    it('applies the typed search at once on request', () => {
+    it('waits for an explicit ID search when the text is not ID-like', () => {
         jest.useFakeTimers();
         try {
             makeStore();
-            store.setSearchText('P-3');
+            store.setSearchText('colorectal');
+            jest.advanceTimersByTime(STUDY_SLIDES_SEARCH_DEBOUNCE_MS * 2);
+            expect(store.search).toBe('');
+
             store.applySearch();
-            expect(store.search).toBe('P-3');
+            expect(store.search).toBe('colorectal');
         } finally {
             jest.useRealTimers();
         }
@@ -344,78 +349,249 @@ describe('StudyPathologySlidesStore', () => {
         expect(store.pageNumber).toBe(0);
     });
 
-    it('starts from list filters restored from the URL and reports changes', async () => {
-        const reported: unknown[] = [];
-        store = new StudyPathologySlidesStore({
-            getFilters: () => filters.get(),
-            getStudyIds: () => [STUDY],
-            fetchPage: server.fetchPage,
-            pageSize: 2,
-            initialSlideFilters: {
-                stainGroups: ['IHC'],
-                matchLevels: [],
-                search: 'P-3',
-            },
-            onSlideFiltersChange: f => reported.push(f),
+    describe('filters', () => {
+        const facets: StudySlideFacets = {
+            attributes: [
+                {
+                    attributeId: 'CANCER_TYPE',
+                    values: [
+                        { value: 'Colorectal Cancer', patientCount: 3 },
+                        { value: 'Breast Cancer', patientCount: 2 },
+                    ],
+                    truncated: false,
+                },
+                {
+                    attributeId: 'SAMPLE_TYPE',
+                    values: [{ value: 'Primary', patientCount: 5 }],
+                    truncated: false,
+                },
+            ],
+            matchLevels: { PART: 4, BLOCK: 2, UNMATCHED: 1 },
+        };
+        const suggestionFacets: StudySlideFacets = {
+            attributes: [
+                {
+                    attributeId: 'PRIMARY_SITE',
+                    values: [{ value: 'Colon', patientCount: 2 }],
+                    truncated: false,
+                },
+            ],
+            matchLevels: { PART: 4, BLOCK: 2, UNMATCHED: 1 },
+        };
+        // Observable, like the study view's filters.
+        const clinicalFilters = observable.box<
+            { attributeId: string; values: string[] }[]
+        >([]);
+        let facetRequests: StudySlideFacetsRequest[];
+        let setFilterValues: jest.Mock;
+
+        function makeFilterStore() {
+            runInAction(() => clinicalFilters.set([]));
+            facetRequests = [];
+            setFilterValues = jest.fn((attributeId, values) =>
+                runInAction(() =>
+                    clinicalFilters.set(
+                        values.length ? [{ attributeId, values }] : []
+                    )
+                )
+            );
+            store = new StudyPathologySlidesStore({
+                getFilters: () => filters.get(),
+                getStudyIds: () => [STUDY],
+                fetchPage: server.fetchPage,
+                fetchFacets: async request => {
+                    facetRequests.push(request);
+                    return request.attributeIds.includes('PRIMARY_SITE')
+                        ? suggestionFacets
+                        : facets;
+                },
+                clinical: {
+                    getAttributes: () =>
+                        [
+                            'CANCER_TYPE',
+                            'CANCER_TYPE_DETAILED',
+                            'SAMPLE_TYPE',
+                            'PRIMARY_SITE',
+                        ].map(attributeId => ({
+                            attributeId,
+                            displayName: attributeId.toLowerCase(),
+                        })),
+                    getFilters: () => clinicalFilters.get(),
+                    setFilterValues,
+                },
+                pageSize: 2,
+            });
+            stopObserving = autorun(() => {
+                void store.page.result;
+                void store.facets.result;
+                void store.suggestionFacets.result;
+            });
+        }
+
+        beforeEach(() => window.localStorage.clear());
+
+        it('requests the default filters with the list filters but not the ID search', async () => {
+            makeFilterStore();
+            store.toggleMatchLevel('PART');
+            store.setSearchText('P-1');
+            store.applySearch();
+            await settle();
+
+            expect(facetRequests[facetRequests.length - 1]).toEqual({
+                studyViewFilter: { studyIds: [STUDY] },
+                stainGroups: [],
+                matchLevels: ['PART'],
+                attributeIds: [
+                    'CANCER_TYPE',
+                    'CANCER_TYPE_DETAILED',
+                    'SAMPLE_TYPE',
+                ],
+            });
+            expect(server.requests[server.requests.length - 1]).toEqual(
+                expect.objectContaining({
+                    matchLevels: ['PART'],
+                    search: 'P-1',
+                })
+            );
+            // SAMPLE_TYPE has one value in the cohort, so it is not offered.
+            expect(store.visibleFacets.map(f => f.attributeId)).toEqual([
+                'CANCER_TYPE',
+            ]);
         });
-        stopObserving = autorun(() => void store.page.result);
-        await settle();
 
-        expect(server.requests[0]).toEqual(
-            expect.objectContaining({ stainGroups: ['IHC'], search: 'P-3' })
-        );
-        expect(store.searchText).toBe('P-3');
-        expect(reported).toEqual([]);
+        it('suggests clinical values and match levels once the search is used', async () => {
+            makeFilterStore();
+            await settle();
+            expect(store.suggestionsFor('col')).toEqual([
+                {
+                    kind: 'clinical',
+                    attributeId: 'CANCER_TYPE',
+                    displayName: 'cancer_type',
+                    value: 'Colorectal Cancer',
+                    patientCount: 3,
+                },
+            ]);
 
-        store.toggleMatchLevel('BLOCK');
-        expect(reported).toEqual([
-            { stainGroups: ['IHC'], matchLevels: ['BLOCK'], search: 'P-3' },
-        ]);
-    });
-
-    it('follows the patient and filters in the URL without reporting them', async () => {
-        const reported: unknown[] = [];
-        store = new StudyPathologySlidesStore({
-            getFilters: () => filters.get(),
-            getStudyIds: () => [STUDY],
-            onSelectionChange: p => selections.push(p),
-            onSlideFiltersChange: f => reported.push(f),
-            fetchPage: server.fetchPage,
-            pageSize: 2,
+            store.requestSuggestions();
+            await settle();
+            expect(
+                store
+                    .suggestionsFor('col')
+                    .map(s => s.kind + ':' + s.patientCount)
+            ).toEqual(['clinical:3', 'clinical:2']);
+            expect(store.suggestionsFor('unmatch')).toEqual([
+                { kind: 'match', level: 'UNMATCHED', patientCount: 1 },
+            ]);
+            expect(store.suggestionsFor('  ')).toEqual([]);
         });
-        stopObserving = autorun(() => void store.page.result);
-        await settle();
-        selections = [];
 
-        // As after Back to an entry for P-4 with an H&E filter.
-        store.followUrl(
-            { studyId: STUDY, patientId: 'P-4' },
-            { stainGroups: ['H&E'], matchLevels: [], search: '' }
-        );
-        await settle();
+        it('sets the shared clinical filter and pins more filters', async () => {
+            makeFilterStore();
+            await settle();
 
-        expect(store.selected?.patientId).toBe('P-4');
-        expect(store.selectedIndex).toBe(3);
-        expect(store.stainGroups).toEqual(['H&E']);
-        expect(selections).toEqual([]);
-        // The reaction reports the filters it was given; the page writes the
-        // same values back, which leaves the URL unchanged.
-        expect(reported).toEqual([
-            { stainGroups: ['H&E'], matchLevels: [], search: '' },
-        ]);
-    });
+            store.addClinicalValue('CANCER_TYPE', 'Breast Cancer');
+            store.addClinicalValue('CANCER_TYPE', 'Colorectal Cancer');
+            expect(setFilterValues).toHaveBeenLastCalledWith('CANCER_TYPE', [
+                'Breast Cancer',
+                'Colorectal Cancer',
+            ]);
+            expect(store.clinicalFilters).toEqual([
+                {
+                    attributeId: 'CANCER_TYPE',
+                    displayName: 'cancer_type',
+                    values: ['Breast Cancer', 'Colorectal Cancer'],
+                },
+            ]);
 
-    it('clears only the tab filters', async () => {
-        makeStore();
-        store.toggleStainGroup('IHC');
-        store.toggleMatchLevel('UNMATCHED');
-        store.setSearchText('P');
-        store.applySearch();
-        expect(store.hasSlideFilters).toBe(true);
+            store.pinAttribute('PRIMARY_SITE');
+            expect(store.facetAttributeIds).toContain('PRIMARY_SITE');
+            expect(
+                JSON.parse(
+                    window.localStorage.getItem('wsi.study.pinnedFacets')!
+                )
+            ).toEqual(['PRIMARY_SITE']);
+            store.unpinAttribute('PRIMARY_SITE');
+            expect(store.facetAttributeIds).not.toContain('PRIMARY_SITE');
+            expect(setFilterValues).toHaveBeenLastCalledWith(
+                'PRIMARY_SITE',
+                []
+            );
+        });
 
-        store.clearSlideFilters();
-        expect(store.hasSlideFilters).toBe(false);
-        expect(store.searchText).toBe('');
+        it('starts from list filters restored from the URL and reports changes', async () => {
+            const reported: unknown[] = [];
+            store = new StudyPathologySlidesStore({
+                getFilters: () => filters.get(),
+                getStudyIds: () => [STUDY],
+                fetchPage: server.fetchPage,
+                pageSize: 2,
+                initialSlideFilters: {
+                    stainGroups: ['IHC'],
+                    matchLevels: [],
+                    search: 'P-3',
+                },
+                onSlideFiltersChange: f => reported.push(f),
+            });
+            stopObserving = autorun(() => void store.page.result);
+            await settle();
+
+            expect(server.requests[0]).toEqual(
+                expect.objectContaining({ stainGroups: ['IHC'], search: 'P-3' })
+            );
+            expect(store.searchText).toBe('P-3');
+            expect(reported).toEqual([]);
+
+            store.toggleMatchLevel('BLOCK');
+            expect(reported).toEqual([
+                { stainGroups: ['IHC'], matchLevels: ['BLOCK'], search: 'P-3' },
+            ]);
+        });
+
+        it('follows the patient and filters in the URL without reporting them', async () => {
+            const reported: unknown[] = [];
+            store = new StudyPathologySlidesStore({
+                getFilters: () => filters.get(),
+                getStudyIds: () => [STUDY],
+                onSelectionChange: p => selections.push(p),
+                onSlideFiltersChange: f => reported.push(f),
+                fetchPage: server.fetchPage,
+                pageSize: 2,
+            });
+            stopObserving = autorun(() => void store.page.result);
+            await settle();
+            selections = [];
+
+            // As after Back to an entry for P-4 with an H&E filter.
+            store.followUrl(
+                { studyId: STUDY, patientId: 'P-4' },
+                { stainGroups: ['H&E'], matchLevels: [], search: '' }
+            );
+            await settle();
+
+            expect(store.selected?.patientId).toBe('P-4');
+            expect(store.selectedIndex).toBe(3);
+            expect(store.stainGroups).toEqual(['H&E']);
+            expect(selections).toEqual([]);
+            // The reaction reports the filters it was given; the page writes the
+            // same values back, which leaves the URL unchanged.
+            expect(reported).toEqual([
+                { stainGroups: ['H&E'], matchLevels: [], search: '' },
+            ]);
+        });
+
+        it('clears only the tab filters', async () => {
+            makeFilterStore();
+            store.toggleStainGroup('IHC');
+            store.toggleMatchLevel('UNMATCHED');
+            store.setSearchText('P');
+            store.applySearch();
+            expect(store.hasSlideFilters).toBe(true);
+
+            store.clearSlideFilters();
+            expect(store.hasSlideFilters).toBe(false);
+            expect(store.searchText).toBe('');
+            expect(setFilterValues).not.toHaveBeenCalled();
+        });
     });
 });
 
