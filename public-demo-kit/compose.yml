@@ -1,0 +1,186 @@
+# cBioPortal + native whole-slide-image viewer, public demo.
+#
+# One origin (nginx, service "web"):
+#   /frontend/  the cBioPortal frontend (static build baked into the web image)
+#   /wsi/...    tile server, annotation service and slide assistant
+#   everything else -> the cBioPortal backend
+#
+# All images are built from pinned commits of public GitHub repositories (.env: *_SHA),
+# checked out by setup.sh under $DATA_DIR/src/. Run ./setup.sh the first time.
+name: wsi-public-demo
+
+x-healthcheck: &default-healthcheck
+  interval: 5s
+  timeout: 5s
+  retries: 120
+
+services:
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8
+    environment:
+      CLICKHOUSE_DB: cbioportal
+      CLICKHOUSE_USER: cbio
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?run ./setup.sh to create .env}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+    ulimits:
+      nofile: {soft: 262144, hard: 262144}
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+      - ./clickhouse_user_settings.xml:/etc/clickhouse-server/users.d/user_settings.xml:ro
+      # Schema + seed of the pinned backend commit.
+      - ${DATA_DIR:-./data}/src/portal/src/main/resources/db-scripts/clickhouse/init:/db-scripts:ro
+      - ./docker/clickhouse-init.sh:/docker-entrypoint-initdb.d/001_init.sh:ro
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${CLICKHOUSE_HTTP_PORT:-27801}:8123"
+    healthcheck:
+      <<: *default-healthcheck
+      test: ["CMD-SHELL", "clickhouse-client --user cbio --password \"$$CLICKHOUSE_PASSWORD\" --query 'SELECT count() FROM cbioportal.info' | grep -q '^1$$'"]
+
+  session-db:
+    image: mongo:4.2
+    volumes:
+      - session_db:/data/db
+    healthcheck:
+      <<: *default-healthcheck
+      test: ["CMD-SHELL", "mongo --quiet --eval 'db.runCommand({ ping: 1 }).ok' | grep 1"]
+
+  session:
+    image: cbioportal/session-service:0.6.4
+    environment:
+      JAVA_OPTS: -Dspring.data.mongodb.uri=mongodb://session-db:27017/session-service
+      SERVER_PORT: "5001"
+    depends_on:
+      session-db: {condition: service_healthy}
+
+  annotation-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: annotations
+      POSTGRES_USER: annotations
+      POSTGRES_PASSWORD: ${ANNOTATION_PG_PASSWORD:?run ./setup.sh to create .env}
+    volumes:
+      - annotation_pg:/var/lib/postgresql/data
+    healthcheck:
+      <<: *default-healthcheck
+      test: ["CMD-SHELL", "pg_isready -U annotations -d annotations"]
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      <<: *default-healthcheck
+      test: ["CMD", "redis-cli", "ping"]
+
+  # Tile server + annotation service + slide assistant (cBioPortal/cbioportal-tile-server).
+  tile:
+    image: wsi-public-demo/tile:${TILE_SHA}
+    build:
+      context: ${DATA_DIR:-./data}/src/tile
+    environment:
+      # Capabilities: the portal signs them with the same secret.
+      WSI_AUTH_SECRET: ${WSI_AUTH_SECRET:?run ./setup.sh to create .env}
+      WSI_AUTH_AUDIENCE: cbioportal-wsi
+      WSI_AUTH_MAX_TTL: "300"
+      # Opens the sealed_source of each slide row (written by make_wsi_resources.py).
+      WSI_SOURCE_SEAL_KEY: ${WSI_SOURCE_SEAL_KEY:?run ./setup.sh to create .env}
+      # Slides are local files under /slides (read-only mount); nothing else may be opened.
+      WSI_ALLOWED_SOURCE_SCHEMES: file
+      WSI_ALLOWED_SOURCE_PREFIXES: file:///slides/
+      WSI_ALLOWED_THUMBNAIL_PREFIXES: file:///slides/thumbnails/
+      REDIS_URL: redis://redis:6379
+      CORS_ORIGINS: ${PUBLIC_ORIGIN:-http://localhost:27800}
+      # Annotations (and assistant state) in Postgres.
+      ANNOTATION_DATABASE_URL: postgresql://annotations:${ANNOTATION_PG_PASSWORD}@annotation-db:5432/annotations
+      ANNOTATION_AUTH_ENABLED: "true"
+      # The portal runs without login (wsi.local-auth-bypass), so its capabilities carry
+      # sub=local-development.
+      ANNOTATION_LOCAL_DEVELOPMENT: "true"
+      # Annotation schema migrations take no lock: keep one worker unless the database
+      # has already been initialised once.
+      N_WORKERS: ${TILE_WORKERS:-1}
+      # Slide assistant: off unless an OpenAI key file is configured (see README).
+      WSI_AGENT_ENABLED: ${WSI_AGENT_ENABLED:-false}
+      WSI_AGENT_PROVIDER: openai
+      WSI_AGENT_MODEL: ${WSI_AGENT_MODEL:-gpt-4.1-mini}
+      OPENAI_API_KEY_FILE: ${OPENAI_API_KEY_FILE_IN_CONTAINER:-}
+      # Region search needs a feature index that is not part of this demo.
+      WSI_RESEARCH_ENABLED: "false"
+    volumes:
+      - ${DATA_DIR:-./data}/slides:/slides:ro
+      - ${SECRETS_DIR:-./secrets}:/run/demo-secrets:ro
+    depends_on:
+      redis: {condition: service_healthy}
+      annotation-db: {condition: service_healthy}
+    healthcheck:
+      <<: *default-healthcheck
+      test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:8080/health\", timeout=2)' >/dev/null"]
+
+  # cBioPortal backend (raylim/cbioportal), ClickHouse mode, no login.
+  portal:
+    image: wsi-public-demo/portal:${PORTAL_SHA}
+    build:
+      context: ${DATA_DIR:-./data}/src/portal
+      dockerfile: docker/web/Dockerfile
+      args:
+        MAVEN_OPTS: -DskipTests -Dmaven.gitcommitid.skip=true
+    environment:
+      JAVA_OPTS: ${PORTAL_JAVA_OPTS:--Xms512m -Xmx3g -XX:+UseG1GC}
+      # Placeholders in application.properties are resolved from these.
+      PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-http://localhost:27800}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
+      WSI_AUTH_SECRET: ${WSI_AUTH_SECRET}
+      WSI_AGENT_ENABLED: ${WSI_AGENT_ENABLED:-false}
+      # The image's built-in application.properties (the upstream example) is the base;
+      # ./application.properties overrides it.
+      WEBAPP_OPTS: --spring.config.additional-location=file:/config/application.properties
+    volumes:
+      - ./application.properties:/config/application.properties:ro
+    depends_on:
+      clickhouse: {condition: service_healthy}
+      session: {condition: service_started}
+    healthcheck:
+      interval: 10s
+      timeout: 5s
+      retries: 60
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/api/health 2>/dev/null | grep -q UP || curl -fsS http://localhost:8080/api/health | grep -q UP"]
+
+  # nginx with the frontend build (raylim/cbioportal-frontend) baked in; nginx.conf mounted.
+  web:
+    image: wsi-public-demo/web:${FRONTEND_SHA}
+    build:
+      context: ${DATA_DIR:-./data}/src/frontend
+      dockerfile_inline: |
+        # The cBioPortal frontend production build, served by nginx under /frontend/.
+        FROM node:22.18.0-bookworm AS build
+        WORKDIR /src
+        COPY . .
+        RUN corepack enable && corepack install
+        ENV CI=true
+        RUN pnpm install --frozen-lockfile
+        RUN pnpm run buildAll
+        FROM nginx:1.27-alpine
+        COPY --from=build /src/dist /usr/share/nginx/frontend
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${WEB_PORT:-27800}:80"
+    depends_on:
+      portal: {condition: service_started}
+      tile: {condition: service_healthy}
+
+  # cBioPortal importer (cBioPortal/cbioportal-core). Only used by load_data.sh.
+  importer:
+    profiles: ["tools"]
+    image: wsi-public-demo/importer:${CORE_SHA}
+    build:
+      context: ${DATA_DIR:-./data}/src/core
+    environment:
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
+    volumes:
+      - ${DATA_DIR:-./data}/demo-study:/study
+    depends_on:
+      clickhouse: {condition: service_healthy}
+
+volumes:
+  clickhouse_data:
+  session_db:
+  annotation_pg:

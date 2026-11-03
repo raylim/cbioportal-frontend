@@ -1,0 +1,55 @@
+{
+  "source": "NCI Genomic Data Commons (https://portal.gdc.cancer.gov), open access",
+  "project": "TCGA-BRCA",
+  "selection": "Diagnostic Slide, 100-300 MB, one per study patient, by file name",
+  "slides": [
+    {
+      "file_id": "554855d7-4e21-406b-8f9f-458b1e7c89c9",
+      "file_name": "TCGA-A7-A0CD-01Z-00-DX1.F045B9C8-049C-41BF-8432-EF89F236D34D.svs",
+      "md5sum": "d148f6d71ac283e653c29ee7e77b2f23",
+      "file_size": 280966835,
+      "patient_id": "TCGA-A7-A0CD",
+      "sample_id": "TCGA-A7-A0CD-01"
+    },
+    {
+      "file_id": "2af79103-7baf-42ea-9c1d-d099ec1f0368",
+      "file_name": "TCGA-A7-A0CH-01Z-00-DX2.81DDF423-FCA8-46CA-83A4-2E80B611844D.svs",
+      "md5sum": "44b090f1c69a320185fb2baf172cd0ec",
+      "file_size": 271767067,
+      "patient_id": "TCGA-A7-A0CH",
+      "sample_id": "TCGA-A7-A0CH-01"
+    },
+    {
+      "file_id": "60dbe3b7-504b-437a-9283-28f3fad5abdc",
+      "file_name": "TCGA-A7-A0CJ-01Z-00-DX1.E26F2F62-D688-4373-BB7B-790A06734E49.svs",
+      "md5sum": "837779fef3cf7e5510c3cb78f17f36a4",
+      "file_size": 231625433,
+      "patient_id": "TCGA-A7-A0CJ",
+      "sample_id": "TCGA-A7-A0CJ-01"
+    },
+    {
+      "file_id": "d7a7cc44-e056-4714-98bf-094777f5d589",
+      "file_name": "TCGA-A7-A0D9-01Z-00-DX1.FBC3B90F-C58B-4476-8354-0AF9248324E3.svs",
+      "md5sum": "90ba380947aa5ea648c41396b258094a",
+      "file_size": 298601613,
+      "patient_id": "TCGA-A7-A0D9",
+      "sample_id": "TCGA-A7-A0D9-01"
+    },
+    {
+      "file_id": "addeb833-423f-49d0-9c7e-88b1aa053f93",
+      "file_name": "TCGA-A7-A0DC-01Z-00-DX1.C770781E-83E4-47DD-B658-25BBBBB32066.svs",
+      "md5sum": "893cd6fa836720bab6f65774b046950b",
+      "file_size": 205014923,
+      "patient_id": "TCGA-A7-A0DC",
+      "sample_id": "TCGA-A7-A0DC-01"
+    },
+    {
+      "file_id": "693d0470-eecc-4457-a97a-d35ea2268188",
+      "file_name": "TCGA-A7-A13G-01Z-00-DX1.C258C545-8C1F-41D4-846F-962A746CBDFB.svs",
+      "md5sum": "d5df4e4e00112f7c92abef5b82560e1b",
+      "file_size": 125960225,
+      "patient_id": "TCGA-A7-A13G",
+      "sample_id": "TCGA-A7-A13G-01"
+    }
+  ]
+}
