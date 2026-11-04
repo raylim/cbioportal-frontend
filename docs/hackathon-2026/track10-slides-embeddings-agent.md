@@ -4,6 +4,43 @@ cBioPortal Hack & Specathon, Nov 3–4 2026 · Raymond Lim
 
 By the Wednesday 15:30 wrap-up we want a design the community can build on: how cBioPortal should present slide embeddings, annotations and an AI agent. We'll show it with a live demo of its first loop, on lung adenocarcinoma (LUAD).
 
+## Results (Nov 4)
+
+The LUAD loop works end to end on the MSK dev stack. Every LUAD H&E slide in MSK-IMPACT was scored for its WHO growth-pattern composition using only text prompts against stored image embeddings, with no training labels. cBioPortal's existing Study View and Group Comparison then recover known LUAD biology.
+
+- **Scale:** 50,764 H&E slides from 6,763 patients, scored overnight on CPU. 9,424 samples carry scores; 5,248 have enough tumor (≥ 200 tumor tiles) for a pattern call.
+- **Method (v0.2):**
+    - Tumor tiles are gated first.
+    - Each tumor tile goes to the best-matching of the 7 WHO patterns, with scores scaled relative to tumor tiles across the cohort.
+    - Each sample gets every pattern's % of tumor and its predominant pattern, from one representative slide.
+    - TIL-rich, necrosis and stroma are reported as % of tissue.
+- **Lesson from v0.1:** per-concept slide scores mostly tracked one shared tumor-ness factor (high-solid samples were also high in every other pattern). Composition fixed that: solid-predominant samples are 64% solid vs 10% in others, 2% lepidic vs 21%, and 20% necrosis vs 6%.
+
+Mutation rates by predominant pattern (MSK-IMPACT LUAD, samples with a pattern call):
+
+| Predominant pattern | Samples | EGFR | KRAS | TP53 | STK11 | KEAP1 | SMARCA4 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Solid | 2,023 | 33% | 27% | 61% | 14% | 15% | 9% |
+| Lepidic | 911 | 37% | 30% | 20% | 5% | 2% | 1% |
+| Papillary | 706 | 31% | 32% | 47% | 15% | 15% | 6% |
+| Invasive mucinous | 588 | 10% | 54% | 19% | 22% | 14% | 5% |
+| Acinar | 439 | 32% | 32% | 37% | 16% | 13% | 5% |
+| Micropapillary | 371 | 40% | 25% | 35% | 10% | 8% | 5% |
+| Cribriform | 210 | 51% | 22% | 27% | 15% | 9% | 7% |
+
+**The two demo comparisons:**
+
+- **Morphology → genomics** (invasive mucinous vs solid predominant): KRAS 55% vs 29%, TP53 20% vs 62%, EGFR 10% vs 36% (all q < 10⁻¹⁰). Invasive mucinous adenocarcinoma is known to be KRAS-driven and EGFR-negative; solid is the high-grade, TP53/SMARCA4/KEAP1 pattern.
+- **Genomics → morphology** (KRAS-mutant vs EGFR-mutant): the top hit is invasive mucinous at 19% vs 6% of tumor (q ≈ 3×10⁻⁷²). Cribriform and micropapillary are higher in EGFR tumors; extracellular mucin and tertiary lymphoid structures are higher in KRAS tumors.
+
+**Caveats:**
+
+- Research signal, not a grade or diagnosis; no pathologist validation yet.
+- Acinar is under-called (8% predominant, though it is the most common LUAD pattern); lepidic and mucinous are likely over-called; cribriform is weak.
+- MSK-IMPACT skews metastatic and high-grade, so solid leading is plausible.
+- The dev copy of MSK-IMPACT has no survival data, so the outcome story isn't shown yet.
+- The text-image adapter and tile embeddings are MSK-internal. A public demo kit (`public-demo-kit/` on this branch) shows the viewer and annotations on TCGA data, without region search.
+
 ## The story
 
 The user is a translational researcher in a LUAD cohort. They start on one patient's slide and end with a morphology-defined cohort compared on genomics. The patient page is the entry point; the cohort and genomics context is what cBioPortal adds over a plain slide viewer.
@@ -23,20 +60,20 @@ The user is a translational researcher in a LUAD cohort. They start on one patie
 
 ## What exists vs. what we build
 
-Most of the loop already exists; the new pieces are the concept scores, their link into the study, and a few tools for cBioChat. Owners are proposals — claim or swap them.
+Most of the loop already exists; the new pieces are the concept scores, their link into the study, and a few tools for cBioChat. Owners are as of Nov 4.
 
-| Piece | State | Proposed owner | Notes |
+| Piece | State | Owner | Notes |
 | --- | --- | --- | --- |
 | Slide viewer, annotations, layers | Works today | — | cbioportal-frontend #5732, #19 |
-| In-viewer assistant + text→region search on one slide | Works today | — | #20, tile server #40; MSK slides only |
+| In-viewer assistant + text→region search | Works today | — | #20, tile server #40; now covers every MSK-IMPACT LUAD slide |
 | Group Comparison, Study View filters | Works today | — | Existing cBioPortal |
-| Concept vocabulary for LUAD (~30 concepts, 2–4 prompts each) | To build | Raymond + a pathologist | Needs a pathologist's review |
-| Concept-score batch over LUAD H&E slides | To build | Raymond | ~6,800 patients, ~53k H&E slides; overnight CPU job |
-| Scores loaded into the study (attributes or a generic assay profile) | To build | Raymond / Darin | Then Study View and Group Comparison work unchanged |
-| "Show me the tiles" link from a score into the viewer | To build | Darin | Opens the slide on the top tiles for a concept |
-| Slide tools for cBioChat | To build | Darin + Track 2 | List concepts, filter cohort by concept, top tiles |
+| LUAD concept vocabulary (29 concepts) | Works today | Raymond | v0.2: acinar prompts strengthened; needs a pathologist's review |
+| Growth-pattern composition batch over LUAD H&E slides | Works today | Raymond | 50,764 slides; about 1.5 h per run on CPU |
+| Scores loaded into the study (sample attributes + a generic-assay profile) | Works today | Raymond | Predominant pattern, 7 pattern %s, region %s; rollback-safe loader |
+| "Show me the tiles" link from a score into the viewer | Works today | Raymond | The viewer's existing deep link; one link per sample × concept |
+| Slide tools for cBioChat | Spec only | Track 2 (open) | Spec only this week; the demo drives Study View directly |
 | Evidence-tile and heat-map UI in the viewer | Spec only | Carlos | Mockups + prototype on public data / mocks |
-| Study-wide free-text search (ANN index) | Spec only | — | The scaling path; spec only for now |
+| Study-wide free-text search (ANN index) | In progress | — | Per-slide search covers all LUAD slides; a cohort-wide index is the next step |
 
 ## How morphology search works at study scale
 
@@ -87,7 +124,7 @@ The concept-score batch has to start tonight, so the vocabulary is the first thi
 
 **Tuesday night**
 
-- [ ] Run the concept-score batch over LUAD H&E slides; keep the top tiles per concept (Raymond)
+- [ ] Run the concept-score batch over LUAD H&E slides; keep the top tiles per concept, and emit the concept heat maps, tissue map and quality flags (Raymond)
 
 **Wednesday, 10:30–12:00**
 
@@ -101,6 +138,28 @@ The concept-score batch has to start tonight, so the vocabulary is the first thi
 - [ ] Rehearse the five-step demo end to end, with a fallback recording (all)
 - [ ] Finish the spec: the story, the three search approaches, the agent split, and what's next (all)
 - [ ] Present at 15:30 (Raymond)
+
+## Precomputed annotations
+
+Tonight's LUAD batch can emit concept heat maps, a tissue map and quality flags alongside the concept scores, because the costly step is already done. Every servable slide has stored H-optimus-1 tile features (224 px tiles at 0.5 µm/px), the KEEP adapter puts them in text space, and TITAN gives one vector per slide.
+
+| Annotation | Source | Compute | Shown as | This week |
+| --- | --- | --- | --- | --- |
+| **Concept heat maps + top regions** (tumor, stroma, necrosis, TIL-rich, mucin, LUAD growth patterns) | KEEP text scores per tile | CPU, same pass as the concept scores | A heat-map layer per concept, plus top-k regions as proposed annotations | Tonight |
+| **Tissue map** (outline, area, number of pieces) | Stored tile coordinates | Trivial | Outline layer; tissue area as a slide attribute | Tonight |
+| **Quality flags** (pen, blur, folds, bubbles, blank) | KEEP prompts, or a small linear probe if too noisy | CPU | "Artifacts" layer; a slide-level QC attribute to filter cohorts | Tonight |
+| **Morphology clusters** (30–50 cohort-wide prototypes) | Clustering of tile embeddings | CPU | A layer whose colors mean the same thing on every slide; a pathologist names clusters once | Tonight or Wednesday |
+| **Similar slides** (top-k neighbors) | TITAN slide embeddings | Small | "Similar slides" list in the viewer | Small add-on |
+| **Tissue-class probes** | Linear heads on H-optimus-1, trained on public labeled tiles | Hours to a day | Per-tile class layer, more reliable than zero-shot text | Spec |
+| **Molecular predictions** (e.g. EGFR, KRAS from H&E) | Weak supervision against cBioPortal's own mutation calls | Days | An "evidence" layer from the model's attention tiles; strictly research | Spec |
+| **Cell-level** (nuclei, TIL density, cellularity, mitoses) | A new pixel model on GPU | Beyond this week | Cell overlays and density maps | Spec |
+| **IHC quantification, H&E↔IHC registration** | Stain classifier + a new model | Beyond this week | Paired viewing across sections | Spec |
+
+**How they appear in the viewer:**
+
+- Each precomputed layer says it's AI-generated, with the model, version and date, and is read-only until someone accepts regions.
+- Accepted regions become ordinary annotations, marked "accepted from AI".
+- Heat maps are overlays with an opacity slider, not thousands of polygons.
 
 ## More user stories
 
