@@ -1,15 +1,45 @@
 import * as React from 'react';
 import { DownloadControlOption } from 'cbioportal-frontend-commons';
-import { WsiViewerConfig, WsiViewerProps } from 'cbioportal-wsi-viewer';
+import { DiscreteCopyNumberData } from 'cbioportal-ts-api-client';
+import {
+    WsiMolecularServices,
+    WsiViewerConfig,
+    WsiViewerProps,
+} from 'cbioportal-wsi-viewer';
 import { getServerConfig } from 'config/config';
-import { buildCBioPortalAPIUrl, buildCBioPortalPageUrl } from 'shared/api/urls';
+import {
+    buildCBioPortalAPIUrl,
+    buildCBioPortalPageUrl,
+    getOncoKbApiUrl,
+} from 'shared/api/urls';
+import { getWsiOncoKbClient } from 'shared/api/wsiOncoKbClientInstance';
 import LoadingIndicator from 'shared/components/loadingIndicator/LoadingIndicator';
+import { getCivicCNAVariants } from 'shared/lib/CivicUtils';
+import { getSimplifiedMutationType } from 'shared/lib/oql/AccessorsForOqlFilter';
 import { useWsiClinicalRows, WsiPatientClinicalData } from './wsiClinicalRows';
 
 const WSI_OSD_PREFIX_URL = '/reactapp/osd-images/';
 
 function renderWsiLoading() {
     return <LoadingIndicator isLoading={true} center={true} size="big" />;
+}
+
+/** OncoKB and CIViC annotation services, as configured for the portal. */
+export function buildWsiMolecularServices(): WsiMolecularServices {
+    const serverConfig = getServerConfig();
+    return {
+        showOncoKb: !!serverConfig.show_oncokb,
+        showCivic: !!serverConfig.show_civic,
+        getOncoKbApiUrl,
+        getOncoKbClient: getWsiOncoKbClient,
+        getCivicCnaVariants: (alteration, geneSymbol, civicVariants) =>
+            getCivicCNAVariants(
+                [({ alteration } as unknown) as DiscreteCopyNumberData],
+                geneSymbol,
+                civicVariants
+            ),
+        getSimplifiedMutationType,
+    };
 }
 
 /** Viewer services from the portal configuration, installed at startup. */
@@ -19,6 +49,7 @@ export function buildWsiViewerConfig(): WsiViewerConfig {
         buildPageUrl: (path: string, query: Record<string, string>) =>
             buildCBioPortalPageUrl(path, query),
         osdPrefixUrl: WSI_OSD_PREFIX_URL,
+        molecular: buildWsiMolecularServices(),
     };
 }
 
