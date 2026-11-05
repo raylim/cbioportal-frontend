@@ -2,8 +2,10 @@ import {
     clearAnnotationAccessToken,
     clearWsiPurposeAccessTokens,
     clearWsiSlideSources,
+    getAgentAccessToken,
     getAnnotationAccessToken,
     getWsiSlideSource,
+    getWsiSourceFingerprint,
     registerWsiSlideSources,
     wsiSlideRegistryGeneration,
 } from './wsiAuth';
@@ -177,6 +179,27 @@ describe('WSI slide sources', () => {
             );
         }
     );
+
+    it('fingerprints a slide source by its slide key and pyramid shape', () => {
+        const slideKey = '0123456789ab';
+        const source = {
+            slideKey,
+            servingKey: slideKey,
+            sealedSource: TEST_SEALED_SOURCE,
+            tileMetadata: {
+                dimensions: { width: 100, height: 80 },
+                levels: 3,
+                tile_size: 256,
+            },
+        } as any;
+
+        expect(getWsiSourceFingerprint(source)).toBe(
+            `wsi-v3:${slideKey}:100x80:3:256`
+        );
+        expect(
+            getWsiSourceFingerprint({ ...source, sealedSource: 'other' })
+        ).toBe(getWsiSourceFingerprint(source));
+    });
 });
 
 function configureRuntime(overrides: Partial<WsiViewerConfig> = {}) {
@@ -222,6 +245,60 @@ describe('WSI purpose access tokens', () => {
             'purpose=annotations'
         );
         clearAnnotationAccessToken();
+    });
+
+    it('does not reuse agent capabilities across authenticated subjects', async () => {
+        jest.spyOn(global, 'fetch')
+            .mockResolvedValueOnce({
+                ok: true,
+                json: async () => ({
+                    access_token: 'agent-a',
+                    expires_in: 300,
+                }),
+            } as Response)
+            .mockResolvedValueOnce({
+                ok: true,
+                json: async () => ({
+                    access_token: 'agent-b',
+                    expires_in: 300,
+                }),
+            } as Response);
+
+        await expect(getAgentAccessToken('study-1', 'user-a')).resolves.toBe(
+            'agent-a'
+        );
+        await expect(getAgentAccessToken('study-1', 'user-b')).resolves.toBe(
+            'agent-b'
+        );
+        expect((global.fetch as jest.Mock).mock.calls[0][0]).toContain(
+            'purpose=agent'
+        );
+        expect(global.fetch).toHaveBeenCalledTimes(2);
+    });
+
+    it('keeps annotation and agent tokens apart', async () => {
+        const fetchImpl = jest.fn(async (url: string) => {
+            const purpose = new URL(url).searchParams.get('purpose');
+            return {
+                ok: true,
+                json: async () => ({
+                    access_token: `${purpose}-token`,
+                    expires_in: 300,
+                }),
+            } as Response;
+        });
+        configureRuntime({ fetchImpl: (fetchImpl as unknown) as typeof fetch });
+
+        await expect(
+            getAnnotationAccessToken('study-1', 'user-a')
+        ).resolves.toBe('annotations-token');
+        await expect(getAgentAccessToken('study-1', 'user-a')).resolves.toBe(
+            'agent-token'
+        );
+        await expect(getAgentAccessToken('study-1', 'user-a')).resolves.toBe(
+            'agent-token'
+        );
+        expect(fetchImpl).toHaveBeenCalledTimes(2);
     });
 
     it('requests annotation tokens through the injected host services', async () => {

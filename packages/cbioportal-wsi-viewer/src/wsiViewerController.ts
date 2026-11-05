@@ -24,7 +24,8 @@ import {
     reopenOsdViewer,
     restoreOrHomeViewport,
 } from './wsiOsdUtils';
-import { getWsiSlideSource } from './wsiAuth';
+import { getWsiSlideSource, getWsiSourceFingerprint } from './wsiAuth';
+import { WsiAgentViewport } from './wsiAgent';
 import { buildWsiSlideQuery } from './wsiUrls';
 import { fetchWsiThumbnailBlob } from './wsiThumbnailFetchCache';
 import { revokeObjectUrl } from './wsiCacheUtils';
@@ -56,6 +57,25 @@ export type WsiInitialSlideLoadOutcome =
     | 'tile_failed'
     | 'tile_timeout'
     | 'selection_timeout';
+
+export type WsiSlideSelectionStatus = 'ready' | 'failed' | 'cancelled';
+
+export interface WsiSlideSelectionResult {
+    status: WsiSlideSelectionStatus;
+    slideKey: string;
+    detail?: string;
+}
+
+/** Short failure details reported to selection callers, by outcome. */
+const SELECTION_FAILURE_DETAILS: Partial<Record<
+    WsiInitialSlideLoadOutcome,
+    string
+>> = {
+    osd_open_failed: 'The slide viewer failed to open.',
+    osd_init_failed: 'The slide viewer failed to initialize.',
+    tile_failed: 'Slide tiles could not be loaded.',
+    metadata_failed: 'Slide metadata failed.',
+};
 
 /** How the first slide of a hierarchy load ended. */
 export interface WsiInitialSlideLoadPerformance {
@@ -147,12 +167,21 @@ export class WsiViewerController {
     private osdOpenTimer: ReturnType<typeof setTimeout> | null = null;
     private selectionTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
     private viewerVisible = true;
+    private agentCaptureSeq = 0;
+    private agentSourceFingerprint = '';
     private terminalTileFailures = new Set<string>();
     private writeHashTimer: ReturnType<typeof setTimeout> | null = null;
     private hierarchyLoadSeq = 0;
     private hierarchyAbortController: AbortController | null = null;
     /** Cancels the scheduled navigator setup or its retry. */
     private cancelScheduledNavigator: (() => void) | null = null;
+    private selectionWaiters = new Map<
+        number,
+        {
+            slideKey: string;
+            resolve: (result: WsiSlideSelectionResult) => void;
+        }
+    >();
     private restoreHashViewportForNextSelection = false;
     private initialSlideKey: string | undefined = undefined;
     /** Start time of the hierarchy load whose first slide is unreported. */
@@ -198,11 +227,14 @@ export class WsiViewerController {
      * ignored, and stops its preview and timers.
      */
     private resetMount(): void {
+        this.resolveSelectionWaiter(this.mountSeq, 'cancelled');
         this.mountSeq++;
         this.nativeTileReadySeq = null;
         this.nativeTileDrawnSeq = null;
         this.clearThumbnailPreview();
         this.clearMountTimers();
+        this.agentSourceFingerprint = '';
+        this.agentCaptureSeq = 0;
     }
 
     /**
@@ -218,7 +250,23 @@ export class WsiViewerController {
         this.clearThumbnailPreview();
         this.state.spinnerVisible = false;
         this.state.tilesReady = true;
+        this.resolveSelectionWaiter(
+            this.mountSeq,
+            'failed',
+            SELECTION_FAILURE_DETAILS[outcome] ?? error
+        );
         this.finishInitialSlideLoad(outcome);
+    }
+
+    private resolveSelectionWaiter(
+        seq: number,
+        status: WsiSlideSelectionStatus,
+        detail?: string
+    ) {
+        const waiter = this.selectionWaiters.get(seq);
+        if (!waiter) return;
+        this.selectionWaiters.delete(seq);
+        waiter.resolve({ status, slideKey: waiter.slideKey, detail });
     }
 
     dispose() {
@@ -541,21 +589,52 @@ export class WsiViewerController {
         );
     }
 
+    /** Selects a slide; resolves once its mount has run. */
     async selectSlide(
         slide: Slide,
         sample: Sample,
         restoreHashViewport = this.restoreHashViewportForNextSelection
     ): Promise<void> {
+        await this.startSelection(slide, sample, restoreHashViewport);
+    }
+
+    /**
+     * Selects a slide and resolves with how the selection ended: its first
+     * tile is ready, it failed, or a later selection replaced it.
+     */
+    async selectSlideAndWait(
+        slide: Slide,
+        sample: Sample
+    ): Promise<WsiSlideSelectionResult> {
+        const { result } = await this.startSelection(
+            slide,
+            sample,
+            this.restoreHashViewportForNextSelection
+        );
+        return result;
+    }
+
+    private async startSelection(
+        slide: Slide,
+        sample: Sample,
+        restoreHashViewport: boolean
+    ): Promise<{ result: Promise<WsiSlideSelectionResult> }> {
         if (
             this.state.selectedSlide?.slide_key === slide.slide_key &&
             this.state.selectedSample?.sample_id === sample.sample_id &&
             this.state.selectedMeta != null &&
-            this.mountedViewer != null
+            this.mountedViewer != null &&
+            this.nativeTileReadySeq === this.mountSeq
         ) {
-            return;
+            return {
+                result: Promise.resolve({
+                    status: 'ready',
+                    slideKey: slide.slide_key,
+                }),
+            };
         }
         this.restoreHashViewportForNextSelection = false;
-        await this.beginMount(slide, sample, restoreHashViewport, true);
+        return this.beginMount(slide, sample, restoreHashViewport, true);
     }
 
     async retrySelectedSlide(): Promise<void> {
@@ -565,21 +644,31 @@ export class WsiViewerController {
         await this.beginMount(slide, sample, true, false);
     }
 
-    /** Replaces the current mount with one of `slide`. */
+    /**
+     * Replaces the current mount with one of `slide`. Resolves once the
+     * mount has run, with the selection's eventual outcome.
+     */
     private async beginMount(
         slide: Slide,
         sample: Sample,
         restoreHashViewport: boolean,
         notifyHost: boolean
-    ): Promise<void> {
+    ): Promise<{ result: Promise<WsiSlideSelectionResult> }> {
         this.cancelActiveMount();
         this.state.beginSlideSelection(slide, sample);
         writeSelectedSlideState(hashUrlState, slide.slide_key);
         if (notifyHost) this.host.onSlideSelectionStarted?.(slide);
         this.loadingStart = Date.now();
         const seq = this.mountSeq;
+        const result = new Promise<WsiSlideSelectionResult>(resolve =>
+            this.selectionWaiters.set(seq, {
+                slideKey: slide.slide_key,
+                resolve,
+            })
+        );
         this.scheduleSelectionTimeout(seq);
         await this.mountOSD(slide, seq, restoreHashViewport);
+        return { result };
     }
 
     cancelSlideSelection(): void {
@@ -608,27 +697,52 @@ export class WsiViewerController {
         hashUrlState.clear();
     }
 
-    goToCoordinates() {
+    goToCoordinates(x?: number, y?: number): boolean {
         if (!this.mountedViewer) {
-            return;
+            return false;
         }
+        const coords =
+            typeof x === 'number' && typeof y === 'number'
+                ? { x: String(x), y: String(y) }
+                : { x: this.state.coordInputX, y: this.state.coordInputY };
         const clamped = clampImageCoordinates(
-            this.state.coordInputX,
-            this.state.coordInputY,
+            coords.x,
+            coords.y,
             this.state.selectedMeta?.dimensions
         );
         if (!clamped) {
-            return;
+            return false;
         }
         this.state.setCoordInputs(String(clamped.x), String(clamped.y));
         if (!this.openSeadragon) {
-            return;
+            return false;
         }
         const imagePoint = new this.openSeadragon.Point(clamped.x, clamped.y);
         const viewportPoint = this.osdViewer.viewport.imageToViewportCoordinates(
             imagePoint
         );
         this.osdViewer.viewport.panTo(viewportPoint, true);
+        return true;
+    }
+
+    setZoom(zoom: number): boolean {
+        const viewport = this.osdViewer?.viewport;
+        if (!viewport || !Number.isFinite(zoom) || zoom <= 0) {
+            return false;
+        }
+        const minZoom = viewport.getMinZoom?.();
+        const maxZoom = viewport.getMaxZoom?.();
+        const boundedZoom = Math.max(
+            typeof minZoom === 'number' ? minZoom : 0,
+            Math.min(
+                typeof maxZoom === 'number'
+                    ? maxZoom
+                    : Number.POSITIVE_INFINITY,
+                zoom
+            )
+        );
+        viewport.zoomTo(boundedZoom, undefined, true);
+        return true;
     }
 
     downloadView() {
@@ -712,6 +826,7 @@ export class WsiViewerController {
         if (this.state.selectedSlide?.slide_key === this.initialSlideKey) {
             this.finishInitialSlideLoad('success');
         }
+        this.resolveSelectionWaiter(seq, 'ready');
     }
 
     private reportViewScale() {
@@ -870,6 +985,160 @@ export class WsiViewerController {
         this.host.onViewerOpened?.(this.osdViewer, this.openSeadragon, slide);
     }
 
+    captureAgentViewport(): WsiAgentViewport | null {
+        if (this.nativeTileReadySeq !== this.mountSeq) return null;
+        const canvas: HTMLCanvasElement | null =
+            this.osdViewer?.drawer?.canvas ?? this.osdViewer?.canvas ?? null;
+        const viewport = this.osdViewer?.viewport;
+        if (!canvas || !viewport || !this.openSeadragon) return null;
+        const sourceWidth = canvas.width;
+        const sourceHeight = canvas.height;
+        if (!sourceWidth || !sourceHeight) return null;
+        const viewerWidth =
+            (this.osdViewer.element as HTMLElement | undefined)?.clientWidth ||
+            sourceWidth;
+        const viewerHeight =
+            (this.osdViewer.element as HTMLElement | undefined)?.clientHeight ||
+            sourceHeight;
+        const imageAt = (x: number, y: number) => {
+            const point = viewport.pointFromPixel(
+                new this.openSeadragon.Point(x, y),
+                true
+            );
+            return viewport.viewportToImageCoordinates(point);
+        };
+        const origin = imageAt(0, 0);
+        const xStep = imageAt(1, 0);
+        const yStep = imageAt(0, 1);
+        const previewScale = Math.min(
+            1,
+            1600 / sourceWidth,
+            1600 / sourceHeight
+        );
+        const previewWidth = Math.max(
+            1,
+            Math.round(sourceWidth * previewScale)
+        );
+        const previewHeight = Math.max(
+            1,
+            Math.round(sourceHeight * previewScale)
+        );
+        let imageDataUrl: string | undefined;
+        try {
+            if (previewScale < 1 && typeof document !== 'undefined') {
+                const preview = document.createElement('canvas');
+                preview.width = previewWidth;
+                preview.height = previewHeight;
+                preview
+                    .getContext('2d')
+                    ?.drawImage(canvas, 0, 0, previewWidth, previewHeight);
+                imageDataUrl = preview.toDataURL('image/jpeg', 0.75);
+            } else {
+                imageDataUrl = canvas.toDataURL('image/jpeg', 0.75);
+            }
+        } catch (_) {
+            // Structured coordinates remain useful if the canvas is tainted.
+        }
+        const dimensions = this.state.selectedMeta?.dimensions;
+        const center = viewport.viewportToImageCoordinates(
+            viewport.getCenter()
+        );
+        const scaleX = viewerWidth / previewWidth;
+        const scaleY = viewerHeight / previewHeight;
+        return {
+            image_data_url: imageDataUrl,
+            image_width: previewWidth,
+            image_height: previewHeight,
+            image_transform: [
+                (xStep.x - origin.x) * scaleX,
+                (yStep.x - origin.x) * scaleY,
+                origin.x,
+                (xStep.y - origin.y) * scaleX,
+                (yStep.y - origin.y) * scaleY,
+                origin.y,
+            ],
+            slide_width: dimensions?.width || sourceWidth,
+            slide_height: dimensions?.height || sourceHeight,
+            center_x: center.x,
+            center_y: center.y,
+            zoom: viewport.getZoom?.(),
+            source_fingerprint: this.agentSourceFingerprint,
+            capture_id: `${this.mountSeq}-${++this.agentCaptureSeq}`,
+            viewer_generation: this.mountSeq,
+        };
+    }
+
+    captureAgentViewportAfterDraw(): Promise<WsiAgentViewport | null> {
+        const viewer = this.osdViewer;
+        const seq = this.mountSeq;
+        if (!viewer?.addHandler || !viewer?.removeHandler) {
+            return Promise.resolve(
+                viewer === this.osdViewer && seq === this.mountSeq
+                    ? this.captureAgentViewport()
+                    : null
+            );
+        }
+        const viewport = viewer.viewport;
+        const hasPendingViewportChange = () => {
+            if (viewer.isAnimating?.()) return true;
+            const targetZoom = viewport?.getZoom?.();
+            const currentZoom = viewport?.getZoom?.(true);
+            if (
+                typeof targetZoom === 'number' &&
+                typeof currentZoom === 'number' &&
+                Math.abs(targetZoom - currentZoom) > 1e-6
+            ) {
+                return true;
+            }
+            const targetCenter = viewport?.getCenter?.();
+            const currentCenter = viewport?.getCenter?.(true);
+            return Boolean(
+                targetCenter &&
+                    currentCenter &&
+                    (Math.abs(targetCenter.x - currentCenter.x) > 1e-6 ||
+                        Math.abs(targetCenter.y - currentCenter.y) > 1e-6)
+            );
+        };
+        return new Promise(resolve => {
+            let settled = false;
+            let frame: number | null = null;
+            let timer: ReturnType<typeof setTimeout> | null = null;
+            let finishIfSettled = () => {};
+            const finish = () => {
+                if (settled) return;
+                settled = true;
+                viewer.removeHandler('update-viewport', finishIfSettled);
+                viewer.removeHandler('animation-finish', finishIfSettled);
+                if (
+                    frame !== null &&
+                    typeof cancelAnimationFrame === 'function'
+                ) {
+                    cancelAnimationFrame(frame);
+                }
+                if (timer !== null) clearTimeout(timer);
+                resolve(
+                    seq === this.mountSeq && this.osdViewer === viewer
+                        ? this.captureAgentViewport()
+                        : null
+                );
+            };
+            finishIfSettled = () => {
+                if (!hasPendingViewportChange()) finish();
+            };
+            viewer.addHandler('update-viewport', finishIfSettled);
+            viewer.addHandler('animation-finish', finishIfSettled);
+            timer = setTimeout(finish, 750);
+            if (typeof requestAnimationFrame === 'function') {
+                frame = requestAnimationFrame(() => {
+                    frame = null;
+                    finishIfSettled();
+                });
+            } else {
+                setTimeout(finishIfSettled, 0);
+            }
+        });
+    }
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     private handleOsdOpenFailed(seq: number, event: any) {
         if (seq !== this.mountSeq) return;
@@ -956,6 +1225,7 @@ export class WsiViewerController {
         try {
             const openSeadragon = await openSeadragonPromise;
             if (seq !== this.mountSeq) return;
+            this.agentSourceFingerprint = getWsiSourceFingerprint(source);
             // Reuse needs an idle viewer: tile requests of the previous slide
             // still in flight would hold loader slots ahead of this slide's
             // cold open. A busy viewer is rebuilt.

@@ -633,8 +633,10 @@ export class WsiAnnotationController {
         }
     }
 
-    private async createAnnotation(annotation: WsiAnnotation) {
-        if (!this.slideKey) return;
+    private async createAnnotation(
+        annotation: WsiAnnotation
+    ): Promise<boolean> {
+        if (!this.slideKey) return false;
         const context = {
             generation: this.generation,
             slideKey: this.slideKey,
@@ -673,7 +675,7 @@ export class WsiAnnotationController {
                 context.slideKey !== this.slideKey ||
                 context.signal?.aborted
             ) {
-                return;
+                return false;
             }
             const saved = this.fromApi(await response.json(), slideKey);
             this.synchronizing = true;
@@ -691,17 +693,79 @@ export class WsiAnnotationController {
             } finally {
                 this.synchronizing = false;
             }
+            return true;
         } catch (_) {
             if (
                 context.generation !== this.generation ||
                 context.slideKey !== this.slideKey ||
                 context.signal?.aborted
             ) {
-                return;
+                return false;
             }
             this.removeAnnotationLocally(annotation.id);
             this.error = 'Unable to save annotation.';
+            return false;
         }
+    }
+
+    async createAgentAnnotation(input: {
+        label: string;
+        layerName: string;
+        color: string;
+        selector: string;
+    }): Promise<boolean> {
+        if (!this.slideKey) return false;
+        return this.createAnnotation({
+            '@context': 'http://www.w3.org/ns/anno.jsonld',
+            type: 'Annotation',
+            id: `agent-${Date.now()}-${Math.random()
+                .toString(36)
+                .slice(2)}`,
+            body: [
+                {
+                    type: 'TextualBody',
+                    value: input.label,
+                    purpose: 'commenting',
+                },
+            ],
+            target: {
+                source: this.slideKey,
+                selector: { type: 'SvgSelector', value: input.selector },
+            },
+            color: input.color,
+            colorName: input.layerName,
+            layerName: input.layerName,
+        });
+    }
+
+    @action.bound
+    adoptAgentAnnotations(items: Array<Record<string, unknown>>) {
+        const slideKey = this.slideKey;
+        if (!slideKey) return;
+        const saved = items
+            .filter(item => {
+                const itemSlideKey = item.slide_id;
+                const itemStudyId = item.study_id;
+                return (
+                    itemSlideKey === slideKey &&
+                    (typeof itemStudyId !== 'string' ||
+                        !this.studyId ||
+                        itemStudyId === this.studyId)
+                );
+            })
+            .map(item => this.fromApi(item, slideKey));
+        if (!saved.length) return;
+        const savedById = new Map(
+            saved.map(annotation => [annotation.id, annotation])
+        );
+        this.annotations = [
+            ...this.annotations.filter(
+                annotation => !savedById.has(annotation.id)
+            ),
+            ...saved,
+        ];
+        this.applyLayerFilter();
+        this.refreshStyle();
     }
 
     private async updateAnnotation(annotation: WsiAnnotation) {
@@ -1067,6 +1131,38 @@ export class WsiAnnotationController {
             point
         );
         return { x: imagePoint.x, y: imagePoint.y };
+    }
+
+    getAgentViewerElementSize(): { width: number; height: number } {
+        const element = this.osdViewer?.element as HTMLElement | undefined;
+        return {
+            width: element?.clientWidth || 0,
+            height: element?.clientHeight || 0,
+        };
+    }
+
+    getAgentViewerElementPoint(imagePoint: {
+        x: number;
+        y: number;
+    }): { x: number; y: number } | null {
+        if (!this.osdViewer?.viewport || !this.openSeadragon) return null;
+        const viewportPoint = this.osdViewer.viewport.imageToViewportCoordinates(
+            new this.openSeadragon.Point(imagePoint.x, imagePoint.y)
+        );
+        const pixel = this.osdViewer.viewport.pixelFromPoint(
+            viewportPoint,
+            true
+        );
+        return { x: pixel.x, y: pixel.y };
+    }
+
+    subscribeAgentViewerChanges(callback: () => void): () => void {
+        const viewer = this.osdViewer;
+        if (!viewer?.addHandler) return () => {};
+        const events = ['viewport-change', 'animation-finish', 'resize'];
+        events.forEach(event => viewer.addHandler(event, callback));
+        return () =>
+            events.forEach(event => viewer.removeHandler?.(event, callback));
     }
 
     private async createCustomShape(

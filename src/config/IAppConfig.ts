@@ -160,6 +160,7 @@ export interface IServerConfig {
      */
     wsi_tile_server_url: string | null;
     wsi_annotation_api_url: string | null;
+    wsi_agent_enabled: boolean;
     query_product_limit: number;
     clinical_attribute_product_limit: number;
     dat_method: string;
