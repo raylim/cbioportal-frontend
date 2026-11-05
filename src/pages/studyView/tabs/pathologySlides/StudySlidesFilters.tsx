@@ -13,7 +13,6 @@ import {
     STUDY_SLIDE_MATCH_LABELS,
     STUDY_SLIDE_MATCH_LEVELS,
     STUDY_SLIDE_STAIN_GROUPS,
-    StudySlideStainGroup,
 } from './studySlidesApi';
 
 const C = WSI_THEME;
@@ -26,7 +25,10 @@ const labelStyle: React.CSSProperties = {
     marginBottom: 2,
 };
 
-/** The patient search: typed text narrows the list to patient or sample IDs containing it. */
+/**
+ * The patient search: typed text narrows the list to patients with a slide whose patient, sample
+ * or slide ID, or other slide detail, contains it.
+ */
 export const StudySlidesSearch: React.FunctionComponent<{
     store: StudyPathologySlidesStore;
 }> = observer(({ store }) => (
@@ -45,7 +47,7 @@ export const StudySlidesSearch: React.FunctionComponent<{
         <input
             type="text"
             className="form-control input-sm"
-            placeholder="Search patient or sample IDs"
+            placeholder="Search patient, sample or slide IDs"
             aria-label="Search patients"
             data-testid="study-slides-search"
             value={store.searchText}
@@ -262,11 +264,11 @@ function MultiSelectChips<K extends string>({
     );
 }
 
-/** Match-level and stain filters, in a collapsible section. */
+/** Match-level and stain filters, in a collapsible section. Stain chips count patients. */
 export const StudySlidesFilterSection: React.FunctionComponent<{
     store: StudyPathologySlidesStore;
-    stainGroupTotals: Record<StudySlideStainGroup, number>;
-}> = observer(({ store, stainGroupTotals }) => {
+}> = observer(({ store }) => {
+    const stainGroupPatients = store.stainGroupPatientCounts;
     const [open, setOpen] = useWsiPanelFlag(FILTERS_OPEN_KEY);
     const collapsed = !open;
     const toggle = () => setOpen(!open);
@@ -319,7 +321,7 @@ export const StudySlidesFilterSection: React.FunctionComponent<{
                             key: group,
                             label: group,
                             color: WSI_STAIN_COLORS[group],
-                            count: stainGroupTotals[group],
+                            count: stainGroupPatients[group],
                         }))}
                         selected={store.stainGroups}
                         onToggle={store.toggleStainGroup}

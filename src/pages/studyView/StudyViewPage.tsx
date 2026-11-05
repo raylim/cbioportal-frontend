@@ -225,7 +225,7 @@ export default class StudyViewPage extends React.Component<
             wsiView
         );
         this.pathologySlidesStore = new StudyPathologySlidesStore({
-            getFilters: () => this.store.filters,
+            getCohort: () => getStudyViewResourceCohort(this.store),
             getStudyIds: () => this.store.queriedPhysicalStudyIds.result,
             initialSelection:
                 wsiStudyId && wsiPatientId

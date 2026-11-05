@@ -28,7 +28,7 @@ import {
 import {
     STUDY_SLIDE_STAIN_GROUPS,
     StudySlidePatient,
-    StudySlidesRequestError,
+    studySlidesErrorStatus,
     viewerMatchFilter,
     viewerStainFilter,
 } from './studySlidesApi';
@@ -303,10 +303,7 @@ const PatientPanel: React.FunctionComponent<{
                 </div>
                 <StudySlidesSearch store={store} />
                 <StudySlidesFilterChips store={store} />
-                <StudySlidesFilterSection
-                    store={store}
-                    stainGroupTotals={page.stainGroupTotals}
-                />
+                <StudySlidesFilterSection store={store} />
             </div>
 
             {page.patients.length === 0 ? (
@@ -551,10 +548,7 @@ const StudySlidesViewerView: React.FunctionComponent<StudyPathologySlidesTabProp
         }, [isActive, store, listCollapsed, setListCollapsed]);
 
         if (store.page.isError) {
-            const status =
-                store.page.error instanceof StudySlidesRequestError
-                    ? store.page.error.status
-                    : undefined;
+            const status = studySlidesErrorStatus(store.page.error);
             return (
                 <div
                     className="alert alert-warning"

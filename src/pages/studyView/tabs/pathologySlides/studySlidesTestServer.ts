@@ -1,64 +1,120 @@
 // Type-only imports keep this module free of path aliases, so the Playwright
 // specs can import it too.
 import {
-    StudySlidePatient,
-    StudySlidesPage,
-    StudySlidesRequest,
+    ResourceTableTestServer,
+    ResourceTableTestServerOptions,
+    TestResourceRow,
+} from '../../../../shared/api/resourceTableTestServer';
+import {
+    ResourceTableQuery,
+    ResourceTabsRequest,
+} from '../../../../shared/api/resourceTableClient';
+import {
+    StudySlideMatchLevel,
     StudySlideStainCounts,
-    StudySlideStainGroup,
+    StudySlidesResourceApi,
 } from './studySlidesApi';
 
-const STAIN_GROUPS: StudySlideStainGroup[] = ['H&E', 'IHC', 'Other', 'Unknown'];
+export { settle } from '../../../../shared/api/resourceTableTestServer';
+
+/** A patient's slides, as a test describes them. */
+export interface TestSlidePatient {
+    studyId: string;
+    patientId: string;
+    /** Slides of each stain group. */
+    stainGroupCounts: Partial<StudySlideStainCounts>;
+    /** Samples the slides are matched to, in turn; none makes every slide unmatched. */
+    sampleCount: number;
+    /** Match level of the matched slides; BLOCK by default. */
+    matchLevel?: StudySlideMatchLevel;
+}
+
+/** A 12-hex slide key, distinct per patient and slide. */
+export function testSlideKey(patientIndex: number, slideIndex: number) {
+    return (patientIndex * 1000 + slideIndex + 1)
+        .toString(16)
+        .padStart(12, '0');
+}
 
 /**
- * The study-slides endpoint over a fixed patient list, for tests: honours the
- * ID search, stain groups, the located patient and paging.
+ * The WSI_SAMPLE and WSI_PATIENT rows of the patients' slides: matched slides go to their
+ * samples in turn, and a patient without samples has unmatched, patient-level slides.
  */
-export function studySlidesPageFor(
-    request: StudySlidesRequest,
-    patients: StudySlidePatient[]
-): StudySlidesPage {
-    const listed = patients.filter(
-        p =>
-            (!request.search ||
-                p.patientId
-                    .toLowerCase()
-                    .includes(request.search.toLowerCase())) &&
-            (!request.stainGroups?.length ||
-                request.stainGroups.some(g => p.stainGroupCounts[g] > 0))
+export function slideRowsFor(patients: TestSlidePatient[]): TestResourceRow[] {
+    const rows: TestResourceRow[] = [];
+    patients.forEach((patient, patientIndex) => {
+        let slide = 0;
+        Object.entries(patient.stainGroupCounts).forEach(([stain, count]) => {
+            for (let i = 0; i < (count || 0); i++, slide++) {
+                const sampleId =
+                    patient.sampleCount > 0
+                        ? `${patient.patientId}-S${(slide %
+                              patient.sampleCount) +
+                              1}`
+                        : null;
+                rows.push({
+                    studyId: patient.studyId,
+                    resourceId: sampleId ? 'WSI_SAMPLE' : 'WSI_PATIENT',
+                    patientId: patient.patientId,
+                    sampleId,
+                    metadata: {
+                        slide_key: testSlideKey(patientIndex, slide),
+                        stain_group: stain,
+                        match_level: sampleId
+                            ? patient.matchLevel || 'BLOCK'
+                            : 'UNMATCHED',
+                    },
+                });
+            }
+        });
+    });
+    return rows;
+}
+
+/** The requests a test API received, by endpoint. */
+export interface RecordedSlideRequests {
+    tabs: ResourceTabsRequest[];
+    groups: ResourceTableQuery[];
+    metadata: ResourceTableQuery[];
+}
+
+/**
+ * The resource-table endpoints the Pathology Slides tab reads, answered by a
+ * ResourceTableTestServer over the patients' slide rows, recording each request.
+ */
+export function testSlidesApi(
+    patients: () => TestSlidePatient[],
+    options?: ResourceTableTestServerOptions
+): { api: StudySlidesResourceApi; requests: RecordedSlideRequests } {
+    const server = new ResourceTableTestServer(
+        () => slideRowsFor(patients()),
+        options
     );
-    const pageNumber = request.pageNumber ?? 0;
-    const pageSize = request.pageSize ?? 50;
-    const located = listed.findIndex(
-        p =>
-            p.studyId === request.locateStudyId &&
-            p.patientId === request.locatePatientId
-    );
-    const stainGroupTotals = {} as StudySlideStainCounts;
-    STAIN_GROUPS.forEach(
-        group =>
-            (stainGroupTotals[group] = patients.reduce(
-                (sum, p) => sum + p.stainGroupCounts[group],
-                0
-            ))
-    );
+    const requests: RecordedSlideRequests = {
+        tabs: [],
+        groups: [],
+        metadata: [],
+    };
     return {
-        totalPatients: listed.length,
-        totalSlides: listed.reduce((sum, p) => sum + p.slideCount, 0),
-        stainGroupTotals,
-        locatedIndex: located >= 0 ? located : null,
-        pageNumber,
-        pageSize,
-        patients: listed.slice(
-            pageNumber * pageSize,
-            (pageNumber + 1) * pageSize
-        ),
+        requests,
+        api: {
+            tabs: async request => {
+                requests.tabs.push(request);
+                return server.tabs(request);
+            },
+            groups: async query => {
+                requests.groups.push(query);
+                return server.groups(query);
+            },
+            metadata: async query => {
+                requests.metadata.push(query);
+                return server.metadata(query);
+            },
+        },
     };
 }
 
-/** Lets pending requests and reactions run. */
-export async function settle() {
-    for (let i = 0; i < 10; i++) {
-        await new Promise(resolve => setTimeout(resolve, 0));
-    }
+/** The patient-grouped list requests among the groups requests, leaving the sample counts out. */
+export function patientListRequests(requests: RecordedSlideRequests) {
+    return requests.groups.filter(query => query.groupBy === 'patient');
 }

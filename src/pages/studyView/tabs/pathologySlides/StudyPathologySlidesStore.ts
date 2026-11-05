@@ -9,14 +9,22 @@ import {
     untracked,
 } from 'mobx';
 import { remoteData } from 'cbioportal-frontend-commons';
-import { StudyViewFilter } from 'cbioportal-ts-api-client';
 import {
-    fetchStudySlidePatients,
+    fetchStudySlideFacets,
+    fetchStudySlideResourceIds,
+    fetchStudySlidesPage,
+    RESOURCE_TABLE_API,
+    StudySlideFacets,
     StudySlideMatchLevel,
     StudySlidePatient,
+    StudySlidePatientRef,
     StudySlidesPage,
     StudySlidesRequest,
+    StudySlidesResourceApi,
+    StudySlidesSelection,
+    StudySlideStainCounts,
     StudySlideStainGroup,
+    stainGroupPatientCounts,
     STUDY_SLIDE_MATCH_LEVELS,
     STUDY_SLIDE_STAIN_GROUPS,
 } from './studySlidesApi';
@@ -26,14 +34,22 @@ import {
     isWsiTileServerConfigured,
     PATHOLOGY_SLIDES_RESOURCE_TAB,
 } from 'shared/lib/ResourcePolicy';
+import {
+    ResourceCohort,
+    sameCohort,
+} from 'shared/components/resourceTable/resourceTableCohort';
 
 export const STUDY_SLIDES_PAGE_SIZE = 50;
-export const STUDY_SLIDES_SEARCH_DEBOUNCE_MS = 300;
 
-export interface StudySlidePatientRef {
-    studyId: string;
-    patientId: string;
+/**
+ * The promise, marked as handled: MobxPromise attaches its handlers a tick later, and a failure
+ * it reports through `isError` is not an unhandled rejection.
+ */
+function handled<T>(promise: Promise<T>): Promise<T> {
+    promise.catch(() => undefined);
+    return promise;
 }
+export const STUDY_SLIDES_SEARCH_DEBOUNCE_MS = 300;
 
 export function isSamePatient(
     a: StudySlidePatientRef | undefined,
@@ -113,8 +129,11 @@ export function studySlidesUrlState(query: {
 }
 
 export interface StudyPathologySlidesStoreOptions {
-    /** The study-view cohort; the list reloads when it changes. */
-    getFilters: () => StudyViewFilter;
+    /**
+     * The study-view cohort (see getStudyViewResourceCohort), or undefined while it loads; the
+     * list reloads when it changes.
+     */
+    getCohort: () => ResourceCohort | undefined;
     /** The queried physical studies, for deciding whether to show the tab. */
     getStudyIds: () => string[];
     /** Called when the user, or a cohort change, selects another patient. */
@@ -128,13 +147,15 @@ export interface StudyPathologySlidesStoreOptions {
     initialSlideFilters?: StudySlideListFilters;
     /** Called when the list's own filters change. */
     onSlideFiltersChange?: (filters: StudySlideListFilters) => void;
-    fetchPage?: (request: StudySlidesRequest) => Promise<StudySlidesPage>;
+    /** The resource-table endpoints; tests pass their own. */
+    api?: StudySlidesResourceApi;
     pageSize?: number;
 }
 
 /**
  * State of the study-view Pathology Slides tab: one page of the cohort's
- * patients with slides, and the patient shown in the viewer.
+ * patients with slides, and the patient shown in the viewer. The list is the
+ * slide resources grouped by patient (resource-table groups/fetch).
  *
  * Every list request also asks the server where the selected patient is in
  * the full list, so the selection keeps its place ("i of N") across list
@@ -155,17 +176,16 @@ export class StudyPathologySlidesStore {
     /** Zero-based position of the selected patient in the full list. */
     @observable selectedIndex: number | undefined;
     @observable private reloadCount = 0;
+    /** The cohort the list reads, once the study view has one. */
+    @observable.ref private cohort: ResourceCohort | undefined;
 
     readonly pageSize: number;
-    private readonly getFilters: () => StudyViewFilter;
     private readonly getStudyIds: () => string[];
     private readonly onSelectionChange?: (
         patient: StudySlidePatientRef | undefined
     ) => void;
     private readonly onViewChange?: (view: StudySlidesView) => void;
-    private readonly fetchPage: (
-        request: StudySlidesRequest
-    ) => Promise<StudySlidesPage>;
+    private readonly api: StudySlidesResourceApi;
     // Page offset to select once the requested page loads (prev/next across pages).
     private selectOnLoad: number | undefined;
     // After a cohort or list-filter change, move the list to the selected patient's page.
@@ -176,12 +196,11 @@ export class StudyPathologySlidesStore {
     private readonly disposers: IReactionDisposer[] = [];
 
     constructor(options: StudyPathologySlidesStoreOptions) {
-        this.getFilters = options.getFilters;
         this.getStudyIds = options.getStudyIds;
         this.onSelectionChange = options.onSelectionChange;
         this.onViewChange = options.onViewChange;
         this.view = options.initialView || 'viewer';
-        this.fetchPage = options.fetchPage || fetchStudySlidePatients;
+        this.api = options.api || RESOURCE_TABLE_API;
         this.pageSize = options.pageSize || STUDY_SLIDES_PAGE_SIZE;
         this.selected = options.initialSelection;
         this.followSelection = !!options.initialSelection;
@@ -190,11 +209,12 @@ export class StudyPathologySlidesStore {
             this.matchLevels = options.initialSlideFilters.matchLevels;
             this.search = this.searchText = options.initialSlideFilters.search;
         }
+        this.cohort = options.getCohort();
         makeObservable(this);
         this.disposers.push(
             reaction(
-                () => this.getFilters(),
-                () => this.restartList()
+                () => options.getCohort(),
+                cohort => this.setCohort(cohort)
             )
         );
         const onSlideFiltersChange = options.onSlideFiltersChange;
@@ -209,45 +229,84 @@ export class StudyPathologySlidesStore {
         }
     }
 
-    /** Whether the queried studies have any pathology slides. */
-    readonly studyHasSlides = remoteData<boolean>({
+    /** The slide resources the queried studies hold; none when they have no slides. */
+    readonly slideResourceIds = remoteData<string[]>({
         invoke: async () => {
-            const studyIds = this.getStudyIds();
-            if (studyIds.length === 0) {
-                return false;
-            }
             try {
-                const page = await this.fetchPage({
-                    studyViewFilter: { studyIds } as StudyViewFilter,
-                    pageSize: 1,
-                });
-                return page.totalSlides > 0;
+                return await fetchStudySlideResourceIds(
+                    this.getStudyIds(),
+                    this.api
+                );
             } catch (e) {
-                return false;
+                return [];
             }
         },
+        default: [],
+    });
+
+    /** Whether the queried studies have any pathology slides. */
+    readonly studyHasSlides = remoteData<boolean>({
+        await: () => [this.slideResourceIds],
+        invoke: async () => this.slideResourceIds.result!.length > 0,
         default: false,
     });
 
-    readonly page = remoteData<StudySlidesPage>({
-        invoke: () => {
-            // Tracked: a change to any of these reloads the page.
-            const request: StudySlidesRequest = {
-                studyViewFilter: this.getFilters(),
+    /**
+     * The slides the list reads before the stain and match filters, which the filter options
+     * ignore; undefined until the cohort is known.
+     */
+    @computed private get unfilteredSelection():
+        | StudySlidesSelection
+        | undefined {
+        if (!this.cohort || !this.slideResourceIds.isComplete) {
+            return undefined;
+        }
+        return {
+            cohort: this.cohort,
+            resourceIds: this.slideResourceIds.result!,
+            stainGroups: [],
+            matchLevels: [],
+            search: this.search || undefined,
+        };
+    }
+
+    /** The slides the list reads, without paging; undefined until the cohort is known. */
+    @computed private get selection(): StudySlidesSelection | undefined {
+        const unfiltered = this.unfilteredSelection;
+        return (
+            unfiltered && {
+                ...unfiltered,
                 stainGroups: this.stainGroups.slice(),
                 matchLevels: this.matchLevels.slice(),
-                search: this.search || undefined,
-                pageNumber: this.pageNumber,
+            }
+        );
+    }
+
+    readonly page = remoteData<StudySlidesPage>({
+        await: () => [this.slideResourceIds],
+        invoke: () => {
+            // Tracked: a change to any of these reloads the page.
+            const selection = this.selection;
+            const pageNumber = this.pageNumber;
+            void this.reloadCount;
+            if (!selection) {
+                // The cohort is still loading; its arrival re-runs this.
+                return new Promise<StudySlidesPage>(() => {});
+            }
+            const request: StudySlidesRequest = {
+                ...selection,
+                pageNumber,
                 pageSize: this.pageSize,
             };
-            void this.reloadCount;
             // Untracked: selecting a patient does not reload the list.
             const selected = untracked(() => this.selected);
             if (selected) {
-                request.locateStudyId = selected.studyId;
-                request.locatePatientId = selected.patientId;
+                request.locate = {
+                    studyId: selected.studyId,
+                    patientId: selected.patientId,
+                };
             }
-            return this.fetchPage(request);
+            return handled(fetchStudySlidesPage(request, this.api));
         },
         onResult: page => {
             if (page) {
@@ -257,6 +316,38 @@ export class StudyPathologySlidesStore {
         // The tab shows its own message and retry for a failed request.
         onError: () => {},
     });
+
+    /**
+     * Patients per value of the slide columns the list filters by. The column filters do not
+     * narrow them, so a stain or match filter does not re-request them.
+     */
+    readonly facets = remoteData<StudySlideFacets>({
+        await: () => [this.slideResourceIds],
+        invoke: () => {
+            const selection = this.unfilteredSelection;
+            if (!selection) {
+                return new Promise<StudySlideFacets>(() => {});
+            }
+            return handled(fetchStudySlideFacets(selection, this.api));
+        },
+        default: {},
+        onError: () => {},
+    });
+
+    /** Patients with slides of each stain group, for the stain filter. */
+    @computed get stainGroupPatientCounts(): StudySlideStainCounts {
+        return stainGroupPatientCounts(this.facets.result);
+    }
+
+    @action
+    private setCohort(cohort: ResourceCohort | undefined) {
+        // Undefined while the study view's selection reloads: keep the list as it is.
+        if (!cohort || (this.cohort && sameCohort(cohort, this.cohort))) {
+            return;
+        }
+        this.cohort = cohort;
+        this.restartList();
+    }
 
     @action.bound
     toggleMatchLevel(level: StudySlideMatchLevel) {

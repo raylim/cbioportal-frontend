@@ -3,18 +3,16 @@
  */
 import * as React from 'react';
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
-import { StudyViewFilter } from 'cbioportal-ts-api-client';
+import { ResourceTableGroupPage } from 'shared/api/resourceTableClient';
 import { StudyPathologySlidesStore } from './StudyPathologySlidesStore';
 import { StudyPathologySlidesTab } from './StudyPathologySlidesTab';
+import { StudySlidesResourceApi } from './studySlidesApi';
 import {
-    StudySlidePatient,
-    StudySlidesPage,
-    StudySlidesRequest,
-    StudySlidesRequestError,
-} from './studySlidesApi';
-import {
+    patientListRequests,
+    RecordedSlideRequests,
     settle as settleRequests,
-    studySlidesPageFor,
+    testSlidesApi,
+    TestSlidePatient,
 } from './studySlidesTestServer';
 
 const settle = () => act(settleRequests);
@@ -41,24 +39,34 @@ jest.mock('shared/api/urls', () => ({
             : ''),
 }));
 
-const PATIENTS: StudySlidePatient[] = ['P-1', 'P-2', 'P-3'].map(id => ({
+const PATIENTS: TestSlidePatient[] = ['P-1', 'P-2', 'P-3'].map(id => ({
     studyId: 'study',
     patientId: id,
-    slideCount: 2,
     sampleCount: 1,
-    stainGroupCounts: { 'H&E': 1, IHC: 1, Other: 0, Unknown: 0 },
+    stainGroupCounts: { 'H&E': 1, IHC: 1 },
 }));
 
-function pageFor(request: StudySlidesRequest, patients = PATIENTS) {
-    return studySlidesPageFor(request, patients);
+/** The resource-table API over these patients' slides. */
+function serve(patients = PATIENTS) {
+    return testSlidesApi(() => patients);
+}
+
+/** The patient list requests the API received. */
+function listRequests(requests: RecordedSlideRequests) {
+    return patientListRequests(requests);
 }
 
 /**
- * A rejected request. MobxPromise attaches its handler a tick later, so the
- * rejection is marked handled here to keep Jest from reporting it.
+ * A rejected request with this HTTP status. MobxPromise attaches its handler
+ * a tick later, so the rejection is marked handled here to keep Jest from
+ * reporting it.
  */
-function failedRequest(error: Error): Promise<StudySlidesPage> {
-    const request = Promise.reject(error);
+function failedRequest(status: number): Promise<ResourceTableGroupPage> {
+    const request = Promise.reject(
+        Object.assign(new Error(`Request failed (${status})`), {
+            response: { status },
+        })
+    );
     request.catch(() => undefined);
     return request;
 }
@@ -69,15 +77,21 @@ function listed(patientId: string) {
     );
 }
 
+const COHORT = {
+    studyIds: ['study'],
+    patientIdentifiers: [],
+    sampleIdentifiers: [],
+};
+
 function renderTab(
-    fetchPage: (request: StudySlidesRequest) => Promise<StudySlidesPage>,
+    api: StudySlidesResourceApi = serve().api,
     isActive = true,
     pageSize?: number
 ) {
     const store = new StudyPathologySlidesStore({
-        getFilters: () => ({ studyIds: ['study'] } as StudyViewFilter),
+        getCohort: () => COHORT,
         getStudyIds: () => ['study'],
-        fetchPage,
+        api,
         pageSize,
     });
     const view = render(
@@ -92,7 +106,7 @@ function renderTab(
 }
 
 /** Seven patients served two per page. */
-const MANY = Array.from({ length: 7 }, (_, i) => ({
+const MANY: TestSlidePatient[] = Array.from({ length: 7 }, (_, i) => ({
     ...PATIENTS[0],
     patientId: `M-${i + 1}`,
 }));
@@ -106,7 +120,7 @@ describe('StudyPathologySlidesTab', () => {
     });
 
     it('lists the cohort and shows the first patient in the viewer', async () => {
-        const { store } = renderTab(async r => pageFor(r));
+        const { store } = renderTab();
         await settle();
 
         expect(
@@ -136,9 +150,9 @@ describe('StudyPathologySlidesTab', () => {
 
     it('switches between the viewer and the slide table, and opens a table slide', async () => {
         const store = new StudyPathologySlidesStore({
-            getFilters: () => ({ studyIds: ['study'] } as StudyViewFilter),
+            getCohort: () => COHORT,
             getStudyIds: () => ['study'],
-            fetchPage: async r => pageFor(r),
+            api: serve().api,
         });
         render(
             <StudyPathologySlidesTab
@@ -180,7 +194,7 @@ describe('StudyPathologySlidesTab', () => {
     });
 
     it('switches the viewer patient from the list, buttons and keys', async () => {
-        const { store } = renderTab(async r => pageFor(r));
+        const { store } = renderTab();
         await settle();
 
         fireEvent.click(listed('P-3'));
@@ -209,7 +223,7 @@ describe('StudyPathologySlidesTab', () => {
     });
 
     it('tells the viewer when the tab is hidden', async () => {
-        const { store, view } = renderTab(async r => pageFor(r));
+        const { store, view } = renderTab();
         await settle();
         expect(mockViewer).toHaveBeenLastCalledWith(
             expect.objectContaining({ hidden: false })
@@ -230,7 +244,7 @@ describe('StudyPathologySlidesTab', () => {
     });
 
     it('ignores the shortcuts while typing or when the tab is hidden', async () => {
-        const { store, view } = renderTab(async r => pageFor(r));
+        const { store, view } = renderTab();
         await settle();
 
         fireEvent.keyDown(screen.getByTestId('study-slides-search'), {
@@ -252,17 +266,28 @@ describe('StudyPathologySlidesTab', () => {
     });
 
     it('filters by stain group and passes one group to the viewer', async () => {
-        const requests: StudySlidesRequest[] = [];
-        const { store } = renderTab(async r => {
-            requests.push(r);
-            return pageFor(r);
-        });
+        const server = serve();
+        const { store } = renderTab(server.api);
         await settle();
+        // Each chip counts the patients with a slide of that stain.
+        expect(
+            screen.getByTestId('study-slides-stain-IHC').textContent
+        ).toContain('(3)');
+        expect(
+            screen.getByTestId('study-slides-stain-Other').textContent
+        ).toContain('(0)');
 
         fireEvent.click(screen.getByTestId('study-slides-stain-IHC'));
         await settle();
 
-        expect(requests[requests.length - 1].stainGroups).toEqual(['IHC']);
+        const requests = listRequests(server.requests);
+        expect(requests[requests.length - 1].filters).toEqual([
+            {
+                columnId: 'metadata:stain_group',
+                operator: 'in',
+                values: ['IHC'],
+            },
+        ]);
         expect(
             screen
                 .getByTestId('study-slides-stain-IHC')
@@ -275,7 +300,7 @@ describe('StudyPathologySlidesTab', () => {
     });
 
     it('links to the patient view with the listed patients as navigation', async () => {
-        const { store } = renderTab(async r => pageFor(r));
+        const { store } = renderTab();
         await settle();
 
         expect(
@@ -288,7 +313,7 @@ describe('StudyPathologySlidesTab', () => {
     });
 
     it('explains an empty cohort', async () => {
-        const { store } = renderTab(async r => pageFor(r, []));
+        const { store } = renderTab(serve([]).api);
         await settle();
 
         expect(screen.getByTestId('study-slides-empty').textContent).toBe(
@@ -299,9 +324,10 @@ describe('StudyPathologySlidesTab', () => {
     });
 
     it('asks anonymous users to sign in, and retries other failures', async () => {
-        const unauthorized = renderTab(() =>
-            failedRequest(new StudySlidesRequestError(401))
-        );
+        const unauthorized = renderTab({
+            ...serve().api,
+            groups: () => failedRequest(401),
+        });
         await settle();
         expect(screen.getByTestId('study-slides-error').textContent).toContain(
             'Sign in to view pathology slides.'
@@ -310,11 +336,12 @@ describe('StudyPathologySlidesTab', () => {
         unauthorized.view.unmount();
 
         let fail = true;
-        const { store } = renderTab(r =>
-            fail
-                ? failedRequest(new StudySlidesRequestError(500))
-                : Promise.resolve(pageFor(r))
-        );
+        const working = serve().api;
+        const { store } = renderTab({
+            ...working,
+            groups: query =>
+                fail ? failedRequest(500) : working.groups(query),
+        });
         await settle();
         expect(screen.getByTestId('study-slides-error').textContent).toContain(
             "Pathology slides couldn't be loaded."
@@ -328,7 +355,7 @@ describe('StudyPathologySlidesTab', () => {
     });
 
     it('hides the patient list into a rail that still steps through patients', async () => {
-        const { store, view } = renderTab(async r => pageFor(r));
+        const { store, view } = renderTab();
         await settle();
 
         fireEvent.click(screen.getByTestId('study-slides-hide'));
@@ -344,7 +371,7 @@ describe('StudyPathologySlidesTab', () => {
         // The hidden state is remembered for the next visit.
         view.unmount();
         store.dispose();
-        const again = renderTab(async r => pageFor(r));
+        const again = renderTab();
         await settle();
         expect(screen.getByTestId('study-slides-rail')).toBeTruthy();
 
@@ -359,7 +386,7 @@ describe('StudyPathologySlidesTab', () => {
     it('hands its rail to the viewer when the slide list is hidden too', async () => {
         window.localStorage.setItem('wsi.study.patientListCollapsed', '1');
         window.localStorage.setItem('wsi.viewer.navCollapsed', '1');
-        const { store } = renderTab(async r => pageFor(r));
+        const { store } = renderTab();
         await settle();
 
         // One rail: the viewer's, with the patient section first.
@@ -382,7 +409,7 @@ describe('StudyPathologySlidesTab', () => {
     });
 
     it('toggles the patient list with the backslash key', async () => {
-        const { store } = renderTab(async r => pageFor(r));
+        const { store } = renderTab();
         await settle();
 
         fireEvent.keyDown(document, { key: '\\' });
@@ -394,13 +421,17 @@ describe('StudyPathologySlidesTab', () => {
 
     it('answers a page click at once and shows the page when it arrives', async () => {
         let release: (() => void) | undefined;
+        const many = serve(MANY).api;
         const { store } = renderTab(
-            r =>
-                r.pageNumber
-                    ? new Promise(resolve => {
-                          release = () => resolve(pageFor(r, MANY));
-                      })
-                    : Promise.resolve(pageFor(r, MANY)),
+            {
+                ...many,
+                groups: query =>
+                    query.groupBy === 'patient' && query.pageNumber
+                        ? new Promise(resolve => {
+                              release = () => resolve(many.groups(query));
+                          })
+                        : many.groups(query),
+            },
             true,
             2
         );
@@ -436,7 +467,7 @@ describe('StudyPathologySlidesTab', () => {
     });
 
     it('jumps to the last, the next and the first page', async () => {
-        const { store } = renderTab(async r => pageFor(r, MANY), true, 2);
+        const { store } = renderTab(serve(MANY).api, true, 2);
         await settle();
 
         fireEvent.click(screen.getByLabelText('View Last Page'));
@@ -459,19 +490,28 @@ describe('StudyPathologySlidesTab', () => {
     });
 
     it('filters by match level and passes one level to the viewer', async () => {
-        const requests: StudySlidesRequest[] = [];
-        const { store } = renderTab(async r => {
-            requests.push(r);
-            return pageFor(r);
-        });
+        // P-3's slides are unmatched.
+        const server = serve(
+            PATIENTS.map(p =>
+                p.patientId === 'P-3' ? { ...p, sampleCount: 0 } : p
+            )
+        );
+        const { store } = renderTab(server.api);
         await settle();
 
         fireEvent.click(screen.getByTestId('study-slides-match-UNMATCHED'));
         await settle();
 
-        expect(requests[requests.length - 1].matchLevels).toEqual([
-            'UNMATCHED',
+        const requests = () => listRequests(server.requests);
+        expect(requests()[requests().length - 1].filters).toEqual([
+            {
+                columnId: 'metadata:match_level',
+                operator: 'in',
+                values: ['UNMATCHED'],
+            },
         ]);
+        expect(screen.getAllByTestId('study-slides-patient')).toHaveLength(1);
+        expect(store.selected?.patientId).toBe('P-3');
         expect(mockViewer).toHaveBeenLastCalledWith(
             expect.objectContaining({ initialMatchFilter: 'unmatched' })
         );
@@ -481,13 +521,13 @@ describe('StudyPathologySlidesTab', () => {
 
         fireEvent.click(screen.getByTestId('study-slides-clear-filters'));
         await settle();
-        expect(requests[requests.length - 1].matchLevels).toEqual([]);
+        expect(requests()[requests().length - 1].filters).toBeUndefined();
         store.dispose();
     });
 
     it('starts with the filters closed and counts active filters', async () => {
         window.localStorage.removeItem('wsi.study.filtersOpen');
-        const { store } = renderTab(async r => pageFor(r));
+        const { store } = renderTab();
         await settle();
         act(() => store.toggleStainGroup('IHC'));
 
