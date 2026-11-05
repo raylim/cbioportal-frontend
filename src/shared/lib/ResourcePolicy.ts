@@ -7,24 +7,51 @@ import { getServerConfig } from 'config/config';
 import { PatientViewPageTabs } from 'pages/patientView/PatientViewPageTabIds';
 import { PathologySlideSettings } from 'pages/patientView/PatientViewUrlWrapper';
 import { isNonEmptyString } from './ResourceUtils';
+import { CombinedResourceTab } from './ResourceTableUtils';
 
 // H&E slide resources that the native viewer replaces. Every H&E resource on
 // the public and MSK portals uses one of these IDs.
 const LEGACY_HE_RESOURCE_IDS = new Set(['HE', 'MSK_HNE']);
 // Whole-slide images are stored as the WSI_SAMPLE and WSI_PATIENT resources,
 // one row per slide, which the viewer reads; the patient view reaches slides
-// through its Pathology Slides tab. Study view lists WSI_SLIDES as its slide
-// table: every viewable slide of the study, which the backend serves with only
-// the allowlisted public slide fields (no tile serving data).
-export const STUDY_SLIDE_TABLE_RESOURCE_ID = 'WSI_SLIDES';
-const WSI_RESOURCE_IDS = new Set([
-    'WSI_SAMPLE',
-    'WSI_PATIENT',
-    STUDY_SLIDE_TABLE_RESOURCE_ID,
-]);
+// through its Pathology Slides tab.
+const WSI_RESOURCE_IDS = ['WSI_SAMPLE', 'WSI_PATIENT'];
+
+/**
+ * Study view's slide table: both slide resources read together as one tab, so
+ * a patient's matched and unmatched slides list side by side.
+ */
+export const PATHOLOGY_SLIDES_RESOURCE_TAB: CombinedResourceTab = {
+    id: 'PATHOLOGY_SLIDES',
+    label: 'Pathology slides',
+    resourceIds: WSI_RESOURCE_IDS,
+};
+
+/** The tabs study view's resource tables show in place of their resources' own tabs. */
+export const STUDY_VIEW_COMBINED_RESOURCE_TABS: CombinedResourceTab[] = [
+    PATHOLOGY_SLIDES_RESOURCE_TAB,
+];
+
+// Metadata the resource tables neither show nor download. A slide's `serving`
+// block (its sealed source and tile metadata) is for the viewer's tile
+// requests only.
+const HIDDEN_METADATA_KEYS: { [resourceId: string]: string[] } = {
+    WSI_SAMPLE: ['serving'],
+    WSI_PATIENT: ['serving'],
+};
+
+/** Whether a table over these resources leaves a metadata key out. */
+export function isHiddenMetadataKey(
+    resourceIds: readonly string[],
+    metadataKey: string
+): boolean {
+    return resourceIds.some(id =>
+        (HIDDEN_METADATA_KEYS[id] || []).includes(metadataKey)
+    );
+}
 
 export function isWsiResourceId(resourceId: string | undefined): boolean {
-    return !!resourceId && WSI_RESOURCE_IDS.has(resourceId);
+    return !!resourceId && WSI_RESOURCE_IDS.includes(resourceId);
 }
 
 export function isWsiTileServerConfigured(): boolean {
@@ -39,14 +66,6 @@ export function shouldHideLegacyHeResourceTab(
         : false;
 }
 
-/** The slide key a slide table row's viewer link names, if any. */
-export function slideKeyFromSlideUrl(
-    url: string | undefined
-): string | undefined {
-    const match = /[?&]slideKey=([0-9a-f]{12})(?:&|#|$)/.exec(url || '');
-    return match ? match[1] : undefined;
-}
-
 /**
  * Resources the resource tables (Files & Links and the resource tabs) leave
  * out: slides are reached through the Pathology Slides views, which also
@@ -59,19 +78,26 @@ export function isHiddenFromResourceViews(resourceId: string): boolean {
 }
 
 /**
- * Resources study view's resource table leaves out. WSI_PATIENT never shows; the slide table
- * (WSI_SLIDES) shows as its own tab only without the slide viewer. With the viewer configured,
- * the Pathology Slides tab shows the slide table as one of its views instead.
+ * Resources study view's resource tables leave out: those of isHiddenFromResourceViews, except
+ * the slides. Without the slide viewer, the slide resources show together as the Pathology slides
+ * tab (STUDY_VIEW_COMBINED_RESOURCE_TABS). With it, they do not show as a resource tab at all:
+ * the Pathology Slides tab shows the same table as one of its views.
  */
 export function isHiddenFromStudyResourceTable(resourceId: string): boolean {
-    return (
-        isHiddenFromResourceViews(resourceId) &&
-        !(
-            resourceId === STUDY_SLIDE_TABLE_RESOURCE_ID &&
-            !isWsiTileServerConfigured()
-        )
-    );
+    if (
+        resourceId === PATHOLOGY_SLIDES_RESOURCE_TAB.id ||
+        PATHOLOGY_SLIDES_RESOURCE_TAB.resourceIds.includes(resourceId)
+    ) {
+        return isWsiTileServerConfigured();
+    }
+    return isHiddenFromResourceViews(resourceId);
 }
+
+/** How study view's resource tables (its resource tabs and Files & Links) list resources. */
+export const STUDY_VIEW_RESOURCE_TABLE_OPTIONS = {
+    hideResource: isHiddenFromStudyResourceTable,
+    combinedTabs: STUDY_VIEW_COMBINED_RESOURCE_TABS,
+};
 
 /**
  * The patient view tab a resource row's patient or sample link opens: slides live in the Pathology
@@ -132,7 +158,8 @@ export function slideStainFilterQuery(
         : {};
 }
 
-const SLIDE_KEY_METADATA_KEY = 'slide_key';
+/** The metadata key holding a slide row's slide key. */
+export const SLIDE_KEY_METADATA_KEY = 'slide_key';
 
 /** A metadata value as a resource table cell shows it: slide keys read as WSI- Slide IDs. */
 export function resourceMetadataDisplayValue(
@@ -150,8 +177,10 @@ export function resourceMetadataDisplayValue(
  * (WSI-1234-094d-6bc6, with or without the prefix or dashes) searches for the bare slide key it stands for.
  */
 export function resourceSearchTermForQuery(
-    resourceId: string | undefined,
+    resourceIds: readonly string[],
     term: string
 ): string {
-    return (isWsiResourceId(resourceId) && slideKeyFromSlideId(term)) || term;
+    return (
+        (resourceIds.some(isWsiResourceId) && slideKeyFromSlideId(term)) || term
+    );
 }

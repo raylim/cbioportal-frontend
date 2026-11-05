@@ -1,84 +1,33 @@
 import { assert } from 'chai';
-import { ResourceTableStore } from './ResourceTableStore';
+import { autorun, when } from 'mobx';
+import { StudyViewFilter } from 'cbioportal-ts-api-client';
+import {
+    fetchResourceTableData,
+    fetchResourceTableMetadata,
+    fetchResourceTableTabs,
+} from 'shared/api/resourceTableClient';
+import {
+    buildResourceTableTabs,
+    ResourceTableStore,
+} from './ResourceTableStore';
+
+jest.mock('shared/api/resourceTableClient', () => ({
+    ...jest.requireActual('shared/api/resourceTableClient'),
+    fetchResourceTableTabs: jest.fn(),
+    fetchResourceTableData: jest.fn(),
+    fetchResourceTableMetadata: jest.fn(),
+}));
+
+const fetchTabs = fetchResourceTableTabs as jest.Mock;
+const fetchData = fetchResourceTableData as jest.Mock;
+const fetchMetadata = fetchResourceTableMetadata as jest.Mock;
 
 describe('ResourceTableStore cohort context', () => {
-    const sample = (studyId: string, patientId: string, sampleId: string) => ({
-        studyId,
-        patientId,
-        sampleId,
-    });
-
-    const allSamples = [
-        sample('study_a', 'patient_1', 'sample_1'),
-        sample('study_a', 'patient_1', 'sample_2'),
-        sample('study_a', 'patient_2', 'sample_3'),
-    ];
-
-    it('sends no case identifiers when the whole study is selected', () => {
-        const store = new ResourceTableStore();
-
-        store.setContextFromSelection(allSamples, allSamples, true);
-
-        assert.deepEqual(store.studyIds, ['study_a']);
-        assert.deepEqual(store.patientIdentifiers, []);
-        assert.deepEqual(store.sampleIdentifiers, []);
-    });
-
-    it('sends the selection when it is a subset of the study', () => {
-        const store = new ResourceTableStore();
-
-        store.setContextFromSelection(allSamples.slice(0, 2), allSamples);
-
-        assert.deepEqual(store.studyIds, ['study_a']);
-        assert.deepEqual(store.patientIdentifiers, [
-            { studyId: 'study_a', patientId: 'patient_1' },
-        ]);
-        assert.deepEqual(store.sampleIdentifiers, [
-            { studyId: 'study_a', sampleId: 'sample_1' },
-            { studyId: 'study_a', sampleId: 'sample_2' },
-        ]);
-    });
-
-    it('sends the selection while the full sample set is still loading', () => {
-        const store = new ResourceTableStore();
-
-        store.setContextFromSelection(allSamples, undefined);
-
-        assert.deepEqual(store.sampleIdentifiers, [
-            { studyId: 'study_a', sampleId: 'sample_1' },
-            { studyId: 'study_a', sampleId: 'sample_2' },
-            { studyId: 'study_a', sampleId: 'sample_3' },
-        ]);
-    });
-
-    it('keeps every study of a fully selected multi-study cohort', () => {
-        const store = new ResourceTableStore();
-        const samples = [
-            sample('study_a', 'patient_1', 'sample_1'),
-            sample('study_b', 'patient_1', 'sample_1'),
-        ];
-
-        store.setContextFromSelection(samples, samples, true);
-
-        assert.deepEqual(store.studyIds, ['study_a', 'study_b']);
-        assert.deepEqual(store.sampleIdentifiers, []);
-    });
-
-    it('sends the selection when the query does not cover the whole study', () => {
-        // A virtual study or case list queries a subset, so `all` is that subset too and the
-        // lengths match while the cohorts do not. Taking the shortcut here would widen the
-        // request to every sample of the physical study.
-        const store = new ResourceTableStore();
-
-        store.setContextFromSelection(allSamples, allSamples, false);
-
-        assert.deepEqual(store.studyIds, ['study_a']);
-        assert.deepEqual(store.sampleIdentifiers, [
-            { studyId: 'study_a', sampleId: 'sample_1' },
-            { studyId: 'study_a', sampleId: 'sample_2' },
-            { studyId: 'study_a', sampleId: 'sample_3' },
-        ]);
-    });
+    const cohort = {
+        studyIds: ['study_a'],
+        patientIdentifiers: [],
+        sampleIdentifiers: [],
+    };
 
     it('keeps the selected resource when the cohort changes', () => {
         // A scoped store gets its resource before its cohort. If the cohort reset cleared the
@@ -87,7 +36,7 @@ describe('ResourceTableStore cohort context', () => {
         const store = new ResourceTableStore();
         store.setSelectedResourceId('PATHOLOGY_SLIDE');
 
-        store.setContextFromSelection(allSamples, allSamples, true);
+        store.setCohort(cohort);
 
         // Asserts on the selection, not activeResourceId: that getter's fallback reads
         // this.tabs, which starts a request.
@@ -100,10 +49,239 @@ describe('ResourceTableStore cohort context', () => {
         store.setPage(2);
         store.setSearchTerm('TCGA-A1');
 
-        store.setContextFromSelection(allSamples, allSamples, true);
+        store.setCohort(cohort);
 
         assert.equal(store.pageNumber, 0);
         assert.equal(store.searchTerm, '');
         assert.deepEqual(store.filters, []);
+    });
+});
+
+describe('ResourceTableStore requests', () => {
+    const filter = ({
+        studyIds: ['study_a'],
+        clinicalDataFilters: [
+            { attributeId: 'CANCER_TYPE', values: [{ value: 'Breast' }] },
+        ],
+    } as any) as StudyViewFilter;
+    const patientIdentifiers = [{ studyId: 'study_a', patientId: 'patient_1' }];
+    const sampleIdentifiers = [{ studyId: 'study_a', sampleId: 'sample_1' }];
+
+    beforeEach(() => {
+        fetchTabs.mockReset().mockResolvedValue([
+            {
+                resourceId: 'PATHOLOGY_SLIDE',
+                label: 'Slides',
+                totalCount: 1,
+                patientCount: 1,
+                sampleCount: 1,
+            },
+        ]);
+        fetchData.mockReset().mockResolvedValue([]);
+        fetchMetadata.mockReset().mockResolvedValue({
+            columns: [],
+            totalRowCount: 0,
+            filteredPatientCount: 0,
+            filteredSampleCount: 0,
+            facets: {},
+            facetRanges: {},
+            distinctValueCounts: {},
+        });
+    });
+
+    async function loadTable(store: ResourceTableStore) {
+        const dispose = autorun(() => {
+            store.tableData.result;
+            store.tableMetadata.result;
+        });
+        await when(() => store.isTableReady && fetchData.mock.calls.length > 0);
+        dispose();
+    }
+
+    it('sends a study-view cohort as the filter, without identifiers', async () => {
+        const store = new ResourceTableStore();
+        store.setCohort({
+            studyIds: ['study_a'],
+            patientIdentifiers,
+            sampleIdentifiers,
+            studyViewFilter: filter,
+        });
+
+        await loadTable(store);
+
+        for (const query of [
+            fetchData.mock.calls[0][0],
+            fetchMetadata.mock.calls[0][0],
+        ]) {
+            assert.deepEqual(query.studyViewFilter, filter);
+            assert.notProperty(query, 'patientIdentifiers');
+            assert.notProperty(query, 'sampleIdentifiers');
+        }
+        // tabs/fetch takes no filter, so it keeps the identifier lists.
+        assert.deepEqual(fetchTabs.mock.calls[0][0], {
+            studyIds: ['study_a'],
+            patientIdentifiers,
+            sampleIdentifiers,
+        });
+    });
+
+    it('sends identifier lists for an explicit cohort', async () => {
+        const store = new ResourceTableStore();
+        store.setContext(['study_a'], patientIdentifiers, sampleIdentifiers);
+
+        await loadTable(store);
+
+        const query = fetchData.mock.calls[0][0];
+        assert.deepEqual(query.patientIdentifiers, patientIdentifiers);
+        assert.deepEqual(query.sampleIdentifiers, sampleIdentifiers);
+        assert.notProperty(query, 'studyViewFilter');
+        assert.equal(query.resourceId, 'PATHOLOGY_SLIDE');
+    });
+
+    it('drops a previous filter when given an explicit cohort', () => {
+        const store = new ResourceTableStore();
+        store.setCohort({
+            studyIds: ['study_a'],
+            patientIdentifiers: [],
+            sampleIdentifiers: [],
+            studyViewFilter: filter,
+        });
+
+        store.setContext(['study_a'], patientIdentifiers, sampleIdentifiers);
+
+        assert.isUndefined(store.studyViewFilter);
+    });
+});
+
+describe('combined resource tabs', () => {
+    const tab = (
+        resourceId: string,
+        totalCount: number,
+        patientCount: number,
+        sampleCount: number
+    ) => ({
+        resourceId,
+        label: resourceId,
+        totalCount,
+        patientCount,
+        sampleCount,
+    });
+    const slides = {
+        id: 'SLIDES',
+        label: 'Slides',
+        resourceIds: ['SLIDE_SAMPLE', 'SLIDE_PATIENT'],
+    };
+
+    it('replaces its resources tabs with one, where the first of them was', () => {
+        const tabs = buildResourceTableTabs(
+            [
+                tab('NOTES', 3, 3, 0),
+                tab('SLIDE_PATIENT', 2, 2, 0),
+                tab('REPORTS', 1, 1, 1),
+                tab('SLIDE_SAMPLE', 5, 4, 5),
+            ],
+            { combinedTabs: [slides] }
+        );
+
+        assert.deepEqual(
+            tabs.map(t => [t.resourceId, t.resourceIds]),
+            [
+                ['NOTES', ['NOTES']],
+                ['SLIDES', ['SLIDE_PATIENT', 'SLIDE_SAMPLE']],
+                ['REPORTS', ['REPORTS']],
+            ]
+        );
+        const combined = tabs[1];
+        assert.equal(combined.label, 'Slides');
+        assert.equal(combined.totalCount, 7);
+        // Two resources can share a case, so the case counts are a lower bound.
+        assert.equal(combined.patientCount, 4);
+        assert.equal(combined.sampleCount, 5);
+    });
+
+    it('reads only the resources the cohort has, and is absent without any', () => {
+        assert.deepEqual(
+            buildResourceTableTabs([tab('SLIDE_SAMPLE', 5, 4, 5)], {
+                combinedTabs: [slides],
+            }).map(t => t.resourceIds),
+            [['SLIDE_SAMPLE']]
+        );
+        assert.deepEqual(
+            buildResourceTableTabs([tab('NOTES', 3, 3, 0)], {
+                combinedTabs: [slides],
+            }).map(t => t.resourceId),
+            ['NOTES']
+        );
+    });
+
+    it('takes the place of a fetched resource with its id, and can be hidden', () => {
+        const fetched = [tab('SLIDES', 9, 9, 9), tab('SLIDE_SAMPLE', 5, 4, 5)];
+        assert.deepEqual(
+            buildResourceTableTabs(fetched, {
+                combinedTabs: [slides],
+            }).map(t => [t.resourceId, t.totalCount]),
+            [['SLIDES', 5]]
+        );
+        assert.deepEqual(
+            buildResourceTableTabs(fetched, {
+                combinedTabs: [slides],
+                hideResource: id => id === 'SLIDES',
+            }),
+            []
+        );
+    });
+
+    it('requests a combined tab with resourceIds, rows and download alike', async () => {
+        fetchTabs
+            .mockReset()
+            .mockResolvedValue([
+                tab('SLIDE_SAMPLE', 5, 4, 5),
+                tab('SLIDE_PATIENT', 2, 2, 0),
+            ]);
+        fetchData.mockReset().mockResolvedValue([]);
+        fetchMetadata.mockReset().mockResolvedValue({
+            columns: [],
+            totalRowCount: 7,
+            filteredPatientCount: 4,
+            filteredSampleCount: 5,
+            facets: {},
+            facetRanges: {},
+            distinctValueCounts: {},
+        });
+        const store = new ResourceTableStore({ combinedTabs: [slides] });
+        store.setSelectedResourceId('SLIDES');
+        store.setContext(['study_a']);
+
+        const dispose = autorun(() => {
+            store.tableData.result;
+            store.tableMetadata.result;
+        });
+        await when(() => store.isTableReady && fetchData.mock.calls.length > 0);
+        dispose();
+
+        assert.deepEqual(store.activeResourceIds, [
+            'SLIDE_SAMPLE',
+            'SLIDE_PATIENT',
+        ]);
+        assert.equal(store.activeResourceLabel, 'Slides');
+        for (const query of [
+            fetchData.mock.calls[0][0],
+            fetchMetadata.mock.calls[0][0],
+        ]) {
+            assert.deepEqual(query.resourceIds, [
+                'SLIDE_SAMPLE',
+                'SLIDE_PATIENT',
+            ]);
+            assert.notProperty(query, 'resourceId');
+        }
+
+        await store.fetchAllRowsForDownload();
+        const download =
+            fetchData.mock.calls[fetchData.mock.calls.length - 1][0];
+        assert.deepEqual(download.resourceIds, [
+            'SLIDE_SAMPLE',
+            'SLIDE_PATIENT',
+        ]);
+        assert.equal(download.pageSize, 7);
     });
 });

@@ -9,108 +9,47 @@ import {
     untracked,
 } from 'mobx';
 import { remoteData } from 'cbioportal-frontend-commons';
-import { StudyViewFilter } from 'cbioportal-ts-api-client';
 import {
     fetchStudySlideFacets,
-    fetchStudySlidePatients,
-    STUDY_SLIDE_MATCH_LABELS,
-    STUDY_SLIDE_MATCH_LEVELS,
-    StudySlideAttributeFacet,
+    fetchStudySlideResourceIds,
+    fetchStudySlidesPage,
+    RESOURCE_TABLE_API,
     StudySlideFacets,
-    StudySlideFacetsRequest,
     StudySlideMatchLevel,
     StudySlidePatient,
+    StudySlidePatientRef,
     StudySlidesPage,
     StudySlidesRequest,
+    StudySlidesResourceApi,
+    StudySlidesSelection,
+    StudySlideStainCounts,
     StudySlideStainGroup,
+    stainGroupPatientCounts,
+    STUDY_SLIDE_MATCH_LEVELS,
     STUDY_SLIDE_STAIN_GROUPS,
 } from './studySlidesApi';
 
 import { getStudyViewResourceTableTabId } from 'pages/studyView/StudyViewPageTabs';
 import {
     isWsiTileServerConfigured,
-    STUDY_SLIDE_TABLE_RESOURCE_ID,
+    PATHOLOGY_SLIDES_RESOURCE_TAB,
 } from 'shared/lib/ResourcePolicy';
+import {
+    ResourceCohort,
+    sameCohort,
+} from 'shared/components/resourceTable/resourceTableCohort';
 
 export const STUDY_SLIDES_PAGE_SIZE = 50;
+
+/**
+ * The promise, marked as handled: MobxPromise attaches its handlers a tick later, and a failure
+ * it reports through `isError` is not an unhandled rejection.
+ */
+function handled<T>(promise: Promise<T>): Promise<T> {
+    promise.catch(() => undefined);
+    return promise;
+}
 export const STUDY_SLIDES_SEARCH_DEBOUNCE_MS = 300;
-
-/** Clinical filters offered when the study has more than one value. */
-export const DEFAULT_FACET_ATTRIBUTE_IDS = [
-    'CANCER_TYPE',
-    'CANCER_TYPE_DETAILED',
-    'SAMPLE_TYPE',
-];
-/** Attributes whose values the search suggests, beyond the shown filters. */
-export const SUGGESTION_ATTRIBUTE_LIMIT = 12;
-export const MAX_SUGGESTIONS = 8;
-/** Browser-stored attributes the user added with "More filters". */
-export const PINNED_FACETS_KEY = 'wsi.study.pinnedFacets';
-
-export interface StudySlidesClinicalAttribute {
-    attributeId: string;
-    displayName: string;
-}
-
-/** The study view's clinical filters, shared with the rest of the page. */
-export interface StudySlidesClinicalAccess {
-    /** Categorical attributes, most important first. */
-    getAttributes: () => StudySlidesClinicalAttribute[];
-    /** Selected values of each attribute with a study-view clinical filter. */
-    getFilters: () => { attributeId: string; values: string[] }[];
-    /** Replaces an attribute's filter; no values removes it. */
-    setFilterValues: (attributeId: string, values: string[]) => void;
-}
-
-export type StudySlidesSuggestion =
-    | {
-          kind: 'clinical';
-          attributeId: string;
-          displayName: string;
-          value: string;
-          patientCount: number;
-      }
-    | { kind: 'match'; level: StudySlideMatchLevel; patientCount: number };
-
-function readPinnedAttributeIds(): string[] {
-    try {
-        const stored = JSON.parse(
-            window.localStorage.getItem(PINNED_FACETS_KEY) || '[]'
-        );
-        return Array.isArray(stored)
-            ? stored.filter(id => typeof id === 'string')
-            : [];
-    } catch (e) {
-        return [];
-    }
-}
-
-function writePinnedAttributeIds(ids: string[]) {
-    try {
-        window.localStorage.setItem(PINNED_FACETS_KEY, JSON.stringify(ids));
-    } catch (e) {
-        // Blocked storage only loses the remembered filters.
-    }
-}
-
-/** Patient and sample IDs carry digits or dashes; clinical words rarely do. */
-export function looksLikeId(text: string): boolean {
-    return /[0-9-]/.test(text);
-}
-
-/** Values that are nearly all different, such as IDs, make poor suggestions. */
-function isIdLike(facet: StudySlideAttributeFacet): boolean {
-    return (
-        facet.values.length >= 50 &&
-        facet.values.filter(v => v.patientCount > 1).length <
-            facet.values.length / 2
-    );
-}
-
-export interface StudySlidePatientRef {
-    studyId: string;
-    patientId: string;
-}
 
 export function isSamePatient(
     a: StudySlidePatientRef | undefined,
@@ -122,10 +61,13 @@ export function isSamePatient(
 /** The tab's two views: patients beside the viewer, or the cohort's slide table. */
 export type StudySlidesView = 'viewer' | 'table';
 
-// The slide table's own resource tab, and the one it had while WSI_SAMPLE was the slide table.
-const SLIDE_TABLE_TAB_IDS = [STUDY_SLIDE_TABLE_RESOURCE_ID, 'WSI_SAMPLE'].map(
-    getStudyViewResourceTableTabId
-);
+// The slide table's own resource tab, and the ones it had as the WSI_SLIDES and WSI_SAMPLE
+// resources.
+const SLIDE_TABLE_TAB_IDS = [
+    PATHOLOGY_SLIDES_RESOURCE_TAB.id,
+    'WSI_SLIDES',
+    'WSI_SAMPLE',
+].map(getStudyViewResourceTableTabId);
 
 /**
  * The Pathology Slides view a study-view URL asks for: `wsiView=table`, or an old link to the
@@ -187,8 +129,11 @@ export function studySlidesUrlState(query: {
 }
 
 export interface StudyPathologySlidesStoreOptions {
-    /** The study-view cohort; the list reloads when it changes. */
-    getFilters: () => StudyViewFilter;
+    /**
+     * The study-view cohort (see getStudyViewResourceCohort), or undefined while it loads; the
+     * list reloads when it changes.
+     */
+    getCohort: () => ResourceCohort | undefined;
     /** The queried physical studies, for deciding whether to show the tab. */
     getStudyIds: () => string[];
     /** Called when the user, or a cohort change, selects another patient. */
@@ -202,18 +147,15 @@ export interface StudyPathologySlidesStoreOptions {
     initialSlideFilters?: StudySlideListFilters;
     /** Called when the list's own filters change. */
     onSlideFiltersChange?: (filters: StudySlideListFilters) => void;
-    fetchPage?: (request: StudySlidesRequest) => Promise<StudySlidesPage>;
-    fetchFacets?: (
-        request: StudySlideFacetsRequest
-    ) => Promise<StudySlideFacets>;
-    /** The study view's clinical filters; without it no clinical filters show. */
-    clinical?: StudySlidesClinicalAccess;
+    /** The resource-table endpoints; tests pass their own. */
+    api?: StudySlidesResourceApi;
     pageSize?: number;
 }
 
 /**
  * State of the study-view Pathology Slides tab: one page of the cohort's
- * patients with slides, and the patient shown in the viewer.
+ * patients with slides, and the patient shown in the viewer. The list is the
+ * slide resources grouped by patient (resource-table groups/fetch).
  *
  * Every list request also asks the server where the selected patient is in
  * the full list, so the selection keeps its place ("i of N") across list
@@ -226,9 +168,6 @@ export class StudyPathologySlidesStore {
     @observable searchText = '';
     /** The applied (debounced) patient/sample ID search. */
     @observable search = '';
-    @observable.ref pinnedAttributeIds: string[] = readPinnedAttributeIds();
-    /** Set while the search has focus, to load suggestion values. */
-    @observable private suggestionsWanted = false;
     @observable pageNumber = 0;
     @observable.ref selected: StudySlidePatientRef | undefined;
     @observable view: StudySlidesView = 'viewer';
@@ -237,21 +176,16 @@ export class StudyPathologySlidesStore {
     /** Zero-based position of the selected patient in the full list. */
     @observable selectedIndex: number | undefined;
     @observable private reloadCount = 0;
+    /** The cohort the list reads, once the study view has one. */
+    @observable.ref private cohort: ResourceCohort | undefined;
 
     readonly pageSize: number;
-    private readonly getFilters: () => StudyViewFilter;
     private readonly getStudyIds: () => string[];
     private readonly onSelectionChange?: (
         patient: StudySlidePatientRef | undefined
     ) => void;
     private readonly onViewChange?: (view: StudySlidesView) => void;
-    private readonly fetchPage: (
-        request: StudySlidesRequest
-    ) => Promise<StudySlidesPage>;
-    private readonly fetchFacets: (
-        request: StudySlideFacetsRequest
-    ) => Promise<StudySlideFacets>;
-    readonly clinical?: StudySlidesClinicalAccess;
+    private readonly api: StudySlidesResourceApi;
     // Page offset to select once the requested page loads (prev/next across pages).
     private selectOnLoad: number | undefined;
     // After a cohort or list-filter change, move the list to the selected patient's page.
@@ -262,14 +196,11 @@ export class StudyPathologySlidesStore {
     private readonly disposers: IReactionDisposer[] = [];
 
     constructor(options: StudyPathologySlidesStoreOptions) {
-        this.getFilters = options.getFilters;
         this.getStudyIds = options.getStudyIds;
         this.onSelectionChange = options.onSelectionChange;
         this.onViewChange = options.onViewChange;
         this.view = options.initialView || 'viewer';
-        this.fetchPage = options.fetchPage || fetchStudySlidePatients;
-        this.fetchFacets = options.fetchFacets || fetchStudySlideFacets;
-        this.clinical = options.clinical;
+        this.api = options.api || RESOURCE_TABLE_API;
         this.pageSize = options.pageSize || STUDY_SLIDES_PAGE_SIZE;
         this.selected = options.initialSelection;
         this.followSelection = !!options.initialSelection;
@@ -278,11 +209,12 @@ export class StudyPathologySlidesStore {
             this.matchLevels = options.initialSlideFilters.matchLevels;
             this.search = this.searchText = options.initialSlideFilters.search;
         }
+        this.cohort = options.getCohort();
         makeObservable(this);
         this.disposers.push(
             reaction(
-                () => this.getFilters(),
-                () => this.restartList()
+                () => options.getCohort(),
+                cohort => this.setCohort(cohort)
             )
         );
         const onSlideFiltersChange = options.onSlideFiltersChange;
@@ -297,45 +229,84 @@ export class StudyPathologySlidesStore {
         }
     }
 
-    /** Whether the queried studies have any pathology slides. */
-    readonly studyHasSlides = remoteData<boolean>({
+    /** The slide resources the queried studies hold; none when they have no slides. */
+    readonly slideResourceIds = remoteData<string[]>({
         invoke: async () => {
-            const studyIds = this.getStudyIds();
-            if (studyIds.length === 0) {
-                return false;
-            }
             try {
-                const page = await this.fetchPage({
-                    studyViewFilter: { studyIds } as StudyViewFilter,
-                    pageSize: 1,
-                });
-                return page.totalSlides > 0;
+                return await fetchStudySlideResourceIds(
+                    this.getStudyIds(),
+                    this.api
+                );
             } catch (e) {
-                return false;
+                return [];
             }
         },
+        default: [],
+    });
+
+    /** Whether the queried studies have any pathology slides. */
+    readonly studyHasSlides = remoteData<boolean>({
+        await: () => [this.slideResourceIds],
+        invoke: async () => this.slideResourceIds.result!.length > 0,
         default: false,
     });
 
-    readonly page = remoteData<StudySlidesPage>({
-        invoke: () => {
-            // Tracked: a change to any of these reloads the page.
-            const request: StudySlidesRequest = {
-                studyViewFilter: this.getFilters(),
+    /**
+     * The slides the list reads before the stain and match filters, which the filter options
+     * ignore; undefined until the cohort is known.
+     */
+    @computed private get unfilteredSelection():
+        | StudySlidesSelection
+        | undefined {
+        if (!this.cohort || !this.slideResourceIds.isComplete) {
+            return undefined;
+        }
+        return {
+            cohort: this.cohort,
+            resourceIds: this.slideResourceIds.result!,
+            stainGroups: [],
+            matchLevels: [],
+            search: this.search || undefined,
+        };
+    }
+
+    /** The slides the list reads, without paging; undefined until the cohort is known. */
+    @computed private get selection(): StudySlidesSelection | undefined {
+        const unfiltered = this.unfilteredSelection;
+        return (
+            unfiltered && {
+                ...unfiltered,
                 stainGroups: this.stainGroups.slice(),
                 matchLevels: this.matchLevels.slice(),
-                search: this.search || undefined,
-                pageNumber: this.pageNumber,
+            }
+        );
+    }
+
+    readonly page = remoteData<StudySlidesPage>({
+        await: () => [this.slideResourceIds],
+        invoke: () => {
+            // Tracked: a change to any of these reloads the page.
+            const selection = this.selection;
+            const pageNumber = this.pageNumber;
+            void this.reloadCount;
+            if (!selection) {
+                // The cohort is still loading; its arrival re-runs this.
+                return new Promise<StudySlidesPage>(() => {});
+            }
+            const request: StudySlidesRequest = {
+                ...selection,
+                pageNumber,
                 pageSize: this.pageSize,
             };
-            void this.reloadCount;
             // Untracked: selecting a patient does not reload the list.
             const selected = untracked(() => this.selected);
             if (selected) {
-                request.locateStudyId = selected.studyId;
-                request.locatePatientId = selected.patientId;
+                request.locate = {
+                    studyId: selected.studyId,
+                    patientId: selected.patientId,
+                };
             }
-            return this.fetchPage(request);
+            return handled(fetchStudySlidesPage(request, this.api));
         },
         onResult: page => {
             if (page) {
@@ -346,193 +317,36 @@ export class StudyPathologySlidesStore {
         onError: () => {},
     });
 
-    /** Categorical attributes by ID, for labels. */
-    @computed get clinicalAttributesById(): {
-        [attributeId: string]: StudySlidesClinicalAttribute;
-    } {
-        const byId: { [id: string]: StudySlidesClinicalAttribute } = {};
-        (this.clinical?.getAttributes() || []).forEach(
-            a => (byId[a.attributeId] = a)
-        );
-        return byId;
-    }
-
-    /** The study view's clinical filters, for chips. */
-    @computed get clinicalFilters(): {
-        attributeId: string;
-        displayName: string;
-        values: string[];
-    }[] {
-        return (this.clinical?.getFilters() || []).map(f => ({
-            ...f,
-            displayName:
-                this.clinicalAttributesById[f.attributeId]?.displayName ||
-                f.attributeId,
-        }));
-    }
-
     /**
-     * Attributes shown as filters: the defaults, the user's pinned ones and
-     * any with a study-view filter, when the study has them.
+     * Patients per value of the slide columns the list filters by. The column filters do not
+     * narrow them, so a stain or match filter does not re-request them.
      */
-    @computed get facetAttributeIds(): string[] {
-        const known = this.clinicalAttributesById;
-        return Array.from(
-            new Set([
-                ...DEFAULT_FACET_ATTRIBUTE_IDS,
-                ...this.pinnedAttributeIds,
-                ...this.clinicalFilters.map(f => f.attributeId),
-            ])
-        )
-            .filter(id => !!known[id])
-            .slice(0, 20);
-    }
-
-    private facetRequest(attributeIds: string[]): StudySlideFacetsRequest {
-        // The ID search narrows only the list, so suggestions and filter
-        // counts are not emptied by a value being typed.
-        return {
-            studyViewFilter: this.getFilters(),
-            stainGroups: this.stainGroups.slice(),
-            matchLevels: this.matchLevels.slice(),
-            attributeIds,
-        };
-    }
-
     readonly facets = remoteData<StudySlideFacets>({
-        invoke: () =>
-            this.fetchFacets(this.facetRequest(this.facetAttributeIds)),
-        onError: () => {},
-    });
-
-    /**
-     * Clinical filters to show: attributes with more than one value, or with
-     * a filter set, in the order of `facetAttributeIds`.
-     */
-    @computed get visibleFacets(): StudySlideAttributeFacet[] {
-        const filtered = new Set(this.clinicalFilters.map(f => f.attributeId));
-        return (this.facets.result?.attributes || []).filter(
-            f => f.values.length > 1 || filtered.has(f.attributeId)
-        );
-    }
-
-    /** Values of further attributes, loaded once the search is used. */
-    readonly suggestionFacets = remoteData<StudySlideAttributeFacet[]>({
-        invoke: async () => {
-            if (!this.suggestionsWanted || !this.clinical) {
-                return [];
+        await: () => [this.slideResourceIds],
+        invoke: () => {
+            const selection = this.unfilteredSelection;
+            if (!selection) {
+                return new Promise<StudySlideFacets>(() => {});
             }
-            const shown = new Set(this.facetAttributeIds);
-            const attributeIds = this.clinical
-                .getAttributes()
-                .map(a => a.attributeId)
-                .filter(id => !shown.has(id))
-                .slice(0, Math.max(0, SUGGESTION_ATTRIBUTE_LIMIT - shown.size));
-            if (attributeIds.length === 0) {
-                return [];
-            }
-            const facets = await this.fetchFacets(
-                this.facetRequest(attributeIds)
-            );
-            return facets.attributes.filter(f => !isIdLike(f));
+            return handled(fetchStudySlideFacets(selection, this.api));
         },
-        default: [],
+        default: {},
         onError: () => {},
     });
 
-    /** Clinical values and match levels whose name contains `text`. */
-    suggestionsFor(text: string): StudySlidesSuggestion[] {
-        const needle = text.trim().toLowerCase();
-        if (!needle) {
-            return [];
+    /** Patients with slides of each stain group, for the stain filter. */
+    @computed get stainGroupPatientCounts(): StudySlideStainCounts {
+        return stainGroupPatientCounts(this.facets.result);
+    }
+
+    @action
+    private setCohort(cohort: ResourceCohort | undefined) {
+        // Undefined while the study view's selection reloads: keep the list as it is.
+        if (!cohort || (this.cohort && sameCohort(cohort, this.cohort))) {
+            return;
         }
-        const attributes = [
-            ...(this.facets.result?.attributes || []),
-            ...(this.suggestionFacets.result || []),
-        ];
-        const clinical: StudySlidesSuggestion[] = [];
-        const seen = new Set<string>();
-        attributes.forEach(facet =>
-            facet.values.forEach(v => {
-                const key = `${facet.attributeId}\u0000${v.value}`;
-                if (v.value.toLowerCase().includes(needle) && !seen.has(key)) {
-                    seen.add(key);
-                    clinical.push({
-                        kind: 'clinical',
-                        attributeId: facet.attributeId,
-                        displayName:
-                            this.clinicalAttributesById[facet.attributeId]
-                                ?.displayName || facet.attributeId,
-                        value: v.value,
-                        patientCount: v.patientCount,
-                    });
-                }
-            })
-        );
-        const match: StudySlidesSuggestion[] = STUDY_SLIDE_MATCH_LEVELS.filter(
-            level =>
-                STUDY_SLIDE_MATCH_LABELS[level].toLowerCase().includes(needle)
-        ).map(level => ({
-            kind: 'match' as const,
-            level,
-            patientCount: this.facets.result?.matchLevels?.[level] ?? 0,
-        }));
-        return [...clinical, ...match]
-            .sort((a, b) => b.patientCount - a.patientCount)
-            .slice(0, MAX_SUGGESTIONS);
-    }
-
-    /** The search has focus: load suggestion values for it. */
-    @action.bound
-    requestSuggestions() {
-        this.suggestionsWanted = true;
-    }
-
-    /**
-     * The search lost focus: stop reloading suggestion values on every
-     * filter change, which would compete with the list and filter counts.
-     */
-    @action.bound
-    releaseSuggestions() {
-        this.suggestionsWanted = false;
-    }
-
-    /** Selected values of an attribute's study-view filter. */
-    clinicalValues(attributeId: string): string[] {
-        return (
-            this.clinicalFilters.find(f => f.attributeId === attributeId)
-                ?.values || []
-        );
-    }
-
-    @action.bound
-    setClinicalValues(attributeId: string, values: string[]) {
-        this.clinical?.setFilterValues(attributeId, values);
-    }
-
-    @action.bound
-    addClinicalValue(attributeId: string, value: string) {
-        const values = this.clinicalValues(attributeId);
-        if (!values.includes(value)) {
-            this.setClinicalValues(attributeId, [...values, value]);
-        }
-    }
-
-    @action.bound
-    pinAttribute(attributeId: string) {
-        if (!this.pinnedAttributeIds.includes(attributeId)) {
-            this.pinnedAttributeIds = [...this.pinnedAttributeIds, attributeId];
-            writePinnedAttributeIds(this.pinnedAttributeIds);
-        }
-    }
-
-    @action.bound
-    unpinAttribute(attributeId: string) {
-        this.pinnedAttributeIds = this.pinnedAttributeIds.filter(
-            id => id !== attributeId
-        );
-        writePinnedAttributeIds(this.pinnedAttributeIds);
-        this.setClinicalValues(attributeId, []);
+        this.cohort = cohort;
+        this.restartList();
     }
 
     @action.bound
@@ -727,24 +541,17 @@ export class StudyPathologySlidesStore {
         this.restartList();
     }
 
-    /**
-     * Updates the typed search. Text that looks like an ID (or no text)
-     * narrows the list after a pause; other text, such as a cancer type, is
-     * left for the suggestions until the ID search is chosen explicitly.
-     */
+    /** Updates the typed ID search, which narrows the list after a pause. */
     @action.bound
     setSearchText(text: string) {
         this.searchText = text;
         if (this.searchTimer !== undefined) {
             clearTimeout(this.searchTimer);
-            this.searchTimer = undefined;
         }
-        if (looksLikeId(text) || text.trim() === '') {
-            this.searchTimer = setTimeout(
-                () => this.applySearch(),
-                STUDY_SLIDES_SEARCH_DEBOUNCE_MS
-            );
-        }
+        this.searchTimer = setTimeout(
+            () => this.applySearch(),
+            STUDY_SLIDES_SEARCH_DEBOUNCE_MS
+        );
     }
 
     @action.bound

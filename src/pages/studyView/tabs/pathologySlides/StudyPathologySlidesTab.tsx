@@ -28,7 +28,7 @@ import {
 import {
     STUDY_SLIDE_STAIN_GROUPS,
     StudySlidePatient,
-    StudySlidesRequestError,
+    studySlidesErrorStatus,
     viewerMatchFilter,
     viewerStainFilter,
 } from './studySlidesApi';
@@ -231,7 +231,6 @@ const PatientPanel: React.FunctionComponent<{
     const listRef = React.useRef<HTMLUListElement>(null);
     const page = store.page.result!;
     const selected = store.selected;
-    const filtering = store.hasSlideFilters || store.clinicalFilters.length > 0;
 
     // Show the selected patient when it is on the page; otherwise start a
     // newly loaded page from its top.
@@ -304,10 +303,7 @@ const PatientPanel: React.FunctionComponent<{
                 </div>
                 <StudySlidesSearch store={store} />
                 <StudySlidesFilterChips store={store} />
-                <StudySlidesFilterSection
-                    store={store}
-                    stainGroupTotals={page.stainGroupTotals}
-                />
+                <StudySlidesFilterSection store={store} />
             </div>
 
             {page.patients.length === 0 ? (
@@ -315,7 +311,7 @@ const PatientPanel: React.FunctionComponent<{
                     data-testid="study-slides-empty"
                     style={{ color: C.muted, fontSize: 12, padding: 12 }}
                 >
-                    {filtering
+                    {store.hasSlideFilters
                         ? 'No patients match these filters.'
                         : NO_SLIDES_MESSAGE}
                 </div>
@@ -552,10 +548,7 @@ const StudySlidesViewerView: React.FunctionComponent<StudyPathologySlidesTabProp
         }, [isActive, store, listCollapsed, setListCollapsed]);
 
         if (store.page.isError) {
-            const status =
-                store.page.error instanceof StudySlidesRequestError
-                    ? store.page.error.status
-                    : undefined;
+            const status = studySlidesErrorStatus(store.page.error);
             return (
                 <div
                     className="alert alert-warning"
