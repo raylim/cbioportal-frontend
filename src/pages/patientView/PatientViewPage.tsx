@@ -65,6 +65,7 @@ import {
 } from './PatientViewPageTabs';
 import { MakeMobxView } from '../../shared/components/MobxView';
 import { ResourceTableStore } from 'shared/components/resourceTable/ResourceTableStore';
+import { ResourceCohort } from 'shared/components/resourceTable/resourceTableCohort';
 import ResourceDataTable from 'shared/components/resourceTable/ResourceDataTable';
 import ResourceViewerTab from 'shared/components/resourceViewer/ResourceViewerTab';
 import resourceViewerStyles from 'shared/components/resourceViewer/styles.module.scss';
@@ -285,28 +286,11 @@ export class PatientViewPageInner extends React.Component<
         });
 
         this.resourceTableStoreDisposer = autorun(() => {
-            const context = this.resourceContext;
-            if (!context) return;
-            const { studyIds, patientIdentifiers, sampleIdentifiers } = context;
-            this.resourceTableStore.setContext(
-                studyIds,
-                patientIdentifiers,
-                sampleIdentifiers
-            );
-            this.resourceTableStores.forEach(store =>
-                store.setContext(
-                    studyIds,
-                    patientIdentifiers,
-                    sampleIdentifiers
-                )
-            );
-            this.resourceViewerStores.forEach(store =>
-                store.setContext(
-                    studyIds,
-                    patientIdentifiers,
-                    sampleIdentifiers
-                )
-            );
+            const cohort = this.resourceCohort;
+            if (!cohort) return;
+            this.resourceTableStore.setCohort(cohort);
+            this.resourceTableStores.forEach(store => store.setCohort(cohort));
+            this.resourceViewerStores.forEach(store => store.setCohort(cohort));
         });
     }
 
@@ -319,8 +303,12 @@ export class PatientViewPageInner extends React.Component<
         }
     }
 
-    /** The patient and samples every resource request is scoped to, once the samples load. */
-    @computed get resourceContext() {
+    /**
+     * The patient and samples every resource request is scoped to, once the samples load. Built
+     * from identifiers, never a filter, and naming the patient explicitly: a patient with no
+     * samples still has patient-level resources to show.
+     */
+    @computed get resourceCohort(): ResourceCohort | undefined {
         const samples = this.pageStore.samples.result;
         if (!samples) {
             return undefined;
@@ -345,13 +333,9 @@ export class PatientViewPageInner extends React.Component<
             store.setSelectedResourceId(resourceId);
             this.resourceTableStores.set(resourceId, store);
 
-            const context = this.resourceContext;
-            if (context) {
-                store.setContext(
-                    context.studyIds,
-                    context.patientIdentifiers,
-                    context.sampleIdentifiers
-                );
+            const cohort = this.resourceCohort;
+            if (cohort) {
+                store.setCohort(cohort);
             }
         }
         return store;
@@ -366,13 +350,9 @@ export class PatientViewPageInner extends React.Component<
             store = new ResourceViewerStore();
             this.resourceViewerStores.set(resourceId, store);
 
-            const context = this.resourceContext;
-            if (context) {
-                store.setContext(
-                    context.studyIds,
-                    context.patientIdentifiers,
-                    context.sampleIdentifiers
-                );
+            const cohort = this.resourceCohort;
+            if (cohort) {
+                store.setCohort(cohort);
             }
         }
         store.setResource(resourceId, totalCount);
@@ -658,7 +638,7 @@ export class PatientViewPageInner extends React.Component<
         invoke: async () => {
             const tabs = this.resourceTableStore.visibleTabs;
             const query = {
-                ...this.resourceContext!,
+                ...this.resourceCohort!,
                 pageNumber: 0,
                 pageSize: 0,
             };

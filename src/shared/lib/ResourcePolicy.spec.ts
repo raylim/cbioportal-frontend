@@ -3,12 +3,14 @@ import { getServerConfig } from 'config/config';
 import {
     isHiddenFromResourceViews,
     isHiddenFromStudyResourceTable,
+    isHiddenMetadataKey,
+    PATHOLOGY_SLIDES_RESOURCE_TAB,
+    STUDY_VIEW_COMBINED_RESOURCE_TABS,
     isWsiResourceId,
     isWsiTileServerConfigured,
     patientViewPathForResource,
     resourceMetadataDisplayValue,
     resourceSearchTermForQuery,
-    slideKeyFromSlideUrl,
     shouldHideLegacyHeResourceTab,
     slideStainFilterForColumnFilters,
     slideStainFilterQuery,
@@ -47,47 +49,34 @@ describe('legacy H&E resource policy', () => {
         assert.isFalse(shouldHideLegacyHeResourceTab('MSK_HNE'));
     });
 
-    it('lists the slide table in study view and no slide resources in the patient view', () => {
+    it('lists the slides as one study view tab without the viewer, and not in the patient view', () => {
+        assert.deepEqual(STUDY_VIEW_COMBINED_RESOURCE_TABS, [
+            PATHOLOGY_SLIDES_RESOURCE_TAB,
+        ]);
+        assert.deepEqual(PATHOLOGY_SLIDES_RESOURCE_TAB.resourceIds, [
+            'WSI_SAMPLE',
+            'WSI_PATIENT',
+        ]);
+        assert.equal(PATHOLOGY_SLIDES_RESOURCE_TAB.label, 'Pathology slides');
         // With the viewer configured, the Pathology Slides tab shows the slide table.
-        assert.isTrue(isHiddenFromStudyResourceTable('WSI_SLIDES'));
+        assert.isTrue(isHiddenFromStudyResourceTable('PATHOLOGY_SLIDES'));
         assert.isTrue(isHiddenFromStudyResourceTable('WSI_SAMPLE'));
         assert.isTrue(isHiddenFromStudyResourceTable('WSI_PATIENT'));
         assert.isFalse(isHiddenFromStudyResourceTable('OTHER'));
-        assert.isTrue(isHiddenFromResourceViews('WSI_SLIDES'));
         assert.isTrue(isHiddenFromResourceViews('WSI_SAMPLE'));
         assert.isTrue(isHiddenFromResourceViews('WSI_PATIENT'));
         assert.isFalse(isHiddenFromResourceViews('OTHER'));
 
+        // Without it, study view shows the slide resources through the combined tab.
         (getServerConfig() as any).wsi_tile_server_url = '';
-        assert.isFalse(isHiddenFromStudyResourceTable('WSI_SLIDES'));
-        assert.isTrue(isHiddenFromStudyResourceTable('WSI_SAMPLE'));
-        assert.isTrue(isHiddenFromStudyResourceTable('WSI_PATIENT'));
-    });
-
-    it('reads the slide key from a slide row link', () => {
-        const key = '0123456789ab';
-        assert.equal(
-            slideKeyFromSlideUrl(
-                `https://portal.example.org/wsi/patient/P-1?studyId=s&slideKey=${key}`
-            ),
-            key
-        );
-        assert.isUndefined(
-            slideKeyFromSlideUrl(
-                'https://portal.example.org/wsi/patient/P-1?studyId=s'
-            )
-        );
-        assert.isUndefined(slideKeyFromSlideUrl('?slideKey=short'));
-        // A retired 32-hex key is not a slide key.
-        assert.isUndefined(
-            slideKeyFromSlideUrl(`?slideKey=${key}0123456789abcdef0123`)
-        );
-        assert.isUndefined(slideKeyFromSlideUrl(undefined));
+        assert.isFalse(isHiddenFromStudyResourceTable('PATHOLOGY_SLIDES'));
+        assert.isFalse(isHiddenFromStudyResourceTable('WSI_SAMPLE'));
+        assert.isFalse(isHiddenFromStudyResourceTable('WSI_PATIENT'));
     });
 
     it('links slide rows to Pathology Slides and other rows to Files & Links', () => {
         assert.equal(
-            patientViewPathForResource('WSI_SLIDES'),
+            patientViewPathForResource('WSI_PATIENT'),
             'patient/wsiHESlides'
         );
         assert.equal(
@@ -141,17 +130,22 @@ describe('legacy H&E resource policy', () => {
     it('recognises the whole-slide image resource ids', () => {
         assert.isTrue(isWsiResourceId('WSI_SAMPLE'));
         assert.isTrue(isWsiResourceId('WSI_PATIENT'));
-        assert.isTrue(isWsiResourceId('WSI_SLIDES'));
+        assert.isFalse(
+            isWsiResourceId(PATHOLOGY_SLIDES_RESOURCE_TAB.id),
+            'the combined tab id is not a resource'
+        );
         assert.isFalse(isWsiResourceId('HE'));
         assert.isFalse(isWsiResourceId(undefined));
     });
 });
 
 describe('slide ID display', () => {
+    const SLIDES = ['WSI_SAMPLE', 'WSI_PATIENT'];
+
     it('shows a slide table slide key as a WSI- Slide ID', () => {
         assert.equal(
             resourceMetadataDisplayValue(
-                'WSI_SLIDES',
+                'WSI_SAMPLE',
                 'slide_key',
                 '1234094d6bc6'
             ),
@@ -161,7 +155,7 @@ describe('slide ID display', () => {
 
     it('leaves other columns and other resources unchanged', () => {
         assert.equal(
-            resourceMetadataDisplayValue('WSI_SLIDES', 'stain_name', 'H&E'),
+            resourceMetadataDisplayValue('WSI_SAMPLE', 'stain_name', 'H&E'),
             'H&E'
         );
         assert.equal(
@@ -179,7 +173,7 @@ describe('slide ID display', () => {
         'searches a slide table for the bare key of a pasted Slide ID %p',
         term => {
             assert.equal(
-                resourceSearchTermForQuery('WSI_SLIDES', term),
+                resourceSearchTermForQuery(SLIDES, term),
                 '1234094d6bc6'
             );
         }
@@ -187,20 +181,30 @@ describe('slide ID display', () => {
 
     it('leaves other searches unchanged', () => {
         assert.equal(
-            resourceSearchTermForQuery('WSI_SLIDES', 'P-0000012-T06-IM7'),
+            resourceSearchTermForQuery(SLIDES, 'P-0000012-T06-IM7'),
             'P-0000012-T06-IM7'
         );
         assert.equal(
-            resourceSearchTermForQuery('WSI_SLIDES', '1234094d6bc6'),
+            resourceSearchTermForQuery(SLIDES, '1234094d6bc6'),
             '1234094d6bc6'
         );
         assert.equal(
-            resourceSearchTermForQuery('NOTES', '1234-094d-6bc6'),
+            resourceSearchTermForQuery(['NOTES'], '1234-094d-6bc6'),
             '1234-094d-6bc6'
         );
         assert.equal(
-            resourceSearchTermForQuery('NOTES', 'WSI-1234-094d-6bc6'),
+            resourceSearchTermForQuery(['NOTES'], 'WSI-1234-094d-6bc6'),
             'WSI-1234-094d-6bc6'
         );
+    });
+});
+
+describe('hidden metadata', () => {
+    it("hides the slides' tile serving block from any table reading them", () => {
+        assert.isTrue(isHiddenMetadataKey(['WSI_SAMPLE'], 'serving'));
+        assert.isTrue(isHiddenMetadataKey(['NOTES', 'WSI_PATIENT'], 'serving'));
+        assert.isFalse(isHiddenMetadataKey(['WSI_SAMPLE'], 'slide_key'));
+        assert.isFalse(isHiddenMetadataKey(['NOTES'], 'serving'));
+        assert.isFalse(isHiddenMetadataKey([], 'serving'));
     });
 });

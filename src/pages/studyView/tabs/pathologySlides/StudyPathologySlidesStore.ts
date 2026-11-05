@@ -24,7 +24,7 @@ import {
 import { getStudyViewResourceTableTabId } from 'pages/studyView/StudyViewPageTabs';
 import {
     isWsiTileServerConfigured,
-    STUDY_SLIDE_TABLE_RESOURCE_ID,
+    PATHOLOGY_SLIDES_RESOURCE_TAB,
 } from 'shared/lib/ResourcePolicy';
 
 export const STUDY_SLIDES_PAGE_SIZE = 50;
@@ -45,10 +45,13 @@ export function isSamePatient(
 /** The tab's two views: patients beside the viewer, or the cohort's slide table. */
 export type StudySlidesView = 'viewer' | 'table';
 
-// The slide table's own resource tab, and the one it had while WSI_SAMPLE was the slide table.
-const SLIDE_TABLE_TAB_IDS = [STUDY_SLIDE_TABLE_RESOURCE_ID, 'WSI_SAMPLE'].map(
-    getStudyViewResourceTableTabId
-);
+// The slide table's own resource tab, and the ones it had as the WSI_SLIDES and WSI_SAMPLE
+// resources.
+const SLIDE_TABLE_TAB_IDS = [
+    PATHOLOGY_SLIDES_RESOURCE_TAB.id,
+    'WSI_SLIDES',
+    'WSI_SAMPLE',
+].map(getStudyViewResourceTableTabId);
 
 /**
  * The Pathology Slides view a study-view URL asks for: `wsiView=table`, or an old link to the

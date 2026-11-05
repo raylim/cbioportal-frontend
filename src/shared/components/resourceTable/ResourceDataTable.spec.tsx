@@ -33,6 +33,7 @@ describe('ResourceDataTable metadata columns', () => {
                 facetRanges: {},
                 distinctValueCounts: {},
                 rowsForDisplay: [],
+                activeResourceIds: [],
                 ...store,
             } as any,
             ...props,
@@ -122,13 +123,45 @@ describe('ResourceDataTable metadata columns', () => {
             ] as ResourceColumnInfo[],
         });
         const slideRow: any = {
-            resourceId: 'WSI_SLIDES',
+            resourceId: 'WSI_SAMPLE',
             metadata: { slide_key: '1234094d6bc6' },
         };
 
         const cell: any = slideId.render(slideRow);
         assert.equal(cell.props.children, 'WSI-1234-094d-6bc6');
         assert.equal(slideId.download!(slideRow), '1234094d6bc6');
+    });
+
+    it("leaves out the slides' tile serving block, from the table and the download", () => {
+        const slideColumns = (activeResourceIds: string[]) =>
+            columns({
+                activeResourceIds,
+                columns: [
+                    metadataColumn({ id: 'metadata:slide_key' }),
+                    metadataColumn({ id: 'metadata:serving' }),
+                ] as ResourceColumnInfo[],
+            }).map(c => c.id);
+
+        assert.deepEqual(slideColumns(['WSI_SAMPLE', 'WSI_PATIENT']), [
+            'metadata:slide_key',
+        ]);
+        assert.deepEqual(slideColumns(['NOTES']), [
+            'metadata:slide_key',
+            'metadata:serving',
+        ]);
+        // Without backend columns, the keys found in the rows are filtered alike.
+        assert.deepEqual(
+            columns({
+                activeResourceIds: ['WSI_PATIENT'],
+                rowsForDisplay: [
+                    {
+                        resourceId: 'WSI_PATIENT',
+                        metadata: { slide_key: 'a', serving: '[object]' },
+                    } as any,
+                ],
+            }).map(c => c.id),
+            ['metadata:slide_key']
+        );
     });
 
     it('renders the metadata value for its own key', () => {
