@@ -42,6 +42,40 @@ export interface CombinedResourceTab {
     resourceIds: string[];
 }
 
+/** How a resource table lists resources; all optional, the default lists each in its own tab. */
+export interface ResourceTableStoreOptions {
+    /** Resources left out of the table, e.g. ones another view shows. */
+    hideResource?: (resourceId: string) => boolean;
+    /**
+     * Tabs that show several resources together, in place of their own tabs. hideResource is
+     * asked about a combined tab's id, not about its resources.
+     */
+    combinedTabs?: CombinedResourceTab[];
+    /**
+     * Metadata keys a table over these resources leaves out of its columns and its download,
+     * e.g. ones only another view reads.
+     */
+    hideMetadataKey?: (
+        resourceIds: readonly string[],
+        metadataKey: string
+    ) => boolean;
+}
+
+/**
+ * Whether a table with these options lists a resource: through its combined tab, or else its own
+ * tab, unless hideResource hides that tab.
+ */
+export function isResourceListedInTable(
+    resourceId: string,
+    options: ResourceTableStoreOptions
+): boolean {
+    const combined = (options.combinedTabs || []).find(tab =>
+        tab.resourceIds.includes(resourceId)
+    );
+    const hide = options.hideResource;
+    return !hide || !hide(combined ? combined.id : resourceId);
+}
+
 export function getResourceTableMetadataKeys(rows: IResourceTableRow[]) {
     return _.sortBy(
         _.uniq(
