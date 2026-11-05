@@ -17,9 +17,13 @@ import ServerDrivenTable, {
 } from 'shared/components/serverDrivenTable/ServerDrivenTable';
 import TabbedTableLayout from 'shared/components/tabbedTable/TabbedTableLayout';
 import {
-    getPatientViewUrlWithPathname,
-    getSampleViewUrlWithPathname,
-} from 'shared/api/urls';
+    isWsiResourceId,
+    patientViewPathForResource,
+    resourceMetadataDisplayValue,
+    slideStainFilterForColumnFilters,
+    slideStainFilterQuery,
+} from 'shared/lib/ResourcePolicy';
+import { buildCBioPortalPageUrl } from 'shared/api/urls';
 import {
     ResourceColumnFilter,
     ResourceColumnInfo,
@@ -41,6 +45,11 @@ export interface IResourceDataTableProps {
     searchPlaceholder?: string;
     hideTabs?: boolean;
     scopedResourceId?: string;
+    /**
+     * Opens a row in the page instead of a new window, e.g. a slide in an embedded viewer. The
+     * Link column then shows a "View" button.
+     */
+    onViewRow?: (row: IResourceTableRow) => void;
 }
 
 // Matches the study view's Clinical Data tab, so a wide or long resource table
@@ -214,7 +223,18 @@ export class ResourceDataTable extends React.Component<
         return this.createColumn(
             `metadata:${metadataKey}`,
             label,
-            row => <span>{row.metadata[metadataKey] || NOT_AVAILABLE}</span>,
+            row => (
+                <span>
+                    {row.metadata[metadataKey]
+                        ? resourceMetadataDisplayValue(
+                              row.resourceId,
+                              metadataKey,
+                              row.metadata[metadataKey]
+                          )
+                        : NOT_AVAILABLE}
+                </span>
+            ),
+            // Downloads keep the stored value (a bare slide key), as links and the API do.
             row => row.metadata[metadataKey] || NOT_AVAILABLE,
             overrides
         );
@@ -360,16 +380,37 @@ export class ResourceDataTable extends React.Component<
                 : []),
             this.createColumn(
                 'link',
-                'Link',
-                row => (
-                    <a href={row.url} target="_blank" rel="noopener noreferrer">
-                        <i
-                            className="fa fa-external-link fa-sm"
-                            style={{ marginRight: 5, color: 'black' }}
-                        />
-                        Open in new window
-                    </a>
-                ),
+                this.props.onViewRow ? 'Viewer' : 'Link',
+                row =>
+                    this.props.onViewRow ? (
+                        <button
+                            type="button"
+                            className="btn btn-link btn-xs"
+                            data-testid="resource-row-view"
+                            onClick={() => this.props.onViewRow!(row)}
+                            style={{
+                                padding: 0,
+                                border: 0,
+                                fontSize: 'inherit',
+                                lineHeight: 'inherit',
+                                verticalAlign: 'baseline',
+                            }}
+                        >
+                            View
+                        </button>
+                    ) : (
+                        <a
+                            href={row.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                        >
+                            <i
+                                className="fa fa-external-link fa-sm"
+                                style={{ marginRight: 5, color: 'black' }}
+                            />
+                            Open in new window
+                        </a>
+                    ),
                 // The cell renders a link; a download of it is only useful as the URL.
                 row => row.url,
                 { sortable: false, filterable: false }
@@ -520,14 +561,31 @@ export class ResourceDataTable extends React.Component<
         );
     }
 
+    /**
+     * The patient view link of a row's patient or sample; slide rows open Pathology Slides with the
+     * table's stain group filter.
+     */
+    private rowCaseUrl(
+        row: IResourceTableRow,
+        caseQuery: { caseId: string } | { sampleId: string }
+    ) {
+        const stainFilter = isWsiResourceId(row.resourceId)
+            ? slideStainFilterForColumnFilters(this.props.store.filters)
+            : undefined;
+        return buildCBioPortalPageUrl(
+            patientViewPathForResource(row.resourceId),
+            {
+                studyId: row.studyId,
+                ...caseQuery,
+                ...slideStainFilterQuery(stainFilter),
+            }
+        );
+    }
+
     private renderPatientId = (row: IResourceTableRow) => {
         const href =
             row.studyId && row.patientStableId
-                ? getPatientViewUrlWithPathname(
-                      row.studyId,
-                      row.patientStableId,
-                      'patient/filesAndLinks'
-                  )
+                ? this.rowCaseUrl(row, { caseId: row.patientStableId })
                 : undefined;
         return this.renderLinkOrText(row.patientId, href);
     };
@@ -535,11 +593,7 @@ export class ResourceDataTable extends React.Component<
     private renderSampleId = (row: IResourceTableRow) => {
         const href =
             row.studyId && row.sampleStableId
-                ? getSampleViewUrlWithPathname(
-                      row.studyId,
-                      row.sampleStableId,
-                      'patient/filesAndLinks'
-                  )
+                ? this.rowCaseUrl(row, { sampleId: row.sampleStableId })
                 : undefined;
         return this.renderLinkOrText(row.sampleId, href);
     };

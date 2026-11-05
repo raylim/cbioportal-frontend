@@ -14,6 +14,12 @@ export default class StudyViewURLWrapper extends URLWrapper<
         StudyViewURLQuery,
         | 'tab'
         | 'resourceUrl'
+        | 'wsiStudyId'
+        | 'wsiPatientId'
+        | 'wsiView'
+        | 'wsiStain'
+        | 'wsiMatch'
+        | 'wsiSearch'
         | 'plots_horz_selection'
         | 'plots_vert_selection'
         | 'plots_coloring_selection'
@@ -38,6 +44,12 @@ export default class StudyViewURLWrapper extends URLWrapper<
         super(routing, {
             tab: { isSessionProp: false },
             resourceUrl: { isSessionProp: false },
+            wsiStudyId: { isSessionProp: false },
+            wsiPatientId: { isSessionProp: false },
+            wsiView: { isSessionProp: false },
+            wsiStain: { isSessionProp: false },
+            wsiMatch: { isSessionProp: false },
+            wsiSearch: { isSessionProp: false },
             ...PLOTS_TAB_URL_PARAMS,
             embeddings_coloring_selection: {
                 isSessionProp: false,
@@ -86,5 +98,52 @@ export default class StudyViewURLWrapper extends URLWrapper<
 
     public setResourceUrl(resourceUrl: string, replace = false) {
         this.updateURL({ resourceUrl }, undefined, false, replace);
+    }
+
+    /** Records the Pathology Slides tab's view; the viewer is the default. */
+    public setWsiView(view: 'viewer' | 'table') {
+        this.updateURL(
+            { wsiView: view === 'table' ? 'table' : undefined },
+            undefined,
+            false,
+            true
+        );
+    }
+
+    /**
+     * Records the Pathology Slides tab's patient. Moving to another patient
+     * gets its own history entry, so Back returns to the previous one.
+     */
+    public setWsiPatient(
+        patient: { studyId: string; patientId: string } | undefined,
+        push: boolean
+    ) {
+        this.updateURL(
+            {
+                wsiStudyId: patient?.studyId,
+                wsiPatientId: patient?.patientId,
+            },
+            undefined,
+            false,
+            !push
+        );
+    }
+
+    /** Records the Pathology Slides tab's list filters, replacing the history entry. */
+    public setWsiSlideFilters(filters: {
+        stainGroups: string[];
+        matchLevels: string[];
+        search: string;
+    }) {
+        this.updateURL(
+            {
+                wsiStain: filters.stainGroups.join(',') || undefined,
+                wsiMatch: filters.matchLevels.join(',') || undefined,
+                wsiSearch: filters.search || undefined,
+            },
+            undefined,
+            false,
+            true
+        );
     }
 }

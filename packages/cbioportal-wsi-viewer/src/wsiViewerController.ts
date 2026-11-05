@@ -1,4 +1,4 @@
-import { WsiStainFilter } from './wsiViewerTypes';
+import { WsiMutationDataStatus, WsiStainFilter } from './wsiViewerTypes';
 import { fetchWsiPatientHierarchy } from './wsiHierarchyFetchCache';
 import {
     buildWsiDownloadFilename,
@@ -24,12 +24,18 @@ import {
     reopenOsdViewer,
     restoreOrHomeViewport,
 } from './wsiOsdUtils';
-import { getWsiSlideSource } from './wsiAuth';
+import { getWsiSlideSource, getWsiSourceFingerprint } from './wsiAuth';
+import { WsiAgentViewport } from './wsiAgent';
 import { buildWsiSlideQuery } from './wsiUrls';
 import { fetchWsiThumbnailBlob } from './wsiThumbnailFetchCache';
 import { revokeObjectUrl } from './wsiCacheUtils';
 import { WsiViewerState } from './wsiViewerState';
-import { Sample, Slide, WsiSlideSource } from './wsiViewerTypes';
+import {
+    PatientHierarchy,
+    Sample,
+    Slide,
+    WsiSlideSource,
+} from './wsiViewerTypes';
 
 const WSI_SELECTION_TIMEOUT_MS = 185_000;
 const WSI_TILE_READY_TIMEOUT_MS = 185_000;
@@ -57,6 +63,25 @@ export type WsiInitialSlideLoadOutcome =
     | 'tile_timeout'
     | 'selection_timeout';
 
+export type WsiSlideSelectionStatus = 'ready' | 'failed' | 'cancelled';
+
+export interface WsiSlideSelectionResult {
+    status: WsiSlideSelectionStatus;
+    slideKey: string;
+    detail?: string;
+}
+
+/** Short failure details reported to selection callers, by outcome. */
+const SELECTION_FAILURE_DETAILS: Partial<Record<
+    WsiInitialSlideLoadOutcome,
+    string
+>> = {
+    osd_open_failed: 'The slide viewer failed to open.',
+    osd_init_failed: 'The slide viewer failed to initialize.',
+    tile_failed: 'Slide tiles could not be loaded.',
+    metadata_failed: 'Slide metadata failed.',
+};
+
 /** How the first slide of a hierarchy load ended. */
 export interface WsiInitialSlideLoadPerformance {
     outcome: WsiInitialSlideLoadOutcome;
@@ -78,6 +103,14 @@ export interface WsiViewerControllerHost {
     chooseInitialServableSlide(
         allSlides: Array<{ slide: Slide; sample: Sample }>
     ): { slide: Slide; sample: Sample } | undefined;
+    setMutationDataStatus(status: WsiMutationDataStatus): void;
+    runSampleEnrichment(
+        base: string,
+        studyId: string,
+        patientId: string,
+        sampleIds: string[],
+        shouldContinue: () => boolean
+    ): Promise<void>;
     reportInitialSlideLoadPerformance(
         metric: WsiInitialSlideLoadPerformance
     ): void;
@@ -138,6 +171,8 @@ export class WsiViewerController {
     private thumbnailPreviewObjectUrl: string | null = null;
     private nativeTileReadySeq: number | null = null;
     private nativeTileDrawnSeq: number | null = null;
+    /** Whether a slide has been shown since the hierarchy loaded. */
+    private slideShownForHierarchy = false;
     /** Whether the renderer raises tile-drawn, which clears the preview. */
     private tileDrawnClearsPreview = false;
     private mountSeq = 0;
@@ -147,12 +182,24 @@ export class WsiViewerController {
     private osdOpenTimer: ReturnType<typeof setTimeout> | null = null;
     private selectionTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
     private viewerVisible = true;
+    private agentCaptureSeq = 0;
+    private agentSourceFingerprint = '';
     private terminalTileFailures = new Set<string>();
     private writeHashTimer: ReturnType<typeof setTimeout> | null = null;
     private hierarchyLoadSeq = 0;
     private hierarchyAbortController: AbortController | null = null;
+    private sampleEnrichmentStarted = false;
+    /** Cancels the scheduled sample enrichment; null when none is pending. */
+    private cancelScheduledSampleEnrichment: (() => void) | null = null;
     /** Cancels the scheduled navigator setup or its retry. */
     private cancelScheduledNavigator: (() => void) | null = null;
+    private selectionWaiters = new Map<
+        number,
+        {
+            slideKey: string;
+            resolve: (result: WsiSlideSelectionResult) => void;
+        }
+    >();
     private restoreHashViewportForNextSelection = false;
     private initialSlideKey: string | undefined = undefined;
     /** Start time of the hierarchy load whose first slide is unreported. */
@@ -198,11 +245,14 @@ export class WsiViewerController {
      * ignored, and stops its preview and timers.
      */
     private resetMount(): void {
+        this.resolveSelectionWaiter(this.mountSeq, 'cancelled');
         this.mountSeq++;
         this.nativeTileReadySeq = null;
         this.nativeTileDrawnSeq = null;
         this.clearThumbnailPreview();
         this.clearMountTimers();
+        this.agentSourceFingerprint = '';
+        this.agentCaptureSeq = 0;
     }
 
     /**
@@ -218,17 +268,44 @@ export class WsiViewerController {
         this.clearThumbnailPreview();
         this.state.spinnerVisible = false;
         this.state.tilesReady = true;
+        this.resolveSelectionWaiter(
+            this.mountSeq,
+            'failed',
+            SELECTION_FAILURE_DETAILS[outcome] ?? error
+        );
         this.finishInitialSlideLoad(outcome);
+    }
+
+    private resolveSelectionWaiter(
+        seq: number,
+        status: WsiSlideSelectionStatus,
+        detail?: string
+    ) {
+        const waiter = this.selectionWaiters.get(seq);
+        if (!waiter) return;
+        this.selectionWaiters.delete(seq);
+        waiter.resolve({ status, slideKey: waiter.slideKey, detail });
     }
 
     dispose() {
         this.resetMount();
         this.clearTimer('writeHashTimer');
+        // Retire the current load, so enrichment already in flight (and its
+        // retries) stops once its shouldContinue check runs.
+        this.hierarchyLoadSeq++;
         this.hierarchyAbortController?.abort();
         this.hierarchyAbortController = null;
+        this.cancelSampleEnrichmentSchedule();
         this.cancelNavigatorSchedule();
         this.destroyViewer();
-        hashUrlState.clear();
+        // The hash stays: Back may have restored this patient's slide there.
+        // A hash slide of another patient is dropped when the next patient
+        // loads, and hosts drop it when they move to a patient.
+    }
+
+    private cancelSampleEnrichmentSchedule() {
+        this.cancelScheduledSampleEnrichment?.();
+        this.cancelScheduledSampleEnrichment = null;
     }
 
     private cancelNavigatorSchedule() {
@@ -429,7 +506,10 @@ export class WsiViewerController {
         const abortController = new AbortController();
         this.hierarchyAbortController = abortController;
         this.resetMount();
+        this.sampleEnrichmentStarted = false;
         this.initialSlideKey = undefined;
+        this.slideShownForHierarchy = false;
+        this.cancelSampleEnrichmentSchedule();
         this.cancelNavigatorSchedule();
         this.initialSlideLoadStartedAt = Date.now();
         this.state.resetForHierarchyLoad();
@@ -453,8 +533,23 @@ export class WsiViewerController {
 
             this.state.hierarchy = data;
             this.state.loading = false;
+            // Start IMPACT enrichment as soon as the hierarchy is available.
+            // It is independent of OSD tile readiness and must not be delayed
+            // behind a slow first-slide load.
+            this.scheduleSampleEnrichment(loadSeq);
 
             const allSlides = this.host.getServableSlides();
+            // A hash slide from another patient (the host navigated with the
+            // old hash in the URL) must not lend its viewport to this one.
+            const hashState = hashUrlState.read();
+            if (
+                hashState &&
+                !allSlides.some(
+                    entry => entry.slide.slide_key === hashState.slideId
+                )
+            ) {
+                hashUrlState.clear();
+            }
             const first = this.host.chooseInitialServableSlide(allSlides);
             if (first) {
                 this.restoreHashViewportForNextSelection = restoreHashViewport;
@@ -484,6 +579,49 @@ export class WsiViewerController {
                 this.hierarchyAbortController = null;
             }
         }
+    }
+
+    private shouldContinueBackgroundWork(
+        expectedLoadSeq: number,
+        expectedHierarchy?: PatientHierarchy
+    ): boolean {
+        const hierarchy = this.state.hierarchy;
+        return (
+            expectedLoadSeq === this.hierarchyLoadSeq &&
+            hierarchy !== null &&
+            (!expectedHierarchy || hierarchy === expectedHierarchy)
+        );
+    }
+
+    private scheduleSampleEnrichment(expectedLoadSeq: number) {
+        if (
+            this.sampleEnrichmentStarted ||
+            this.cancelScheduledSampleEnrichment ||
+            !this.host.getProps().studyId
+        ) {
+            return;
+        }
+
+        const runSampleEnrichment = () => {
+            this.cancelScheduledSampleEnrichment = null;
+            if (
+                this.sampleEnrichmentStarted ||
+                !this.shouldContinueBackgroundWork(expectedLoadSeq) ||
+                !this.host.getProps().studyId
+            ) {
+                return;
+            }
+
+            this.sampleEnrichmentStarted = true;
+            void this.enrichSamplesFromCbioportal(expectedLoadSeq);
+        };
+
+        // Mutation data is part of the initial sidebar contract. Schedule it on
+        // the next task instead of waiting for requestIdleCallback or the first
+        // tile; a slow/failed tile load must not prevent the variant table from
+        // hydrating.
+        const timer = setTimeout(runSampleEnrichment, 0);
+        this.cancelScheduledSampleEnrichment = () => clearTimeout(timer);
     }
 
     private scheduleNavigatorIfReady(seq: number) {
@@ -541,21 +679,91 @@ export class WsiViewerController {
         );
     }
 
+    private async enrichSamplesFromCbioportal(
+        expectedLoadSeq = this.hierarchyLoadSeq
+    ) {
+        const hierarchy = this.state.hierarchy;
+        if (
+            !hierarchy ||
+            !this.shouldContinueBackgroundWork(expectedLoadSeq, hierarchy)
+        ) {
+            return;
+        }
+        const { studyId } = this.host.getProps();
+        if (!studyId || !hierarchy.samples.length) return;
+
+        const shouldContinue = () =>
+            this.shouldContinueBackgroundWork(expectedLoadSeq, hierarchy);
+
+        const base = '';
+        const sampleIds: string[] = [];
+        for (let index = 0; index < hierarchy.samples.length; index += 1) {
+            const sampleId = hierarchy.samples[index].sample_id;
+            if (sampleId && sampleId !== 'UNMATCHED') {
+                sampleIds.push(sampleId);
+            }
+        }
+        if (!sampleIds.length) return;
+
+        try {
+            await this.host.runSampleEnrichment(
+                base,
+                studyId,
+                hierarchy.patient_id,
+                sampleIds,
+                shouldContinue
+            );
+        } catch {
+            // Silently fall back to tile-server data
+        }
+    }
+
+    /** Selects a slide; resolves once its mount has run. */
     async selectSlide(
         slide: Slide,
         sample: Sample,
         restoreHashViewport = this.restoreHashViewportForNextSelection
     ): Promise<void> {
+        await this.startSelection(slide, sample, restoreHashViewport);
+    }
+
+    /**
+     * Selects a slide and resolves with how the selection ended: its first
+     * tile is ready, it failed, or a later selection replaced it.
+     */
+    async selectSlideAndWait(
+        slide: Slide,
+        sample: Sample
+    ): Promise<WsiSlideSelectionResult> {
+        const { result } = await this.startSelection(
+            slide,
+            sample,
+            this.restoreHashViewportForNextSelection
+        );
+        return result;
+    }
+
+    private async startSelection(
+        slide: Slide,
+        sample: Sample,
+        restoreHashViewport: boolean
+    ): Promise<{ result: Promise<WsiSlideSelectionResult> }> {
         if (
             this.state.selectedSlide?.slide_key === slide.slide_key &&
             this.state.selectedSample?.sample_id === sample.sample_id &&
             this.state.selectedMeta != null &&
-            this.mountedViewer != null
+            this.mountedViewer != null &&
+            this.nativeTileReadySeq === this.mountSeq
         ) {
-            return;
+            return {
+                result: Promise.resolve({
+                    status: 'ready',
+                    slideKey: slide.slide_key,
+                }),
+            };
         }
         this.restoreHashViewportForNextSelection = false;
-        await this.beginMount(slide, sample, restoreHashViewport, true);
+        return this.beginMount(slide, sample, restoreHashViewport, true);
     }
 
     async retrySelectedSlide(): Promise<void> {
@@ -565,21 +773,38 @@ export class WsiViewerController {
         await this.beginMount(slide, sample, true, false);
     }
 
-    /** Replaces the current mount with one of `slide`. */
+    /**
+     * Replaces the current mount with one of `slide`. Resolves once the
+     * mount has run, with the selection's eventual outcome.
+     */
     private async beginMount(
         slide: Slide,
         sample: Sample,
         restoreHashViewport: boolean,
         notifyHost: boolean
-    ): Promise<void> {
+    ): Promise<{ result: Promise<WsiSlideSelectionResult> }> {
         this.cancelActiveMount();
         this.state.beginSlideSelection(slide, sample);
-        writeSelectedSlideState(hashUrlState, slide.slide_key);
+        // Only moving between this patient's slides is a step for Back; the
+        // first slide shown, even one replacing a stale link's, is not.
+        writeSelectedSlideState(
+            hashUrlState,
+            slide.slide_key,
+            this.slideShownForHierarchy
+        );
+        this.slideShownForHierarchy = true;
         if (notifyHost) this.host.onSlideSelectionStarted?.(slide);
         this.loadingStart = Date.now();
         const seq = this.mountSeq;
+        const result = new Promise<WsiSlideSelectionResult>(resolve =>
+            this.selectionWaiters.set(seq, {
+                slideKey: slide.slide_key,
+                resolve,
+            })
+        );
         this.scheduleSelectionTimeout(seq);
         await this.mountOSD(slide, seq, restoreHashViewport);
+        return { result };
     }
 
     cancelSlideSelection(): void {
@@ -608,27 +833,52 @@ export class WsiViewerController {
         hashUrlState.clear();
     }
 
-    goToCoordinates() {
+    goToCoordinates(x?: number, y?: number): boolean {
         if (!this.mountedViewer) {
-            return;
+            return false;
         }
+        const coords =
+            typeof x === 'number' && typeof y === 'number'
+                ? { x: String(x), y: String(y) }
+                : { x: this.state.coordInputX, y: this.state.coordInputY };
         const clamped = clampImageCoordinates(
-            this.state.coordInputX,
-            this.state.coordInputY,
+            coords.x,
+            coords.y,
             this.state.selectedMeta?.dimensions
         );
         if (!clamped) {
-            return;
+            return false;
         }
         this.state.setCoordInputs(String(clamped.x), String(clamped.y));
         if (!this.openSeadragon) {
-            return;
+            return false;
         }
         const imagePoint = new this.openSeadragon.Point(clamped.x, clamped.y);
         const viewportPoint = this.osdViewer.viewport.imageToViewportCoordinates(
             imagePoint
         );
         this.osdViewer.viewport.panTo(viewportPoint, true);
+        return true;
+    }
+
+    setZoom(zoom: number): boolean {
+        const viewport = this.osdViewer?.viewport;
+        if (!viewport || !Number.isFinite(zoom) || zoom <= 0) {
+            return false;
+        }
+        const minZoom = viewport.getMinZoom?.();
+        const maxZoom = viewport.getMaxZoom?.();
+        const boundedZoom = Math.max(
+            typeof minZoom === 'number' ? minZoom : 0,
+            Math.min(
+                typeof maxZoom === 'number'
+                    ? maxZoom
+                    : Number.POSITIVE_INFINITY,
+                zoom
+            )
+        );
+        viewport.zoomTo(boundedZoom, undefined, true);
+        return true;
     }
 
     downloadView() {
@@ -712,6 +962,7 @@ export class WsiViewerController {
         if (this.state.selectedSlide?.slide_key === this.initialSlideKey) {
             this.finishInitialSlideLoad('success');
         }
+        this.resolveSelectionWaiter(seq, 'ready');
     }
 
     private reportViewScale() {
@@ -870,6 +1121,160 @@ export class WsiViewerController {
         this.host.onViewerOpened?.(this.osdViewer, this.openSeadragon, slide);
     }
 
+    captureAgentViewport(): WsiAgentViewport | null {
+        if (this.nativeTileReadySeq !== this.mountSeq) return null;
+        const canvas: HTMLCanvasElement | null =
+            this.osdViewer?.drawer?.canvas ?? this.osdViewer?.canvas ?? null;
+        const viewport = this.osdViewer?.viewport;
+        if (!canvas || !viewport || !this.openSeadragon) return null;
+        const sourceWidth = canvas.width;
+        const sourceHeight = canvas.height;
+        if (!sourceWidth || !sourceHeight) return null;
+        const viewerWidth =
+            (this.osdViewer.element as HTMLElement | undefined)?.clientWidth ||
+            sourceWidth;
+        const viewerHeight =
+            (this.osdViewer.element as HTMLElement | undefined)?.clientHeight ||
+            sourceHeight;
+        const imageAt = (x: number, y: number) => {
+            const point = viewport.pointFromPixel(
+                new this.openSeadragon.Point(x, y),
+                true
+            );
+            return viewport.viewportToImageCoordinates(point);
+        };
+        const origin = imageAt(0, 0);
+        const xStep = imageAt(1, 0);
+        const yStep = imageAt(0, 1);
+        const previewScale = Math.min(
+            1,
+            1600 / sourceWidth,
+            1600 / sourceHeight
+        );
+        const previewWidth = Math.max(
+            1,
+            Math.round(sourceWidth * previewScale)
+        );
+        const previewHeight = Math.max(
+            1,
+            Math.round(sourceHeight * previewScale)
+        );
+        let imageDataUrl: string | undefined;
+        try {
+            if (previewScale < 1 && typeof document !== 'undefined') {
+                const preview = document.createElement('canvas');
+                preview.width = previewWidth;
+                preview.height = previewHeight;
+                preview
+                    .getContext('2d')
+                    ?.drawImage(canvas, 0, 0, previewWidth, previewHeight);
+                imageDataUrl = preview.toDataURL('image/jpeg', 0.75);
+            } else {
+                imageDataUrl = canvas.toDataURL('image/jpeg', 0.75);
+            }
+        } catch (_) {
+            // Structured coordinates remain useful if the canvas is tainted.
+        }
+        const dimensions = this.state.selectedMeta?.dimensions;
+        const center = viewport.viewportToImageCoordinates(
+            viewport.getCenter()
+        );
+        const scaleX = viewerWidth / previewWidth;
+        const scaleY = viewerHeight / previewHeight;
+        return {
+            image_data_url: imageDataUrl,
+            image_width: previewWidth,
+            image_height: previewHeight,
+            image_transform: [
+                (xStep.x - origin.x) * scaleX,
+                (yStep.x - origin.x) * scaleY,
+                origin.x,
+                (xStep.y - origin.y) * scaleX,
+                (yStep.y - origin.y) * scaleY,
+                origin.y,
+            ],
+            slide_width: dimensions?.width || sourceWidth,
+            slide_height: dimensions?.height || sourceHeight,
+            center_x: center.x,
+            center_y: center.y,
+            zoom: viewport.getZoom?.(),
+            source_fingerprint: this.agentSourceFingerprint,
+            capture_id: `${this.mountSeq}-${++this.agentCaptureSeq}`,
+            viewer_generation: this.mountSeq,
+        };
+    }
+
+    captureAgentViewportAfterDraw(): Promise<WsiAgentViewport | null> {
+        const viewer = this.osdViewer;
+        const seq = this.mountSeq;
+        if (!viewer?.addHandler || !viewer?.removeHandler) {
+            return Promise.resolve(
+                viewer === this.osdViewer && seq === this.mountSeq
+                    ? this.captureAgentViewport()
+                    : null
+            );
+        }
+        const viewport = viewer.viewport;
+        const hasPendingViewportChange = () => {
+            if (viewer.isAnimating?.()) return true;
+            const targetZoom = viewport?.getZoom?.();
+            const currentZoom = viewport?.getZoom?.(true);
+            if (
+                typeof targetZoom === 'number' &&
+                typeof currentZoom === 'number' &&
+                Math.abs(targetZoom - currentZoom) > 1e-6
+            ) {
+                return true;
+            }
+            const targetCenter = viewport?.getCenter?.();
+            const currentCenter = viewport?.getCenter?.(true);
+            return Boolean(
+                targetCenter &&
+                    currentCenter &&
+                    (Math.abs(targetCenter.x - currentCenter.x) > 1e-6 ||
+                        Math.abs(targetCenter.y - currentCenter.y) > 1e-6)
+            );
+        };
+        return new Promise(resolve => {
+            let settled = false;
+            let frame: number | null = null;
+            let timer: ReturnType<typeof setTimeout> | null = null;
+            let finishIfSettled = () => {};
+            const finish = () => {
+                if (settled) return;
+                settled = true;
+                viewer.removeHandler('update-viewport', finishIfSettled);
+                viewer.removeHandler('animation-finish', finishIfSettled);
+                if (
+                    frame !== null &&
+                    typeof cancelAnimationFrame === 'function'
+                ) {
+                    cancelAnimationFrame(frame);
+                }
+                if (timer !== null) clearTimeout(timer);
+                resolve(
+                    seq === this.mountSeq && this.osdViewer === viewer
+                        ? this.captureAgentViewport()
+                        : null
+                );
+            };
+            finishIfSettled = () => {
+                if (!hasPendingViewportChange()) finish();
+            };
+            viewer.addHandler('update-viewport', finishIfSettled);
+            viewer.addHandler('animation-finish', finishIfSettled);
+            timer = setTimeout(finish, 750);
+            if (typeof requestAnimationFrame === 'function') {
+                frame = requestAnimationFrame(() => {
+                    frame = null;
+                    finishIfSettled();
+                });
+            } else {
+                setTimeout(finishIfSettled, 0);
+            }
+        });
+    }
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     private handleOsdOpenFailed(seq: number, event: any) {
         if (seq !== this.mountSeq) return;
@@ -956,6 +1361,7 @@ export class WsiViewerController {
         try {
             const openSeadragon = await openSeadragonPromise;
             if (seq !== this.mountSeq) return;
+            this.agentSourceFingerprint = getWsiSourceFingerprint(source);
             // Reuse needs an idle viewer: tile requests of the previous slide
             // still in flight would hold loader slots ahead of this slide's
             // cold open. A busy viewer is rebuilt.
