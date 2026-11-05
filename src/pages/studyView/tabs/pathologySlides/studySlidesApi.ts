@@ -52,6 +52,7 @@ export const STUDY_SLIDE_MATCH_LABELS: Record<StudySlideMatchLevel, string> = {
 /** The slide rows' stain group and match level columns. */
 export const STAIN_GROUP_COLUMN = 'metadata:stain_group';
 export const MATCH_LEVEL_COLUMN = 'metadata:match_level';
+const METADATA_COLUMN_PREFIX = 'metadata:';
 
 export type StudySlideStainCounts = Record<StudySlideStainGroup, number>;
 
@@ -77,6 +78,11 @@ export interface StudySlidesPage {
     patients: StudySlidePatient[];
 }
 
+/** Selected values of slide columns (`metadata:<key>`), each column narrowing the list. */
+export interface StudySlideColumnFilters {
+    [columnId: string]: string[];
+}
+
 /** The slides a list reads: the cohort's, narrowed by the tab's own filters. */
 export interface StudySlidesSelection {
     cohort: ResourceCohort;
@@ -84,6 +90,8 @@ export interface StudySlidesSelection {
     resourceIds: string[];
     stainGroups: StudySlideStainGroup[];
     matchLevels: StudySlideMatchLevel[];
+    /** Filters on other slide columns. */
+    columnFilters: StudySlideColumnFilters;
     /** Keeps slides whose IDs or metadata contain this, ignoring case. */
     search?: string;
 }
@@ -108,9 +116,12 @@ export const RESOURCE_TABLE_API: StudySlidesResourceApi = {
     metadata: fetchResourceTableMetadata,
 };
 
-/** The tab's stain and match filters as resource-table column filters. */
+/** The tab's filters as resource-table column filters. */
 export function studySlidesColumnFilters(
-    selection: Pick<StudySlidesSelection, 'stainGroups' | 'matchLevels'>
+    selection: Pick<
+        StudySlidesSelection,
+        'stainGroups' | 'matchLevels' | 'columnFilters'
+    >
 ): ResourceColumnFilter[] {
     const filters: ResourceColumnFilter[] = [];
     if (selection.stainGroups.length > 0) {
@@ -127,6 +138,14 @@ export function studySlidesColumnFilters(
             values: selection.matchLevels.slice(),
         });
     }
+    Object.keys(selection.columnFilters)
+        .sort()
+        .forEach(columnId => {
+            const values = selection.columnFilters[columnId];
+            if (values.length > 0) {
+                filters.push({ columnId, operator: 'in', values });
+            }
+        });
     return filters;
 }
 
@@ -284,22 +303,57 @@ export interface StudySlideFacets {
     [columnId: string]: { value: string; count: number }[];
 }
 
+/** A slide column the list can filter by, with the patients having each of its values. */
+export interface StudySlideFacetColumn {
+    columnId: string;
+    label: string;
+    values: { value: string; count: number }[];
+}
+
+export interface StudySlideFilterOptions {
+    facets: StudySlideFacets;
+    /** The filterable columns with value counts, in the resources' declared order. */
+    columns: StudySlideFacetColumn[];
+}
+
+const NO_FILTER_OPTIONS: StudySlideFilterOptions = { facets: {}, columns: [] };
+
 /**
- * The list's filter options: grouped metadata/fetch, whose facets count patients per value. They
- * ignore every column filter, so a selected value never hides the others; search and the cohort
- * apply.
+ * The list's filter options: grouped metadata/fetch, whose facets count patients per value, with
+ * the columns' labels. The facets ignore every column filter, so a selected value never hides the
+ * others; search and the cohort apply.
  */
 export async function fetchStudySlideFacets(
     selection: StudySlidesSelection,
     api: StudySlidesResourceApi = RESOURCE_TABLE_API
-): Promise<StudySlideFacets> {
+): Promise<StudySlideFilterOptions> {
     const query = buildResourceTableGroupsMetadataQuery(
         groupsState(selection, 'patient')
     );
     if (!query) {
-        return {};
+        return NO_FILTER_OPTIONS;
     }
-    return (await api.metadata(query)).facets;
+    const metadata = await api.metadata(query);
+    const labels = new Map(
+        metadata.columns.map(column => [column.id, column.label])
+    );
+    // The columns first, in their declared order, then any facet without a column.
+    const ids = Array.from(
+        new Set([
+            ...metadata.columns.map(column => column.id),
+            ...Object.keys(metadata.facets),
+        ])
+    ).filter(id => !!metadata.facets[id]);
+    return {
+        facets: metadata.facets,
+        columns: ids.map(columnId => ({
+            columnId,
+            label:
+                labels.get(columnId) ||
+                columnId.slice(METADATA_COLUMN_PREFIX.length),
+            values: metadata.facets[columnId],
+        })),
+    };
 }
 
 /** Patients per stain group, from the facets; 0 for a group none has. */

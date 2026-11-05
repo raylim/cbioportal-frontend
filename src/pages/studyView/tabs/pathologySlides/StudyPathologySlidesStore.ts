@@ -13,8 +13,13 @@ import {
     fetchStudySlideFacets,
     fetchStudySlideResourceIds,
     fetchStudySlidesPage,
+    MATCH_LEVEL_COLUMN,
     RESOURCE_TABLE_API,
-    StudySlideFacets,
+    STAIN_GROUP_COLUMN,
+    STUDY_SLIDE_MATCH_LABELS,
+    StudySlideColumnFilters,
+    StudySlideFacetColumn,
+    StudySlideFilterOptions,
     StudySlideMatchLevel,
     StudySlidePatient,
     StudySlidePatientRef,
@@ -31,6 +36,7 @@ import {
 
 import { getStudyViewResourceTableTabId } from 'pages/studyView/StudyViewPageTabs';
 import {
+    isHiddenMetadataKey,
     isWsiTileServerConfigured,
     PATHOLOGY_SLIDES_RESOURCE_TAB,
 } from 'shared/lib/ResourcePolicy';
@@ -50,6 +56,54 @@ function handled<T>(promise: Promise<T>): Promise<T> {
     return promise;
 }
 export const STUDY_SLIDES_SEARCH_DEBOUNCE_MS = 300;
+
+/** Slide columns offered as filters when the cohort's slides have more than one value. */
+export const DEFAULT_FACET_COLUMN_IDS = [
+    'metadata:stain_name',
+    'metadata:part_type',
+    'metadata:subspecialty',
+];
+/** Columns with filters of their own (the match and stain chips). */
+const CHIP_FILTER_COLUMN_IDS = [STAIN_GROUP_COLUMN, MATCH_LEVEL_COLUMN];
+export const MAX_SUGGESTIONS = 8;
+/** Browser-stored columns the user added with "More filters". */
+export const PINNED_FACETS_KEY = 'wsi.study.pinnedFacets';
+
+export type StudySlidesSuggestion =
+    | {
+          kind: 'value';
+          columnId: string;
+          label: string;
+          value: string;
+          patientCount: number;
+      }
+    | { kind: 'match'; level: StudySlideMatchLevel; patientCount: number };
+
+function readPinnedColumnIds(): string[] {
+    try {
+        const stored = JSON.parse(
+            window.localStorage.getItem(PINNED_FACETS_KEY) || '[]'
+        );
+        return Array.isArray(stored)
+            ? stored.filter(id => typeof id === 'string')
+            : [];
+    } catch (e) {
+        return [];
+    }
+}
+
+function writePinnedColumnIds(ids: string[]) {
+    try {
+        window.localStorage.setItem(PINNED_FACETS_KEY, JSON.stringify(ids));
+    } catch (e) {
+        // Blocked storage only loses the remembered filters.
+    }
+}
+
+/** Patient, sample and slide IDs carry digits or dashes; words such as stain names rarely do. */
+export function looksLikeId(text: string): boolean {
+    return /[0-9-]/.test(text);
+}
 
 export function isSamePatient(
     a: StudySlidePatientRef | undefined,
@@ -91,7 +145,33 @@ export function studySlidesViewFromUrl(
 export interface StudySlideListFilters {
     stainGroups: StudySlideStainGroup[];
     matchLevels: StudySlideMatchLevel[];
+    /** Selected values of other slide columns. */
+    columns: StudySlideColumnFilters;
     search: string;
+}
+
+/** Column filters from the URL's JSON, keeping only `metadata:<key>` columns and string values. */
+function parseColumnFilters(json: string | undefined): StudySlideColumnFilters {
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(json || '{}');
+    } catch (e) {
+        return {};
+    }
+    const filters: StudySlideColumnFilters = {};
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        Object.entries(parsed as Record<string, unknown>).forEach(
+            ([columnId, values]) => {
+                const strings = Array.isArray(values)
+                    ? values.filter((v): v is string => typeof v === 'string')
+                    : [];
+                if (columnId.startsWith('metadata:') && strings.length > 0) {
+                    filters[columnId] = strings;
+                }
+            }
+        );
+    }
+    return filters;
 }
 
 /** The patient and list filters a study-view URL names for the Pathology Slides tab. */
@@ -100,6 +180,7 @@ export function studySlidesUrlState(query: {
     wsiPatientId?: string;
     wsiStain?: string;
     wsiMatch?: string;
+    wsiFacets?: string;
     wsiSearch?: string;
 }): {
     selection: StudySlidePatientRef | undefined;
@@ -123,6 +204,7 @@ export function studySlidesUrlState(query: {
             ).filter((level): level is StudySlideMatchLevel =>
                 STUDY_SLIDE_MATCH_LEVELS.includes(level as StudySlideMatchLevel)
             ),
+            columns: parseColumnFilters(query.wsiFacets),
             search: (query.wsiSearch || '').trim(),
         },
     };
@@ -165,8 +247,12 @@ export interface StudyPathologySlidesStoreOptions {
 export class StudyPathologySlidesStore {
     @observable.ref stainGroups: StudySlideStainGroup[] = [];
     @observable.ref matchLevels: StudySlideMatchLevel[] = [];
+    /** Selected values of other slide columns. */
+    @observable.ref columnFilters: StudySlideColumnFilters = {};
+    /** Columns the user added to the filters with "More filters". */
+    @observable.ref pinnedColumnIds: string[] = readPinnedColumnIds();
     @observable searchText = '';
-    /** The applied (debounced) patient/sample ID search. */
+    /** The applied search over slide IDs and details. */
     @observable search = '';
     @observable pageNumber = 0;
     @observable.ref selected: StudySlidePatientRef | undefined;
@@ -207,6 +293,7 @@ export class StudyPathologySlidesStore {
         if (options.initialSlideFilters) {
             this.stainGroups = options.initialSlideFilters.stainGroups;
             this.matchLevels = options.initialSlideFilters.matchLevels;
+            this.columnFilters = options.initialSlideFilters.columns;
             this.search = this.searchText = options.initialSlideFilters.search;
         }
         this.cohort = options.getCohort();
@@ -252,8 +339,8 @@ export class StudyPathologySlidesStore {
     });
 
     /**
-     * The slides the list reads before the stain and match filters, which the filter options
-     * ignore; undefined until the cohort is known.
+     * The slides the list reads before its column filters, which the filter options ignore;
+     * undefined until the cohort is known.
      */
     @computed private get unfilteredSelection():
         | StudySlidesSelection
@@ -266,6 +353,7 @@ export class StudyPathologySlidesStore {
             resourceIds: this.slideResourceIds.result!,
             stainGroups: [],
             matchLevels: [],
+            columnFilters: {},
             search: this.search || undefined,
         };
     }
@@ -278,6 +366,7 @@ export class StudyPathologySlidesStore {
                 ...unfiltered,
                 stainGroups: this.stainGroups.slice(),
                 matchLevels: this.matchLevels.slice(),
+                columnFilters: this.columnFilters,
             }
         );
     }
@@ -319,24 +408,209 @@ export class StudyPathologySlidesStore {
 
     /**
      * Patients per value of the slide columns the list filters by. The column filters do not
-     * narrow them, so a stain or match filter does not re-request them.
+     * narrow them, so a filter does not re-request them.
      */
-    readonly facets = remoteData<StudySlideFacets>({
+    readonly facets = remoteData<StudySlideFilterOptions>({
         await: () => [this.slideResourceIds],
         invoke: () => {
             const selection = this.unfilteredSelection;
             if (!selection) {
-                return new Promise<StudySlideFacets>(() => {});
+                return new Promise<StudySlideFilterOptions>(() => {});
             }
             return handled(fetchStudySlideFacets(selection, this.api));
         },
-        default: {},
+        default: { facets: {}, columns: [] },
         onError: () => {},
     });
 
     /** Patients with slides of each stain group, for the stain filter. */
     @computed get stainGroupPatientCounts(): StudySlideStainCounts {
-        return stainGroupPatientCounts(this.facets.result);
+        return stainGroupPatientCounts(this.facets.result?.facets);
+    }
+
+    /** Patients with slides of each match level, for the match filter; undefined until known. */
+    @computed get matchLevelPatientCounts():
+        | Record<StudySlideMatchLevel, number>
+        | undefined {
+        const options = this.facets.result?.facets[MATCH_LEVEL_COLUMN];
+        if (!options) {
+            return undefined;
+        }
+        const counts = {} as Record<StudySlideMatchLevel, number>;
+        STUDY_SLIDE_MATCH_LEVELS.forEach(
+            level =>
+                (counts[level] =
+                    options.find(o => o.value === level)?.count || 0)
+        );
+        return counts;
+    }
+
+    /**
+     * The slide columns the list can filter by beyond match and stain: those with value counts,
+     * less the ones the resource policy hides.
+     */
+    @computed get facetColumns(): StudySlideFacetColumn[] {
+        const resourceIds = this.slideResourceIds.result || [];
+        return (this.facets.result?.columns || []).filter(
+            column =>
+                !CHIP_FILTER_COLUMN_IDS.includes(column.columnId) &&
+                !isHiddenMetadataKey(
+                    resourceIds,
+                    column.columnId.slice('metadata:'.length)
+                )
+        );
+    }
+
+    @computed get facetColumnsById(): {
+        [columnId: string]: StudySlideFacetColumn;
+    } {
+        const byId: { [columnId: string]: StudySlideFacetColumn } = {};
+        this.facetColumns.forEach(column => (byId[column.columnId] = column));
+        return byId;
+    }
+
+    /** A column's label, falling back to its metadata key. */
+    columnLabel(columnId: string): string {
+        return (
+            this.facetColumnsById[columnId]?.label ||
+            columnId.slice('metadata:'.length)
+        );
+    }
+
+    /** The active column filters, for chips. */
+    @computed get activeColumnFilters(): {
+        columnId: string;
+        label: string;
+        values: string[];
+    }[] {
+        return Object.keys(this.columnFilters)
+            .filter(columnId => this.columnFilters[columnId].length > 0)
+            .map(columnId => ({
+                columnId,
+                label: this.columnLabel(columnId),
+                values: this.columnFilters[columnId],
+            }));
+    }
+
+    /**
+     * Columns shown as filters: the defaults and the user's pinned ones with more than one value,
+     * and any with a selection.
+     */
+    @computed get visibleFacets(): StudySlideFacetColumn[] {
+        const filtered = this.activeColumnFilters.map(f => f.columnId);
+        const ids = Array.from(
+            new Set([
+                ...DEFAULT_FACET_COLUMN_IDS,
+                ...this.pinnedColumnIds,
+                ...filtered,
+            ])
+        );
+        return ids
+            .map(
+                columnId =>
+                    this.facetColumnsById[columnId] ||
+                    (filtered.includes(columnId)
+                        ? {
+                              columnId,
+                              label: this.columnLabel(columnId),
+                              values: [],
+                          }
+                        : undefined)
+            )
+            .filter(
+                (column): column is StudySlideFacetColumn =>
+                    !!column &&
+                    (column.values.length > 1 ||
+                        filtered.includes(column.columnId))
+            );
+    }
+
+    /** Columns "More filters" offers: the others with more than one value. */
+    @computed get addableFacetColumns(): StudySlideFacetColumn[] {
+        const shown = new Set(this.visibleFacets.map(f => f.columnId));
+        return this.facetColumns.filter(
+            column => !shown.has(column.columnId) && column.values.length > 1
+        );
+    }
+
+    /** Column values and match levels whose name contains `text`, most patients first. */
+    suggestionsFor(text: string): StudySlidesSuggestion[] {
+        const needle = text.trim().toLowerCase();
+        if (!needle) {
+            return [];
+        }
+        const values: StudySlidesSuggestion[] = [];
+        this.facetColumns.forEach(column =>
+            column.values.forEach(v => {
+                if (v.value.toLowerCase().includes(needle)) {
+                    values.push({
+                        kind: 'value',
+                        columnId: column.columnId,
+                        label: column.label,
+                        value: v.value,
+                        patientCount: v.count,
+                    });
+                }
+            })
+        );
+        const matchCounts = this.matchLevelPatientCounts;
+        const match: StudySlidesSuggestion[] = STUDY_SLIDE_MATCH_LEVELS.filter(
+            level =>
+                STUDY_SLIDE_MATCH_LABELS[level].toLowerCase().includes(needle)
+        ).map(level => ({
+            kind: 'match' as const,
+            level,
+            patientCount: matchCounts?.[level] ?? 0,
+        }));
+        return [...values, ...match]
+            .sort((a, b) => b.patientCount - a.patientCount)
+            .slice(0, MAX_SUGGESTIONS);
+    }
+
+    /** Selected values of a column. */
+    columnValues(columnId: string): string[] {
+        return this.columnFilters[columnId] || [];
+    }
+
+    /** Replaces a column's selected values; none removes its filter. */
+    @action.bound
+    setColumnValues(columnId: string, values: string[]) {
+        const next = { ...this.columnFilters };
+        if (values.length > 0) {
+            next[columnId] = values;
+        } else {
+            delete next[columnId];
+        }
+        this.columnFilters = next;
+        this.restartList();
+    }
+
+    @action.bound
+    addColumnValue(columnId: string, value: string) {
+        const values = this.columnValues(columnId);
+        if (!values.includes(value)) {
+            this.setColumnValues(columnId, [...values, value]);
+        }
+    }
+
+    @action.bound
+    pinColumn(columnId: string) {
+        if (!this.pinnedColumnIds.includes(columnId)) {
+            this.pinnedColumnIds = [...this.pinnedColumnIds, columnId];
+            writePinnedColumnIds(this.pinnedColumnIds);
+        }
+    }
+
+    /** Removes a pinned column from the filters, with its selection. */
+    @action.bound
+    unpinColumn(columnId: string) {
+        this.pinnedColumnIds = this.pinnedColumnIds.filter(
+            id => id !== columnId
+        );
+        writePinnedColumnIds(this.pinnedColumnIds);
+        if (this.columnValues(columnId).length > 0) {
+            this.setColumnValues(columnId, []);
+        }
     }
 
     @action
@@ -380,6 +654,7 @@ export class StudyPathologySlidesStore {
     private resetSlideFilters() {
         this.stainGroups = [];
         this.matchLevels = [];
+        this.columnFilters = {};
         this.searchText = '';
         this.applySearch();
     }
@@ -388,6 +663,7 @@ export class StudyPathologySlidesStore {
         return {
             stainGroups: this.stainGroups.slice(),
             matchLevels: this.matchLevels.slice(),
+            columns: this.columnFilters,
             search: this.search,
         };
     }
@@ -404,6 +680,7 @@ export class StudyPathologySlidesStore {
         if (!comparer.structural(filters, this.slideFilters)) {
             this.stainGroups = filters.stainGroups;
             this.matchLevels = filters.matchLevels;
+            this.columnFilters = filters.columns;
             this.searchText = filters.search;
             this.search = filters.search;
             this.restartList();
@@ -425,6 +702,7 @@ export class StudyPathologySlidesStore {
         return (
             this.stainGroups.length > 0 ||
             this.matchLevels.length > 0 ||
+            this.activeColumnFilters.length > 0 ||
             this.search !== ''
         );
     }
@@ -541,17 +819,24 @@ export class StudyPathologySlidesStore {
         this.restartList();
     }
 
-    /** Updates the typed ID search, which narrows the list after a pause. */
+    /**
+     * Updates the typed search. Text that looks like an ID (or no text)
+     * narrows the list after a pause; other text, such as a stain name, is
+     * left for the suggestions until the search is chosen explicitly.
+     */
     @action.bound
     setSearchText(text: string) {
         this.searchText = text;
         if (this.searchTimer !== undefined) {
             clearTimeout(this.searchTimer);
+            this.searchTimer = undefined;
         }
-        this.searchTimer = setTimeout(
-            () => this.applySearch(),
-            STUDY_SLIDES_SEARCH_DEBOUNCE_MS
-        );
+        if (looksLikeId(text) || text.trim() === '') {
+            this.searchTimer = setTimeout(
+                () => this.applySearch(),
+                STUDY_SLIDES_SEARCH_DEBOUNCE_MS
+            );
+        }
     }
 
     @action.bound

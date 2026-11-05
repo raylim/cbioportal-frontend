@@ -31,6 +31,11 @@ export interface ResourceTableTestServerOptions {
         row: TestResourceRow,
         query: ResourceTableQuery
     ) => boolean;
+    /**
+     * Metadata keys that are not filterable, as a resource's contract declares identifiers:
+     * they get no facet.
+     */
+    unfilterableKeys?: string[];
 }
 
 function text(value: unknown): string {
@@ -129,8 +134,9 @@ export class ResourceTableTestServer {
                 scoped.flatMap(row =>
                     Object.keys(row.metadata).filter(
                         key =>
-                            typeof row.metadata[key] === 'string' ||
-                            typeof row.metadata[key] === 'boolean'
+                            (typeof row.metadata[key] === 'string' ||
+                                typeof row.metadata[key] === 'boolean') &&
+                            !(this.options.unfilterableKeys || []).includes(key)
                     )
                 )
             )

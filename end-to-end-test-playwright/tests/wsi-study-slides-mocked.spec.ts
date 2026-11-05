@@ -49,6 +49,16 @@ function isOddPatient(patientId: string) {
     return patientIds.indexOf(patientId) % 2 === 0;
 }
 
+/** The first 30 patients' slides are biopsies, the rest resections. */
+function partType(patientId: string) {
+    return patientIds.indexOf(patientId) < 30 ? 'Biopsy' : 'Resection';
+}
+
+/** Every seventh patient's slides are matched by part, the others by block. */
+function isPartMatched(patientId: string) {
+    return patientIds.indexOf(patientId) % 7 === 0;
+}
+
 /** An opaque 12-hex slide key per patient slide, as the backend publishes them. */
 function slideKeyFor(patientId: string, slide = 0) {
     return (patientIds.indexOf(patientId) + 1 + slide * 0x1000)
@@ -77,6 +87,7 @@ function slideRow(
             part_key: 'part:1',
             part_number: '1',
             part_description: 'Contract specimen',
+            part_type: partType(patientId),
             block_key: 'block:A1',
             block_number: 'A1',
             block_label: 'A1',
@@ -86,7 +97,7 @@ function slideRow(
             is_ihc: stain === 'IHC',
             slide_type: stain,
             can_serve_tiles: true,
-            match_level: 'BLOCK',
+            match_level: isPartMatched(patientId) ? 'PART' : 'BLOCK',
             specimen_key: 'block::1::A1',
             serving: {
                 key: slideKey,
@@ -110,6 +121,16 @@ const resourceTable = new ResourceTableTestServer(() => slideRows, {
     inStudyViewCohort: (row, query) =>
         !(query.studyViewFilter as any)?.clinicalDataFilters ||
         isOddPatient(row.patientId!),
+    // Identifiers and free text, which the slide contract declares unfilterable.
+    unfilterableKeys: [
+        'slide_key',
+        'reference_sample_id',
+        'part_key',
+        'part_description',
+        'block_key',
+        'block_label',
+        'specimen_key',
+    ],
 });
 
 interface StudySlidesMocks {
@@ -451,6 +472,71 @@ if (process.env.PW_SUITE === 'wsi') {
             await expect(page.getByTestId('study-slides-empty')).toHaveText(
                 'No patients match these filters.'
             );
+        });
+
+        test('filters by slide column values from the search and by match level', async ({
+            page,
+        }) => {
+            const mocks = await installStudySlidesMocks(page);
+            await page.goto(`/study/pathologySlides?id=${STUDY_ID}`);
+            await expect(
+                page.getByTestId('study-slides-patient')
+            ).toHaveCount(PAGE_SIZE, { timeout: 30000 });
+
+            await page.getByTestId('study-slides-search').fill('biop');
+            const suggestion = page
+                .getByTestId('study-slides-suggestion')
+                .filter({ hasText: /Biopsy\s*part_type/ });
+            await expect(suggestion).toContainText('30 patients');
+            await suggestion.click();
+
+            await expect(
+                page.getByTestId('study-slides-patient-count')
+            ).toHaveText('30');
+            await expect(
+                page.getByTestId('study-slides-chip-metadata:part_type')
+            ).toContainText('part_type: Biopsy');
+            await expect(page.getByTestId('study-slides-search')).toHaveValue(
+                ''
+            );
+            expect(lastOf(mocks.listRequests).filters).toEqual([
+                {
+                    columnId: 'metadata:part_type',
+                    operator: 'in',
+                    values: ['Biopsy'],
+                },
+            ]);
+            await expect
+                .poll(() => new URL(page.url()).searchParams.get('wsiFacets'))
+                .toBe(JSON.stringify({ 'metadata:part_type': ['Biopsy'] }));
+
+            // The filter survives a reload through the URL.
+            await page.reload();
+            await expect(
+                page.getByTestId('study-slides-patient-count')
+            ).toHaveText('30', { timeout: 30000 });
+
+            await page
+                .getByTestId('study-slides-chip-metadata:part_type')
+                .getByLabel('Remove filter')
+                .click();
+            await expect(
+                page.getByTestId('study-slides-patient-count')
+            ).toHaveText(String(PATIENT_COUNT));
+
+            await page.getByTestId('study-slides-filters-toggle').click();
+            const partMatched = patientIds.filter(isPartMatched).length;
+            await expect(
+                page.getByTestId('study-slides-match-PART')
+            ).toContainText(`(${partMatched})`);
+            await page.getByTestId('study-slides-match-PART').click();
+            await expect(
+                page.getByTestId('study-slides-patient-count')
+            ).toHaveText(String(partMatched));
+            await expect(
+                page.getByTestId('study-slides-chip-match-PART')
+            ).toBeVisible();
+            expect(mocks.retiredRequests).toEqual([]);
         });
 
         test('restores the slide table view and redirects the old slide table tabs', async ({

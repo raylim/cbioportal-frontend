@@ -27,6 +27,8 @@ export interface TestSlidePatient {
     sampleCount: number;
     /** Match level of the matched slides; BLOCK by default. */
     matchLevel?: StudySlideMatchLevel;
+    /** Further metadata every one of the patient's slides carries. */
+    metadata?: { [key: string]: string };
 }
 
 /** A 12-hex slide key, distinct per patient and slide. */
@@ -58,6 +60,7 @@ export function slideRowsFor(patients: TestSlidePatient[]): TestResourceRow[] {
                     patientId: patient.patientId,
                     sampleId,
                     metadata: {
+                        ...patient.metadata,
                         slide_key: testSlideKey(patientIndex, slide),
                         stain_group: stain,
                         match_level: sampleId
@@ -88,7 +91,8 @@ export function testSlidesApi(
 ): { api: StudySlidesResourceApi; requests: RecordedSlideRequests } {
     const server = new ResourceTableTestServer(
         () => slideRowsFor(patients()),
-        options
+        // Slide keys identify single slides, so they are not filterable.
+        { unfilterableKeys: ['slide_key'], ...options }
     );
     const requests: RecordedSlideRequests = {
         tabs: [],

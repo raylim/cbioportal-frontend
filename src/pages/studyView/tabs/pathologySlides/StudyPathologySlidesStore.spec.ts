@@ -317,13 +317,16 @@ describe('StudyPathologySlidesStore', () => {
         }
     });
 
-    it('applies the typed search at once on request', () => {
+    it('waits for an explicit search when the text is not ID-like', () => {
         jest.useFakeTimers();
         try {
             makeStore();
-            store.setSearchText('P-3');
+            store.setSearchText('biopsy');
+            jest.advanceTimersByTime(STUDY_SLIDES_SEARCH_DEBOUNCE_MS * 2);
+            expect(store.search).toBe('');
+
             store.applySearch();
-            expect(store.search).toBe('P-3');
+            expect(store.search).toBe('biopsy');
         } finally {
             jest.useRealTimers();
         }
@@ -376,6 +379,7 @@ describe('StudyPathologySlidesStore', () => {
             initialSlideFilters: {
                 stainGroups: ['IHC'],
                 matchLevels: [],
+                columns: {},
                 search: 'P-3',
             },
             onSlideFiltersChange: f => reported.push(f),
@@ -400,7 +404,12 @@ describe('StudyPathologySlidesStore', () => {
 
         store.toggleMatchLevel('BLOCK');
         expect(reported).toEqual([
-            { stainGroups: ['IHC'], matchLevels: ['BLOCK'], search: 'P-3' },
+            {
+                stainGroups: ['IHC'],
+                matchLevels: ['BLOCK'],
+                columns: {},
+                search: 'P-3',
+            },
         ]);
     });
 
@@ -421,7 +430,7 @@ describe('StudyPathologySlidesStore', () => {
         // As after Back to an entry for P-4 with an H&E filter.
         store.followUrl(
             { studyId: STUDY, patientId: 'P-4' },
-            { stainGroups: ['H&E'], matchLevels: [], search: '' }
+            { stainGroups: ['H&E'], matchLevels: [], columns: {}, search: '' }
         );
         await settle();
 
@@ -432,7 +441,7 @@ describe('StudyPathologySlidesStore', () => {
         // The reaction reports the filters it was given; the page writes the
         // same values back, which leaves the URL unchanged.
         expect(reported).toEqual([
-            { stainGroups: ['H&E'], matchLevels: [], search: '' },
+            { stainGroups: ['H&E'], matchLevels: [], columns: {}, search: '' },
         ]);
     });
 
@@ -530,6 +539,162 @@ describe('StudyPathologySlidesStore', () => {
         ]);
     });
 
+    describe('slide column filters', () => {
+        beforeEach(() => {
+            window.localStorage.clear();
+            patients = [
+                ['P-1', 'Biopsy', 'GI', 'H&E'],
+                ['P-2', 'Biopsy', 'GI', 'IHC'],
+                ['P-3', 'Resection', 'Breast', 'H&E'],
+                ['P-4', 'Resection', 'GI', 'H&E'],
+                ['P-5', 'Cytology', 'GI', 'H&E'],
+            ].map(([patientId, partType, subspecialty, stain]) => ({
+                ...patient(patientId, stain),
+                metadata: {
+                    part_type: partType,
+                    subspecialty,
+                    magnification: patientId === 'P-1' ? '20x' : '40x',
+                },
+            }));
+        });
+
+        async function loadFilters() {
+            makeStore();
+            const stop = autorun(() => void store.facets.result);
+            await settle();
+            return stop;
+        }
+
+        it('offers the default columns with more than one value, counting patients', async () => {
+            const stop = await loadFilters();
+
+            expect(
+                store.visibleFacets.map(f => [
+                    f.columnId,
+                    f.values.map(v => `${v.value}:${v.count}`),
+                ])
+            ).toEqual([
+                [
+                    'metadata:part_type',
+                    ['Biopsy:2', 'Resection:2', 'Cytology:1'],
+                ],
+                ['metadata:subspecialty', ['GI:4', 'Breast:1']],
+            ]);
+            // Match and stain have chips of their own; the rest are added with "More filters".
+            expect(store.addableFacetColumns.map(f => f.columnId)).toEqual([
+                'metadata:magnification',
+            ]);
+            expect(store.matchLevelPatientCounts).toEqual({
+                PART: 0,
+                BLOCK: 5,
+                UNMATCHED: 0,
+            });
+            stop();
+        });
+
+        it('filters the list by column values, as metadata column filters', async () => {
+            const stop = await loadFilters();
+            const facetRequests = server.recorded.metadata.length;
+
+            store.addColumnValue('metadata:part_type', 'Biopsy');
+            store.addColumnValue('metadata:part_type', 'Cytology');
+            store.toggleStainGroup('H&E');
+            await settle();
+
+            expect(server.requests[server.requests.length - 1].filters).toEqual(
+                [
+                    {
+                        columnId: 'metadata:stain_group',
+                        operator: 'in',
+                        values: ['H&E'],
+                    },
+                    {
+                        columnId: 'metadata:part_type',
+                        operator: 'in',
+                        values: ['Biopsy', 'Cytology'],
+                    },
+                ]
+            );
+            expect(store.page.result!.patients.map(p => p.patientId)).toEqual([
+                'P-1',
+                'P-5',
+            ]);
+            expect(store.activeColumnFilters).toEqual([
+                {
+                    columnId: 'metadata:part_type',
+                    label: 'part_type',
+                    values: ['Biopsy', 'Cytology'],
+                },
+            ]);
+            expect(store.slideFilters.columns).toEqual({
+                'metadata:part_type': ['Biopsy', 'Cytology'],
+            });
+            // The options ignore the column filters, so they are not requested again.
+            expect(server.recorded.metadata.length).toBe(facetRequests);
+
+            store.setColumnValues('metadata:part_type', []);
+            expect(store.columnFilters).toEqual({});
+            stop();
+        });
+
+        it('suggests column values and match levels containing the search text', async () => {
+            const stop = await loadFilters();
+
+            expect(store.suggestionsFor('res')).toEqual([
+                {
+                    kind: 'value',
+                    columnId: 'metadata:part_type',
+                    label: 'part_type',
+                    value: 'Resection',
+                    patientCount: 2,
+                },
+            ]);
+            expect(store.suggestionsFor('bloc')).toEqual([
+                { kind: 'match', level: 'BLOCK', patientCount: 5 },
+            ]);
+            expect(
+                store
+                    .suggestionsFor('40')
+                    .map(s => s.kind + ':' + s.patientCount)
+            ).toEqual(['value:4']);
+            expect(store.suggestionsFor('  ')).toEqual([]);
+            stop();
+        });
+
+        it('pins more columns, and unpinning drops their selection', async () => {
+            const stop = await loadFilters();
+
+            store.pinColumn('metadata:magnification');
+            expect(store.visibleFacets.map(f => f.columnId)).toContain(
+                'metadata:magnification'
+            );
+            expect(
+                JSON.parse(
+                    window.localStorage.getItem('wsi.study.pinnedFacets')!
+                )
+            ).toEqual(['metadata:magnification']);
+            store.addColumnValue('metadata:magnification', '20x');
+
+            store.unpinColumn('metadata:magnification');
+            expect(store.visibleFacets.map(f => f.columnId)).not.toContain(
+                'metadata:magnification'
+            );
+            expect(store.columnFilters).toEqual({});
+            stop();
+        });
+
+        it('clears column filters with the other tab filters', async () => {
+            const stop = await loadFilters();
+            store.addColumnValue('metadata:subspecialty', 'GI');
+            expect(store.hasSlideFilters).toBe(true);
+
+            store.clearSlideFilters();
+            expect(store.hasSlideFilters).toBe(false);
+            expect(store.columnFilters).toEqual({});
+            stop();
+        });
+    });
+
     it('clears only the tab filters', async () => {
         makeStore();
         store.toggleStainGroup('IHC');
@@ -600,6 +765,11 @@ describe('studySlidesUrlState', () => {
                 wsiPatientId: 'P-1',
                 wsiStain: 'H&E,bogus,IHC',
                 wsiMatch: 'BLOCK',
+                wsiFacets: JSON.stringify({
+                    'metadata:part_type': ['Biopsy', 7],
+                    patientId: ['P-1'],
+                    'metadata:stain_name': [],
+                }),
                 wsiSearch: ' P-1 ',
             })
         ).toEqual({
@@ -607,12 +777,18 @@ describe('studySlidesUrlState', () => {
             filters: {
                 stainGroups: ['H&E', 'IHC'],
                 matchLevels: ['BLOCK'],
+                columns: { 'metadata:part_type': ['Biopsy'] },
                 search: 'P-1',
             },
         });
-        expect(studySlidesUrlState({})).toEqual({
+        expect(studySlidesUrlState({ wsiFacets: '{oops' })).toEqual({
             selection: undefined,
-            filters: { stainGroups: [], matchLevels: [], search: '' },
+            filters: {
+                stainGroups: [],
+                matchLevels: [],
+                columns: {},
+                search: '',
+            },
         });
     });
 });

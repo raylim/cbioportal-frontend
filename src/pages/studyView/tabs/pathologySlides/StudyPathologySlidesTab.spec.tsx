@@ -44,6 +44,10 @@ const PATIENTS: TestSlidePatient[] = ['P-1', 'P-2', 'P-3'].map(id => ({
     patientId: id,
     sampleCount: 1,
     stainGroupCounts: { 'H&E': 1, IHC: 1 },
+    metadata: {
+        part_type: id === 'P-3' ? 'Resection' : 'Biopsy',
+        magnification: id === 'P-1' ? '20x' : '40x',
+    },
 }));
 
 /** The resource-table API over these patients' slides. */
@@ -499,6 +503,10 @@ describe('StudyPathologySlidesTab', () => {
         const { store } = renderTab(server.api);
         await settle();
 
+        // Each match chip counts the patients with a slide of that level.
+        expect(
+            screen.getByTestId('study-slides-match-UNMATCHED').textContent
+        ).toBe('Unmatched(1)');
         fireEvent.click(screen.getByTestId('study-slides-match-UNMATCHED'));
         await settle();
 
@@ -522,6 +530,77 @@ describe('StudyPathologySlidesTab', () => {
         fireEvent.click(screen.getByTestId('study-slides-clear-filters'));
         await settle();
         expect(requests()[requests().length - 1].filters).toBeUndefined();
+        store.dispose();
+    });
+
+    it('suggests slide column values that add filters', async () => {
+        const server = serve();
+        const { store } = renderTab(server.api);
+        await settle();
+
+        const search = screen.getByTestId('study-slides-search');
+        fireEvent.focus(search);
+        fireEvent.change(search, { target: { value: 'bio' } });
+        await settle();
+        const options = screen.getAllByTestId('study-slides-suggestion');
+        expect(options.map(o => o.textContent)).toEqual([
+            'Slides matching “bio”',
+            'Biopsypart_type2 patients',
+        ]);
+        // Words wait for a choice rather than searching as they are typed.
+        expect(store.search).toBe('');
+
+        fireEvent.keyDown(search, { key: 'ArrowDown' });
+        fireEvent.keyDown(search, { key: 'Enter' });
+        await settle();
+        expect(store.searchText).toBe('');
+        expect(screen.queryByTestId('study-slides-suggestions')).toBeNull();
+        expect(
+            screen.getByTestId('study-slides-chip-metadata:part_type')
+                .textContent
+        ).toBe('part_type: Biopsy');
+        expect(screen.getAllByTestId('study-slides-patient')).toHaveLength(2);
+        const requests = listRequests(server.requests);
+        expect(requests[requests.length - 1].filters).toEqual([
+            {
+                columnId: 'metadata:part_type',
+                operator: 'in',
+                values: ['Biopsy'],
+            },
+        ]);
+
+        fireEvent.click(
+            within(
+                screen.getByTestId('study-slides-chip-metadata:part_type')
+            ).getByLabelText('Remove filter')
+        );
+        await settle();
+        expect(
+            screen.queryByTestId('study-slides-chip-metadata:part_type')
+        ).toBeNull();
+        expect(screen.getAllByTestId('study-slides-patient')).toHaveLength(3);
+        store.dispose();
+    });
+
+    it('shows slide column filters with patient counts and adds more', async () => {
+        const { store } = renderTab();
+        await settle();
+
+        expect(
+            screen.getByTestId('study-slides-facet-metadata:part_type')
+                .textContent
+        ).toContain('part_type');
+        const add = screen.getByTestId('study-slides-add-filter');
+        expect(
+            Array.from(add.querySelectorAll('option')).map(o => o.textContent)
+        ).toEqual(['+ More filters…', 'magnification']);
+        fireEvent.change(add, {
+            target: { value: 'metadata:magnification' },
+        });
+        expect(store.pinnedColumnIds).toEqual(['metadata:magnification']);
+        expect(
+            screen.getByTestId('study-slides-facet-metadata:magnification')
+        ).toBeTruthy();
         store.dispose();
     });
 

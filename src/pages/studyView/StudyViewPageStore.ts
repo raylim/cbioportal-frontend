@@ -475,6 +475,7 @@ export type StudyViewURLQuery = {
     wsiView?: string; // 'table' when the Pathology Slides tab shows its slide table
     wsiStain?: string; // the Pathology Slides tab's list filters (comma-separated)
     wsiMatch?: string;
+    wsiFacets?: string; // the Pathology Slides tab's slide column filters (JSON)
     wsiSearch?: string;
     cancer_study_id?: string;
     filterJson?: string;
