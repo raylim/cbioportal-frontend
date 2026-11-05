@@ -7,7 +7,10 @@ import { getServerConfig } from 'config/config';
 import { PatientViewPageTabs } from 'pages/patientView/PatientViewPageTabIds';
 import { PathologySlideSettings } from 'pages/patientView/PatientViewUrlWrapper';
 import { isNonEmptyString } from './ResourceUtils';
-import { CombinedResourceTab } from './ResourceTableUtils';
+import {
+    CombinedResourceTab,
+    ResourceTableStoreOptions,
+} from './ResourceTableUtils';
 
 // H&E slide resources that the native viewer replaces. Every H&E resource on
 // the public and MSK portals uses one of these IDs.
@@ -93,10 +96,15 @@ export function isHiddenFromStudyResourceTable(resourceId: string): boolean {
     return isHiddenFromResourceViews(resourceId);
 }
 
-/** How study view's resource tables (its resource tabs and Files & Links) list resources. */
-export const STUDY_VIEW_RESOURCE_TABLE_OPTIONS = {
+/**
+ * How study view's resource tables (its resource tabs and Files & Links) list resources: the slide
+ * resources as the Pathology slides tab (see isHiddenFromStudyResourceTable), without their tile
+ * serving block.
+ */
+export const STUDY_VIEW_RESOURCE_TABLE_OPTIONS: ResourceTableStoreOptions = {
     hideResource: isHiddenFromStudyResourceTable,
     combinedTabs: STUDY_VIEW_COMBINED_RESOURCE_TABS,
+    hideMetadataKey: isHiddenMetadataKey,
 };
 
 /**

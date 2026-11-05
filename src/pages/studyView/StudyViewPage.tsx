@@ -105,13 +105,16 @@ import {
 import { StudyPathologySlidesTab } from './tabs/pathologySlides/StudyPathologySlidesTab';
 import { ResourceTableStore } from 'shared/components/resourceTable/ResourceTableStore';
 import {
-    isHiddenFromStudyResourceTable,
+    isHiddenMetadataKey,
     isWsiTileServerConfigured,
     PATHOLOGY_SLIDES_RESOURCE_TAB,
     SLIDE_KEY_METADATA_KEY,
     STUDY_VIEW_RESOURCE_TABLE_OPTIONS,
 } from 'shared/lib/ResourcePolicy';
-import { IResourceTableRow } from 'shared/lib/ResourceTableUtils';
+import {
+    IResourceTableRow,
+    isResourceListedInTable,
+} from 'shared/lib/ResourceTableUtils';
 import {
     getStudyViewResourceCohort,
     syncStudyViewResourceCohort,
@@ -436,6 +439,7 @@ export default class StudyViewPage extends React.Component<
                           // The Pathology Slides tab's slide table, which the resource tabs
                           // leave out when the viewer shows it.
                           combinedTabs: [PATHOLOGY_SLIDES_RESOURCE_TAB],
+                          hideMetadataKey: isHiddenMetadataKey,
                           hideResource: id =>
                               id !== PATHOLOGY_SLIDES_RESOURCE_TAB.id,
                       }
@@ -600,11 +604,11 @@ export default class StudyViewPage extends React.Component<
     }
 
     @computed get visibleResourceDefinitions() {
-        // The resources the resource tables list (slides through the combined
-        // Pathology slides tab), so a study whose resources are all hidden from
-        // them (legacy H&E) has no Files & Links tab.
-        return (this.store.resourceDefinitions.result || []).filter(
-            d => !isHiddenFromStudyResourceTable(d.resourceId)
+        return (this.store.resourceDefinitions.result || []).filter(d =>
+            isResourceListedInTable(
+                d.resourceId,
+                STUDY_VIEW_RESOURCE_TABLE_OPTIONS
+            )
         );
     }
 
