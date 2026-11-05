@@ -192,6 +192,9 @@ export function tabs(
                                     pageComponent.patientViewPageStore
                                         .clinicalEvents.result
                                 }
+                                showPathologySlides={
+                                    !!getServerConfig().wsi_tile_server_url
+                                }
                                 sampleManager={sampleManager}
                                 width={WindowStore.size.width}
                                 samples={
@@ -666,6 +669,9 @@ export function tabs(
                         WindowStore.size.height - 220,
                         WindowStore.size.width
                     )}
+                    clinicalEvents={
+                        pageComponent.patientViewPageStore.clinicalEvents.result
+                    }
                     hidden={
                         urlWrapper.activeTabId !==
                         PatientViewPageTabs.WSIHESlides
