@@ -19,6 +19,9 @@ import { isResourceListedInTable } from './ResourceTableUtils';
 
 const isHiddenFromStudyResourceTable = (resourceId: string) =>
     !isResourceListedInTable(resourceId, STUDY_VIEW_RESOURCE_TABLE_OPTIONS);
+// The combined tab's id names no resource, so ask hideResource about the tab itself.
+const isStudyResourceTabHidden = (tabId: string) =>
+    STUDY_VIEW_RESOURCE_TABLE_OPTIONS.hideResource!(tabId);
 
 describe('legacy H&E resource policy', () => {
     let savedTileServerUrl: unknown;
@@ -63,7 +66,7 @@ describe('legacy H&E resource policy', () => {
         ]);
         assert.equal(PATHOLOGY_SLIDES_RESOURCE_TAB.label, 'Pathology slides');
         // With the viewer configured, the Pathology Slides tab shows the slide table.
-        assert.isTrue(isHiddenFromStudyResourceTable('PATHOLOGY_SLIDES'));
+        assert.isTrue(isStudyResourceTabHidden('PATHOLOGY_SLIDES'));
         assert.isTrue(isHiddenFromStudyResourceTable('WSI_SAMPLE'));
         assert.isTrue(isHiddenFromStudyResourceTable('WSI_PATIENT'));
         assert.isFalse(isHiddenFromStudyResourceTable('OTHER'));
@@ -73,7 +76,7 @@ describe('legacy H&E resource policy', () => {
 
         // Without it, study view shows the slide resources through the combined tab.
         (getServerConfig() as any).wsi_tile_server_url = '';
-        assert.isFalse(isHiddenFromStudyResourceTable('PATHOLOGY_SLIDES'));
+        assert.isFalse(isStudyResourceTabHidden('PATHOLOGY_SLIDES'));
         assert.isFalse(isHiddenFromStudyResourceTable('WSI_SAMPLE'));
         assert.isFalse(isHiddenFromStudyResourceTable('WSI_PATIENT'));
     });
