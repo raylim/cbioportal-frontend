@@ -3,57 +3,62 @@
  */
 import { autorun, observable, runInAction } from 'mobx';
 import { getServerConfig } from 'config/config';
-import { StudyViewFilter } from 'cbioportal-ts-api-client';
+import { ResourceCohort } from 'shared/components/resourceTable/resourceTableCohort';
 import {
     STUDY_SLIDES_SEARCH_DEBOUNCE_MS,
     StudyPathologySlidesStore,
-    StudySlidePatientRef,
     studySlidesUrlState,
     studySlidesViewFromUrl,
 } from './StudyPathologySlidesStore';
+import { StudySlidePatientRef } from './studySlidesApi';
 import {
-    StudySlidePatient,
-    StudySlidesPage,
-    StudySlidesRequest,
-} from './studySlidesApi';
-import { settle, studySlidesPageFor } from './studySlidesTestServer';
-
-jest.mock('shared/api/urls', () => ({
-    buildCBioPortalAPIUrl: (path: string) => `/${path}`,
-}));
+    patientListRequests,
+    settle,
+    testSlidesApi,
+    TestSlidePatient,
+} from './studySlidesTestServer';
 
 const STUDY = 'study';
 
-function patient(patientId: string, stain = 'H&E'): StudySlidePatient {
+function patient(patientId: string, stain = 'H&E'): TestSlidePatient {
     return {
         studyId: STUDY,
         patientId,
-        slideCount: 1,
         sampleCount: 1,
-        stainGroupCounts: {
-            'H&E': stain === 'H&E' ? 1 : 0,
-            IHC: stain === 'IHC' ? 1 : 0,
-            Other: 0,
-            Unknown: 0,
+        stainGroupCounts: { [stain]: 1 },
+    };
+}
+
+const STUDY_COHORT: ResourceCohort = {
+    studyIds: [STUDY],
+    patientIdentifiers: [],
+    sampleIdentifiers: [],
+};
+
+/** A cohort the study view's filter narrows; the test server lists `patients` for it. */
+function filteredCohort(caseList: string): ResourceCohort {
+    return {
+        ...STUDY_COHORT,
+        studyViewFilter: { studyIds: [STUDY], caseLists: [[caseList]] } as any,
+    };
+}
+
+/** The resource-table API over a fixed patient list, recording its requests. */
+function fakeServer(allPatients: () => TestSlidePatient[]) {
+    const server = testSlidesApi(allPatients);
+    return {
+        api: server.api,
+        recorded: server.requests,
+        /** The patient list requests. */
+        get requests() {
+            return patientListRequests(server.requests);
         },
     };
 }
 
-/** A server over a fixed patient list that honours the request options. */
-function fakeServer(allPatients: () => StudySlidePatient[]) {
-    const requests: StudySlidesRequest[] = [];
-    const fetchPage = jest.fn(async (request: StudySlidesRequest) => {
-        requests.push(request);
-        return studySlidesPageFor(request, allPatients());
-    });
-    return { fetchPage, requests };
-}
-
 describe('StudyPathologySlidesStore', () => {
-    const filters = observable.box<StudyViewFilter>({
-        studyIds: [STUDY],
-    } as StudyViewFilter);
-    let patients: StudySlidePatient[];
+    const cohort = observable.box<ResourceCohort | undefined>(STUDY_COHORT);
+    let patients: TestSlidePatient[];
     let server: ReturnType<typeof fakeServer>;
     let selections: (StudySlidePatientRef | undefined)[];
     let store: StudyPathologySlidesStore;
@@ -61,11 +66,11 @@ describe('StudyPathologySlidesStore', () => {
 
     function makeStore(initialSelection?: StudySlidePatientRef) {
         store = new StudyPathologySlidesStore({
-            getFilters: () => filters.get(),
+            getCohort: () => cohort.get(),
             getStudyIds: () => [STUDY],
             onSelectionChange: p => selections.push(p),
             initialSelection,
-            fetchPage: server.fetchPage,
+            api: server.api,
             pageSize: 2,
         });
         // The tab observes the page while it is shown.
@@ -76,9 +81,7 @@ describe('StudyPathologySlidesStore', () => {
         patients = ['P-1', 'P-2', 'P-3', 'P-4', 'P-5'].map(id => patient(id));
         server = fakeServer(() => patients);
         selections = [];
-        runInAction(() =>
-            filters.set({ studyIds: [STUDY] } as StudyViewFilter)
-        );
+        runInAction(() => cohort.set(STUDY_COHORT));
     });
 
     afterEach(() => {
@@ -86,17 +89,33 @@ describe('StudyPathologySlidesStore', () => {
         store.dispose();
     });
 
-    it('posts the cohort filter and selects the first listed patient', async () => {
+    it('lists the slides grouped by patient and selects the first listed patient', async () => {
         makeStore();
         await settle();
 
+        expect(server.recorded.tabs[0]).toEqual({
+            studyIds: [STUDY],
+            patientIdentifiers: [],
+            sampleIdentifiers: [],
+        });
         expect(server.requests[0]).toEqual(
             expect.objectContaining({
-                studyViewFilter: { studyIds: [STUDY] },
+                studyIds: [STUDY],
+                // The studies hold only matched slides.
+                resourceId: 'WSI_SAMPLE',
+                groupBy: 'patient',
+                groupCounts: ['metadata:stain_group'],
                 pageNumber: 0,
                 pageSize: 2,
             })
         );
+        expect(store.page.result!.patients[0]).toEqual({
+            studyId: STUDY,
+            patientId: 'P-1',
+            slideCount: 1,
+            sampleCount: 1,
+            stainGroupCounts: { 'H&E': 1, IHC: 0, Other: 0, Unknown: 0 },
+        });
         expect(store.selected).toEqual({ studyId: STUDY, patientId: 'P-1' });
         expect(store.selectedIndex).toBe(0);
         expect(selections).toEqual([{ studyId: STUDY, patientId: 'P-1' }]);
@@ -138,12 +157,12 @@ describe('StudyPathologySlidesStore', () => {
     it('opens a slide from the slide table in the viewer', async () => {
         const views: string[] = [];
         store = new StudyPathologySlidesStore({
-            getFilters: () => filters.get(),
+            getCohort: () => cohort.get(),
             getStudyIds: () => [STUDY],
             onSelectionChange: p => selections.push(p),
             onViewChange: view => views.push(view),
             initialView: 'table',
-            fetchPage: server.fetchPage,
+            api: server.api,
             pageSize: 2,
         });
         stopObserving = autorun(() => void store.page.result);
@@ -209,12 +228,10 @@ describe('StudyPathologySlidesStore', () => {
         makeStore({ studyId: STUDY, patientId: 'P-4' });
         await settle();
 
-        expect(server.requests[0]).toEqual(
-            expect.objectContaining({
-                locateStudyId: STUDY,
-                locatePatientId: 'P-4',
-            })
-        );
+        expect(server.requests[0].locate).toEqual({
+            studyId: STUDY,
+            patientId: 'P-4',
+        });
         expect(store.pageNumber).toBe(1);
         expect(store.selectedIndex).toBe(3);
         expect(store.selected?.patientId).toBe('P-4');
@@ -230,9 +247,7 @@ describe('StudyPathologySlidesStore', () => {
         expect(store.selected?.patientId).toBe('P-3');
 
         patients = patients.filter(p => p.patientId !== 'P-1');
-        runInAction(() =>
-            filters.set({ studyIds: [STUDY], caseLists: [['x']] } as any)
-        );
+        runInAction(() => cohort.set(filteredCohort('x')));
         await settle();
 
         expect(store.selected?.patientId).toBe('P-3');
@@ -245,9 +260,7 @@ describe('StudyPathologySlidesStore', () => {
         await settle();
 
         patients = patients.filter(p => p.patientId !== 'P-4');
-        runInAction(() =>
-            filters.set({ studyIds: [STUDY], caseLists: [['y']] } as any)
-        );
+        runInAction(() => cohort.set(filteredCohort('y')));
         await settle();
 
         expect(store.pageNumber).toBe(0);
@@ -266,7 +279,16 @@ describe('StudyPathologySlidesStore', () => {
         await settle();
 
         expect(server.requests[server.requests.length - 1]).toEqual(
-            expect.objectContaining({ stainGroups: ['IHC'], pageNumber: 0 })
+            expect.objectContaining({
+                filters: [
+                    {
+                        columnId: 'metadata:stain_group',
+                        operator: 'in',
+                        values: ['IHC'],
+                    },
+                ],
+                pageNumber: 0,
+            })
         );
         expect(store.selected?.patientId).toBe('P-4');
         expect(store.totalPatients).toBe(1);
@@ -295,13 +317,16 @@ describe('StudyPathologySlidesStore', () => {
         }
     });
 
-    it('applies the typed search at once on request', () => {
+    it('waits for an explicit search when the text is not ID-like', () => {
         jest.useFakeTimers();
         try {
             makeStore();
-            store.setSearchText('P-3');
+            store.setSearchText('biopsy');
+            jest.advanceTimersByTime(STUDY_SLIDES_SEARCH_DEBOUNCE_MS * 2);
+            expect(store.search).toBe('');
+
             store.applySearch();
-            expect(store.search).toBe('P-3');
+            expect(store.search).toBe('biopsy');
         } finally {
             jest.useRealTimers();
         }
@@ -316,9 +341,9 @@ describe('StudyPathologySlidesStore', () => {
 
         patients = [];
         const empty = new StudyPathologySlidesStore({
-            getFilters: () => filters.get(),
+            getCohort: () => cohort.get(),
             getStudyIds: () => [STUDY],
-            fetchPage: server.fetchPage,
+            api: server.api,
         });
         const stopEmpty = autorun(() => void empty.studyHasSlides.result);
         await settle();
@@ -347,13 +372,14 @@ describe('StudyPathologySlidesStore', () => {
     it('starts from list filters restored from the URL and reports changes', async () => {
         const reported: unknown[] = [];
         store = new StudyPathologySlidesStore({
-            getFilters: () => filters.get(),
+            getCohort: () => cohort.get(),
             getStudyIds: () => [STUDY],
-            fetchPage: server.fetchPage,
+            api: server.api,
             pageSize: 2,
             initialSlideFilters: {
                 stainGroups: ['IHC'],
                 matchLevels: [],
+                columns: {},
                 search: 'P-3',
             },
             onSlideFiltersChange: f => reported.push(f),
@@ -362,25 +388,39 @@ describe('StudyPathologySlidesStore', () => {
         await settle();
 
         expect(server.requests[0]).toEqual(
-            expect.objectContaining({ stainGroups: ['IHC'], search: 'P-3' })
+            expect.objectContaining({
+                filters: [
+                    {
+                        columnId: 'metadata:stain_group',
+                        operator: 'in',
+                        values: ['IHC'],
+                    },
+                ],
+                search: 'P-3',
+            })
         );
         expect(store.searchText).toBe('P-3');
         expect(reported).toEqual([]);
 
         store.toggleMatchLevel('BLOCK');
         expect(reported).toEqual([
-            { stainGroups: ['IHC'], matchLevels: ['BLOCK'], search: 'P-3' },
+            {
+                stainGroups: ['IHC'],
+                matchLevels: ['BLOCK'],
+                columns: {},
+                search: 'P-3',
+            },
         ]);
     });
 
     it('follows the patient and filters in the URL without reporting them', async () => {
         const reported: unknown[] = [];
         store = new StudyPathologySlidesStore({
-            getFilters: () => filters.get(),
+            getCohort: () => cohort.get(),
             getStudyIds: () => [STUDY],
             onSelectionChange: p => selections.push(p),
             onSlideFiltersChange: f => reported.push(f),
-            fetchPage: server.fetchPage,
+            api: server.api,
             pageSize: 2,
         });
         stopObserving = autorun(() => void store.page.result);
@@ -390,7 +430,7 @@ describe('StudyPathologySlidesStore', () => {
         // As after Back to an entry for P-4 with an H&E filter.
         store.followUrl(
             { studyId: STUDY, patientId: 'P-4' },
-            { stainGroups: ['H&E'], matchLevels: [], search: '' }
+            { stainGroups: ['H&E'], matchLevels: [], columns: {}, search: '' }
         );
         await settle();
 
@@ -401,8 +441,258 @@ describe('StudyPathologySlidesStore', () => {
         // The reaction reports the filters it was given; the page writes the
         // same values back, which leaves the URL unchanged.
         expect(reported).toEqual([
-            { stainGroups: ['H&E'], matchLevels: [], search: '' },
+            { stainGroups: ['H&E'], matchLevels: [], columns: {}, search: '' },
         ]);
+    });
+
+    it("reads matched and unmatched slides together, with each patient's distinct samples", async () => {
+        patients = [
+            {
+                studyId: STUDY,
+                patientId: 'P-1',
+                sampleCount: 2,
+                stainGroupCounts: { 'H&E': 2, IHC: 1 },
+            },
+            {
+                studyId: STUDY,
+                patientId: 'P-2',
+                sampleCount: 0,
+                stainGroupCounts: { Other: 2 },
+            },
+        ];
+        makeStore();
+        await settle();
+
+        expect(server.requests[0].resourceIds).toEqual([
+            'WSI_SAMPLE',
+            'WSI_PATIENT',
+        ]);
+        expect(store.page.result!.totalSlides).toBe(5);
+        expect(
+            store.page.result!.patients.map(p => [
+                p.patientId,
+                p.slideCount,
+                p.sampleCount,
+                p.stainGroupCounts,
+            ])
+        ).toEqual([
+            ['P-1', 3, 2, { 'H&E': 2, IHC: 1, Other: 0, Unknown: 0 }],
+            ['P-2', 2, 0, { 'H&E': 0, IHC: 0, Other: 2, Unknown: 0 }],
+        ]);
+        // The samples come from the same slides grouped by sample, for the page's patients.
+        const samples = server.recorded.groups.filter(
+            q => q.groupBy === 'sample'
+        );
+        expect(samples).toHaveLength(1);
+        expect(samples[0].filters).toEqual([
+            { columnId: 'patientId', operator: 'in', values: ['P-1', 'P-2'] },
+        ]);
+    });
+
+    it('counts patients per stain group for the stain filter, whatever the filters', async () => {
+        patients[3] = patient('P-4', 'IHC');
+        makeStore();
+        const stop = autorun(() => void store.facets.result);
+        await settle();
+        expect(store.stainGroupPatientCounts).toEqual({
+            'H&E': 4,
+            IHC: 1,
+            Other: 0,
+            Unknown: 0,
+        });
+        expect(server.recorded.metadata[0]).toEqual(
+            expect.objectContaining({ groupBy: 'patient', pageSize: 0 })
+        );
+
+        const requests = server.recorded.metadata.length;
+        store.toggleStainGroup('IHC');
+        await settle();
+        // The facets ignore column filters, so a stain filter does not re-request them.
+        expect(server.recorded.metadata.length).toBe(requests);
+        expect(store.stainGroupPatientCounts.IHC).toBe(1);
+        stop();
+    });
+
+    it('waits for the study view cohort before listing', async () => {
+        runInAction(() => cohort.set(undefined));
+        makeStore();
+        await settle();
+        expect(server.requests).toHaveLength(0);
+        expect(store.page.isPending).toBe(true);
+
+        runInAction(() => cohort.set(STUDY_COHORT));
+        await settle();
+        expect(store.page.result!.totalPatients).toBe(5);
+    });
+
+    it('searches a pasted Slide ID by its slide key', async () => {
+        makeStore();
+        store.setSearchText('WSI-0000-0000-03e9');
+        store.applySearch();
+        await settle();
+
+        expect(server.requests[server.requests.length - 1].search).toBe(
+            '0000000003e9'
+        );
+        expect(store.page.result!.patients.map(p => p.patientId)).toEqual([
+            'P-2',
+        ]);
+    });
+
+    describe('slide column filters', () => {
+        beforeEach(() => {
+            window.localStorage.clear();
+            patients = [
+                ['P-1', 'Biopsy', 'GI', 'H&E'],
+                ['P-2', 'Biopsy', 'GI', 'IHC'],
+                ['P-3', 'Resection', 'Breast', 'H&E'],
+                ['P-4', 'Resection', 'GI', 'H&E'],
+                ['P-5', 'Cytology', 'GI', 'H&E'],
+            ].map(([patientId, partType, subspecialty, stain]) => ({
+                ...patient(patientId, stain),
+                metadata: {
+                    part_type: partType,
+                    subspecialty,
+                    magnification: patientId === 'P-1' ? '20x' : '40x',
+                },
+            }));
+        });
+
+        async function loadFilters() {
+            makeStore();
+            const stop = autorun(() => void store.facets.result);
+            await settle();
+            return stop;
+        }
+
+        it('offers the default columns with more than one value, counting patients', async () => {
+            const stop = await loadFilters();
+
+            expect(
+                store.visibleFacets.map(f => [
+                    f.columnId,
+                    f.values.map(v => `${v.value}:${v.count}`),
+                ])
+            ).toEqual([
+                [
+                    'metadata:part_type',
+                    ['Biopsy:2', 'Resection:2', 'Cytology:1'],
+                ],
+                ['metadata:subspecialty', ['GI:4', 'Breast:1']],
+            ]);
+            // Match and stain have chips of their own; the rest are added with "More filters".
+            expect(store.addableFacetColumns.map(f => f.columnId)).toEqual([
+                'metadata:magnification',
+            ]);
+            expect(store.matchLevelPatientCounts).toEqual({
+                PART: 0,
+                BLOCK: 5,
+                UNMATCHED: 0,
+            });
+            stop();
+        });
+
+        it('filters the list by column values, as metadata column filters', async () => {
+            const stop = await loadFilters();
+            const facetRequests = server.recorded.metadata.length;
+
+            store.addColumnValue('metadata:part_type', 'Biopsy');
+            store.addColumnValue('metadata:part_type', 'Cytology');
+            store.toggleStainGroup('H&E');
+            await settle();
+
+            expect(server.requests[server.requests.length - 1].filters).toEqual(
+                [
+                    {
+                        columnId: 'metadata:stain_group',
+                        operator: 'in',
+                        values: ['H&E'],
+                    },
+                    {
+                        columnId: 'metadata:part_type',
+                        operator: 'in',
+                        values: ['Biopsy', 'Cytology'],
+                    },
+                ]
+            );
+            expect(store.page.result!.patients.map(p => p.patientId)).toEqual([
+                'P-1',
+                'P-5',
+            ]);
+            expect(store.activeColumnFilters).toEqual([
+                {
+                    columnId: 'metadata:part_type',
+                    label: 'part_type',
+                    values: ['Biopsy', 'Cytology'],
+                },
+            ]);
+            expect(store.slideFilters.columns).toEqual({
+                'metadata:part_type': ['Biopsy', 'Cytology'],
+            });
+            // The options ignore the column filters, so they are not requested again.
+            expect(server.recorded.metadata.length).toBe(facetRequests);
+
+            store.setColumnValues('metadata:part_type', []);
+            expect(store.columnFilters).toEqual({});
+            stop();
+        });
+
+        it('suggests column values and match levels containing the search text', async () => {
+            const stop = await loadFilters();
+
+            expect(store.suggestionsFor('res')).toEqual([
+                {
+                    kind: 'value',
+                    columnId: 'metadata:part_type',
+                    label: 'part_type',
+                    value: 'Resection',
+                    patientCount: 2,
+                },
+            ]);
+            expect(store.suggestionsFor('bloc')).toEqual([
+                { kind: 'match', level: 'BLOCK', patientCount: 5 },
+            ]);
+            expect(
+                store
+                    .suggestionsFor('40')
+                    .map(s => s.kind + ':' + s.patientCount)
+            ).toEqual(['value:4']);
+            expect(store.suggestionsFor('  ')).toEqual([]);
+            stop();
+        });
+
+        it('pins more columns, and unpinning drops their selection', async () => {
+            const stop = await loadFilters();
+
+            store.pinColumn('metadata:magnification');
+            expect(store.visibleFacets.map(f => f.columnId)).toContain(
+                'metadata:magnification'
+            );
+            expect(
+                JSON.parse(
+                    window.localStorage.getItem('wsi.study.pinnedFacets')!
+                )
+            ).toEqual(['metadata:magnification']);
+            store.addColumnValue('metadata:magnification', '20x');
+
+            store.unpinColumn('metadata:magnification');
+            expect(store.visibleFacets.map(f => f.columnId)).not.toContain(
+                'metadata:magnification'
+            );
+            expect(store.columnFilters).toEqual({});
+            stop();
+        });
+
+        it('clears column filters with the other tab filters', async () => {
+            const stop = await loadFilters();
+            store.addColumnValue('metadata:subspecialty', 'GI');
+            expect(store.hasSlideFilters).toBe(true);
+
+            store.clearSlideFilters();
+            expect(store.hasSlideFilters).toBe(false);
+            expect(store.columnFilters).toEqual({});
+            stop();
+        });
     });
 
     it('clears only the tab filters', async () => {
@@ -445,9 +735,12 @@ describe('studySlidesViewFromUrl', () => {
 
     it("redirects the slide table's old resource tab to the table view", () => {
         expect(
+            studySlidesViewFromUrl('resourceTable_PATHOLOGY_SLIDES', undefined)
+        ).toEqual({ view: 'table', redirectToSlidesTab: true });
+        // The tabs the slide table had as a single resource.
+        expect(
             studySlidesViewFromUrl('resourceTable_WSI_SLIDES', undefined)
         ).toEqual({ view: 'table', redirectToSlidesTab: true });
-        // The tab the slide table had before it got its own resource id.
         expect(
             studySlidesViewFromUrl('resourceTable_WSI_SAMPLE', undefined)
         ).toEqual({ view: 'table', redirectToSlidesTab: true });
@@ -459,7 +752,7 @@ describe('studySlidesViewFromUrl', () => {
     it('keeps the old slide table tab without a slide viewer', () => {
         (getServerConfig() as any).wsi_tile_server_url = '';
         expect(
-            studySlidesViewFromUrl('resourceTable_WSI_SLIDES', undefined)
+            studySlidesViewFromUrl('resourceTable_PATHOLOGY_SLIDES', undefined)
         ).toEqual({ view: 'viewer', redirectToSlidesTab: false });
     });
 });
@@ -472,6 +765,11 @@ describe('studySlidesUrlState', () => {
                 wsiPatientId: 'P-1',
                 wsiStain: 'H&E,bogus,IHC',
                 wsiMatch: 'BLOCK',
+                wsiFacets: JSON.stringify({
+                    'metadata:part_type': ['Biopsy', 7],
+                    patientId: ['P-1'],
+                    'metadata:stain_name': [],
+                }),
                 wsiSearch: ' P-1 ',
             })
         ).toEqual({
@@ -479,12 +777,18 @@ describe('studySlidesUrlState', () => {
             filters: {
                 stainGroups: ['H&E', 'IHC'],
                 matchLevels: ['BLOCK'],
+                columns: { 'metadata:part_type': ['Biopsy'] },
                 search: 'P-1',
             },
         });
-        expect(studySlidesUrlState({})).toEqual({
+        expect(studySlidesUrlState({ wsiFacets: '{oops' })).toEqual({
             selection: undefined,
-            filters: { stainGroups: [], matchLevels: [], search: '' },
+            filters: {
+                stainGroups: [],
+                matchLevels: [],
+                columns: {},
+                search: '',
+            },
         });
     });
 });

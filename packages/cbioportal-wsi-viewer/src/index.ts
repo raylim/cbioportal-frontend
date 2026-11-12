@@ -5,12 +5,16 @@ export {
     configureWsiViewerRuntime,
     WsiMolecularServices,
     WsiOncoKbClient,
-    WsiAgentConfig,
-    WsiAnnotationsConfig,
     WsiViewerConfig,
 } from './wsiViewerConfig';
 // Type-only: the component itself is in the viewer entry.
 export { WsiViewerProps } from './WsiViewerEntry';
+export { DAY_ZERO_TOOLTIP, formatDaysSinceDiagnosis } from './wsiNavUtils';
+export {
+    buildWsiSampleTimelineMap,
+    WsiSampleTimeline,
+    WsiSampleTimelineMap,
+} from './wsiSampleTimeline';
 export {
     clearWsiHashFromCurrentUrl,
     hashUrlState,

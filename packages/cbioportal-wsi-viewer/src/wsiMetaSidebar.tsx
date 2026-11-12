@@ -301,10 +301,6 @@ function WsiMetaSidebarComponent({
     sample,
     mutationDataStatus,
     dataVersion,
-    annotationLayersPanel,
-    annotationPanel,
-    annotationPanelTitle,
-    agentPanel,
     clinicalRows,
     onHide,
 }: {
@@ -318,10 +314,6 @@ function WsiMetaSidebarComponent({
     mutationDataStatus: WsiMutationDataStatus;
     /** Invalidates the memoized sidebar when enrichment mutates a sample in place. */
     dataVersion?: number;
-    annotationLayersPanel?: React.ReactNode;
-    annotationPanel?: React.ReactNode;
-    annotationPanelTitle?: string;
-    agentPanel?: React.ReactNode;
     /** Patient clinical rows; unset (e.g. still loading) hides the section. */
     clinicalRows?: ReadonlyArray<MetaRow>;
     /** Shows a header button that hides the sidebar. */
@@ -397,24 +389,6 @@ function WsiMetaSidebarComponent({
                     {sample?.structural_variants?.length ? (
                         <StructuralVariantTable sample={sample} />
                     ) : null}
-                </SbSection>
-            )}
-            {annotationLayersPanel && (
-                <SbSection id="annotationLayers" title="Layers">
-                    {annotationLayersPanel}
-                </SbSection>
-            )}
-            {annotationPanel && (
-                <SbSection
-                    id="annotations"
-                    title={annotationPanelTitle || 'Annotations'}
-                >
-                    {annotationPanel}
-                </SbSection>
-            )}
-            {agentPanel && (
-                <SbSection id="researchAssistant" title="Research assistant">
-                    {agentPanel}
                 </SbSection>
             )}
         </div>

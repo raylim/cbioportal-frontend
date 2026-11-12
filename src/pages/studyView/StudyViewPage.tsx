@@ -105,18 +105,26 @@ import {
 import { StudyPathologySlidesTab } from './tabs/pathologySlides/StudyPathologySlidesTab';
 import { ResourceTableStore } from 'shared/components/resourceTable/ResourceTableStore';
 import {
-    isHiddenFromStudyResourceTable,
+    isHiddenMetadataKey,
     isWsiTileServerConfigured,
-    slideKeyFromSlideUrl,
-    STUDY_SLIDE_TABLE_RESOURCE_ID,
+    PATHOLOGY_SLIDES_RESOURCE_TAB,
+    SLIDE_KEY_METADATA_KEY,
+    STUDY_VIEW_RESOURCE_TABLE_OPTIONS,
 } from 'shared/lib/ResourcePolicy';
-import { IResourceTableRow } from 'shared/lib/ResourceTableUtils';
+import {
+    IResourceTableRow,
+    isResourceViewerTab,
+    listedResourceTabs,
+} from 'shared/lib/ResourceTableUtils';
+import {
+    getStudyViewResourceCohort,
+    syncStudyViewResourceCohort,
+} from './resources/studyViewResourceCohort';
 import ResourceDataTable from 'shared/components/resourceTable/ResourceDataTable';
 import { ResourceViewerStore } from 'shared/components/resourceViewer/ResourceViewerStore';
 import ResourceViewerTab from 'shared/components/resourceViewer/ResourceViewerTab';
 import resourceViewerStyles from 'shared/components/resourceViewer/styles.module.scss';
 import { ResourceTableTab } from 'shared/api/resourceTableClient';
-import { isStudyWideResource } from 'shared/lib/ResourceTableUtils';
 
 export interface IStudyViewPageProps {
     routing: any;
@@ -176,9 +184,9 @@ export default class StudyViewPage extends React.Component<
     private toolbarLeftUpdater: any;
     @observable private toolbarLeft: number = 0;
 
-    private readonly resourceTableStore = new ResourceTableStore({
-        hideResource: isHiddenFromStudyResourceTable,
-    });
+    private readonly resourceTableStore = new ResourceTableStore(
+        STUDY_VIEW_RESOURCE_TABLE_OPTIONS
+    );
     private readonly resourceTableStores = new Map<
         string,
         ResourceTableStore
@@ -220,7 +228,7 @@ export default class StudyViewPage extends React.Component<
             wsiView
         );
         this.pathologySlidesStore = new StudyPathologySlidesStore({
-            getFilters: () => this.store.filters,
+            getCohort: () => getStudyViewResourceCohort(this.store),
             getStudyIds: () => this.store.queriedPhysicalStudyIds.result,
             initialSelection:
                 wsiStudyId && wsiPatientId
@@ -393,25 +401,11 @@ export default class StudyViewPage extends React.Component<
         }, 500);
 
         this.resourceTableStoreDisposer = autorun(() => {
-            const samples = this.store.selectedSamples.result;
-            if (!samples) return;
-            const allSamples = this.store.samples.result;
-            // store.samples is itself filtered to the queried identifiers for a virtual study or
-            // case list, so "every sample is selected" does not mean "the whole study" there.
-            const coversWholeStudy = _.isEmpty(
-                this.store.queriedSampleIdentifiers.result
-            );
-            this.resourceTableStore.setContextFromSelection(
-                samples,
-                allSamples,
-                coversWholeStudy
-            );
+            const cohort = getStudyViewResourceCohort(this.store);
+            if (!cohort) return;
+            syncStudyViewResourceCohort(this.resourceTableStore, cohort);
             this.resourceTableStores.forEach(store =>
-                store.setContextFromSelection(
-                    samples,
-                    allSamples,
-                    coversWholeStudy
-                )
+                syncStudyViewResourceCohort(store, cohort)
             );
             this.resourceViewerStores.forEach(store =>
                 this.setViewerStoreContext(store)
@@ -439,33 +433,31 @@ export default class StudyViewPage extends React.Component<
     private getOrCreateResourceStore(resourceId: string): ResourceTableStore {
         let store = this.resourceTableStores.get(resourceId);
         if (!store) {
-            store = new ResourceTableStore({
-                hideResource:
-                    resourceId === STUDY_SLIDE_TABLE_RESOURCE_ID
-                        ? id => id !== STUDY_SLIDE_TABLE_RESOURCE_ID
-                        : isHiddenFromStudyResourceTable,
-            });
-            store.setSelectedResourceId(resourceId);
+            store = new ResourceTableStore(
+                resourceId === PATHOLOGY_SLIDES_RESOURCE_TAB.id
+                    ? {
+                          // The Pathology Slides tab's slide table, which the resource tabs
+                          // leave out when the viewer shows it.
+                          combinedTabs: [PATHOLOGY_SLIDES_RESOURCE_TAB],
+                          hideMetadataKey: isHiddenMetadataKey,
+                          hideResource: id =>
+                              id !== PATHOLOGY_SLIDES_RESOURCE_TAB.id,
+                      }
+                    : STUDY_VIEW_RESOURCE_TABLE_OPTIONS
+            );
+            store.scopeToResource(resourceId);
             this.resourceTableStores.set(resourceId, store);
 
-            const samples = this.store.selectedSamples.result;
-            if (samples) {
-                store.setContextFromSelection(
-                    samples,
-                    this.store.samples.result,
-                    _.isEmpty(this.store.queriedSampleIdentifiers.result)
-                );
+            const cohort = getStudyViewResourceCohort(this.store);
+            if (cohort) {
+                store.setCohort(cohort);
             }
         }
         return store;
     }
 
     private setViewerStoreContext(store: ResourceViewerStore) {
-        store.setContext(
-            this.resourceTableStore.studyIds,
-            this.resourceTableStore.patientIdentifiers,
-            this.resourceTableStore.sampleIdentifiers
-        );
+        store.setCohort(this.resourceTableStore.cohort);
     }
 
     private getOrCreateViewerStore(
@@ -611,18 +603,17 @@ export default class StudyViewPage extends React.Component<
         }
     }
 
-    @computed get visibleResourceDefinitions() {
-        // The resources the resource table lists, so a study whose resources are
-        // all hidden from it (legacy H&E, slides the viewer shows) has no Files
-        // & Links tab.
-        return (this.store.resourceDefinitions.result || []).filter(
-            d => !isHiddenFromStudyResourceTable(d.resourceId)
+    /** The tabs the study's resources are listed in, a combined tab once; see listedResourceTabs. */
+    @computed get listedResourceTabs() {
+        return listedResourceTabs(
+            this.store.resourceDefinitions.result || [],
+            STUDY_VIEW_RESOURCE_TABLE_OPTIONS
         );
     }
 
     @computed get shouldShowResources() {
         if (this.store.resourceDefinitions.isComplete) {
-            return this.visibleResourceDefinitions.length > 0;
+            return this.listedResourceTabs.length > 0;
         } else {
             return false;
         }
@@ -637,7 +628,7 @@ export default class StudyViewPage extends React.Component<
                 studyId: row.studyId,
                 patientId: row.patientStableId || row.patientId,
             },
-            slideKeyFromSlideUrl(row.url)
+            row.metadata[SLIDE_KEY_METADATA_KEY] || undefined
         );
     };
 
@@ -822,7 +813,7 @@ export default class StudyViewPage extends React.Component<
                 return [] as JSX.Element[];
             }
             return apiTabs.map(tab =>
-                isStudyWideResource(tab) ? (
+                isResourceViewerTab(tab, STUDY_VIEW_RESOURCE_TABLE_OPTIONS) ? (
                     this.renderViewerTab(tab)
                 ) : (
                     <MSKTab
@@ -883,9 +874,9 @@ export default class StudyViewPage extends React.Component<
     }
 
     @computed get isStudyWideViewerTabActive(): boolean {
-        return (this.resourceTableStore.tabs.result || []).some(
+        return this.resourceTableStore.visibleTabs.some(
             tab =>
-                isStudyWideResource(tab) &&
+                isResourceViewerTab(tab, STUDY_VIEW_RESOURCE_TABLE_OPTIONS) &&
                 (this.store.currentTab as string) ===
                     getStudyViewResourceTableTabId(tab.resourceId)
         );
@@ -1075,11 +1066,9 @@ export default class StudyViewPage extends React.Component<
                                             StudyViewPageTabKeyEnum.FILES_AND_LINKS
                                         }
                                         linkText={
-                                            this.visibleResourceDefinitions
-                                                .length === 1
-                                                ? this
-                                                      .visibleResourceDefinitions[0]
-                                                      .displayName
+                                            this.listedResourceTabs.length === 1
+                                                ? this.listedResourceTabs[0]
+                                                      .label
                                                 : RESOURCES_TAB_NAME
                                         }
                                         hide={
@@ -1161,10 +1150,10 @@ export default class StudyViewPage extends React.Component<
                                                 slideTable={
                                                     <ResourceDataTable
                                                         store={this.getOrCreateResourceStore(
-                                                            STUDY_SLIDE_TABLE_RESOURCE_ID
+                                                            PATHOLOGY_SLIDES_RESOURCE_TAB.id
                                                         )}
                                                         scopedResourceId={
-                                                            STUDY_SLIDE_TABLE_RESOURCE_ID
+                                                            PATHOLOGY_SLIDES_RESOURCE_TAB.id
                                                         }
                                                         hideTabs={true}
                                                         resourceLabel="slides"

@@ -19,6 +19,7 @@ export default class StudyViewURLWrapper extends URLWrapper<
         | 'wsiView'
         | 'wsiStain'
         | 'wsiMatch'
+        | 'wsiFacets'
         | 'wsiSearch'
         | 'plots_horz_selection'
         | 'plots_vert_selection'
@@ -49,6 +50,7 @@ export default class StudyViewURLWrapper extends URLWrapper<
             wsiView: { isSessionProp: false },
             wsiStain: { isSessionProp: false },
             wsiMatch: { isSessionProp: false },
+            wsiFacets: { isSessionProp: false },
             wsiSearch: { isSessionProp: false },
             ...PLOTS_TAB_URL_PARAMS,
             embeddings_coloring_selection: {
@@ -133,12 +135,17 @@ export default class StudyViewURLWrapper extends URLWrapper<
     public setWsiSlideFilters(filters: {
         stainGroups: string[];
         matchLevels: string[];
+        columns: { [columnId: string]: string[] };
         search: string;
     }) {
         this.updateURL(
             {
                 wsiStain: filters.stainGroups.join(',') || undefined,
                 wsiMatch: filters.matchLevels.join(',') || undefined,
+                wsiFacets:
+                    Object.keys(filters.columns).length > 0
+                        ? JSON.stringify(filters.columns)
+                        : undefined,
                 wsiSearch: filters.search || undefined,
             },
             undefined,
