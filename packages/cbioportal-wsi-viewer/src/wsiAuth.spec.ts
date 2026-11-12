@@ -1,6 +1,7 @@
 import {
     clearWsiSlideSources,
     getWsiSlideSource,
+    getWsiSourceFingerprint,
     registerWsiSlideSources,
     wsiSlideRegistryGeneration,
 } from './wsiAuth';
@@ -173,4 +174,25 @@ describe('WSI slide sources', () => {
             );
         }
     );
+
+    it('fingerprints a slide source by its slide key and pyramid shape', () => {
+        const slideKey = '0123456789ab';
+        const source = {
+            slideKey,
+            servingKey: slideKey,
+            sealedSource: TEST_SEALED_SOURCE,
+            tileMetadata: {
+                dimensions: { width: 100, height: 80 },
+                levels: 3,
+                tile_size: 256,
+            },
+        } as any;
+
+        expect(getWsiSourceFingerprint(source)).toBe(
+            `wsi-v3:${slideKey}:100x80:3:256`
+        );
+        expect(
+            getWsiSourceFingerprint({ ...source, sealedSource: 'other' })
+        ).toBe(getWsiSourceFingerprint(source));
+    });
 });
