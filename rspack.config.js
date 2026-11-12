@@ -129,6 +129,15 @@ var config = {
                     chunks: 'initial',
                     enforce: true,
                 },
+                // The viewer and Annotorious each load OpenSeadragon from
+                // their own async chunk; keep its single copy in the
+                // wsi-openseadragon chunk that both of them share.
+                wsiOpenSeadragon: {
+                    test: /[\\/]node_modules[\\/]openseadragon[\\/]/,
+                    name: 'wsi-openseadragon',
+                    chunks: 'async',
+                    enforce: true,
+                },
                 default: false,
                 defaultVendors: false,
             },

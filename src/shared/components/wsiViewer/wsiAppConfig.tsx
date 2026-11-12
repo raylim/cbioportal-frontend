@@ -14,11 +14,15 @@ function renderWsiLoading() {
 
 /** Viewer services from the portal configuration, installed at startup. */
 export function buildWsiViewerConfig(): WsiViewerConfig {
+    const annotationApiUrl = getServerConfig().wsi_annotation_api_url?.trim();
     return {
         buildApiUrl: (path: string) => buildCBioPortalAPIUrl(path),
         buildPageUrl: (path: string, query: Record<string, string>) =>
             buildCBioPortalPageUrl(path, query),
         osdPrefixUrl: WSI_OSD_PREFIX_URL,
+        annotations: annotationApiUrl
+            ? { apiUrl: annotationApiUrl.replace(/\/+$/, '') }
+            : undefined,
     };
 }
 
