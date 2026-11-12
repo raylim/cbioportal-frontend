@@ -35,39 +35,100 @@ function apiAnnotation(
 const SLIDE_KEY = '0123456789ab';
 
 describe('WsiAnnotationController', () => {
-    const token = jest.fn().mockResolvedValue('annotation-token');
-
     // Viewers attach synchronously once the Annotorious chunk has loaded.
     beforeAll(() => loadAnnotorious());
 
     beforeEach(() => {
         jest.restoreAllMocks();
-        token.mockClear();
         window.localStorage.clear();
         global.fetch = jest.fn() as typeof fetch;
     });
 
-    it('sends the annotation capability on API requests', async () => {
-        jest.spyOn(global, 'fetch').mockResolvedValue({
-            ok: true,
-            json: async () => [apiAnnotation('a1')],
-        } as Response);
+    it('calls the service with the session cookie, the study and the CSRF header on writes', async () => {
+        jest.spyOn(global, 'fetch').mockImplementation(async (_url, init) => {
+            if (init?.method === 'DELETE') {
+                return { ok: true, status: 204 } as Response;
+            }
+            if (init?.method === 'POST' || init?.method === 'PUT') {
+                return {
+                    ok: true,
+                    json: async () => apiAnnotation('a1', 2),
+                } as Response;
+            }
+            return {
+                ok: true,
+                json: async () => [apiAnnotation('a1')],
+            } as Response;
+        });
         const controller = new WsiAnnotationController(
-            'https://tiles.example',
-            'study1',
-            token
+            'https://annotations.example/wsi/',
+            'study 1'
+        );
+
+        controller.beginSlide(SLIDE_KEY);
+        await new Promise(resolve => setTimeout(resolve, 0));
+        expect(controller.annotations[0].id).toBe('a1');
+        await (controller as any).createAnnotation({
+            id: 'client-a',
+            body: [],
+            target: {
+                source: SLIDE_KEY,
+                selector: {
+                    type: 'FragmentSelector',
+                    value: 'xywh=pixel:1,2,3,4',
+                },
+            },
+        });
+        await (controller as any).updateAnnotation(controller.annotations[0]);
+        await controller.removeAnnotation('a1');
+
+        const calls = (global.fetch as jest.Mock).mock.calls as Array<
+            [string, RequestInit]
+        >;
+        expect(calls.map(([, init]) => init.method || 'GET')).toEqual([
+            'GET',
+            'POST',
+            'PUT',
+            'DELETE',
+        ]);
+        const paths = calls.map(([url]) => new URL(url).pathname);
+        expect(paths).toEqual([
+            '/wsi/annotations',
+            '/wsi/annotations',
+            '/wsi/annotations/a1',
+            '/wsi/annotations/a1',
+        ]);
+        calls.forEach(([url, init]) => {
+            const query = new URL(url).searchParams;
+            expect(query.getAll('studyId')).toEqual(['study 1']);
+            expect(init.credentials).toBe('include');
+            const headers = init.headers as Headers;
+            expect(headers.has('Authorization')).toBe(false);
+            const write = (init.method || 'GET') !== 'GET';
+            expect(headers.get('X-Requested-With')).toBe(
+                write ? 'XMLHttpRequest' : null
+            );
+            expect(headers.get('Content-Type')).toBe(
+                init.body ? 'application/json' : null
+            );
+        });
+        expect(new URL(calls[0][0]).searchParams.get('study_id')).toBe(
+            'study 1'
+        );
+        expect(JSON.parse(calls[1][1].body as string).study_id).toBe('study 1');
+    });
+
+    it('sends nothing without a study', async () => {
+        const controller = new WsiAnnotationController(
+            'https://annotations.example',
+            undefined
         );
 
         controller.beginSlide(SLIDE_KEY);
         await new Promise(resolve => setTimeout(resolve, 0));
 
-        expect(token).toHaveBeenCalledTimes(1);
-        const request = (global.fetch as jest.Mock).mock.calls[0];
-        expect(request[0]).toContain('study_id=study1');
-        expect(request[1].headers.get('Authorization')).toBe(
-            'Bearer annotation-token'
-        );
-        expect(controller.annotations[0].id).toBe('a1');
+        expect(global.fetch).not.toHaveBeenCalled();
+        expect(controller.error).toBe('Unable to load annotations.');
     });
 
     it('sends the opaque slide key as the service slide_id on loads and writes', async () => {
@@ -82,8 +143,7 @@ describe('WsiAnnotationController', () => {
         });
         const controller = new WsiAnnotationController(
             'https://annotations.example',
-            'study1',
-            token
+            'study1'
         );
 
         controller.beginSlide(SLIDE_KEY);
@@ -128,8 +188,7 @@ describe('WsiAnnotationController', () => {
             );
         const controller = new WsiAnnotationController(
             'https://tiles.example',
-            'study1',
-            token
+            'study1'
         );
 
         controller.beginSlide('slide1');
@@ -162,8 +221,7 @@ describe('WsiAnnotationController', () => {
         });
         const controller = new WsiAnnotationController(
             'https://tiles.example',
-            'study1',
-            token
+            'study1'
         );
 
         controller.beginSlide('slide-a');
@@ -213,8 +271,7 @@ describe('WsiAnnotationController', () => {
         });
         const controller = new WsiAnnotationController(
             'https://tiles.example',
-            'study1',
-            token
+            'study1'
         );
 
         controller.beginSlide('slide-a');
@@ -239,15 +296,14 @@ describe('WsiAnnotationController', () => {
         ).toHaveLength(2);
     });
 
-    it('reports an unauthorized annotation load without exposing partial data', async () => {
+    it('asks a signed-out user to sign in and turns editing off', async () => {
         jest.spyOn(global, 'fetch').mockResolvedValue({
             ok: false,
             status: 401,
         } as Response);
         const controller = new WsiAnnotationController(
             'https://tiles.example',
-            'study1',
-            token
+            'study1'
         );
 
         controller.beginSlide('slide1');
@@ -255,7 +311,92 @@ describe('WsiAnnotationController', () => {
 
         expect(controller.loading).toBe(false);
         expect(controller.annotations).toEqual([]);
-        expect(controller.error).toBe('Unable to load annotations.');
+        expect(controller.accessIssue).toBe('signedOut');
+        expect(controller.canEdit).toBe(false);
+        expect(controller.error).toBe('Sign in to view and edit annotations.');
+        controller.setTool('rectangle');
+        expect(controller.activeTool).toBeNull();
+        expect(global.fetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('makes annotations read-only when a write is refused, without retrying', async () => {
+        jest.spyOn(global, 'fetch').mockImplementation(async (_url, init) =>
+            init?.method === 'PUT'
+                ? ({ ok: false, status: 403 } as Response)
+                : ({
+                      ok: true,
+                      json: async () => [apiAnnotation('a1')],
+                  } as Response)
+        );
+        const controller = new WsiAnnotationController(
+            'https://tiles.example',
+            'study1'
+        );
+        controller.beginSlide('slide1');
+        await new Promise(resolve => setTimeout(resolve, 0));
+
+        await controller.renameAnnotation('a1', 'renamed');
+
+        expect(controller.accessIssue).toBe('forbidden');
+        expect(controller.canEdit).toBe(false);
+        expect(controller.error).toBe(
+            'Annotations are read-only: you do not have access to this study.'
+        );
+        // The saved annotation stays; the refused edit is not reloaded or retried.
+        expect(controller.annotations.map(item => item.body[0].value)).toEqual([
+            'a1',
+        ]);
+        expect(
+            (global.fetch as jest.Mock).mock.calls.map(
+                ([, init]) => init?.method || 'GET'
+            )
+        ).toEqual(['GET', 'PUT']);
+
+        // Further edits are not sent.
+        await controller.removeAnnotation('a1');
+        await controller.renameAnnotation('a1', 'again');
+        expect(global.fetch).toHaveBeenCalledTimes(2);
+
+        // A new study tries again.
+        controller.setContext('https://tiles.example', 'study2');
+        expect(controller.accessIssue).toBeNull();
+        await new Promise(resolve => setTimeout(resolve, 0));
+        expect(global.fetch).toHaveBeenCalledTimes(3);
+    });
+
+    it('drops a refused new annotation', async () => {
+        jest.spyOn(global, 'fetch').mockImplementation(async (_url, init) =>
+            init?.method === 'POST'
+                ? ({ ok: false, status: 403 } as Response)
+                : ({ ok: true, json: async () => [] } as Response)
+        );
+        const controller = new WsiAnnotationController(
+            'https://tiles.example',
+            'study1'
+        );
+        controller.beginSlide(SLIDE_KEY);
+        await new Promise(resolve => setTimeout(resolve, 0));
+        (controller as any).annotations = [
+            {
+                id: 'client-a',
+                body: [
+                    {
+                        type: 'TextualBody',
+                        value: 'new',
+                        purpose: 'commenting',
+                    },
+                ],
+                target: { source: SLIDE_KEY, selector: {} },
+            },
+        ];
+
+        await (controller as any).createAnnotation(
+            (controller as any).annotations[0]
+        );
+
+        expect(controller.annotations).toEqual([]);
+        expect(controller.accessIssue).toBe('forbidden');
+        expect(global.fetch).toHaveBeenCalledTimes(2);
     });
 
     it('stores the server version after an update', async () => {
@@ -265,8 +406,7 @@ describe('WsiAnnotationController', () => {
         } as Response);
         const controller = new WsiAnnotationController(
             'https://tiles.example',
-            'study1',
-            token
+            'study1'
         );
         (controller as any).annotations = [
             (controller as any).fromApi(apiAnnotation('a1', 1), 'slide1'),
@@ -303,8 +443,7 @@ describe('WsiAnnotationController', () => {
         } as Response);
         const controller = new WsiAnnotationController(
             'https://tiles.example',
-            'study1',
-            token
+            'study1'
         );
         (controller as any).slideKey = 'slide1';
         controller.addLayer('Tumor');
@@ -372,8 +511,7 @@ describe('WsiAnnotationController', () => {
         } as Response);
         const controller = new WsiAnnotationController(
             'https://tiles.example',
-            'study1',
-            token
+            'study1'
         );
         (controller as any).slideKey = 'slide1';
         const viewerElement = document.createElement('div');
@@ -453,8 +591,7 @@ describe('WsiAnnotationController', () => {
         (createOSDAnnotator as jest.Mock).mockReturnValue(annotator);
         const controller = new WsiAnnotationController(
             'https://tiles.example',
-            'study1',
-            token
+            'study1'
         );
         (controller as any).slideKey = 'slide1';
         (controller as any).annotations = [
@@ -526,8 +663,7 @@ describe('WsiAnnotationController', () => {
         } as Response);
         const controller = new WsiAnnotationController(
             'https://tiles.example',
-            'study1',
-            token
+            'study1'
         );
         controller.toggleLayerVisibility('Tumor');
         controller.beginSlide('slide1');
@@ -560,8 +696,7 @@ describe('WsiAnnotationController', () => {
         (createOSDAnnotator as jest.Mock).mockReturnValue(annotator);
         const controller = new WsiAnnotationController(
             'https://tiles.example',
-            'study1',
-            token
+            'study1'
         );
         (controller as any).slideKey = 'slide1';
         const viewerElement = document.createElement('div');
@@ -607,8 +742,7 @@ describe('WsiAnnotationController', () => {
         );
         const controller = new WsiAnnotationController(
             'https://tiles.example',
-            'study1',
-            token
+            'study1'
         );
         controller.beginSlide('slide1');
         await new Promise(resolve => setTimeout(resolve, 0));
@@ -649,15 +783,14 @@ describe('WsiAnnotationController', () => {
                 Promise.resolve({
                     ok: true,
                     json: async () =>
-                        String(url).includes('study_id=study2')
+                        String(url).includes('studyId=study2')
                             ? [apiAnnotation('b1')]
                             : [apiAnnotation('a1')],
                 } as Response)
         );
         const controller = new WsiAnnotationController(
             'https://tiles.example',
-            'study1',
-            token
+            'study1'
         );
         controller.beginSlide('slide1');
         await new Promise(resolve => setTimeout(resolve, 0));
@@ -671,7 +804,7 @@ describe('WsiAnnotationController', () => {
         expect(controller.annotations.map(item => item.id)).toEqual(['b1']);
         expect(
             (global.fetch as jest.Mock).mock.calls[1][0] as string
-        ).toContain('study_id=study2');
+        ).toContain('studyId=study2');
     });
 
     it('clears the previous annotations when pending requests are invalidated', async () => {
@@ -681,8 +814,7 @@ describe('WsiAnnotationController', () => {
         } as Response);
         const controller = new WsiAnnotationController(
             'https://tiles.example',
-            'study1',
-            token
+            'study1'
         );
         controller.beginSlide('slide1');
         await new Promise(resolve => setTimeout(resolve, 0));
@@ -752,8 +884,7 @@ describe('WsiAnnotationController', () => {
     it('only offers removal for unused user-added colors', () => {
         const controller = new WsiAnnotationController(
             'https://tiles.example',
-            'study1',
-            token
+            'study1'
         );
         controller.addNamedColor('Tumor', '#ef4444');
         controller.addNamedColor('Stroma', '#22c55e');

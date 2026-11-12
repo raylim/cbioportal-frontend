@@ -53,6 +53,23 @@ const tools: Array<{
     },
 ];
 
+const toolbarStyle: React.CSSProperties = {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    display: 'flex',
+    alignItems: 'center',
+    gap: 6,
+    flexWrap: 'wrap',
+    padding: '4px 10px 4px 44px',
+    background: 'rgba(250,250,250,0.92)',
+    borderBottom: `1px solid ${colors.border}`,
+    fontSize: 11,
+    backdropFilter: 'blur(2px)',
+    zIndex: 20,
+};
+
 export const WsiAnnotationToolbar = observer(
     ({ controller }: { controller: WsiAnnotationController }) => {
         const [showAddColor, setShowAddColor] = React.useState(false);
@@ -70,26 +87,23 @@ export const WsiAnnotationToolbar = observer(
             setShowAddColor(false);
         };
 
+        if (!controller.canEdit) {
+            // Signed out or read-only: no drawing tools, only the notice.
+            return controller.accessMessage ? (
+                <div data-testid="wsi-annotation-toolbar" style={toolbarStyle}>
+                    <span
+                        role="status"
+                        data-testid="wsi-annotation-access-notice"
+                        style={{ color: colors.muted }}
+                    >
+                        {controller.accessMessage}
+                    </span>
+                </div>
+            ) : null;
+        }
+
         return (
-            <div
-                data-testid="wsi-annotation-toolbar"
-                style={{
-                    position: 'absolute',
-                    top: 0,
-                    left: 0,
-                    right: 0,
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 6,
-                    flexWrap: 'wrap',
-                    padding: '4px 10px 4px 44px',
-                    background: 'rgba(250,250,250,0.92)',
-                    borderBottom: `1px solid ${colors.border}`,
-                    fontSize: 11,
-                    backdropFilter: 'blur(2px)',
-                    zIndex: 20,
-                }}
-            >
+            <div data-testid="wsi-annotation-toolbar" style={toolbarStyle}>
                 {tools.map(tool => {
                     const active = controller.activeTool === tool.name;
                     return (
@@ -404,7 +418,7 @@ export const WsiAnnotationLayersPanel = observer(
                             >
                                 {count}
                             </span>
-                            {layer !== DEFAULT_LAYER && (
+                            {layer !== DEFAULT_LAYER && controller.canEdit && (
                                 <button
                                     data-testid={`delete-layer-${layer}`}
                                     title={`Delete layer "${layer}"`}
@@ -529,7 +543,9 @@ export const WsiAnnotationPanel = observer(
         if (!controller.annotations.length) {
             return (
                 <span style={{ color: '#999', fontSize: 11 }}>
-                    No annotations yet. Draw on the slide to create one.
+                    {controller.canEdit
+                        ? 'No annotations yet. Draw on the slide to create one.'
+                        : 'No annotations.'}
                 </span>
             );
         }
@@ -686,7 +702,7 @@ const AnnotationRow = observer(
                         </>
                     )}
                 </div>
-                {!editing && (
+                {!editing && controller.canEdit && (
                     <button
                         data-testid={`edit-label-${annotation.id}`}
                         title="Edit label"
@@ -704,21 +720,23 @@ const AnnotationRow = observer(
                         ✎
                     </button>
                 )}
-                <button
-                    data-testid={`delete-annotation-${annotation.id}`}
-                    title="Delete annotation"
-                    onClick={() =>
-                        void controller.removeAnnotation(annotation.id)
-                    }
-                    style={{
-                        border: 'none',
-                        background: 'transparent',
-                        color: '#c0392b',
-                        padding: '0 2px',
-                    }}
-                >
-                    ✕
-                </button>
+                {controller.canEdit && (
+                    <button
+                        data-testid={`delete-annotation-${annotation.id}`}
+                        title="Delete annotation"
+                        onClick={() =>
+                            void controller.removeAnnotation(annotation.id)
+                        }
+                        style={{
+                            border: 'none',
+                            background: 'transparent',
+                            color: '#c0392b',
+                            padding: '0 2px',
+                        }}
+                    >
+                        ✕
+                    </button>
+                )}
             </div>
         );
     }

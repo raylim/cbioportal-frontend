@@ -16,8 +16,7 @@ describe('WsiAnnotationController before Annotorious loads', () => {
     function makeController() {
         const controller = new WsiAnnotationController(
             'https://tiles.example',
-            's1',
-            () => Promise.resolve('token')
+            's1'
         );
         (controller as any).slideKey = 'slide1';
         return controller;

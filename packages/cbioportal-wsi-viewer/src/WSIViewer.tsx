@@ -34,11 +34,7 @@ import {
 import { WsiViewerState } from './wsiViewerState';
 import { loadOpenSeadragon } from './wsiOpenSeadragonLoader';
 import { clearPatientHierarchyCache } from './wsiHierarchyFetchCache';
-import {
-    clearWsiPurposeAccessTokens,
-    clearWsiSlideSources,
-    getAnnotationAccessToken,
-} from './wsiAuth';
+import { clearWsiSlideSources } from './wsiAuth';
 import { clearWsiThumbnailFetchCache } from './wsiThumbnailFetchCache';
 import { WsiAnnotationController } from './wsiAnnotationController';
 import {
@@ -303,12 +299,7 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
         this.linkoutScopeActive = !!props.pathologyFilter;
         this.annotationController = new WsiAnnotationController(
             props.annotationApiUrl,
-            props.studyId,
-            () =>
-                getAnnotationAccessToken(
-                    this.props.studyId,
-                    this.props.authScope
-                )
+            props.studyId
         );
         this.controller = new WsiViewerController(
             this.createControllerHost(),
@@ -512,7 +503,6 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
         if (authScopeChanged) {
             clearPatientHierarchyCache();
             clearWsiSlideSources();
-            clearWsiPurposeAccessTokens();
             clearWsiThumbnailFetchCache();
         }
 

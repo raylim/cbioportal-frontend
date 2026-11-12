@@ -79,6 +79,25 @@ So `wsi_tile_server_url` must be same-origin with the portal, such as `/wsi` on 
 
 Only the ingress answers 401/403, meaning the session expired or lacks access to the study; the tile server answers its own refusals (a source it will not open, an `enc` that does not match the `key`) with 404. A tile answered 401/403 puts the viewer in its error state, asking the user to reload or sign in again. A failed thumbnail never fails the slide: the slide list retries or hides it, and the slide opens without its preview.
 
+### Annotation service
+
+With `annotations: { apiUrl }` in the runtime (the portal's `wsi_annotation_api_url`, e.g. `/wsi`), the viewer adds annotation authoring:
+
+| Request | Use |
+| --- | --- |
+| `GET {apiUrl}/annotations?slide_id=…&study_id=…&studyId=…` | The slide's annotations |
+| `POST {apiUrl}/annotations?studyId=…` | Create one; the body names `slide_id` and `study_id` |
+| `PUT {apiUrl}/annotations/{id}?studyId=…` | Update one, with its `version` |
+| `DELETE {apiUrl}/annotations/{id}?studyId=…` | Delete one |
+
+The service sits behind a proxy that authorizes each request with the portal session cookie for the study in `studyId`, and forwards the user and study to the service. So every request:
+
+- sends the cookie (`credentials: 'include'`) and no token or `Authorization` header;
+- carries `studyId` exactly once in the query string;
+- if it is a write (POST, PUT, PATCH, DELETE), sends `X-Requested-With: XMLHttpRequest`, and `Content-Type: application/json` with its body.
+
+A 401 means the user is signed out: the toolbar asks them to sign in and editing is off. A 403 means no access to the study: annotations are read-only. Neither is retried; a new slide or study tries again. `wsiServiceRequest.ts` holds the request rules.
+
 The viewer stores the selected slide and viewport in the URL hash (`#wsi:slide=…&x=…&y=…&z=…`) so a view can be shared.
 
 ## Development
