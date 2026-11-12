@@ -638,14 +638,12 @@ export class WsiAnnotationController {
 
     // The annotation service's slide_id field carries the opaque slide key
     // (contract wsi-serving-v5); the browser never holds the image ID. The
-    // list filters by its own study_id; the request's studyId (added by
-    // wsiServiceFetch) is the study the proxy authorizes.
+    // list is scoped to the request's studyId (added by wsiServiceFetch),
+    // the study the proxy authorizes; the service ignores a study_id query.
     private async loadAnnotations(slideKey: string, loadGeneration: number) {
         try {
             const response = await this.request(
-                `/annotations?slide_id=${encodeURIComponent(
-                    slideKey
-                )}&study_id=${encodeURIComponent(this.studyId || '')}`,
+                `/annotations?slide_id=${encodeURIComponent(slideKey)}`,
                 {},
                 this.loadAbortController?.signal
             );

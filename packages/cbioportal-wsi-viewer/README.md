@@ -85,7 +85,7 @@ With `annotations: { apiUrl }` in the runtime (the portal's `wsi_annotation_api_
 
 | Request | Use |
 | --- | --- |
-| `GET {apiUrl}/annotations?slide_id=…&study_id=…&studyId=…` | The slide's annotations |
+| `GET {apiUrl}/annotations?slide_id=…&studyId=…` | The slide's annotations in the authorized study |
 | `POST {apiUrl}/annotations?studyId=…` | Create one; the body names `slide_id` and `study_id` |
 | `PUT {apiUrl}/annotations/{id}?studyId=…` | Update one, with its `version` |
 | `DELETE {apiUrl}/annotations/{id}?studyId=…` | Delete one |

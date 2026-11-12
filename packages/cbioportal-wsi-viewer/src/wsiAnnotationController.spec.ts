@@ -112,8 +112,9 @@ describe('WsiAnnotationController', () => {
                 init.body ? 'application/json' : null
             );
         });
-        expect(new URL(calls[0][0]).searchParams.get('study_id')).toBe(
-            'study 1'
+        expect(new URL(calls[0][0]).searchParams.has('study_id')).toBe(false);
+        expect(new URL(calls[0][0]).searchParams.get('slide_id')).toBe(
+            SLIDE_KEY
         );
         expect(JSON.parse(calls[1][1].body as string).study_id).toBe('study 1');
     });
