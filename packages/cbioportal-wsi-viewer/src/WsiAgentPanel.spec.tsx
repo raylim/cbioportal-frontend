@@ -88,7 +88,206 @@ function streamResponse(value: string) {
     };
 }
 
+/** A write to the service: session cookie and CSRF header, no token. */
+function expectServiceWrite(init: RequestInit) {
+    expect(init.method).toBe('POST');
+    expect(init.credentials).toBe('include');
+    const headers = init.headers as Headers;
+    expect(headers.has('Authorization')).toBe(false);
+    expect(headers.get('X-Requested-With')).toBe('XMLHttpRequest');
+    expect(headers.get('Content-Type')).toBe(
+        init.body ? 'application/json' : null
+    );
+}
+
+function ensureTextDecoder() {
+    if (!globalThis.TextDecoder) {
+        Object.defineProperty(globalThis, 'TextDecoder', {
+            value: require('util').TextDecoder,
+        });
+    }
+}
+
+async function ask(renderer: TestRenderer.ReactTestRenderer, text: string) {
+    const input = renderer.root.findByProps({
+        'aria-label': 'Ask the research assistant',
+    });
+    act(() => {
+        input.props.onChange({ target: { value: text } });
+    });
+    await act(async () => {
+        renderer.root
+            .findByType('form')
+            .props.onSubmit({ preventDefault: jest.fn() });
+        await new Promise(resolve => setTimeout(resolve, 25));
+    });
+}
+
+const viewerProposal: WsiAgentProposal = {
+    ...proposal,
+    id: 'proposal-v',
+    action_type: 'viewer_action',
+    payload: { action: 'zoom_to', rationale: 'Look closer.' },
+};
+
+function proposalStream(item: WsiAgentProposal) {
+    return streamResponse(
+        `event: proposal\ndata: ${JSON.stringify(
+            item
+        )}\n\nevent: complete\ndata: {}\n\n`
+    ) as Response;
+}
+
 describe('WsiAgentPanel', () => {
+    let originalFetch: typeof fetch;
+    beforeEach(() => {
+        originalFetch = globalThis.fetch;
+        ensureTextDecoder();
+    });
+    afterEach(() => {
+        globalThis.fetch = originalFetch;
+    });
+
+    it('applies and rejects viewer proposals with the study on every call', async () => {
+        const fetchMock = jest.fn();
+        globalThis.fetch = (fetchMock as unknown) as typeof fetch;
+        fetchMock
+            .mockResolvedValueOnce(proposalStream(viewerProposal))
+            .mockResolvedValueOnce(
+                responseWithJson({ ...viewerProposal, status: 'approved' })
+            )
+            .mockResolvedValueOnce(
+                responseWithJson({ ...viewerProposal, status: 'completed' })
+            )
+            .mockResolvedValueOnce(
+                proposalStream({ ...viewerProposal, id: 'proposal-w' })
+            )
+            .mockResolvedValueOnce(
+                responseWithJson({
+                    ...viewerProposal,
+                    id: 'proposal-w',
+                    status: 'rejected',
+                })
+            );
+        const applyProposal = jest
+            .fn()
+            .mockResolvedValue({ success: true, detail: 'Zoomed.' });
+        const renderer = TestRenderer.create(
+            <WsiAgentPanel
+                apiUrl="/wsi/"
+                studyId="study a"
+                getContext={() => context}
+                applyProposal={applyProposal}
+            />
+        );
+
+        await ask(renderer, 'zoom in');
+        await act(async () => {
+            renderer.root
+                .findByProps({ 'data-testid': 'wsi-agent-apply-proposal-v' })
+                .props.onClick();
+            await new Promise(resolve => setTimeout(resolve, 25));
+        });
+        await ask(renderer, 'zoom again');
+        await act(async () => {
+            renderer.root
+                .findByProps({ 'data-testid': 'wsi-agent-proposal-proposal-w' })
+                .findAllByType('button')
+                .find(button => button.children.includes('Reject'))!
+                .props.onClick();
+            await new Promise(resolve => setTimeout(resolve, 25));
+        });
+
+        expect(applyProposal).toHaveBeenCalledTimes(1);
+        expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+            '/wsi/agent/chat?studyId=study%20a',
+            '/wsi/agent/actions/proposal-v/apply?studyId=study%20a',
+            '/wsi/agent/actions/proposal-v/complete?studyId=study%20a',
+            '/wsi/agent/chat?studyId=study%20a',
+            '/wsi/agent/actions/proposal-w/reject?studyId=study%20a',
+        ]);
+        fetchMock.mock.calls.forEach(([, init]) => expectServiceWrite(init));
+    });
+
+    it.each([
+        [401, 'Sign in to use the research assistant.'],
+        [
+            403,
+            'You do not have access to the research assistant for this study.',
+        ],
+    ])('stops sending requests after a %i', async (status, message) => {
+        const fetchMock = jest
+            .fn()
+            .mockResolvedValue({ ok: false, status } as Response);
+        globalThis.fetch = (fetchMock as unknown) as typeof fetch;
+        const renderer = TestRenderer.create(
+            <WsiAgentPanel
+                apiUrl="/wsi"
+                studyId="study-a"
+                getContext={() => context}
+                applyProposal={jest.fn()}
+            />
+        );
+
+        await ask(renderer, 'summarize this');
+        await ask(renderer, 'summarize this again');
+
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        expect(
+            renderer.root.findByProps({ role: 'alert' }).children.join('')
+        ).toBe(message);
+        expect(
+            renderer.root.findByProps({
+                'aria-label': 'Ask the research assistant',
+            }).props.disabled
+        ).toBe(true);
+
+        // Another study tries again.
+        renderer.update(
+            <WsiAgentPanel
+                apiUrl="/wsi"
+                studyId="study-b"
+                getContext={() => context}
+                applyProposal={jest.fn()}
+            />
+        );
+        await ask(renderer, 'summarize this');
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    it('disables a pending proposal when a write is refused', async () => {
+        const fetchMock = jest
+            .fn()
+            .mockResolvedValueOnce(proposalStream(viewerProposal))
+            .mockResolvedValue({ ok: false, status: 403 } as Response);
+        globalThis.fetch = (fetchMock as unknown) as typeof fetch;
+        const applyProposal = jest.fn();
+        const renderer = TestRenderer.create(
+            <WsiAgentPanel
+                apiUrl="/wsi"
+                studyId="study-a"
+                getContext={() => context}
+                applyProposal={applyProposal}
+            />
+        );
+        await ask(renderer, 'zoom in');
+
+        await act(async () => {
+            renderer.root
+                .findByProps({ 'data-testid': 'wsi-agent-apply-proposal-v' })
+                .props.onClick();
+            await new Promise(resolve => setTimeout(resolve, 25));
+        });
+
+        expect(applyProposal).not.toHaveBeenCalled();
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+        expect(
+            renderer.root.findByProps({
+                'data-testid': 'wsi-agent-apply-proposal-v',
+            }).props.disabled
+        ).toBe(true);
+    });
+
     it('does not apply a proposed annotation until Apply is pressed', async () => {
         if (!globalThis.TextDecoder) {
             Object.defineProperty(globalThis, 'TextDecoder', {
@@ -127,7 +326,7 @@ describe('WsiAgentPanel', () => {
             <WsiAgentPanel
                 apiUrl="/wsi"
                 getContext={() => Promise.resolve(context)}
-                getToken={async () => 'token'}
+                studyId="study-a"
                 applyProposal={applyProposal}
             />
         );
@@ -172,9 +371,15 @@ describe('WsiAgentPanel', () => {
         });
         expect(applyProposal).not.toHaveBeenCalled();
         expect(fetchMock).toHaveBeenCalledTimes(2);
-        expect(fetchMock.mock.calls[1][0]).toContain(
-            '/agent/actions/proposal-a/commit-annotations'
+        expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+            '/wsi/agent/chat?studyId=study-a',
+            '/wsi/agent/actions/proposal-a/commit-annotations?studyId=study-a',
+        ]);
+        expectServiceWrite(fetchMock.mock.calls[0][1]);
+        expect(fetchMock.mock.calls[0][1].headers.get('Accept')).toBe(
+            'text/event-stream'
         );
+        expectServiceWrite(fetchMock.mock.calls[1][1]);
         expect(fetchMock.mock.calls[1][1]).toEqual(
             expect.objectContaining({
                 method: 'POST',
@@ -202,7 +407,7 @@ describe('WsiAgentPanel', () => {
             <WsiAgentPanel
                 apiUrl="/wsi"
                 getContext={() => context}
-                getToken={async () => 'token'}
+                studyId="study-a"
                 applyProposal={jest.fn()}
             />
         );
@@ -249,7 +454,7 @@ describe('WsiAgentPanel', () => {
             <WsiAgentPanel
                 apiUrl="/wsi"
                 getContext={() => context}
-                getToken={async () => 'token'}
+                studyId="study-a"
                 applyProposal={jest.fn()}
             />
         );
@@ -275,7 +480,7 @@ describe('WsiAgentPanel', () => {
             <WsiAgentPanel
                 apiUrl="/wsi"
                 getContext={() => context}
-                getToken={async () => 'token'}
+                studyId="study-a"
                 applyProposal={jest.fn()}
             />
         );
@@ -311,7 +516,7 @@ describe('WsiAgentPanel', () => {
             <WsiAgentPanel
                 apiUrl="/wsi"
                 getContext={() => context}
-                getToken={async () => 'token'}
+                studyId="study-a"
                 applyProposal={jest.fn()}
             />
         );
@@ -385,7 +590,7 @@ describe('WsiAgentPanel', () => {
             <WsiAgentPanel
                 apiUrl="/wsi"
                 getContext={() => context}
-                getToken={async () => 'token'}
+                studyId="study-a"
                 applyProposal={applyProposal}
             />
         );

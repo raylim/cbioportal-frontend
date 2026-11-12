@@ -600,9 +600,6 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
         return this.linkoutScopeActive ? this.props.pathologyFilter : undefined;
     }
 
-    private readonly getAgentToken = () =>
-        getAgentAccessToken(this.props.studyId, this.props.authScope);
-
     private readonly getAgentContext = async (): Promise<WsiAgentContext | null> => {
         if (
             !this.viewerState.selectedSlide ||
@@ -1683,8 +1680,8 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
                                         apiUrl={
                                             this.props.annotationApiUrl || ''
                                         }
+                                        studyId={this.props.studyId}
                                         getContext={this.getAgentContext}
-                                        getToken={this.getAgentToken}
                                         applyProposal={this.applyAgentProposal}
                                         onCommittedAnnotations={
                                             this.adoptCommittedAgentAnnotations

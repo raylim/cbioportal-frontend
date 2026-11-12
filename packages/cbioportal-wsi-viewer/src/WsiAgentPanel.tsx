@@ -1,11 +1,14 @@
 import * as React from 'react';
-import { getWsiViewerRuntime } from './wsiViewerConfig';
 import {
-    agentEndpoint,
     WsiAgentContext,
     WsiAgentProposal,
     WsiAgentSseEvent,
 } from './wsiAgent';
+import {
+    WsiServiceAccessIssue,
+    wsiServiceAccessIssue,
+    wsiServiceFetch,
+} from './wsiServiceRequest';
 
 interface AgentMessage {
     id: string;
@@ -26,8 +29,9 @@ interface CommitResult {
 
 interface Props {
     apiUrl: string;
+    /** The study every request is authorized for. */
+    studyId: string;
     getContext: () => WsiAgentContext | null | Promise<WsiAgentContext | null>;
-    getToken: () => Promise<string>;
     applyProposal: (proposal: WsiAgentProposal) => Promise<ApplyResult>;
     onCommittedAnnotations?: (
         annotations: Array<Record<string, unknown>>
@@ -65,6 +69,24 @@ function proposalSummary(proposal: WsiAgentProposal): string {
     return `Delete annotation ${payload.annotation_id || ''}`;
 }
 
+const ACCESS_MESSAGES: Record<WsiServiceAccessIssue, string> = {
+    signedOut: 'Sign in to use the research assistant.',
+    forbidden:
+        'You do not have access to the research assistant for this study.',
+};
+
+/** A 401 or 403 from the service; the panel stops sending requests. */
+class AccessRefusedError extends Error {
+    constructor(readonly issue: WsiServiceAccessIssue) {
+        super(ACCESS_MESSAGES[issue]);
+    }
+}
+
+function refuseAccess(response: Response): void {
+    const issue = wsiServiceAccessIssue(response.status);
+    if (issue) throw new AccessRefusedError(issue);
+}
+
 function parseSseBuffer(
     buffer: string
 ): {
@@ -90,8 +112,8 @@ function parseSseBuffer(
 
 export function WsiAgentPanel({
     apiUrl,
+    studyId,
     getContext,
-    getToken,
     applyProposal,
     onCommittedAnnotations,
     onProposal,
@@ -113,6 +135,24 @@ export function WsiAgentPanel({
     );
     const autoApplyAttempted = React.useRef(new Set<string>());
     const [error, setError] = React.useState<string | null>(null);
+    // Set by a 401 or 403; the panel is then read-only for this study.
+    const [
+        accessIssue,
+        setAccessIssue,
+    ] = React.useState<WsiServiceAccessIssue | null>(null);
+    React.useEffect(() => setAccessIssue(null), [apiUrl, studyId]);
+    const showRequestError = React.useCallback(
+        (requestError: unknown, fallback: string) => {
+            if (requestError instanceof AccessRefusedError) {
+                setAccessIssue(requestError.issue);
+                setAutoApproveAnnotations(false);
+            }
+            setError(
+                requestError instanceof Error ? requestError.message : fallback
+            );
+        },
+        []
+    );
     const sessionId = React.useRef(
         `browser-${Date.now()}-${Math.random()
             .toString(36)
@@ -154,7 +194,7 @@ export function WsiAgentPanel({
 
     const sendMessage = React.useCallback(async () => {
         const message = input.trim();
-        if (!message || loading) return;
+        if (!message || loading || accessIssue) return;
         const context = await getContext();
         if (!context) {
             setError('Open a viewable slide before using the assistant.');
@@ -179,17 +219,13 @@ export function WsiAgentPanel({
             { id: assistantId, role: 'assistant', content: '' },
         ]);
         try {
-            const token = await getToken();
-            const headers: Record<string, string> = {
-                'Content-Type': 'application/json',
-                Accept: 'text/event-stream',
-            };
-            if (token) headers.Authorization = `Bearer ${token}`;
-            const response = await getWsiViewerRuntime().fetchImpl(
-                agentEndpoint(apiUrl, '/agent/chat'),
+            const response = await wsiServiceFetch(
+                apiUrl,
+                '/agent/chat',
+                studyId,
                 {
                     method: 'POST',
-                    headers,
+                    headers: { Accept: 'text/event-stream' },
                     body: JSON.stringify({
                         session_id: sessionId,
                         request_id: requestId,
@@ -209,6 +245,7 @@ export function WsiAgentPanel({
                     }),
                 }
             );
+            refuseAccess(response);
             if (!response.ok) {
                 let detail: string | undefined;
                 try {
@@ -272,22 +309,20 @@ export function WsiAgentPanel({
             const final = parseSseBuffer(`${buffer}\n\n`);
             final.events.forEach(consume);
         } catch (requestError) {
-            setError(
-                requestError instanceof Error
-                    ? requestError.message
-                    : 'Assistant request failed.'
-            );
+            showRequestError(requestError, 'Assistant request failed.');
         } finally {
             setLoading(false);
         }
     }, [
+        accessIssue,
         apiUrl,
         getContext,
-        getToken,
         input,
         loading,
         messages,
         sessionId,
+        showRequestError,
+        studyId,
         upsertProposal,
     ]);
 
@@ -296,31 +331,24 @@ export function WsiAgentPanel({
             setBusyProposalId(proposal.id);
             setError(null);
             try {
-                const token = await getToken();
-                const headers: Record<string, string> = {};
-                if (token) headers.Authorization = `Bearer ${token}`;
-                const response = await getWsiViewerRuntime().fetchImpl(
-                    agentEndpoint(
-                        apiUrl,
-                        `/agent/actions/${proposal.id}/reject`
-                    ),
-                    { method: 'POST', headers }
+                const response = await wsiServiceFetch(
+                    apiUrl,
+                    `/agent/actions/${encodeURIComponent(proposal.id)}/reject`,
+                    studyId,
+                    { method: 'POST' }
                 );
+                refuseAccess(response);
                 if (!response.ok)
                     throw new Error(`Reject failed (${response.status})`);
                 const rejected = (await response.json()) as WsiAgentProposal;
                 upsertProposal(rejected);
             } catch (requestError) {
-                setError(
-                    requestError instanceof Error
-                        ? requestError.message
-                        : 'Reject failed.'
-                );
+                showRequestError(requestError, 'Reject failed.');
             } finally {
                 setBusyProposalId(null);
             }
         },
-        [apiUrl, getToken, upsertProposal]
+        [apiUrl, showRequestError, studyId, upsertProposal]
     );
 
     const apply = React.useCallback(
@@ -328,9 +356,6 @@ export function WsiAgentPanel({
             setBusyProposalId(proposal.id);
             setError(null);
             try {
-                const token = await getToken();
-                const headers: Record<string, string> = {};
-                if (token) headers.Authorization = `Bearer ${token}`;
                 if (
                     proposal.action_type === 'create_annotation' ||
                     (proposal.action_type === 'annotation_batch' &&
@@ -359,19 +384,14 @@ export function WsiAgentPanel({
                             'The slide source changed; ask the assistant to regenerate the proposal.'
                         );
                     }
-                    const commit = await getWsiViewerRuntime().fetchImpl(
-                        agentEndpoint(
-                            apiUrl,
-                            '/agent/actions/' +
-                                proposal.id +
-                                '/commit-annotations'
-                        ),
+                    const commit = await wsiServiceFetch(
+                        apiUrl,
+                        `/agent/actions/${encodeURIComponent(
+                            proposal.id
+                        )}/commit-annotations`,
+                        studyId,
                         {
                             method: 'POST',
-                            headers: {
-                                ...headers,
-                                'Content-Type': 'application/json',
-                            },
                             body: JSON.stringify({
                                 source_fingerprint: sourceFingerprint,
                                 viewer_generation: viewerGeneration,
@@ -379,6 +399,7 @@ export function WsiAgentPanel({
                             }),
                         }
                     );
+                    refuseAccess(commit);
                     if (!commit.ok) {
                         let detail =
                             'Annotation commit failed (' + commit.status + ')';
@@ -408,13 +429,13 @@ export function WsiAgentPanel({
                     }
                     return;
                 }
-                const approval = await getWsiViewerRuntime().fetchImpl(
-                    agentEndpoint(
-                        apiUrl,
-                        `/agent/actions/${proposal.id}/apply`
-                    ),
-                    { method: 'POST', headers }
+                const approval = await wsiServiceFetch(
+                    apiUrl,
+                    `/agent/actions/${encodeURIComponent(proposal.id)}/apply`,
+                    studyId,
+                    { method: 'POST' }
                 );
+                refuseAccess(approval);
                 if (!approval.ok)
                     throw new Error(`Apply failed (${approval.status})`);
                 const approved = (await approval.json()) as WsiAgentProposal;
@@ -422,31 +443,22 @@ export function WsiAgentPanel({
                     ...proposal,
                     ...approved,
                 });
-                const completed = await getWsiViewerRuntime().fetchImpl(
-                    agentEndpoint(
-                        apiUrl,
-                        `/agent/actions/${proposal.id}/complete`
-                    ),
-                    {
-                        method: 'POST',
-                        headers: {
-                            ...headers,
-                            'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify(result),
-                    }
+                const completed = await wsiServiceFetch(
+                    apiUrl,
+                    `/agent/actions/${encodeURIComponent(
+                        proposal.id
+                    )}/complete`,
+                    studyId,
+                    { method: 'POST', body: JSON.stringify(result) }
                 );
+                refuseAccess(completed);
                 if (!completed.ok)
                     throw new Error(`Completion failed (${completed.status})`);
                 upsertProposal((await completed.json()) as WsiAgentProposal);
                 if (!result.success)
                     setError(result.detail || 'Unable to apply proposal.');
             } catch (requestError) {
-                setError(
-                    requestError instanceof Error
-                        ? requestError.message
-                        : 'Apply failed.'
-                );
+                showRequestError(requestError, 'Apply failed.');
             } finally {
                 setBusyProposalId(null);
             }
@@ -455,8 +467,9 @@ export function WsiAgentPanel({
             apiUrl,
             applyProposal,
             getContext,
-            getToken,
             onCommittedAnnotations,
+            showRequestError,
+            studyId,
             upsertProposal,
         ]
     );
@@ -465,7 +478,8 @@ export function WsiAgentPanel({
         if (
             !autoApproveAnnotations ||
             !hasApprovedAnnotation ||
-            busyProposalId !== null
+            busyProposalId !== null ||
+            accessIssue
         ) {
             return;
         }
@@ -480,6 +494,7 @@ export function WsiAgentPanel({
         autoApplyAttempted.current.add(nextProposal.id);
         void apply(nextProposal);
     }, [
+        accessIssue,
         apply,
         autoApproveAnnotations,
         busyProposalId,
@@ -598,7 +613,9 @@ export function WsiAgentPanel({
                             <button
                                 type="button"
                                 className="btn btn-primary btn-xs"
-                                disabled={busyProposalId !== null}
+                                disabled={
+                                    busyProposalId !== null || !!accessIssue
+                                }
                                 onClick={() => void apply(proposal)}
                                 data-testid={`wsi-agent-apply-${proposal.id}`}
                             >
@@ -607,7 +624,9 @@ export function WsiAgentPanel({
                             <button
                                 type="button"
                                 className="btn btn-default btn-xs"
-                                disabled={busyProposalId !== null}
+                                disabled={
+                                    busyProposalId !== null || !!accessIssue
+                                }
                                 onClick={() => void rejectProposal(proposal)}
                             >
                                 Reject
@@ -635,13 +654,13 @@ export function WsiAgentPanel({
                     value={input}
                     onChange={event => setInput(event.target.value)}
                     placeholder="Ask about this view…"
-                    disabled={loading}
+                    disabled={loading || !!accessIssue}
                     style={{ flex: 1, minWidth: 0 }}
                 />
                 <button
                     type="submit"
                     className="btn btn-primary btn-xs"
-                    disabled={loading || !input.trim()}
+                    disabled={loading || !!accessIssue || !input.trim()}
                 >
                     {loading ? '…' : 'Send'}
                 </button>

@@ -1,3 +1,4 @@
+import { Page, Request } from '@playwright/test';
 import { expect, test } from '../fixtures';
 import {
     SLIDE_KEY,
@@ -5,6 +6,39 @@ import {
     PATIENT_ID,
     STUDY_ID,
 } from './wsi-foundation-mocks';
+
+/** Requests to the annotation service (annotations and assistant). */
+function recordServiceRequests(page: Page): Request[] {
+    const requests: Request[] = [];
+    page.on('request', request => {
+        if (/\/wsi\/(annotations|agent)(\/|\?|$)/.test(request.url())) {
+            requests.push(request);
+        }
+    });
+    return requests;
+}
+
+/**
+ * Each expected call was made with exactly one studyId and no token, and
+ * writes sent the CSRF header.
+ */
+function expectServiceContract(requests: Request[], expected: string[]) {
+    const calls = requests.map(
+        request => `${request.method()} ${new URL(request.url()).pathname}`
+    );
+    for (const call of expected) {
+        expect(calls).toContain(call);
+    }
+    for (const request of requests) {
+        const url = new URL(request.url());
+        expect(url.searchParams.getAll('studyId')).toEqual([STUDY_ID]);
+        const headers = request.headers();
+        expect(headers['authorization']).toBeUndefined();
+        expect(headers['x-requested-with']).toBe(
+            request.method() === 'GET' ? undefined : 'XMLHttpRequest'
+        );
+    }
+}
 
 // Mocked like wsi-foundation-mocked.spec.ts: runs in the WSI suite only.
 if (process.env.PW_SUITE === 'wsi') {
@@ -17,17 +51,7 @@ if (process.env.PW_SUITE === 'wsi') {
                 enableAgent: true,
             });
 
-            await page.route('**/api/wsi/access-token*', route =>
-                route.fulfill({
-                    status: 200,
-                    contentType: 'application/json',
-                    body: JSON.stringify({
-                        access_token: 'agent-capability-token',
-                        token_type: 'Bearer',
-                        expires_in: 300,
-                    }),
-                })
-            );
+            const serviceRequests = recordServiceRequests(page);
 
             await page.route('**/wsi/annotations*', async route => {
                 if (route.request().method() === 'GET') {
@@ -64,7 +88,7 @@ if (process.env.PW_SUITE === 'wsi') {
             });
 
             const chatBodies: string[] = [];
-            await page.route('**/wsi/agent/chat', async route => {
+            await page.route('**/wsi/agent/chat?*', async route => {
                 chatBodies.push(route.request().postData() || '');
                 const request = JSON.parse(
                     route.request().postData() || '{}'
@@ -126,7 +150,7 @@ if (process.env.PW_SUITE === 'wsi') {
             });
 
             await page.route(
-                '**/wsi/agent/actions/proposal-agent-1/commit-annotations',
+                '**/wsi/agent/actions/proposal-agent-1/commit-annotations?*',
                 route =>
                     route.fulfill({
                         status: 200,
@@ -205,6 +229,11 @@ if (process.env.PW_SUITE === 'wsi') {
                 expect(JSON.parse(body).context.slide_id).toBe(SLIDE_KEY);
                 expect(body).not.toMatch(/image_?id|barcode|s3:/i);
             }
+            expectServiceContract(serviceRequests, [
+                'GET /wsi/annotations',
+                'POST /wsi/agent/chat',
+                'POST /wsi/agent/actions/proposal-agent-1/commit-annotations',
+            ]);
         });
 
         test('applies an approved navigation proposal to the native viewer', async ({
@@ -215,17 +244,7 @@ if (process.env.PW_SUITE === 'wsi') {
                 enableAgent: true,
             });
 
-            await page.route('**/api/wsi/access-token*', route =>
-                route.fulfill({
-                    status: 200,
-                    contentType: 'application/json',
-                    body: JSON.stringify({
-                        access_token: 'agent-capability-token',
-                        token_type: 'Bearer',
-                        expires_in: 300,
-                    }),
-                })
-            );
+            const serviceRequests = recordServiceRequests(page);
 
             await page.route('**/wsi/annotations*', route =>
                 route.fulfill({
@@ -235,7 +254,7 @@ if (process.env.PW_SUITE === 'wsi') {
                 })
             );
             let navigationContext: Record<string, unknown>;
-            await page.route('**/wsi/agent/chat', async route => {
+            await page.route('**/wsi/agent/chat?*', async route => {
                 const request = JSON.parse(
                     route.request().postData() || '{}'
                 ) as {
@@ -289,7 +308,7 @@ if (process.env.PW_SUITE === 'wsi') {
                 });
             });
             await page.route(
-                '**/wsi/agent/actions/proposal-navigation-1/apply',
+                '**/wsi/agent/actions/proposal-navigation-1/apply?*',
                 route =>
                     route.fulfill({
                         status: 200,
@@ -311,7 +330,7 @@ if (process.env.PW_SUITE === 'wsi') {
                     })
             );
             await page.route(
-                '**/wsi/agent/actions/proposal-navigation-1/complete',
+                '**/wsi/agent/actions/proposal-navigation-1/complete?*',
                 route =>
                     route.fulfill({
                         status: 200,
@@ -359,6 +378,12 @@ if (process.env.PW_SUITE === 'wsi') {
             await expect(page.getByLabel('Y in image pixels')).toHaveValue(
                 '120'
             );
+            expectServiceContract(serviceRequests, [
+                'GET /wsi/annotations',
+                'POST /wsi/agent/chat',
+                'POST /wsi/agent/actions/proposal-navigation-1/apply',
+                'POST /wsi/agent/actions/proposal-navigation-1/complete',
+            ]);
         });
     });
 }

@@ -253,7 +253,3 @@ export function buildWsiAgentSvgSelectorFromSlidePoints(
         '" /></svg>'
     );
 }
-
-export function agentEndpoint(apiUrl: string, path: string): string {
-    return `${apiUrl.replace(/\/$/, '')}${path}`;
-}

@@ -98,6 +98,17 @@ The service sits behind a proxy that authorizes each request with the portal ses
 
 A 401 means the user is signed out: the toolbar asks them to sign in and editing is off. A 403 means no access to the study: annotations are read-only. Neither is retried; a new slide or study tries again. `wsiServiceRequest.ts` holds the request rules.
 
+With `agent: { enabled: true }` as well (the portal's `wsi_agent_enabled`, off by default), the sidebar shows the research assistant. It calls the same service under the same rules:
+
+| Request | Use |
+| --- | --- |
+| `POST {apiUrl}/agent/chat?studyId=…` | A chat turn, streamed back as server-sent events; proposals arrive in the stream |
+| `POST {apiUrl}/agent/actions/{id}/commit-annotations?studyId=…` | Save an annotation proposal |
+| `POST {apiUrl}/agent/actions/{id}/apply?studyId=…`, then `…/complete?studyId=…` | Approve a viewer proposal, then report the result |
+| `POST {apiUrl}/agent/actions/{id}/reject?studyId=…` | Reject a proposal |
+
+After a 401 or 403 the panel shows the reason and sends nothing more for that study.
+
 The viewer stores the selected slide and viewport in the URL hash (`#wsi:slide=…&x=…&y=…&z=…`) so a view can be shared.
 
 ## Development
