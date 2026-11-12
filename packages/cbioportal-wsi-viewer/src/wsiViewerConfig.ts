@@ -22,7 +22,7 @@ export interface WsiViewerConfig {
     fetchImpl?: typeof fetch;
     /**
      * Annotation authoring against the annotation service at `apiUrl`,
-     * authorized with study-scoped portal tokens. Off when unset.
+     * called with the portal session cookie. Off when unset.
      */
     annotations?: WsiAnnotationsConfig;
     /**

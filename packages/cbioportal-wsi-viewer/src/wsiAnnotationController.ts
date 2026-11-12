@@ -1,7 +1,11 @@
 import { action, computed, makeObservable, observable } from 'mobx';
 import { WsiAnnotation } from './wsiViewerTypes';
 import { normalizeSvgSelector } from './wsiAnnotationGeometryUtils';
-import { getWsiViewerRuntime } from './wsiViewerConfig';
+import {
+    WsiServiceAccessIssue,
+    wsiServiceAccessIssue,
+    wsiServiceFetch,
+} from './wsiServiceRequest';
 import {
     AnnotoriousModule,
     getLoadedAnnotorious,
@@ -140,12 +144,24 @@ function parseColor(value: unknown): { name: string; color: string } {
     return { name: parsed.name, color: parsed.hex };
 }
 
-type TokenProvider = () => Promise<string>;
+export const WSI_ANNOTATION_ACCESS_MESSAGES: Record<
+    WsiServiceAccessIssue,
+    string
+> = {
+    signedOut: 'Sign in to view and edit annotations.',
+    forbidden:
+        'Annotations are read-only: you do not have access to this study.',
+};
 
 export class WsiAnnotationController {
     @observable annotations: WsiAnnotation[] = [];
     @observable loading = false;
     @observable error: string | null = null;
+    /**
+     * Set when the service refused this study (signed out, or no access).
+     * Editing is then off until the slide or study changes.
+     */
+    @observable accessIssue: WsiServiceAccessIssue | null = null;
     @observable visible = true;
     @observable activeTool: WsiAnnotationTool = null;
     @observable activeColor = DEFAULT_COLOR;
@@ -191,10 +207,21 @@ export class WsiAnnotationController {
 
     constructor(
         private apiUrl: string | null | undefined,
-        private studyId: string | undefined,
-        private readonly getToken: TokenProvider
+        private studyId: string | undefined
     ) {
         makeObservable(this);
+    }
+
+    /** Whether the user may draw, edit or delete annotations. */
+    @computed get canEdit(): boolean {
+        return Boolean(this.apiUrl) && this.accessIssue === null;
+    }
+
+    /** The sign-in or read-only notice, when the service refused the study. */
+    @computed get accessMessage(): string | null {
+        return this.accessIssue
+            ? WSI_ANNOTATION_ACCESS_MESSAGES[this.accessIssue]
+            : null;
     }
 
     @computed get layerNames(): string[] {
@@ -250,6 +277,7 @@ export class WsiAnnotationController {
         this.slideKey = slideKey;
         this.annotations = [];
         this.error = null;
+        this.accessIssue = null;
         this.loading = Boolean(this.apiUrl);
         this.destroyAnnotorious();
         if (this.apiUrl) {
@@ -270,6 +298,7 @@ export class WsiAnnotationController {
         this.cancelDrawing();
         this.annotations = [];
         this.error = null;
+        this.accessIssue = null;
         this.annotationTooltip = null;
         this.applyLayerFilter();
         const slideKey = this.slideKey;
@@ -374,6 +403,7 @@ export class WsiAnnotationController {
             }
         );
         this.annotorious.setVisible(this.visible);
+        if (!this.canEdit) this.annotorious.setUserSelectAction?.('SELECT');
         this.applyLayerFilter();
         this.refreshStyle();
         this.installCustomDrawingHandlers();
@@ -407,6 +437,7 @@ export class WsiAnnotationController {
 
     @action.bound
     setTool(tool: WsiAnnotationTool) {
+        if (tool !== null && !this.canEdit) return;
         this.activeTool = tool;
         this.customDrawPreview = null;
         this.pointerDown = null;
@@ -578,24 +609,37 @@ export class WsiAnnotationController {
         await this.deleteAnnotation(id);
     }
 
-    private async request(
+    private request(
         path: string,
         init: RequestInit = {},
         signal: AbortSignal | undefined = this.abortController?.signal
     ) {
-        const token = await this.getToken();
-        const headers = new Headers(init.headers);
-        headers.set('Content-Type', 'application/json');
-        headers.set('Authorization', `Bearer ${token}`);
-        return getWsiViewerRuntime().fetchImpl(`${this.apiUrl}${path}`, {
+        return wsiServiceFetch(this.apiUrl || '', path, this.studyId, {
             ...init,
-            headers,
             signal,
         });
     }
 
+    /**
+     * Records a 401 or 403 from the service and turns editing off; returns
+     * whether the response was one. The request is not retried.
+     */
+    @action
+    private refuseAccess(response: Response): boolean {
+        const issue = wsiServiceAccessIssue(response.status);
+        if (!issue) return false;
+        this.accessIssue = issue;
+        this.error = WSI_ANNOTATION_ACCESS_MESSAGES[issue];
+        this.loading = false;
+        this.cancelDrawing();
+        this.annotorious?.setUserSelectAction?.('SELECT');
+        return true;
+    }
+
     // The annotation service's slide_id field carries the opaque slide key
-    // (contract wsi-serving-v5); the browser never holds the image ID.
+    // (contract wsi-serving-v5); the browser never holds the image ID. The
+    // list filters by its own study_id; the request's studyId (added by
+    // wsiServiceFetch) is the study the proxy authorizes.
     private async loadAnnotations(slideKey: string, loadGeneration: number) {
         try {
             const response = await this.request(
@@ -605,6 +649,13 @@ export class WsiAnnotationController {
                 {},
                 this.loadAbortController?.signal
             );
+            if (
+                loadGeneration === this.loadGeneration &&
+                this.slideKey === slideKey &&
+                this.refuseAccess(response)
+            ) {
+                return;
+            }
             if (!response.ok)
                 throw new Error(`Annotation load failed (${response.status})`);
             const raw = (await response.json()) as any[];
@@ -637,6 +688,10 @@ export class WsiAnnotationController {
         annotation: WsiAnnotation
     ): Promise<boolean> {
         if (!this.slideKey) return false;
+        if (!this.canEdit) {
+            this.removeAnnotationLocally(annotation.id);
+            return false;
+        }
         const context = {
             generation: this.generation,
             slideKey: this.slideKey,
@@ -666,6 +721,10 @@ export class WsiAnnotationController {
                 },
                 context.signal
             );
+            if (this.isCurrent(context) && this.refuseAccess(response)) {
+                this.removeAnnotationLocally(annotation.id);
+                return false;
+            }
             if (!response.ok)
                 throw new Error(
                     `Annotation create failed (${response.status})`
@@ -769,6 +828,10 @@ export class WsiAnnotationController {
     }
 
     private async updateAnnotation(annotation: WsiAnnotation) {
+        if (!this.canEdit) {
+            this.applyLayerFilter();
+            return;
+        }
         const context = {
             generation: this.generation,
             slideKey: this.slideKey,
@@ -794,6 +857,11 @@ export class WsiAnnotationController {
                 },
                 context.signal
             );
+            if (this.isCurrent(context) && this.refuseAccess(response)) {
+                // Put the edited shape back as it is saved.
+                this.applyLayerFilter();
+                return;
+            }
             if (response.status === 409) {
                 if (
                     context.generation !== this.generation ||
@@ -835,6 +903,10 @@ export class WsiAnnotationController {
     }
 
     private async deleteAnnotation(id: string) {
+        if (!this.canEdit) {
+            this.applyLayerFilter();
+            return;
+        }
         const context = {
             generation: this.generation,
             slideKey: this.slideKey,
@@ -848,6 +920,11 @@ export class WsiAnnotationController {
                 },
                 context.signal
             );
+            if (this.isCurrent(context) && this.refuseAccess(response)) {
+                // Put the deleted shape back.
+                this.applyLayerFilter();
+                return;
+            }
             if (!response.ok && response.status !== 404)
                 throw new Error(
                     `Annotation delete failed (${response.status})`
@@ -872,6 +949,18 @@ export class WsiAnnotationController {
         }
     }
 
+    private isCurrent(context: {
+        generation: number;
+        slideKey: string | null;
+        signal?: AbortSignal;
+    }): boolean {
+        return (
+            context.generation === this.generation &&
+            context.slideKey === this.slideKey &&
+            !context.signal?.aborted
+        );
+    }
+
     private async reloadCurrentSlide(message: string) {
         if (!this.slideKey) return;
         const slideKey = this.slideKey;
@@ -881,7 +970,8 @@ export class WsiAnnotationController {
         await this.loadAnnotations(slideKey, loadGeneration);
         if (
             loadGeneration === this.loadGeneration &&
-            this.slideKey === slideKey
+            this.slideKey === slideKey &&
+            this.accessIssue === null
         ) {
             this.error = message;
         }
