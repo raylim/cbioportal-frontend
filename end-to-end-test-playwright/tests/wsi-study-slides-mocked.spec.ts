@@ -366,7 +366,7 @@ if (process.env.PW_SUITE === 'wsi') {
             ).toHaveAttribute(
                 'href',
                 new RegExp(
-                    `/patient/wsiHESlides\\?studyId=${STUDY_ID}&caseId=${patientIds[PAGE_SIZE]}#navCaseIds=`
+                    `/patient/wsiHESlides\\?studyId=${STUDY_ID}&caseId=${patientIds[PAGE_SIZE]}$`
                 )
             );
 
