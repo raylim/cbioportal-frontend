@@ -376,10 +376,6 @@ const PatientNav: React.FunctionComponent<{
         return null;
     }
     const listed = page.patients.find(p => isSamePatient(p, selected));
-    const navPatients = page.patients.map(p => ({
-        studyId: p.studyId,
-        patientId: p.patientId,
-    }));
     return (
         <div
             data-testid="study-slides-nav"
@@ -429,8 +425,7 @@ const PatientNav: React.FunctionComponent<{
                 href={getPatientViewUrlWithPathname(
                     selected.studyId,
                     selected.patientId,
-                    `patient/${PatientViewPageTabs.WSIHESlides}`,
-                    listed ? navPatients : undefined
+                    `patient/${PatientViewPageTabs.WSIHESlides}`
                 )}
                 target="_blank"
                 rel="noopener noreferrer"

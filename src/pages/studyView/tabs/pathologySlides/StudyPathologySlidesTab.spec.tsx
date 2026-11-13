@@ -299,16 +299,13 @@ describe('StudyPathologySlidesTab', () => {
         store.dispose();
     });
 
-    it('links to the patient view with the listed patients as navigation', async () => {
+    it('links to the patient view without the listed patients in the URL', async () => {
         const { store } = renderTab();
         await settle();
 
         expect(
             screen.getByTestId('study-slides-open-patient').getAttribute('href')
-        ).toBe(
-            '/patient/wsiHESlides?studyId=study&caseId=P-1' +
-                '#navCaseIds=study:P-1,study:P-2,study:P-3'
-        );
+        ).toBe('/patient/wsiHESlides?studyId=study&caseId=P-1');
         store.dispose();
     });
 
