@@ -1139,6 +1139,92 @@ describe('WsiAnnotationController', () => {
         expect(controller.annotations[0].body[0].value).toBe('theirs');
     });
 
+    it('shares new annotations by default, or keeps them private', async () => {
+        jest.spyOn(global, 'fetch').mockImplementation(
+            async (_url, init) =>
+                ({
+                    ok: true,
+                    json: async () => ({
+                        ...apiAnnotation('saved'),
+                        visible_to: JSON.parse(init!.body as string).visible_to,
+                    }),
+                } as Response)
+        );
+        const controller = new WsiAnnotationController(
+            'https://tiles.example',
+            'study1'
+        );
+        (controller as any).slideKey = SLIDE_KEY;
+        const draft = (id: string) => ({
+            id,
+            body: [],
+            target: {
+                source: SLIDE_KEY,
+                selector: {
+                    type: 'FragmentSelector',
+                    value: 'xywh=pixel:1,2,3,4',
+                },
+            },
+        });
+        expect(controller.defaultShared).toBe(true);
+
+        await (controller as any).createAnnotation(draft('client-1'));
+        controller.setDefaultShared(false);
+        await (controller as any).createAnnotation(draft('client-2'));
+
+        const sent = (global.fetch as jest.Mock).mock.calls.map(
+            ([, init]) => JSON.parse(init.body).visible_to
+        );
+        expect(sent).toEqual([[], null]);
+        expect(controller.annotations[0].visibleTo).toBeNull();
+        // The choice is remembered for the next viewer.
+        expect(
+            new WsiAnnotationController('https://tiles.example', 'study1')
+                .defaultShared
+        ).toBe(false);
+    });
+
+    it('switches an annotation between private and shared with its version', async () => {
+        jest.spyOn(global, 'fetch').mockImplementation(
+            async (_url, init) =>
+                ({
+                    ok: true,
+                    json: async () => ({
+                        ...apiAnnotation('a1', 2),
+                        visible_to: JSON.parse(init!.body as string).visible_to,
+                    }),
+                } as Response)
+        );
+        const controller = new WsiAnnotationController(
+            'https://tiles.example',
+            'study1'
+        );
+        (controller as any).slideKey = 'slide1';
+        (controller as any).annotations = [
+            (controller as any).fromApi(
+                { ...apiAnnotation('a1'), visible_to: [] },
+                'slide1'
+            ),
+        ];
+
+        await controller.setAnnotationShared('a1', false);
+
+        const sent = JSON.parse(
+            (global.fetch as jest.Mock).mock.calls[0][1].body
+        );
+        expect(sent).toMatchObject({ visible_to: null, version: 1 });
+        expect(controller.annotations[0].visibleTo).toBeNull();
+
+        // A row without visible_to keeps its stored value on an update.
+        (controller as any).annotations = [
+            (controller as any).fromApi(apiAnnotation('a2'), 'slide1'),
+        ];
+        await controller.renameAnnotation('a2', 'renamed');
+        expect(
+            JSON.parse((global.fetch as jest.Mock).mock.calls[1][1].body)
+        ).not.toHaveProperty('visible_to');
+    });
+
     it('only offers removal for unused user-added colors', () => {
         const controller = new WsiAnnotationController(
             'https://tiles.example',

@@ -49,6 +49,7 @@ export const DEFAULT_NAMED_COLORS: NamedColor[] = [
 
 const LOCALSTORAGE_COLORS_KEY = 'wsi_annotation_colors_v2';
 const LOCALSTORAGE_LAYERS_KEY = 'wsi_annotation_layers_v1';
+const LOCALSTORAGE_DEFAULT_SHARED_KEY = 'wsi_annotation_default_shared_v1';
 const HEX_COLOR_RE = /^#[0-9a-fA-F]{3,8}$/;
 
 function loadNamedColors(): NamedColor[] {
@@ -100,6 +101,42 @@ function loadLayerNames(): string[] {
         // Ignore malformed or unavailable local storage.
     }
     return [DEFAULT_LAYER];
+}
+
+/** New annotations are shared with the study unless the user chose private. */
+function loadDefaultShared(): boolean {
+    try {
+        return (
+            localStorage.getItem(LOCALSTORAGE_DEFAULT_SHARED_KEY) !== 'false'
+        );
+    } catch (_) {
+        return true;
+    }
+}
+
+function saveDefaultShared(shared: boolean) {
+    try {
+        localStorage.setItem(LOCALSTORAGE_DEFAULT_SHARED_KEY, String(shared));
+    } catch (_) {
+        // Ignore unavailable local storage.
+    }
+}
+
+/**
+ * The service's `visible_to`: null keeps an annotation private to its
+ * creator, [] shares it with everyone who can read the study. Group lists
+ * are accepted by the service but not used: the proxy sends no groups.
+ */
+export type WsiAnnotationVisibility = 'private' | 'shared' | 'groups';
+
+export function annotationVisibility(
+    visibleTo: string[] | null | undefined
+): WsiAnnotationVisibility | null {
+    if (visibleTo === null) return 'private';
+    if (Array.isArray(visibleTo)) {
+        return visibleTo.length ? 'groups' : 'shared';
+    }
+    return null;
 }
 
 function saveLayerNames(layers: string[]) {
@@ -180,6 +217,8 @@ export class WsiAnnotationController {
     @observable hiddenLayerNames = new Set<string>();
     /** Hides assistant annotations no one has accepted, on the slide and list. */
     @observable hideUnreviewedAi = false;
+    /** Whether new annotations are shared with the study (else private). */
+    @observable defaultShared = loadDefaultShared();
     @observable annotationTooltip: {
         x: number;
         y: number;
@@ -657,6 +696,23 @@ export class WsiAnnotationController {
     }
 
     @action.bound
+    setDefaultShared(shared: boolean) {
+        this.defaultShared = shared;
+        saveDefaultShared(shared);
+    }
+
+    /** Shares an annotation with the study, or makes it private. */
+    @action.bound
+    async setAnnotationShared(id: string, shared: boolean) {
+        const annotation = this.annotations.find(item => item.id === id);
+        if (!annotation) return;
+        await this.updateAnnotation({
+            ...annotation,
+            visibleTo: shared ? [] : null,
+        });
+    }
+
+    @action.bound
     toggleHideUnreviewedAi() {
         this.hideUnreviewedAi = !this.hideUnreviewedAi;
         if (this.hideUnreviewedAi) this.annotorious?.cancelSelected?.();
@@ -779,7 +835,12 @@ export class WsiAnnotationController {
             study_id: this.studyId || '',
             body: this.toApiBody(annotation),
             target: { selector: annotation.target.selector },
-            visible_to: [],
+            visible_to:
+                annotation.visibleTo !== undefined
+                    ? annotation.visibleTo
+                    : this.defaultShared
+                    ? []
+                    : null,
         };
         try {
             const response = await this.request(
@@ -852,6 +913,11 @@ export class WsiAnnotationController {
                     body: JSON.stringify({
                         body: this.toApiBody(annotation),
                         target: { selector: annotation.target.selector },
+                        // Sent only when known: the service keeps the
+                        // stored value when the field is absent.
+                        ...(annotation.visibleTo !== undefined
+                            ? { visible_to: annotation.visibleTo }
+                            : {}),
                         version: annotation.version || 1,
                     }),
                 },
@@ -1069,6 +1135,11 @@ export class WsiAnnotationController {
             colorName: parsedColor.name,
             layerName,
             note,
+            visibleTo: Array.isArray(item.visible_to)
+                ? item.visible_to
+                : item.visible_to === null
+                ? null
+                : undefined,
             provenance:
                 item.body?.provenance &&
                 typeof item.body.provenance === 'object'

@@ -113,6 +113,10 @@ The viewer writes the service's `AnnotationBody` fields as follows:
 
 Rows written before the viewer used `layer_name` kept the layer in `comment` and sent no `layer_name` or `color`, so the service stored its defaults (`Default`, `#2f80ed`). The viewer reads `comment` as the layer only for such rows: when `layer_name` is missing or `Default`, `color` is missing or exactly `#2f80ed`, and `comment` is one line of at most 100 characters. The viewer always writes `color`, and writes `#2f80ed` as `#2F80ED`, so a note on a row it wrote is never read as a layer. Saving an edit to a legacy row writes its layer to `layer_name` and clears `comment`. A `comment` that only repeats `layer_name`, as the service writes for a saved assistant proposal, is not shown as a note. `wsiAnnotationBody.ts` holds the rules.
 
+#### Private and shared annotations
+
+`visible_to` decides who sees an annotation: `null` keeps it private to its creator, and `[]` shares it with everyone who can read the study. The toolbar's **Shared**/**Private** button sets the default for new annotations (shared unless the user chose private; remembered in `localStorage`), and each list row shows a **Private** or **Shared** badge that switches the annotation with a versioned `PUT`. The service also accepts group names, but the proxy sends no groups, so the viewer offers no group choice; a row shared with groups shows **Groups**.
+
 #### Assistant annotations
 
 An annotation whose `provenance.source` is `agent` (as the service writes when it saves a research-assistant proposal) shows an **AI** badge, "unreviewed" until a user accepts it. **Accept** saves `provenance.review_status: "accepted"` and `reviewed_at` with a `PUT` carrying the annotation's `version`; **Reject** deletes it. The list can hide unreviewed AI annotations, on the slide too.

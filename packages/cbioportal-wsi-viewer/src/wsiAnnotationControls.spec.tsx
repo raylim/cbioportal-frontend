@@ -67,4 +67,28 @@ describe('WsiAnnotationPanel', () => {
         expect(screen.queryByTestId('annotation-row-ai-1')).toBeNull();
         expect(screen.getByTestId('annotation-row-ai-2')).toBeTruthy();
     });
+
+    it('shows whether each annotation is private or shared and switches it', () => {
+        const controller = controllerWith([
+            { ...apiItem('mine', {}), visible_to: null },
+            { ...apiItem('ours', {}), visible_to: [] },
+        ]);
+        const setShared = jest
+            .spyOn(controller, 'setAnnotationShared')
+            .mockResolvedValue(undefined);
+        render(<WsiAnnotationPanel controller={controller} />);
+
+        const mine = screen.getByTestId('annotation-visibility-mine');
+        const ours = screen.getByTestId('annotation-visibility-ours');
+        expect(mine.textContent).toContain('Private');
+        expect(ours.textContent).toContain('Shared');
+        expect(mine.getAttribute('aria-label')).toContain('Share: mine');
+
+        fireEvent.click(mine);
+        fireEvent.click(ours);
+        expect(setShared.mock.calls).toEqual([
+            ['mine', true],
+            ['ours', false],
+        ]);
+    });
 });

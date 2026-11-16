@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { observer } from 'mobx-react';
 import {
+    annotationVisibility,
     DEFAULT_COLOR,
     DEFAULT_LAYER,
     WsiAnnotationController,
@@ -140,14 +141,7 @@ export const WsiAnnotationToolbar = observer(
                         </button>
                     );
                 })}
-                <span
-                    style={{
-                        width: 1,
-                        height: 16,
-                        background: colors.border,
-                        margin: '0 2px',
-                    }}
-                />
+                <ToolbarDivider />
                 <span
                     style={{
                         fontSize: 10,
@@ -316,10 +310,60 @@ export const WsiAnnotationToolbar = observer(
                         </button>
                     </span>
                 )}
+                <ToolbarDivider />
+                <button
+                    data-testid="annotation-default-sharing"
+                    aria-pressed={controller.defaultShared}
+                    aria-label={
+                        controller.defaultShared
+                            ? 'New annotations are shared with the study; click to make new annotations private'
+                            : 'New annotations are private; click to share new annotations with the study'
+                    }
+                    title={
+                        controller.defaultShared
+                            ? 'New annotations: shared with everyone who can see this study'
+                            : 'New annotations: private (only you)'
+                    }
+                    onClick={() =>
+                        controller.setDefaultShared(!controller.defaultShared)
+                    }
+                    style={{
+                        padding: '2px 8px',
+                        fontSize: 11,
+                        cursor: 'pointer',
+                        borderRadius: 3,
+                        lineHeight: '18px',
+                        border: `1px solid ${colors.border}`,
+                        background: '#fff',
+                        color: colors.muted,
+                        whiteSpace: 'nowrap',
+                    }}
+                >
+                    <i
+                        aria-hidden="true"
+                        className={`fa ${
+                            controller.defaultShared ? 'fa-users' : 'fa-lock'
+                        }`}
+                    />{' '}
+                    {controller.defaultShared ? 'Shared' : 'Private'}
+                </button>
             </div>
         );
     }
 );
+
+function ToolbarDivider() {
+    return (
+        <span
+            style={{
+                width: 1,
+                height: 16,
+                background: colors.border,
+                margin: '0 2px',
+            }}
+        />
+    );
+}
 
 export const WsiAnnotationLayersPanel = observer(
     ({ controller }: { controller: WsiAnnotationController }) => {
@@ -703,6 +747,10 @@ const AnnotationRow = observer(
                                 }}
                             >
                                 <AiBadge annotation={annotation} />
+                                <VisibilityBadge
+                                    controller={controller}
+                                    annotation={annotation}
+                                />
                                 <AnnotationBadge label={layer} />
                                 {annotation.colorName && (
                                     <AnnotationBadge
@@ -842,6 +890,85 @@ function AiBadge({ annotation }: { annotation: WsiAnnotation }) {
         </span>
     );
 }
+
+/**
+ * Whether an annotation is private or shared with the study; a button that
+ * switches it for a user who can edit.
+ */
+const VisibilityBadge = observer(
+    ({
+        controller,
+        annotation,
+    }: {
+        controller: WsiAnnotationController;
+        annotation: WsiAnnotation;
+    }) => {
+        const visibility = annotationVisibility(annotation.visibleTo);
+        if (!visibility) return null;
+        const label = annotation.body?.[0]?.value || 'annotation';
+        const text =
+            visibility === 'private'
+                ? 'Private'
+                : visibility === 'shared'
+                ? 'Shared'
+                : 'Groups';
+        const description =
+            visibility === 'private'
+                ? 'Private: only you can see it'
+                : visibility === 'shared'
+                ? 'Shared with everyone who can see this study'
+                : 'Shared with groups';
+        const style: React.CSSProperties = {
+            padding: '0 4px',
+            borderRadius: 2,
+            border: `1px solid ${colors.border}`,
+            background: visibility === 'private' ? '#fff7e6' : '#eef6ff',
+            color: colors.muted,
+            fontSize: 9,
+            lineHeight: '12px',
+        };
+        const content = (
+            <>
+                <i
+                    aria-hidden="true"
+                    className={`fa ${
+                        visibility === 'private' ? 'fa-lock' : 'fa-users'
+                    }`}
+                />{' '}
+                {text}
+            </>
+        );
+        if (!controller.canEdit) {
+            return (
+                <span
+                    data-testid={`annotation-visibility-${annotation.id}`}
+                    title={description}
+                    style={style}
+                >
+                    {content}
+                </span>
+            );
+        }
+        const share = visibility === 'private';
+        return (
+            <button
+                data-testid={`annotation-visibility-${annotation.id}`}
+                aria-label={`${description}. ${
+                    share ? 'Share' : 'Make private'
+                }: ${label}`}
+                title={`${description}. Click to ${
+                    share ? 'share it with the study' : 'make it private'
+                }.`}
+                onClick={() =>
+                    void controller.setAnnotationShared(annotation.id, share)
+                }
+                style={{ ...style, cursor: 'pointer' }}
+            >
+                {content}
+            </button>
+        );
+    }
+);
 
 function AnnotationBadge({
     label,

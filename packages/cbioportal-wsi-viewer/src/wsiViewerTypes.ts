@@ -139,6 +139,11 @@ export interface WsiAnnotation {
     layerName?: string;
     /** The user's free-text note (`body.comment`). */
     note?: string;
+    /**
+     * The service's `visible_to`: null for private to the creator, [] for
+     * shared with the study; undefined when the service did not say.
+     */
+    visibleTo?: string[] | null;
     /** `body.provenance` as stored, kept on every update. */
     provenance?: Record<string, unknown> | null;
 }
