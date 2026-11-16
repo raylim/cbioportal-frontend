@@ -113,6 +113,12 @@ The viewer writes the service's `AnnotationBody` fields as follows:
 
 Rows written before the viewer used `layer_name` kept the layer in `comment` and sent no `layer_name` or `color`, so the service stored its defaults (`Default`, `#2f80ed`). The viewer reads `comment` as the layer only for such rows: when `layer_name` is missing or `Default`, `color` is missing or exactly `#2f80ed`, and `comment` is one line of at most 100 characters. The viewer always writes `color`, and writes `#2f80ed` as `#2F80ED`, so a note on a row it wrote is never read as a layer. Saving an edit to a legacy row writes its layer to `layer_name` and clears `comment`. A `comment` that only repeats `layer_name`, as the service writes for a saved assistant proposal, is not shown as a note. `wsiAnnotationBody.ts` holds the rules.
 
+#### Assistant annotations
+
+An annotation whose `provenance.source` is `agent` (as the service writes when it saves a research-assistant proposal) shows an **AI** badge, "unreviewed" until a user accepts it. **Accept** saves `provenance.review_status: "accepted"` and `reviewed_at` with a `PUT` carrying the annotation's `version`; **Reject** deletes it. The list can hide unreviewed AI annotations, on the slide too.
+
+Only an annotation's creator may change it. The service answers another user's edit with a 403 whose `detail` says so; the viewer shows that and keeps the study editable. Any other 403 means no access to the study.
+
 The viewer stores the selected slide and viewport in the URL hash (`#wsi:slide=…&x=…&y=…&z=…`) so a view can be shared.
 
 ## Development

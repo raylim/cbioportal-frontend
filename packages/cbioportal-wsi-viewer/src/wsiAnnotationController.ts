@@ -2,6 +2,9 @@ import { action, computed, makeObservable, observable } from 'mobx';
 import { WsiAnnotation } from './wsiViewerTypes';
 import { normalizeSvgSelector } from './wsiAnnotationGeometryUtils';
 import {
+    acceptedProvenance,
+    isAssistantProvenance,
+    isUnreviewedAssistant,
     readLayerAndNote,
     serviceColor,
     WsiAnnotationApiBody,
@@ -175,11 +178,14 @@ export class WsiAnnotationController {
     @observable private customLayers: string[] = loadLayerNames();
     @observable private customColors: NamedColor[] = loadNamedColors();
     @observable hiddenLayerNames = new Set<string>();
+    /** Hides assistant annotations no one has accepted, on the slide and list. */
+    @observable hideUnreviewedAi = false;
     @observable annotationTooltip: {
         x: number;
         y: number;
         text: string;
         layerName?: string;
+        ai?: 'unreviewed' | 'accepted';
     } | null = null;
     @observable.ref customDrawPreview: {
         tool: WsiPointerAnnotationTool;
@@ -257,12 +263,29 @@ export class WsiAnnotationController {
     }
 
     @computed get visibleAnnotationCount(): number {
-        return this.annotations.filter(
-            annotation =>
-                !this.hiddenLayerNames.has(
-                    annotation.layerName || DEFAULT_LAYER
-                )
+        return this.shownAnnotations.length;
+    }
+
+    /** The annotations drawn on the slide: visible layers, and filters. */
+    @computed get shownAnnotations(): WsiAnnotation[] {
+        return this.annotations.filter(annotation => this.isShown(annotation));
+    }
+
+    /** Assistant annotations that no one has accepted yet. */
+    @computed get unreviewedAiCount(): number {
+        return this.annotations.filter(annotation =>
+            isUnreviewedAssistant(annotation.provenance)
         ).length;
+    }
+
+    private isShown(annotation: WsiAnnotation): boolean {
+        return (
+            !this.hiddenLayerNames.has(annotation.layerName || DEFAULT_LAYER) &&
+            !(
+                this.hideUnreviewedAi &&
+                isUnreviewedAssistant(annotation.provenance)
+            )
+        );
     }
 
     @computed get annotationsByLayer(): Map<string, WsiAnnotation[]> {
@@ -614,6 +637,32 @@ export class WsiAnnotationController {
         await this.deleteAnnotation(id);
     }
 
+    /** Marks an assistant annotation reviewed and accepted. */
+    @action.bound
+    async acceptAnnotation(id: string) {
+        const annotation = this.annotations.find(item => item.id === id);
+        if (!annotation || !isUnreviewedAssistant(annotation.provenance)) {
+            return;
+        }
+        await this.updateAnnotation({
+            ...annotation,
+            provenance: acceptedProvenance(annotation.provenance),
+        });
+    }
+
+    /** Rejecting an assistant annotation deletes it. */
+    @action.bound
+    async rejectAnnotation(id: string) {
+        await this.deleteAnnotation(id);
+    }
+
+    @action.bound
+    toggleHideUnreviewedAi() {
+        this.hideUnreviewedAi = !this.hideUnreviewedAi;
+        if (this.hideUnreviewedAi) this.annotorious?.cancelSelected?.();
+        this.applyLayerFilter();
+    }
+
     private request(
         path: string,
         init: RequestInit = {},
@@ -639,6 +688,32 @@ export class WsiAnnotationController {
         this.cancelDrawing();
         this.annotorious?.setUserSelectAction?.('SELECT');
         return true;
+    }
+
+    /**
+     * Records the service's refusal to change another user's annotation;
+     * returns whether `response` was one. Only the creator may update or
+     * delete an annotation, so the study stays editable.
+     */
+    private async refuseNonCreator(response: Response): Promise<boolean> {
+        if (response.status !== 403 || typeof response.clone !== 'function') {
+            return false;
+        }
+        try {
+            const detail = (await response.clone().json())?.detail;
+            if (
+                typeof detail === 'string' &&
+                /only the creator/i.test(detail)
+            ) {
+                action(() => {
+                    this.error = 'Only its creator can change this annotation.';
+                })();
+                return true;
+            }
+        } catch (_) {
+            // Not the service's JSON refusal: the proxy refused the study.
+        }
+        return false;
     }
 
     // The annotation service's slide_id field carries the opaque slide key
@@ -782,6 +857,13 @@ export class WsiAnnotationController {
                 },
                 context.signal
             );
+            if (
+                this.isCurrent(context) &&
+                (await this.refuseNonCreator(response))
+            ) {
+                this.applyLayerFilter();
+                return;
+            }
             if (this.isCurrent(context) && this.refuseAccess(response)) {
                 // Put the edited shape back as it is saved.
                 this.applyLayerFilter();
@@ -845,6 +927,13 @@ export class WsiAnnotationController {
                 },
                 context.signal
             );
+            if (
+                this.isCurrent(context) &&
+                (await this.refuseNonCreator(response))
+            ) {
+                this.applyLayerFilter();
+                return;
+            }
             if (this.isCurrent(context) && this.refuseAccess(response)) {
                 // Put the deleted shape back.
                 this.applyLayerFilter();
@@ -1289,6 +1378,11 @@ export class WsiAnnotationController {
             y: event.clientY,
             text,
             layerName: annotation.layerName || DEFAULT_LAYER,
+            ai: isAssistantProvenance(annotation.provenance)
+                ? isUnreviewedAssistant(annotation.provenance)
+                    ? 'unreviewed'
+                    : 'accepted'
+                : undefined,
         };
     }
 
@@ -1317,12 +1411,7 @@ export class WsiAnnotationController {
 
     private applyLayerFilter() {
         if (!this.annotorious) return;
-        const visibleAnnotations = this.annotations.filter(
-            annotation =>
-                !this.hiddenLayerNames.has(
-                    annotation.layerName || DEFAULT_LAYER
-                )
-        );
+        const visibleAnnotations = this.shownAnnotations;
         this.synchronizing = true;
         try {
             this.annotorious.setAnnotations?.(visibleAnnotations);

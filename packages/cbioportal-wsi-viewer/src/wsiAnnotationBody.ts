@@ -83,3 +83,47 @@ export function serviceColor(hex: string): string {
         ? SERVICE_DEFAULT_COLOR.toUpperCase()
         : hex;
 }
+
+/** `provenance.source` values that mark an assistant-created annotation. */
+const ASSISTANT_SOURCES = ['agent', 'assistant', 'ai'];
+/** `provenance.review_status` once a user has accepted an AI annotation. */
+export const AI_REVIEW_ACCEPTED = 'accepted';
+
+/**
+ * Whether the research assistant created the annotation. The service writes
+ * `provenance.source: "agent"` when it saves an assistant proposal.
+ */
+export function isAssistantProvenance(
+    provenance: Record<string, unknown> | null | undefined
+): boolean {
+    const source = provenance?.source;
+    return (
+        typeof source === 'string' &&
+        ASSISTANT_SOURCES.includes(source.toLowerCase())
+    );
+}
+
+/** An assistant annotation that no user has accepted yet. */
+export function isUnreviewedAssistant(
+    provenance: Record<string, unknown> | null | undefined
+): boolean {
+    return (
+        isAssistantProvenance(provenance) &&
+        provenance!.review_status !== AI_REVIEW_ACCEPTED
+    );
+}
+
+/**
+ * The provenance of an accepted assistant annotation: the stored one, marked
+ * `review_status: "accepted"` with the time of review.
+ */
+export function acceptedProvenance(
+    provenance: Record<string, unknown> | null | undefined,
+    now: Date = new Date()
+): Record<string, unknown> {
+    return {
+        ...(provenance || {}),
+        review_status: AI_REVIEW_ACCEPTED,
+        reviewed_at: now.toISOString(),
+    };
+}

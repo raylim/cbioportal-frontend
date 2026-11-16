@@ -994,6 +994,151 @@ describe('WsiAnnotationController', () => {
         });
     });
 
+    it('accepts an assistant annotation with its version and rejects by deleting', async () => {
+        const agentBody = {
+            label: 'AI tumor',
+            comment: '',
+            layer_name: 'AI review',
+            color: '#ef4444',
+            type: 'AI review|#ef4444',
+            provenance: { source: 'agent', proposal_id: 'p1' },
+        };
+        jest.spyOn(global, 'fetch').mockImplementation(async (_url, init) => {
+            if (init?.method === 'PUT') {
+                const sent = JSON.parse(init.body as string);
+                return {
+                    ok: true,
+                    json: async () => ({
+                        ...apiAnnotation('ai-1', 4),
+                        body: sent.body,
+                    }),
+                } as Response;
+            }
+            return { ok: true, status: 204 } as Response;
+        });
+        const controller = new WsiAnnotationController(
+            'https://tiles.example',
+            'study1'
+        );
+        (controller as any).slideKey = 'slide1';
+        (controller as any).annotations = [
+            (controller as any).fromApi(
+                { ...apiAnnotation('ai-1', 3), body: agentBody },
+                'slide1'
+            ),
+            (controller as any).fromApi(
+                { ...apiAnnotation('ai-2', 1), body: agentBody },
+                'slide1'
+            ),
+            (controller as any).fromApi(apiAnnotation('mine'), 'slide1'),
+        ];
+        expect(controller.unreviewedAiCount).toBe(2);
+
+        await controller.acceptAnnotation('ai-1');
+        const put = (global.fetch as jest.Mock).mock.calls[0];
+        expect(put[1].method).toBe('PUT');
+        const sent = JSON.parse(put[1].body);
+        expect(sent.version).toBe(3);
+        expect(sent.body.provenance).toMatchObject({
+            source: 'agent',
+            proposal_id: 'p1',
+            review_status: 'accepted',
+        });
+        expect(typeof sent.body.provenance.reviewed_at).toBe('string');
+        expect(controller.unreviewedAiCount).toBe(1);
+        expect(controller.annotations[0].version).toBe(4);
+
+        await controller.rejectAnnotation('ai-2');
+        const del = (global.fetch as jest.Mock).mock.calls[1];
+        expect(del[1].method).toBe('DELETE');
+        expect(new URL(del[0]).pathname).toBe('/annotations/ai-2');
+        expect(controller.annotations.map(item => item.id)).toEqual([
+            'ai-1',
+            'mine',
+        ]);
+    });
+
+    it('hides unreviewed assistant annotations on request', () => {
+        const annotator = {
+            on: jest.fn(),
+            setVisible: jest.fn(),
+            setAnnotations: jest.fn(),
+            setStyle: jest.fn(),
+            setDrawingEnabled: jest.fn(),
+            cancelSelected: jest.fn(),
+        };
+        (createOSDAnnotator as jest.Mock).mockReturnValue(annotator);
+        const controller = new WsiAnnotationController(
+            'https://tiles.example',
+            'study1'
+        );
+        (controller as any).slideKey = 'slide1';
+        (controller as any).annotations = [
+            (controller as any).fromApi(
+                {
+                    ...apiAnnotation('ai'),
+                    body: {
+                        label: 'AI',
+                        layer_name: 'Default',
+                        color: '#ef4444',
+                        provenance: { source: 'agent' },
+                    },
+                },
+                'slide1'
+            ),
+            (controller as any).fromApi(apiAnnotation('mine'), 'slide1'),
+        ];
+        controller.attachViewer(
+            { element: document.createElement('div') },
+            {},
+            'slide1'
+        );
+        const shownIds = () =>
+            annotator.setAnnotations.mock.calls[
+                annotator.setAnnotations.mock.calls.length - 1
+            ][0].map((annotation: { id: string }) => annotation.id);
+        expect(shownIds()).toEqual(['ai', 'mine']);
+
+        controller.toggleHideUnreviewedAi();
+        expect(shownIds()).toEqual(['mine']);
+        expect(controller.visibleAnnotationCount).toBe(1);
+        expect(annotator.cancelSelected).toHaveBeenCalled();
+
+        controller.toggleHideUnreviewedAi();
+        expect(shownIds()).toEqual(['ai', 'mine']);
+    });
+
+    it("keeps the study editable when the service refuses another user's annotation", async () => {
+        const refusal = {
+            ok: false,
+            status: 403,
+            json: async () => ({
+                detail: 'Only the creator may update this annotation',
+            }),
+        };
+        jest.spyOn(global, 'fetch').mockResolvedValue({
+            ...refusal,
+            clone: () => refusal,
+        } as any);
+        const controller = new WsiAnnotationController(
+            'https://tiles.example',
+            'study1'
+        );
+        (controller as any).slideKey = 'slide1';
+        (controller as any).annotations = [
+            (controller as any).fromApi(apiAnnotation('theirs'), 'slide1'),
+        ];
+
+        await controller.renameAnnotation('theirs', 'renamed');
+
+        expect(controller.accessIssue).toBeNull();
+        expect(controller.canEdit).toBe(true);
+        expect(controller.error).toBe(
+            'Only its creator can change this annotation.'
+        );
+        expect(controller.annotations[0].body[0].value).toBe('theirs');
+    });
+
     it('only offers removal for unused user-added colors', () => {
         const controller = new WsiAnnotationController(
             'https://tiles.example',

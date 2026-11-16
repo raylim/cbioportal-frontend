@@ -7,8 +7,13 @@ import {
     WsiAnnotationTool,
 } from './wsiAnnotationController';
 import { WsiAnnotation } from './wsiViewerTypes';
+import {
+    isAssistantProvenance,
+    isUnreviewedAssistant,
+} from './wsiAnnotationBody';
 
 const colors = {
+    ai: '#7c3aed',
     blue: '#2986e2',
     border: '#ddd',
     muted: '#737373',
@@ -562,17 +567,35 @@ export const WsiAnnotationPanel = observer(
                         {controller.error}
                     </div>
                 )}
-                {controller.annotations.map(annotation =>
-                    controller.hiddenLayerNames.has(
-                        annotation.layerName || DEFAULT_LAYER
-                    ) ? null : (
-                        <AnnotationRow
-                            key={annotation.id}
-                            controller={controller}
-                            annotation={annotation}
+                {(controller.unreviewedAiCount > 0 ||
+                    controller.hideUnreviewedAi) && (
+                    <label
+                        style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 4,
+                            fontSize: 11,
+                            color: colors.muted,
+                            marginBottom: 4,
+                        }}
+                    >
+                        <input
+                            type="checkbox"
+                            data-testid="annotation-hide-unreviewed-ai"
+                            checked={controller.hideUnreviewedAi}
+                            onChange={controller.toggleHideUnreviewedAi}
                         />
-                    )
+                        Hide unreviewed AI annotations (
+                        {controller.unreviewedAiCount})
+                    </label>
                 )}
+                {controller.shownAnnotations.map(annotation => (
+                    <AnnotationRow
+                        key={annotation.id}
+                        controller={controller}
+                        annotation={annotation}
+                    />
+                ))}
             </div>
         );
     }
@@ -594,6 +617,7 @@ const AnnotationRow = observer(
         const layer = annotation.layerName || DEFAULT_LAYER;
         const dotColor = annotation.color || DEFAULT_COLOR;
         const creator = annotation.creator || '';
+        const unreviewedAi = isUnreviewedAssistant(annotation.provenance);
         const created = annotation.created
             ? new Date(annotation.created).toLocaleDateString()
             : '';
@@ -678,6 +702,7 @@ const AnnotationRow = observer(
                                     flexWrap: 'wrap',
                                 }}
                             >
+                                <AiBadge annotation={annotation} />
                                 <AnnotationBadge label={layer} />
                                 {annotation.colorName && (
                                     <AnnotationBadge
@@ -687,6 +712,41 @@ const AnnotationRow = observer(
                                     />
                                 )}
                             </div>
+                            {unreviewedAi && controller.canEdit && (
+                                <div
+                                    style={{
+                                        display: 'flex',
+                                        gap: 4,
+                                        marginTop: 2,
+                                    }}
+                                >
+                                    <button
+                                        data-testid={`accept-annotation-${annotation.id}`}
+                                        aria-label={`Accept AI annotation ${rawLabel}`}
+                                        onClick={() =>
+                                            void controller.acceptAnnotation(
+                                                annotation.id
+                                            )
+                                        }
+                                        style={reviewButtonStyle('#2a7a2a')}
+                                    >
+                                        ✓ Accept
+                                    </button>
+                                    <button
+                                        data-testid={`reject-annotation-${annotation.id}`}
+                                        aria-label={`Reject AI annotation ${rawLabel}`}
+                                        title="Reject: deletes the annotation"
+                                        onClick={() =>
+                                            void controller.rejectAnnotation(
+                                                annotation.id
+                                            )
+                                        }
+                                        style={reviewButtonStyle('#c0392b')}
+                                    >
+                                        ✕ Reject
+                                    </button>
+                                </div>
+                            )}
                             {(creator || created) && (
                                 <div
                                     style={{
@@ -742,6 +802,47 @@ const AnnotationRow = observer(
     }
 );
 
+function reviewButtonStyle(color: string): React.CSSProperties {
+    return {
+        fontSize: 10,
+        padding: '0 6px',
+        borderRadius: 3,
+        border: `1px solid ${color}`,
+        background: '#fff',
+        color,
+        cursor: 'pointer',
+        lineHeight: '16px',
+    };
+}
+
+/** "AI" on an annotation the research assistant created. */
+function AiBadge({ annotation }: { annotation: WsiAnnotation }) {
+    if (!isAssistantProvenance(annotation.provenance)) return null;
+    const unreviewed = isUnreviewedAssistant(annotation.provenance);
+    const description = unreviewed
+        ? 'Created by the research assistant; not reviewed yet'
+        : 'Created by the research assistant; accepted';
+    return (
+        <span
+            data-testid={`annotation-ai-badge-${annotation.id}`}
+            aria-label={description}
+            title={description}
+            style={{
+                padding: '0 4px',
+                borderRadius: 2,
+                border: `1px ${unreviewed ? 'dashed' : 'solid'} ${colors.ai}`,
+                background: unreviewed ? '#fff' : colors.ai,
+                color: unreviewed ? colors.ai : '#fff',
+                fontSize: 9,
+                fontWeight: 700,
+                lineHeight: '12px',
+            }}
+        >
+            {unreviewed ? 'AI · unreviewed' : 'AI · accepted'}
+        </span>
+    );
+}
+
 function AnnotationBadge({
     label,
     background = '#e8e8e8',
@@ -791,6 +892,13 @@ export const WsiAnnotationTooltip = observer(
                 }}
             >
                 {tooltip.text}
+                {tooltip.ai && (
+                    <div style={{ marginTop: 2, fontSize: 10 }}>
+                        {tooltip.ai === 'unreviewed'
+                            ? 'AI · not reviewed yet'
+                            : 'AI · accepted'}
+                    </div>
+                )}
                 {tooltip.layerName && (
                     <div style={{ marginTop: 2, fontSize: 10, opacity: 0.7 }}>
                         Layer: {tooltip.layerName}

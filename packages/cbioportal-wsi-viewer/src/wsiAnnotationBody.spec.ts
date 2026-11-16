@@ -1,4 +1,7 @@
 import {
+    acceptedProvenance,
+    isAssistantProvenance,
+    isUnreviewedAssistant,
     isLegacyLayerComment,
     readLayerAndNote,
     serviceColor,
@@ -74,5 +77,26 @@ describe('wsiAnnotationBody', () => {
         expect(serviceColor('#2f80ed')).toBe('#2F80ED');
         expect(serviceColor('#2F80ed')).toBe('#2F80ED');
         expect(serviceColor('#ef4444')).toBe('#ef4444');
+    });
+
+    it('recognizes assistant provenance and its review', () => {
+        const agent = { source: 'agent', proposal_id: 'p1' };
+        expect(isAssistantProvenance(agent)).toBe(true);
+        expect(isAssistantProvenance({ source: 'user' })).toBe(false);
+        expect(isAssistantProvenance(null)).toBe(false);
+        expect(isUnreviewedAssistant(agent)).toBe(true);
+
+        const accepted = acceptedProvenance(
+            agent,
+            new Date('2026-11-16T12:00:00Z')
+        );
+        expect(accepted).toEqual({
+            source: 'agent',
+            proposal_id: 'p1',
+            review_status: 'accepted',
+            reviewed_at: '2026-11-16T12:00:00.000Z',
+        });
+        expect(isUnreviewedAssistant(accepted)).toBe(false);
+        expect(isAssistantProvenance(accepted)).toBe(true);
     });
 });
