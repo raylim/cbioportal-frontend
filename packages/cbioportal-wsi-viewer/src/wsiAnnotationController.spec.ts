@@ -489,8 +489,11 @@ describe('WsiAnnotationController', () => {
         );
         expect(payload.body).toEqual({
             label: 'Tumor 1',
-            comment: 'Tumor',
+            comment: '',
             type: 'Tumor|#ef4444',
+            layer_name: 'Tumor',
+            color: '#ef4444',
+            provenance: null,
         });
         expect(controller.activeTool).toBeNull();
     });
@@ -879,6 +882,115 @@ describe('WsiAnnotationController', () => {
         expect(controller.customDrawPreview).toMatchObject({
             tool: 'polygon',
             points: [{ x: 100, y: 100 }],
+        });
+    });
+
+    it('reads layer_name, and a legacy layer kept in comment', () => {
+        const controller = new WsiAnnotationController(
+            'https://tiles.example',
+            'study1'
+        );
+        const read = (body: Record<string, unknown>) =>
+            (controller as any).fromApi(
+                { ...apiAnnotation('a1'), body },
+                'slide1'
+            );
+
+        // Written by this viewer: the layer and the note are separate.
+        expect(
+            read({
+                label: 'x',
+                comment: 'Check margin',
+                layer_name: 'Tumor',
+                color: '#ef4444',
+            })
+        ).toMatchObject({ layerName: 'Tumor', note: 'Check margin' });
+        expect(
+            read({
+                label: 'x',
+                comment: 'One-line note',
+                layer_name: 'Default',
+                color: '#2F80ED',
+            })
+        ).toMatchObject({ layerName: 'Default', note: 'One-line note' });
+        // Written before layer_name: the service stored its defaults.
+        expect(
+            read({
+                label: 'x',
+                comment: 'Stroma',
+                type: 'Stroma|#22c55e',
+                layer_name: 'Default',
+                color: '#2f80ed',
+            })
+        ).toMatchObject({
+            layerName: 'Stroma',
+            note: '',
+            color: '#22c55e',
+        });
+        expect(read({ label: 'x', comment: 'Stroma' })).toMatchObject({
+            layerName: 'Stroma',
+            note: '',
+        });
+    });
+
+    it('keeps the note and provenance when an edit is saved', async () => {
+        const provenance = { source: 'agent', proposal_id: 'p1' };
+        jest.spyOn(global, 'fetch').mockImplementation(
+            async () =>
+                ({
+                    ok: true,
+                    json: async () => ({
+                        ...apiAnnotation('a1', 2, 'renamed'),
+                        body: {
+                            label: 'renamed',
+                            comment: 'note',
+                            layer_name: 'Tumor',
+                            color: '#ef4444',
+                            type: 'Tumor|#ef4444',
+                            provenance,
+                        },
+                    }),
+                } as Response)
+        );
+        const controller = new WsiAnnotationController(
+            'https://tiles.example',
+            'study1'
+        );
+        (controller as any).slideKey = 'slide1';
+        (controller as any).annotations = [
+            (controller as any).fromApi(
+                {
+                    ...apiAnnotation('a1'),
+                    body: {
+                        label: 'old',
+                        comment: 'note',
+                        layer_name: 'Tumor',
+                        color: '#ef4444',
+                        type: 'Tumor|#ef4444',
+                        provenance,
+                    },
+                },
+                'slide1'
+            ),
+        ];
+
+        await controller.renameAnnotation('a1', 'renamed');
+
+        const sent = JSON.parse(
+            (global.fetch as jest.Mock).mock.calls[0][1].body
+        );
+        expect(sent.body).toEqual({
+            label: 'renamed',
+            comment: 'note',
+            type: 'Tumor|#ef4444',
+            layer_name: 'Tumor',
+            color: '#ef4444',
+            provenance,
+        });
+        expect(controller.annotations[0]).toMatchObject({
+            layerName: 'Tumor',
+            note: 'note',
+            provenance,
         });
     });
 

@@ -98,6 +98,21 @@ The service sits behind a proxy that authorizes each request with the portal ses
 
 A 401 means the user is signed out: the toolbar asks them to sign in and editing is off. A 403 means no access to the study: annotations are read-only. Neither is retried; a new slide or study tries again. `wsiServiceRequest.ts` holds the request rules.
 
+#### Annotation body
+
+The viewer writes the service's `AnnotationBody` fields as follows:
+
+| Field | Holds |
+| --- | --- |
+| `label` | The annotation's label |
+| `comment` | The user's free-text note (empty when there is none) |
+| `layer_name` | The layer the annotation is drawn on |
+| `type` | The named color, as `name|#hex` |
+| `color` | The color as `#hex` |
+| `provenance` | Kept as stored; the viewer never drops it on an update |
+
+Rows written before the viewer used `layer_name` kept the layer in `comment` and sent no `layer_name` or `color`, so the service stored its defaults (`Default`, `#2f80ed`). The viewer reads `comment` as the layer only for such rows: when `layer_name` is missing or `Default`, `color` is missing or exactly `#2f80ed`, and `comment` is one line of at most 100 characters. The viewer always writes `color`, and writes `#2f80ed` as `#2F80ED`, so a note on a row it wrote is never read as a layer. Saving an edit to a legacy row writes its layer to `layer_name` and clears `comment`. A `comment` that only repeats `layer_name`, as the service writes for a saved assistant proposal, is not shown as a note. `wsiAnnotationBody.ts` holds the rules.
+
 The viewer stores the selected slide and viewport in the URL hash (`#wsi:slide=…&x=…&y=…&z=…`) so a view can be shared.
 
 ## Development

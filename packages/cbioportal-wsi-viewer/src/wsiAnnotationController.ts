@@ -2,6 +2,11 @@ import { action, computed, makeObservable, observable } from 'mobx';
 import { WsiAnnotation } from './wsiViewerTypes';
 import { normalizeSvgSelector } from './wsiAnnotationGeometryUtils';
 import {
+    readLayerAndNote,
+    serviceColor,
+    WsiAnnotationApiBody,
+} from './wsiAnnotationBody';
+import {
     WsiServiceAccessIssue,
     wsiServiceAccessIssue,
     wsiServiceFetch,
@@ -697,14 +702,7 @@ export class WsiAnnotationController {
         const payload = {
             slide_id: slideKey,
             study_id: this.studyId || '',
-            body: {
-                label: annotation.body?.[0]?.value || '',
-                comment: annotation.layerName || this.activeLayer,
-                type: serializeColorLabel(
-                    annotation.colorName || this.activeColorName,
-                    annotation.color || this.activeColor
-                ),
-            },
+            body: this.toApiBody(annotation),
             target: { selector: annotation.target.selector },
             visible_to: [],
         };
@@ -777,14 +775,7 @@ export class WsiAnnotationController {
                 {
                     method: 'PUT',
                     body: JSON.stringify({
-                        body: {
-                            label: annotation.body?.[0]?.value || '',
-                            comment: annotation.layerName || this.activeLayer,
-                            type: serializeColorLabel(
-                                annotation.colorName || this.activeColorName,
-                                annotation.color || this.activeColor
-                            ),
-                        },
+                        body: this.toApiBody(annotation),
                         target: { selector: annotation.target.selector },
                         version: annotation.version || 1,
                     }),
@@ -925,8 +916,34 @@ export class WsiAnnotationController {
         this.refreshStyle();
     }
 
+    /**
+     * The service body for `annotation`: the layer in `layer_name`, the
+     * user's note in `comment`, and the stored provenance unchanged.
+     */
+    private toApiBody(annotation: WsiAnnotation): WsiAnnotationApiBody {
+        const colorName = annotation.colorName ?? this.activeColorName;
+        const color = annotation.color || this.activeColor;
+        return {
+            label: annotation.body?.[0]?.value || '',
+            comment: annotation.note || '',
+            type: serializeColorLabel(colorName, color),
+            layer_name: annotation.layerName || this.activeLayer,
+            color: serviceColor(
+                HEX_COLOR_RE.test(color) ? color : DEFAULT_COLOR
+            ),
+            provenance: annotation.provenance ?? null,
+        };
+    }
+
     private fromApi(item: any, slideKey: string): WsiAnnotation {
-        const parsedColor = parseColor(item.body?.type);
+        // `type` holds the named color; a body without one has only `color`.
+        const parsedColor =
+            !item.body?.type &&
+            typeof item.body?.color === 'string' &&
+            HEX_COLOR_RE.test(item.body.color)
+                ? { name: '', color: item.body.color.toLowerCase() }
+                : parseColor(item.body?.type);
+        const { layerName, note } = readLayerAndNote(item.body);
         return {
             '@context': 'http://www.w3.org/ns/anno.jsonld',
             type: 'Annotation',
@@ -961,7 +978,13 @@ export class WsiAnnotationController {
             version: item.version,
             color: parsedColor.color,
             colorName: parsedColor.name,
-            layerName: item.body?.comment || DEFAULT_LAYER,
+            layerName,
+            note,
+            provenance:
+                item.body?.provenance &&
+                typeof item.body.provenance === 'object'
+                    ? item.body.provenance
+                    : null,
         };
     }
 

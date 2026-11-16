@@ -137,6 +137,10 @@ export interface WsiAnnotation {
     color?: string;
     colorName?: string;
     layerName?: string;
+    /** The user's free-text note (`body.comment`). */
+    note?: string;
+    /** `body.provenance` as stored, kept on every update. */
+    provenance?: Record<string, unknown> | null;
 }
 
 /** A label/value row for the sidebar's Clinical section, built by the host. */
