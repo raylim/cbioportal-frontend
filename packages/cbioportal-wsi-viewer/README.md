@@ -121,6 +121,10 @@ The sidebar's Annotations section lists the slide's annotations on visible layer
 
 Each annotation can carry a free-text note, kept in `body.comment` and separate from its label. The list shows it under the annotation, with **+ Note** / **Edit note** for users who can edit (Ctrl/Cmd+Enter saves, Esc cancels); saving sends a `PUT` with the annotation's `version`. The click tooltip shows it too.
 
+#### Points
+
+The **Point** tool drops a point at each click (a drag still pans the slide) and stays on until Esc. A point is stored as an `SvgSelector` holding a circle of radius 0, in level-0 image pixels: `<svg><circle cx="…" cy="…" r="0" /></svg>`. Points are labelled with the active color's name, so counting mitoses means picking a "Mitosis" color and clicking. The viewer draws points itself, as fixed-size markers on one canvas redrawn per frame, because Annotorious has no point shape; that keeps hundreds of points fast. A point shows and counts at once, before its save returns. The toolbar shows the count for the active layer and label while the tool is on, and the Annotations section has a **Point counts** table per label and layer. Clicking a marker shows its tooltip.
+
 #### Measurements
 
 The list and the click tooltip show each annotation's size: the length of a line, and the area and perimeter of a rectangle, ellipse, circle or polygon (including freehand and brush shapes). Coordinates are level-0 image pixels, scaled by the slide's microns-per-pixel (`tile_metadata.mpp`, the scale the status bar uses) on each axis, so slides with unequal x and y scales measure correctly. Lengths are shown in µm, or mm from 1 mm; areas in µm², or mm² from 0.01 mm². An ellipse's perimeter uses Ramanujan's approximation. Without a valid mpp the sizes are in pixels and the list says so. Drawing a line, rectangle, ellipse or circle shows its length or area next to the cursor. `wsiAnnotationGeometryUtils.ts` holds the math.

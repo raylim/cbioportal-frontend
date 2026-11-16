@@ -1,10 +1,17 @@
 const MIN_RENDERABLE_ANNOTATION_SIZE = 1;
 
+/**
+ * Rewrites an SVG selector into shapes Annotorious draws: a circle becomes an
+ * ellipse, and a zero-size ellipse or line gets a minimal size. A circle of
+ * radius 0 is a point, which the viewer draws itself, and is kept.
+ */
 export function normalizeSvgSelector(svg: string): string {
     let normalized = svg.replace(
         /<circle\s+cx="([^"]+)"\s+cy="([^"]+)"\s+r="([^"]+)"\s*\/>/g,
-        (_match, cx, cy, radius) =>
-            `<ellipse cx="${cx}" cy="${cy}" rx="${radius}" ry="${radius}" />`
+        (match, cx, cy, radius) =>
+            Number(radius) === 0
+                ? match
+                : `<ellipse cx="${cx}" cy="${cy}" rx="${radius}" ry="${radius}" />`
     );
     normalized = normalized.replace(
         /<ellipse\s+cx="([^"]+)"\s+cy="([^"]+)"\s+rx="([^"]+)"\s+ry="([^"]+)"\s*\/>/g,

@@ -197,4 +197,34 @@ describe('WsiAnnotationPanel', () => {
             'No annotations match the filters.'
         );
     });
+
+    it('tallies points per label and layer', () => {
+        const point = (id: string, label: string, layer: string) => ({
+            ...apiItem(id, { label, layer_name: layer }),
+            target: {
+                selector: {
+                    type: 'SvgSelector',
+                    value: '<svg><circle cx="1" cy="2" r="0" /></svg>',
+                },
+            },
+        });
+        const controller = controllerWith([
+            point('p1', 'Mitosis', 'Counts'),
+            point('p2', 'Mitosis', 'Counts'),
+            point('p3', 'Lymphocyte', 'Counts'),
+            apiItem('box', {}),
+        ]);
+        render(<WsiAnnotationPanel controller={controller} />);
+
+        const tally = screen.getByTestId('annotation-point-tally');
+        expect(tally.textContent).toContain('Point counts');
+        expect(
+            screen.getByTestId('annotation-point-tally-Counts-Mitosis')
+                .textContent
+        ).toBe('MitosisCounts2');
+        expect(
+            screen.getByTestId('annotation-point-tally-Counts-Lymphocyte')
+                .textContent
+        ).toBe('LymphocyteCounts1');
+    });
 });

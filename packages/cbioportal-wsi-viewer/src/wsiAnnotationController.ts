@@ -28,6 +28,7 @@ import {
     getLoadedAnnotorious,
     loadAnnotorious,
 } from './wsiAnnotoriousLoader';
+import { WsiPointLayer } from './wsiAnnotationPointLayer';
 
 export type WsiAnnotationTool =
     | 'rectangle'
@@ -35,6 +36,7 @@ export type WsiAnnotationTool =
     | 'circle'
     | 'line'
     | 'polygon'
+    | 'point'
     | null;
 
 type WsiPointerAnnotationTool = Exclude<WsiAnnotationTool, null>;
@@ -242,6 +244,25 @@ function countBy<T>(items: T[], key: (item: T) => string): Map<string, number> {
     return counts;
 }
 
+/** Point annotations counted by layer and label term. */
+export interface WsiPointTallyRow {
+    layer: string;
+    label: string;
+    color: string;
+    count: number;
+}
+
+/** A point's SVG selector: a circle of radius 0, in image pixels. */
+export function pointSelectorSvg(point: { x: number; y: number }): string {
+    const round = (value: number) => Math.round(value * 100) / 100;
+    return `<svg><circle cx="${round(point.x)}" cy="${round(
+        point.y
+    )}" r="0" /></svg>`;
+}
+
+/** Pointer travel, in screen pixels, below which a press is a click. */
+const CLICK_TOLERANCE = 5;
+
 export class WsiAnnotationController {
     @observable annotations: WsiAnnotation[] = [];
     @observable loading = false;
@@ -304,6 +325,14 @@ export class WsiAnnotationController {
     private polygonPoints: Array<{ x: number; y: number }> = [];
     private polygonScreenPoints: Array<{ x: number; y: number }> = [];
     private synchronizing = false;
+    private pointLayer: WsiPointLayer | null = null;
+    private canvasClickCleanup: (() => void) | null = null;
+    /** The shapes last given to Annotorious, to skip unchanged updates. */
+    private annotoriousShapes: WsiAnnotation[] = [];
+    private readonly shapeCache = new WeakMap<
+        object,
+        WsiAnnotationShape | null
+    >();
     @observable.ref private mppProvider: () => WsiMpp | null | undefined = () =>
         undefined;
 
@@ -331,7 +360,57 @@ export class WsiAnnotationController {
 
     /** An annotation's shape, or null for a selector the viewer cannot read. */
     shapeOf(annotation: WsiAnnotation): WsiAnnotationShape | null {
-        return parseAnnotationShape(annotation.target?.selector);
+        const selector = annotation.target?.selector;
+        if (!selector) return null;
+        if (!this.shapeCache.has(selector)) {
+            this.shapeCache.set(selector, parseAnnotationShape(selector));
+        }
+        return this.shapeCache.get(selector)!;
+    }
+
+    isPoint(annotation: WsiAnnotation): boolean {
+        return this.shapeOf(annotation)?.kind === 'point';
+    }
+
+    /** Points on the slide per layer and label term, most first. */
+    @computed get pointTally(): WsiPointTallyRow[] {
+        const rows = new Map<string, WsiPointTallyRow>();
+        this.shownAnnotations.forEach(annotation => {
+            if (!this.isPoint(annotation)) return;
+            const layer = annotation.layerName || DEFAULT_LAYER;
+            const label = labelTerm(annotation.body?.[0]?.value || 'Point');
+            const key = `${layer}\u0000${label}`;
+            const row = rows.get(key) || {
+                layer,
+                label,
+                color: annotation.color || DEFAULT_COLOR,
+                count: 0,
+            };
+            row.count += 1;
+            rows.set(key, row);
+        });
+        return Array.from(rows.values()).sort(
+            (a, b) =>
+                b.count - a.count ||
+                a.layer.localeCompare(b.layer) ||
+                a.label.localeCompare(b.label)
+        );
+    }
+
+    /** The label a new point gets: the active color's name. */
+    @computed get activePointLabel(): string {
+        return this.activeColorName.trim() || 'Point';
+    }
+
+    /** Points with the active layer and point label, for the toolbar. */
+    @computed get activePointCount(): number {
+        return (
+            this.pointTally.find(
+                row =>
+                    row.layer === this.activeLayer &&
+                    row.label === labelTerm(this.activePointLabel)
+            )?.count || 0
+        );
     }
 
     /** An annotation's size, in microns, or in pixels without an mpp. */
@@ -676,6 +755,13 @@ export class WsiAnnotationController {
             }
         );
         this.annotorious.setVisible(this.visible);
+        this.pointLayer = new WsiPointLayer(viewer, openSeadragon);
+        this.pointLayer.setVisible(this.visible);
+        if (viewer.addHandler) {
+            viewer.addHandler('canvas-click', this.handleCanvasClick);
+            this.canvasClickCleanup = () =>
+                viewer.removeHandler?.('canvas-click', this.handleCanvasClick);
+        }
         if (!this.canEdit) this.annotorious.setUserSelectAction?.('SELECT');
         this.applyLayerFilter();
         this.refreshStyle();
@@ -741,6 +827,7 @@ export class WsiAnnotationController {
     toggleVisible() {
         this.visible = !this.visible;
         this.annotorious?.setVisible?.(this.visible);
+        this.pointLayer?.setVisible(this.visible);
         if (!this.visible) this.annotationTooltip = null;
     }
 
@@ -1091,8 +1178,8 @@ export class WsiAnnotationController {
                     ),
                     saved,
                 ];
-                this.applyLayerFilter();
-                this.refreshStyle();
+                this.applyLayerFilter(!this.isPoint(saved));
+                if (!this.isPoint(saved)) this.refreshStyle();
             } finally {
                 this.synchronizing = false;
             }
@@ -1379,6 +1466,8 @@ export class WsiAnnotationController {
                 image,
                 client: { x: event.clientX, y: event.clientY },
             };
+            // A point drops on click; a drag still pans the slide.
+            if (tool === 'point') return;
             const screenPoint = {
                 x: event.clientX - rect.left,
                 y: event.clientY - rect.top,
@@ -1435,6 +1524,15 @@ export class WsiAnnotationController {
                 event.clientY - rect.top
             );
             if (!endPoint) return;
+
+            if (start.tool === 'point') {
+                const moved = Math.hypot(
+                    event.clientX - start.client.x,
+                    event.clientY - start.client.y
+                );
+                if (moved <= CLICK_TOLERANCE) this.createPoint(endPoint);
+                return;
+            }
 
             if (start.tool === 'polygon') {
                 const moved = Math.hypot(
@@ -1590,27 +1688,7 @@ export class WsiAnnotationController {
                 : `<svg><ellipse cx="${cx}" cy="${cy}" rx="${
                       tool === 'circle' ? radius : rx
                   }" ry="${tool === 'circle' ? radius : ry}" /></svg>`;
-        const annotation: WsiAnnotation = {
-            '@context': 'http://www.w3.org/ns/anno.jsonld',
-            type: 'Annotation',
-            id: `client-${Date.now()}-${Math.random()
-                .toString(36)
-                .slice(2)}`,
-            body: [
-                {
-                    type: 'TextualBody',
-                    value: this.nextAutoLabel(),
-                    purpose: 'commenting',
-                },
-            ],
-            target: {
-                source: this.slideKey || '',
-                selector: { type: 'SvgSelector', value: selector },
-            },
-            color: this.activeColor,
-            colorName: this.activeColorName,
-            layerName: this.activeLayer,
-        };
+        const annotation = this.draftAnnotation(selector, this.nextAutoLabel());
         // Release the tool before saving so a slow save cannot cut short
         // the next shape.
         this.cancelDrawing();
@@ -1622,7 +1700,14 @@ export class WsiAnnotationController {
         const selector = `<svg><polygon points="${points
             .map(point => `${point.x},${point.y}`)
             .join(' ')}" /></svg>`;
-        const annotation: WsiAnnotation = {
+        const annotation = this.draftAnnotation(selector, this.nextAutoLabel());
+        this.cancelDrawing();
+        await this.createAnnotation(annotation);
+    }
+
+    /** A new, unsaved annotation of an SVG shape on the active layer. */
+    private draftAnnotation(svg: string, label: string): WsiAnnotation {
+        return {
             '@context': 'http://www.w3.org/ns/anno.jsonld',
             type: 'Annotation',
             id: `client-${Date.now()}-${Math.random()
@@ -1631,20 +1716,34 @@ export class WsiAnnotationController {
             body: [
                 {
                     type: 'TextualBody',
-                    value: this.nextAutoLabel(),
+                    value: label,
                     purpose: 'commenting',
                 },
             ],
             target: {
                 source: this.slideKey || '',
-                selector: { type: 'SvgSelector', value: selector },
+                selector: { type: 'SvgSelector', value: svg },
             },
             color: this.activeColor,
             colorName: this.activeColorName,
             layerName: this.activeLayer,
         };
-        this.cancelDrawing();
-        await this.createAnnotation(annotation);
+    }
+
+    /**
+     * Drops a point. It shows and counts at once, before the save returns;
+     * the point tool stays on for the next click.
+     */
+    @action
+    private createPoint(point: { x: number; y: number }) {
+        if (!this.canEdit || !this.slideKey) return;
+        const annotation = this.draftAnnotation(
+            pointSelectorSvg(point),
+            this.activePointLabel
+        );
+        this.annotations = [...this.annotations, annotation];
+        this.applyLayerFilter(false);
+        void this.createAnnotation(annotation);
     }
 
     private nextAutoLabel(): string {
@@ -1687,6 +1786,11 @@ export class WsiAnnotationController {
     private destroyAnnotorious() {
         // Cancels an attach still waiting for the Annotorious chunk.
         this.attachGeneration += 1;
+        this.canvasClickCleanup?.();
+        this.canvasClickCleanup = null;
+        this.pointLayer?.destroy();
+        this.pointLayer = null;
+        this.annotoriousShapes = [];
         this.pointerCleanup?.();
         this.pointerCleanup = null;
         this.keydownCleanup?.();
@@ -1707,16 +1811,59 @@ export class WsiAnnotationController {
         this.polygonScreenPoints = [];
     }
 
-    private applyLayerFilter() {
+    /**
+     * Puts the shown annotations on the slide: points on the point layer,
+     * other shapes in Annotorious. Without `force`, Annotorious is left alone
+     * when its shapes did not change, so adding points stays fast.
+     */
+    private applyLayerFilter(force = true) {
+        const shown = this.shownAnnotations;
+        const points: WsiAnnotation[] = [];
+        const shapes: WsiAnnotation[] = [];
+        shown.forEach(annotation =>
+            (this.isPoint(annotation) ? points : shapes).push(annotation)
+        );
+        this.pointLayer?.setMarkers(
+            points.map(annotation => {
+                const shape = this.shapeOf(annotation) as {
+                    x: number;
+                    y: number;
+                };
+                return {
+                    id: annotation.id,
+                    x: shape.x,
+                    y: shape.y,
+                    color: annotation.color || DEFAULT_COLOR,
+                };
+            })
+        );
         if (!this.annotorious) return;
-        const visibleAnnotations = this.shownAnnotations;
+        if (
+            !force &&
+            shapes.length === this.annotoriousShapes.length &&
+            shapes.every((shape, i) => shape === this.annotoriousShapes[i])
+        ) {
+            return;
+        }
+        this.annotoriousShapes = shapes;
         this.synchronizing = true;
         try {
-            this.annotorious.setAnnotations?.(visibleAnnotations);
+            this.annotorious.setAnnotations?.(shapes);
         } finally {
             this.synchronizing = false;
         }
     }
+
+    /** A click on a point marker shows its tooltip. */
+    private readonly handleCanvasClick = (event: any) => {
+        if (this.activeTool || !event?.quick || !event.position) return;
+        const marker = this.pointLayer?.hitTest(event.position);
+        const annotation =
+            marker && this.annotations.find(item => item.id === marker.id);
+        if (annotation && event.originalEvent) {
+            this.showAnnotationTooltip(annotation, event.originalEvent);
+        }
+    };
 
     private refreshStyle() {
         if (!this.annotorious) return;

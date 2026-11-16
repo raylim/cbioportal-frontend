@@ -59,6 +59,13 @@ const tools: Array<{
         icon: '⬡',
         hint: 'Draw a polygon — click to add points, double-click to close',
     },
+    {
+        name: 'point',
+        label: 'Point',
+        icon: '•',
+        hint:
+            'Drop points — click on the slide for each one (drag to pan); Esc to stop',
+    },
 ];
 
 const toolbarStyle: React.CSSProperties = {
@@ -143,6 +150,22 @@ export const WsiAnnotationToolbar = observer(
                         </button>
                     );
                 })}
+                {controller.activeTool === 'point' && (
+                    <span
+                        role="status"
+                        data-testid="annotation-point-count"
+                        aria-live="polite"
+                        style={{
+                            fontSize: 11,
+                            color: colors.text,
+                            fontWeight: 600,
+                            whiteSpace: 'nowrap',
+                        }}
+                    >
+                        {controller.activePointLabel}:{' '}
+                        {controller.activePointCount}
+                    </span>
+                )}
                 <ToolbarDivider />
                 <span
                     style={{
@@ -646,6 +669,7 @@ export const WsiAnnotationPanel = observer(
                         scale.
                     </div>
                 )}
+                <PointTally controller={controller} />
                 <AnnotationListFilters controller={controller} />
                 <AnnotationCounts controller={controller} />
                 <div
@@ -1087,6 +1111,80 @@ const AnnotationCounts = observer(
                     ))
                 )}
             </div>
+        );
+    }
+);
+
+/** Point counts per layer and label, e.g. mitoses. */
+const PointTally = observer(
+    ({ controller }: { controller: WsiAnnotationController }) => {
+        const rows = controller.pointTally;
+        if (!rows.length) return null;
+        return (
+            <table
+                data-testid="annotation-point-tally"
+                style={{
+                    width: '100%',
+                    fontSize: 11,
+                    borderCollapse: 'collapse',
+                    marginBottom: 6,
+                }}
+            >
+                <caption
+                    style={{
+                        textAlign: 'left',
+                        fontSize: 10,
+                        color: colors.muted,
+                    }}
+                >
+                    Point counts
+                </caption>
+                <thead>
+                    <tr style={{ color: colors.muted, fontSize: 10 }}>
+                        <th style={{ textAlign: 'left', fontWeight: 400 }}>
+                            Label
+                        </th>
+                        <th style={{ textAlign: 'left', fontWeight: 400 }}>
+                            Layer
+                        </th>
+                        <th style={{ textAlign: 'right', fontWeight: 400 }}>
+                            Count
+                        </th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {rows.map(row => (
+                        <tr
+                            key={`${row.layer}|${row.label}`}
+                            data-testid={`annotation-point-tally-${row.layer}-${row.label}`}
+                        >
+                            <td>
+                                <span
+                                    aria-hidden="true"
+                                    style={{
+                                        display: 'inline-block',
+                                        width: 7,
+                                        height: 7,
+                                        borderRadius: '50%',
+                                        background: row.color,
+                                        marginRight: 4,
+                                    }}
+                                />
+                                {row.label}
+                            </td>
+                            <td style={{ color: colors.muted }}>{row.layer}</td>
+                            <td
+                                style={{
+                                    textAlign: 'right',
+                                    fontWeight: 600,
+                                }}
+                            >
+                                {row.count}
+                            </td>
+                        </tr>
+                    ))}
+                </tbody>
+            </table>
         );
     }
 );

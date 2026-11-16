@@ -2,7 +2,11 @@
  * @jest-environment jsdom
  */
 
-import { labelTerm, WsiAnnotationController } from './wsiAnnotationController';
+import {
+    labelTerm,
+    pointSelectorSvg,
+    WsiAnnotationController,
+} from './wsiAnnotationController';
 import { createOSDAnnotator } from '@annotorious/openseadragon';
 import { loadAnnotorious } from './wsiAnnotoriousLoader';
 
@@ -1456,6 +1460,138 @@ describe('WsiAnnotationController', () => {
             viewport: new Rect(800, 1800, 800, 600),
         });
         expect(controller.zoomToAnnotation('missing')).toBe(false);
+    });
+
+    it('drops points on click, counts them at once and keeps the tool on', async () => {
+        const annotator = {
+            on: jest.fn(),
+            setVisible: jest.fn(),
+            setAnnotations: jest.fn(),
+            setStyle: jest.fn(),
+            setDrawingEnabled: jest.fn(),
+            cancelDrawing: jest.fn(),
+        };
+        (createOSDAnnotator as jest.Mock).mockReturnValue(annotator);
+        let saved = 0;
+        jest.spyOn(global, 'fetch').mockImplementation(
+            async (_url, init) =>
+                ({
+                    ok: true,
+                    json: async () => ({
+                        ...JSON.parse(init!.body as string),
+                        id: `saved-${++saved}`,
+                        version: 1,
+                        created_by: 'user',
+                    }),
+                } as Response)
+        );
+        const controller = new WsiAnnotationController(
+            'https://tiles.example',
+            'study1'
+        );
+        (controller as any).slideKey = SLIDE_KEY;
+        controller.addLayer('Counts');
+        controller.addNamedColor('Mitosis', '#ef4444');
+        const viewerElement = document.createElement('div');
+        controller.attachViewer({ element: viewerElement }, {}, SLIDE_KEY);
+        jest.spyOn(
+            controller as any,
+            'imagePoint'
+        ).mockImplementation((x: number, y: number) => ({ x, y }));
+        const click = (x: number, y: number, toX = x, toY = y) => {
+            viewerElement.dispatchEvent(
+                new MouseEvent('pointerdown', {
+                    button: 0,
+                    clientX: x,
+                    clientY: y,
+                })
+            );
+            viewerElement.dispatchEvent(
+                new MouseEvent('pointerup', {
+                    button: 0,
+                    clientX: toX,
+                    clientY: toY,
+                })
+            );
+        };
+
+        controller.setTool('point');
+        click(10, 20);
+        click(30, 40, 32, 41);
+        // A drag pans the slide instead.
+        click(50, 50, 120, 90);
+
+        expect(controller.activeTool).toBe('point');
+        expect(controller.activePointCount).toBe(2);
+        expect(controller.pointTally).toEqual([
+            { layer: 'Counts', label: 'Mitosis', color: '#ef4444', count: 2 },
+        ]);
+        await new Promise(resolve => setTimeout(resolve, 0));
+        const bodies = (global.fetch as jest.Mock).mock.calls.map(([, init]) =>
+            JSON.parse(init.body)
+        );
+        expect(bodies).toHaveLength(2);
+        expect(bodies[0].target.selector).toEqual({
+            type: 'SvgSelector',
+            value: '<svg><circle cx="10" cy="20" r="0" /></svg>',
+        });
+        expect(bodies[0].body).toMatchObject({
+            label: 'Mitosis',
+            layer_name: 'Counts',
+        });
+        expect(controller.annotations.map(item => item.id)).toEqual([
+            'saved-1',
+            'saved-2',
+        ]);
+        expect(controller.pointTally[0].count).toBe(2);
+        // Points never go to Annotorious.
+        annotator.setAnnotations.mock.calls.forEach(([shapes]) =>
+            expect(shapes).toEqual([])
+        );
+    });
+
+    it('writes a point as a circle of radius 0, rounded to 0.01 pixel', () => {
+        expect(pointSelectorSvg({ x: 10.126, y: 20.004 })).toBe(
+            '<svg><circle cx="10.13" cy="20" r="0" /></svg>'
+        );
+    });
+
+    it('stays fast with hundreds of points', () => {
+        const annotator = {
+            on: jest.fn(),
+            setVisible: jest.fn(),
+            setAnnotations: jest.fn(),
+            setStyle: jest.fn(),
+        };
+        (createOSDAnnotator as jest.Mock).mockReturnValue(annotator);
+        jest.spyOn(global, 'fetch').mockImplementation(
+            () => new Promise(() => undefined)
+        );
+        const controller = new WsiAnnotationController(
+            'https://tiles.example',
+            'study1'
+        );
+        (controller as any).slideKey = SLIDE_KEY;
+        (controller as any).annotations = Array.from({ length: 50 }, (_, i) =>
+            (controller as any).fromApi(apiAnnotation(`shape-${i}`), SLIDE_KEY)
+        );
+        controller.attachViewer(
+            { element: document.createElement('div') },
+            {},
+            SLIDE_KEY
+        );
+        const setCalls = annotator.setAnnotations.mock.calls.length;
+
+        const started = Date.now();
+        for (let i = 0; i < 500; i++) {
+            (controller as any).createPoint({ x: i, y: i });
+        }
+        const elapsed = Date.now() - started;
+
+        expect(controller.pointTally[0].count).toBe(500);
+        // Annotorious keeps its 50 shapes; points are drawn on their own layer.
+        expect(annotator.setAnnotations.mock.calls.length).toBe(setCalls);
+        expect(elapsed).toBeLessThan(2000);
     });
 
     it('only offers removal for unused user-added colors', () => {

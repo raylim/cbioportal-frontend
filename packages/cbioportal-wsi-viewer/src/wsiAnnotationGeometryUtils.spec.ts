@@ -4,6 +4,7 @@ import {
     formatLength,
     formatMeasurement,
     measureShape,
+    normalizeSvgSelector,
     parseAnnotationShape,
     pathLength,
     polygonArea,
@@ -86,6 +87,17 @@ describe('parseAnnotationShape', () => {
             parseAnnotationShape(svg('<svg><rect x="a" y="0" /></svg>'))
         ).toBe(null);
         expect(parseAnnotationShape(null)).toBe(null);
+    });
+});
+
+describe('normalizeSvgSelector', () => {
+    it('turns circles into ellipses but keeps points', () => {
+        expect(
+            normalizeSvgSelector('<svg><circle cx="1" cy="2" r="3" /></svg>')
+        ).toBe('<svg><ellipse cx="1" cy="2" rx="3" ry="3" /></svg>');
+        expect(
+            normalizeSvgSelector('<svg><circle cx="1" cy="2" r="0" /></svg>')
+        ).toBe('<svg><circle cx="1" cy="2" r="0" /></svg>');
     });
 });
 
