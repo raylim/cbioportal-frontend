@@ -123,4 +123,33 @@ describe('WsiAnnotationPanel', () => {
             screen.queryByTestId('annotation-measurement-scale-note')
         ).toBeNull();
     });
+
+    it('adds and edits a note separately from the label', () => {
+        const controller = controllerWith([
+            apiItem('a1', {}),
+            apiItem('a2', { comment: 'Existing note' }),
+        ]);
+        const setNote = jest
+            .spyOn(controller, 'setAnnotationNote')
+            .mockResolvedValue(undefined);
+        render(<WsiAnnotationPanel controller={controller} />);
+
+        expect(screen.getByTestId('annotation-note-a2').textContent).toBe(
+            'Existing note'
+        );
+        fireEvent.click(screen.getByLabelText('Add note for a1'));
+        fireEvent.change(screen.getByLabelText('Note for a1'), {
+            target: { value: '  Mitoses near margin  ' },
+        });
+        fireEvent.click(screen.getByTestId('annotation-note-save-a1'));
+        expect(setNote).toHaveBeenCalledWith('a1', 'Mitoses near margin');
+
+        fireEvent.click(screen.getByLabelText('Edit note for a2'));
+        const input = screen.getByLabelText(
+            'Note for a2'
+        ) as HTMLTextAreaElement;
+        expect(input.value).toBe('Existing note');
+        fireEvent.keyDown(input, { key: 'Enter', ctrlKey: true });
+        expect(setNote).toHaveBeenLastCalledWith('a2', 'Existing note');
+    });
 });

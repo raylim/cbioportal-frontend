@@ -1291,6 +1291,50 @@ describe('WsiAnnotationController', () => {
         expect(controller.drawPreviewMeasurement).toBe('Area 1,250 µm²');
     });
 
+    it('saves a note in comment with the version, apart from the label', async () => {
+        jest.spyOn(global, 'fetch').mockImplementation(
+            async (_url, init) =>
+                ({
+                    ok: true,
+                    json: async () => ({
+                        ...apiAnnotation('a1', 2),
+                        body: JSON.parse(init!.body as string).body,
+                    }),
+                } as Response)
+        );
+        const controller = new WsiAnnotationController(
+            'https://tiles.example',
+            'study1'
+        );
+        (controller as any).slideKey = 'slide1';
+        (controller as any).annotations = [
+            (controller as any).fromApi(
+                apiAnnotation('a1', 1, 'Tumor 1', 'Tumor'),
+                'slide1'
+            ),
+        ];
+
+        await controller.setAnnotationNote('a1', 'Necrotic center.\nRecheck.');
+        // An unchanged note is not saved again.
+        await controller.setAnnotationNote('a1', 'Necrotic center.\nRecheck.');
+
+        expect(global.fetch).toHaveBeenCalledTimes(1);
+        const sent = JSON.parse(
+            (global.fetch as jest.Mock).mock.calls[0][1].body
+        );
+        expect(sent.version).toBe(1);
+        expect(sent.body).toMatchObject({
+            label: 'Tumor 1',
+            comment: 'Necrotic center.\nRecheck.',
+            layer_name: 'Tumor',
+        });
+        expect(controller.annotations[0]).toMatchObject({
+            note: 'Necrotic center.\nRecheck.',
+            layerName: 'Tumor',
+            version: 2,
+        });
+    });
+
     it('only offers removal for unused user-added colors', () => {
         const controller = new WsiAnnotationController(
             'https://tiles.example',

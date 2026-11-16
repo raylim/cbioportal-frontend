@@ -787,6 +787,10 @@ const AnnotationRow = observer(
                                     {formatMeasurement(measurement)}
                                 </div>
                             )}
+                            <AnnotationNote
+                                controller={controller}
+                                annotation={annotation}
+                            />
                             {unreviewedAi && controller.canEdit && (
                                 <div
                                     style={{
@@ -873,6 +877,115 @@ const AnnotationRow = observer(
                     </button>
                 )}
             </div>
+        );
+    }
+);
+
+export const MAX_NOTE_LENGTH = 2000;
+
+/** An annotation's note, with an editor for users who can edit. */
+const AnnotationNote = observer(
+    ({
+        controller,
+        annotation,
+    }: {
+        controller: WsiAnnotationController;
+        annotation: WsiAnnotation;
+    }) => {
+        const [editing, setEditing] = React.useState(false);
+        const [draft, setDraft] = React.useState('');
+        const note = annotation.note || '';
+        const label = annotation.body?.[0]?.value || 'annotation';
+        const save = () => {
+            setEditing(false);
+            void controller.setAnnotationNote(annotation.id, draft.trim());
+        };
+        if (editing) {
+            return (
+                <div style={{ marginTop: 2 }}>
+                    <textarea
+                        data-testid={`annotation-note-input-${annotation.id}`}
+                        aria-label={`Note for ${label}`}
+                        autoFocus
+                        rows={3}
+                        value={draft}
+                        maxLength={MAX_NOTE_LENGTH}
+                        onChange={event => setDraft(event.target.value)}
+                        onKeyDown={event => {
+                            if (
+                                event.key === 'Enter' &&
+                                (event.ctrlKey || event.metaKey)
+                            ) {
+                                event.preventDefault();
+                                save();
+                            }
+                            if (event.key === 'Escape') setEditing(false);
+                        }}
+                        style={{
+                            width: '100%',
+                            boxSizing: 'border-box',
+                            fontSize: 11,
+                            resize: 'vertical',
+                        }}
+                    />
+                    <div style={{ display: 'flex', gap: 4 }}>
+                        <button
+                            data-testid={`annotation-note-save-${annotation.id}`}
+                            onClick={save}
+                            style={reviewButtonStyle('#2a7a2a')}
+                        >
+                            Save note
+                        </button>
+                        <button
+                            onClick={() => setEditing(false)}
+                            style={reviewButtonStyle(colors.muted)}
+                        >
+                            Cancel
+                        </button>
+                    </div>
+                </div>
+            );
+        }
+        return (
+            <>
+                {note && (
+                    <div
+                        data-testid={`annotation-note-${annotation.id}`}
+                        style={{
+                            color: colors.text,
+                            fontSize: 11,
+                            whiteSpace: 'pre-wrap',
+                            wordBreak: 'break-word',
+                            marginTop: 2,
+                            fontStyle: 'italic',
+                        }}
+                    >
+                        {note}
+                    </div>
+                )}
+                {controller.canEdit && (
+                    <button
+                        data-testid={`annotation-note-edit-${annotation.id}`}
+                        aria-label={`${
+                            note ? 'Edit' : 'Add'
+                        } note for ${label}`}
+                        onClick={() => {
+                            setDraft(note);
+                            setEditing(true);
+                        }}
+                        style={{
+                            border: 'none',
+                            background: 'transparent',
+                            color: colors.blue,
+                            fontSize: 10,
+                            padding: 0,
+                            cursor: 'pointer',
+                        }}
+                    >
+                        {note ? 'Edit note' : '+ Note'}
+                    </button>
+                )}
+            </>
         );
     }
 );
@@ -1052,6 +1165,19 @@ export const WsiAnnotationTooltip = observer(
                         style={{ marginTop: 2, fontSize: 11 }}
                     >
                         {tooltip.measurement}
+                    </div>
+                )}
+                {tooltip.note && (
+                    <div
+                        data-testid="annotation-tooltip-note"
+                        style={{
+                            marginTop: 2,
+                            fontSize: 11,
+                            whiteSpace: 'pre-wrap',
+                            fontStyle: 'italic',
+                        }}
+                    >
+                        {tooltip.note}
                     </div>
                 )}
                 {tooltip.ai && (

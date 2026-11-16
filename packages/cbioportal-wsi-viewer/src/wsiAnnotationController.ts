@@ -234,6 +234,7 @@ export class WsiAnnotationController {
         layerName?: string;
         ai?: 'unreviewed' | 'accepted';
         measurement?: string;
+        note?: string;
     } | null = null;
     @observable.ref customDrawPreview: {
         tool: WsiPointerAnnotationTool;
@@ -745,6 +746,14 @@ export class WsiAnnotationController {
             ],
         };
         await this.updateAnnotation(updated);
+    }
+
+    /** Saves the user's free-text note (`body.comment`). */
+    @action.bound
+    async setAnnotationNote(id: string, note: string) {
+        const annotation = this.annotations.find(item => item.id === id);
+        if (!annotation || (annotation.note || '') === note) return;
+        await this.updateAnnotation({ ...annotation, note });
     }
 
     @action.bound
@@ -1527,7 +1536,8 @@ export class WsiAnnotationController {
         const text = annotation.body?.[0]?.value || '';
         const stored = this.annotations.find(item => item.id === annotation.id);
         const measurement = this.measurementOf(stored || annotation);
-        if (!text && !measurement) return;
+        const note = (stored || annotation).note || '';
+        if (!text && !measurement && !note) return;
         this.annotationTooltip = {
             x: event.clientX,
             y: event.clientY,
@@ -1541,6 +1551,7 @@ export class WsiAnnotationController {
             measurement: measurement
                 ? formatMeasurement(measurement)
                 : undefined,
+            note: note || undefined,
         };
     }
 
