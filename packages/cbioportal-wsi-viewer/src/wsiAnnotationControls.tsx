@@ -476,6 +476,28 @@ export const WsiAnnotationToolbar = observer(
                 )}
                 <ToolbarDivider />
                 <button
+                    data-testid="annotation-undo"
+                    aria-label={`${controller.undoLabel ||
+                        'Nothing to undo'} (Ctrl+Z)`}
+                    title={`${controller.undoLabel ||
+                        'Nothing to undo'} (Ctrl+Z)`}
+                    disabled={!controller.canUndo}
+                    onClick={() => void controller.undo()}
+                    style={{
+                        padding: '2px 8px',
+                        fontSize: 11,
+                        cursor: controller.canUndo ? 'pointer' : 'default',
+                        borderRadius: 3,
+                        lineHeight: '18px',
+                        border: `1px solid ${colors.border}`,
+                        background: '#fff',
+                        color: colors.muted,
+                        opacity: controller.canUndo ? 1 : 0.5,
+                    }}
+                >
+                    <i aria-hidden="true" className="fa fa-undo" /> Undo
+                </button>
+                <button
                     data-testid="annotation-default-sharing"
                     aria-pressed={controller.defaultShared}
                     aria-label={

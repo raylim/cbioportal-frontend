@@ -273,6 +273,18 @@ export function pointSelectorSvg(point: { x: number; y: number }): string {
     )}" r="0" /></svg>`;
 }
 
+/**
+ * A change undo can reverse: annotations created (deleted on undo), an edit
+ * (its previous version saved again) or annotations deleted (created again).
+ */
+export type WsiUndoEntry =
+    | { kind: 'create'; ids: string[] }
+    | { kind: 'update'; before: WsiAnnotation }
+    | { kind: 'delete'; before: WsiAnnotation[] };
+
+/** How many changes undo remembers. */
+const MAX_UNDO = 50;
+
 /** An import read and validated, waiting for the user to confirm it. */
 export interface WsiAnnotationImportPreview {
     fileName: string;
@@ -332,6 +344,9 @@ export class WsiAnnotationController {
      * color's name and a number (only without a strict vocabulary).
      */
     @observable activeLabel = '';
+    /** This session's changes on the open slide, the latest last. */
+    @observable.ref undoStack: WsiUndoEntry[] = [];
+    @observable undoing = false;
     @observable.ref importPreview: WsiAnnotationImportPreview | null = null;
     @observable.ref importProgress: {
         total: number;
@@ -857,7 +872,7 @@ export class WsiAnnotationController {
                 }
                 if (draft.layer) annotation.layerName = draft.layer;
                 if (draft.note) annotation.note = draft.note;
-                const result = await this.createAnnotation(annotation);
+                const result = await this.createAnnotation(annotation, false);
                 if (result) saved.push(result);
                 else progress.failed += 1;
                 progress.done += 1;
@@ -869,6 +884,9 @@ export class WsiAnnotationController {
         await Promise.all(
             Array.from({ length: IMPORT_CONCURRENCY }, () => worker())
         );
+        if (saved.length) {
+            this.pushUndo({ kind: 'create', ids: saved.map(item => item.id) });
+        }
         action(() => {
             this.importProgress = null;
             if (progress.failed) {
@@ -876,6 +894,104 @@ export class WsiAnnotationController {
             }
         })();
         return saved;
+    }
+
+    @computed get canUndo(): boolean {
+        return this.canEdit && !this.undoing && this.undoStack.length > 0;
+    }
+
+    /** What undo would reverse, e.g. "Undo delete". */
+    @computed get undoLabel(): string | null {
+        const entry = this.undoStack[this.undoStack.length - 1];
+        if (!entry) return null;
+        const what =
+            entry.kind === 'create'
+                ? 'create'
+                : entry.kind === 'update'
+                ? 'edit'
+                : 'delete';
+        const n =
+            entry.kind === 'create'
+                ? entry.ids.length
+                : entry.kind === 'delete'
+                ? entry.before.length
+                : 1;
+        return `Undo ${what}${n > 1 ? ` of ${n} annotations` : ''}`;
+    }
+
+    @action
+    private pushUndo(entry: WsiUndoEntry) {
+        this.undoStack = [...this.undoStack, entry].slice(-MAX_UNDO);
+    }
+
+    /** Points the undo history at an annotation's new id after it was re-created. */
+    @action
+    private renameInUndo(oldId: string, newId: string) {
+        this.undoStack = this.undoStack.map(entry =>
+            entry.kind === 'create'
+                ? {
+                      ...entry,
+                      ids: entry.ids.map(id => (id === oldId ? newId : id)),
+                  }
+                : entry.kind === 'update' && entry.before.id === oldId
+                ? { ...entry, before: { ...entry.before, id: newId } }
+                : entry
+        );
+    }
+
+    /**
+     * Reverses this session's last create, edit or delete on the slide: a
+     * created annotation is deleted, an edit is undone by saving the previous
+     * version over the current one (with the current `version`), and a
+     * deleted annotation is created again, with a new id.
+     */
+    @action.bound
+    async undo(): Promise<boolean> {
+        if (!this.canUndo) return false;
+        const entry = this.undoStack[this.undoStack.length - 1];
+        this.undoStack = this.undoStack.slice(0, -1);
+        this.undoing = true;
+        try {
+            if (entry.kind === 'create') {
+                for (const id of entry.ids) {
+                    if (this.annotations.some(item => item.id === id)) {
+                        await this.deleteAnnotation(id, false);
+                    }
+                }
+            } else if (entry.kind === 'update') {
+                const current = this.annotations.find(
+                    item => item.id === entry.before.id
+                );
+                if (!current) {
+                    action(() => {
+                        this.error = 'Cannot undo: the annotation was deleted.';
+                    })();
+                    return false;
+                }
+                await this.updateAnnotation(
+                    { ...entry.before, version: current.version },
+                    false
+                );
+            } else {
+                for (const before of entry.before) {
+                    const saved = await this.createAnnotation(
+                        {
+                            ...before,
+                            id: `client-undo-${Date.now()}-${Math.random()
+                                .toString(36)
+                                .slice(2)}`,
+                        },
+                        false
+                    );
+                    if (saved) this.renameInUndo(before.id, saved.id);
+                }
+            }
+            return true;
+        } finally {
+            action(() => {
+                this.undoing = false;
+            })();
+        }
     }
 
     /** Assistant annotations that no one has accepted yet. */
@@ -912,6 +1028,7 @@ export class WsiAnnotationController {
         this.slideKey = slideKey;
         this.annotations = [];
         this.listFilter = EMPTY_LIST_FILTER;
+        this.undoStack = [];
         this.importPreview = null;
         this.importError = null;
         this.error = null;
@@ -932,6 +1049,7 @@ export class WsiAnnotationController {
     setContext(apiUrl: string | null | undefined, studyId: string | undefined) {
         this.apiUrl = apiUrl;
         this.studyId = studyId;
+        this.undoStack = [];
         this.restartRequests();
         this.cancelDrawing();
         this.annotations = [];
@@ -1028,8 +1146,24 @@ export class WsiAnnotationController {
             this.annotorious?.setDrawingEnabled?.(false);
             void this.createAnnotation(annotation);
         });
+        // A shape or its vertices were dragged: keep everything but the
+        // geometry as stored.
         this.annotorious.on('updateAnnotation', (annotation: WsiAnnotation) => {
-            if (!this.synchronizing) void this.updateAnnotation(annotation);
+            if (this.synchronizing) return;
+            const stored = this.annotations.find(
+                item => item.id === annotation.id
+            );
+            void this.updateAnnotation(
+                stored
+                    ? {
+                          ...stored,
+                          target: {
+                              ...stored.target,
+                              selector: annotation.target.selector,
+                          },
+                      }
+                    : annotation
+            );
         });
         this.annotorious.on('deleteAnnotation', (annotation: WsiAnnotation) => {
             if (!this.synchronizing) void this.deleteAnnotation(annotation.id);
@@ -1074,6 +1208,7 @@ export class WsiAnnotationController {
         this.loadAbortController = null;
         this.slideKey = null;
         this.annotations = [];
+        this.undoStack = [];
         this.error = null;
         this.annotationTooltip = null;
         this.loading = false;
@@ -1228,9 +1363,13 @@ export class WsiAnnotationController {
         const annotations = this.annotations.filter(
             annotation => (annotation.layerName || DEFAULT_LAYER) === layer
         );
+        const deleted: WsiAnnotation[] = [];
         for (const annotation of annotations) {
-            await this.deleteAnnotation(annotation.id);
+            if (await this.deleteAnnotation(annotation.id, false)) {
+                deleted.push(annotation);
+            }
         }
+        if (deleted.length) this.pushUndo({ kind: 'delete', before: deleted });
         this.customLayers = this.customLayers.filter(item => item !== layer);
         saveLayerNames(this.customLayers);
         const hidden = new Set(this.hiddenLayerNames);
@@ -1416,7 +1555,8 @@ export class WsiAnnotationController {
 
     /** Saves a new annotation; resolves to the saved one, or null. */
     private async createAnnotation(
-        annotation: WsiAnnotation
+        annotation: WsiAnnotation,
+        record = true
     ): Promise<WsiAnnotation | null> {
         if (!this.slideKey) return null;
         if (!this.canEdit) {
@@ -1481,6 +1621,7 @@ export class WsiAnnotationController {
             } finally {
                 this.synchronizing = false;
             }
+            if (record) this.pushUndo({ kind: 'create', ids: [saved.id] });
             return saved;
         } catch (_) {
             if (
@@ -1496,10 +1637,18 @@ export class WsiAnnotationController {
         }
     }
 
-    private async updateAnnotation(annotation: WsiAnnotation) {
+    /**
+     * Saves an edit with the annotation's version; resolves to the saved
+     * annotation, or null. With `record`, undo can put the old one back.
+     */
+    private async updateAnnotation(
+        annotation: WsiAnnotation,
+        record = true
+    ): Promise<WsiAnnotation | null> {
+        const before = this.annotations.find(item => item.id === annotation.id);
         if (!this.canEdit) {
             this.applyLayerFilter();
-            return;
+            return null;
         }
         const context = {
             generation: this.generation,
@@ -1529,12 +1678,12 @@ export class WsiAnnotationController {
                 (await this.refuseNonCreator(response))
             ) {
                 this.applyLayerFilter();
-                return;
+                return null;
             }
             if (this.isCurrent(context) && this.refuseAccess(response)) {
                 // Put the edited shape back as it is saved.
                 this.applyLayerFilter();
-                return;
+                return null;
             }
             if (response.status === 409) {
                 if (
@@ -1542,12 +1691,12 @@ export class WsiAnnotationController {
                     context.slideKey !== this.slideKey ||
                     context.signal?.aborted
                 ) {
-                    return;
+                    return null;
                 }
                 await this.reloadCurrentSlide(
                     'Annotation changed elsewhere; reloaded latest data.'
                 );
-                return;
+                return null;
             }
             if (!response.ok)
                 throw new Error(
@@ -1558,28 +1707,40 @@ export class WsiAnnotationController {
                 context.slideKey !== this.slideKey ||
                 context.signal?.aborted
             ) {
-                return;
+                return null;
             }
-            this.replaceAnnotation(
-                annotation.id,
-                this.fromApi(await response.json(), this.slideKey || '')
+            const saved = this.fromApi(
+                await response.json(),
+                this.slideKey || ''
             );
+            this.replaceAnnotation(annotation.id, saved);
+            if (record && before) this.pushUndo({ kind: 'update', before });
+            return saved;
         } catch (_) {
             if (
                 context.generation !== this.generation ||
                 context.slideKey !== this.slideKey ||
                 context.signal?.aborted
             ) {
-                return;
+                return null;
             }
             await this.reloadCurrentSlide('Unable to update annotation.');
+            return null;
         }
     }
 
-    private async deleteAnnotation(id: string) {
+    /**
+     * Deletes an annotation; resolves to whether it is gone. With `record`,
+     * undo can create it again.
+     */
+    private async deleteAnnotation(
+        id: string,
+        record = true
+    ): Promise<boolean> {
+        const before = this.annotations.find(item => item.id === id);
         if (!this.canEdit) {
             this.applyLayerFilter();
-            return;
+            return false;
         }
         const context = {
             generation: this.generation,
@@ -1599,12 +1760,12 @@ export class WsiAnnotationController {
                 (await this.refuseNonCreator(response))
             ) {
                 this.applyLayerFilter();
-                return;
+                return false;
             }
             if (this.isCurrent(context) && this.refuseAccess(response)) {
                 // Put the deleted shape back.
                 this.applyLayerFilter();
-                return;
+                return false;
             }
             if (!response.ok && response.status !== 404)
                 throw new Error(
@@ -1615,18 +1776,23 @@ export class WsiAnnotationController {
                 context.slideKey !== this.slideKey ||
                 context.signal?.aborted
             ) {
-                return;
+                return false;
             }
             this.removeAnnotationLocally(id);
+            if (record && before) {
+                this.pushUndo({ kind: 'delete', before: [before] });
+            }
+            return true;
         } catch (_) {
             if (
                 context.generation !== this.generation ||
                 context.slideKey !== this.slideKey ||
                 context.signal?.aborted
             ) {
-                return;
+                return false;
             }
             await this.reloadCurrentSlide('Unable to delete annotation.');
+            return false;
         }
     }
 
@@ -1995,6 +2161,24 @@ export class WsiAnnotationController {
     private readonly handleKeyDown = (event: KeyboardEvent) => {
         if (event.key === 'Escape' && this.activeTool) {
             this.cancelDrawing();
+            return;
+        }
+        // Ctrl+Z / Cmd+Z, unless the user is typing in a field.
+        const target = event.target as HTMLElement | null;
+        if (
+            (event.ctrlKey || event.metaKey) &&
+            !event.shiftKey &&
+            !event.altKey &&
+            event.key.toLowerCase() === 'z' &&
+            !(
+                target &&
+                (/^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName) ||
+                    target.isContentEditable)
+            ) &&
+            this.canUndo
+        ) {
+            event.preventDefault();
+            void this.undo();
         }
     };
 

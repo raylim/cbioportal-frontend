@@ -1900,6 +1900,8 @@ describe('WsiAnnotationController', () => {
         const created = await controller.confirmImport();
 
         expect(created).toHaveLength(2);
+        // One undo removes the whole import.
+        expect(controller.undoLabel).toBe('Undo create of 2 annotations');
         expect(controller.importPreview).toBeNull();
         expect(controller.importProgress).toBeNull();
         const bodies = (global.fetch as jest.Mock).mock.calls.map(([, init]) =>
@@ -1931,6 +1933,313 @@ describe('WsiAnnotationController', () => {
         await controller.previewImport(new File(['{nope'], 'bad.json'));
         expect(controller.importError).toBe('The file is not valid JSON.');
         expect(controller.importPreview).toBeNull();
+    });
+
+    describe('undo', () => {
+        /** A service that stores annotations and checks versions. */
+        function fakeService() {
+            const rows = new Map<string, any>();
+            let next = 0;
+            jest.spyOn(global, 'fetch').mockImplementation(
+                async (url, init) => {
+                    const method = init?.method || 'GET';
+                    const id = decodeURIComponent(
+                        new URL(String(url)).pathname.split('/')[2] || ''
+                    );
+                    const sent = init?.body
+                        ? JSON.parse(init.body as string)
+                        : null;
+                    if (method === 'POST') {
+                        const row = {
+                            ...sent,
+                            id: `row-${++next}`,
+                            version: 1,
+                            created_by: 'user',
+                        };
+                        rows.set(row.id, row);
+                        return { ok: true, json: async () => row } as Response;
+                    }
+                    if (method === 'PUT') {
+                        const row = rows.get(id);
+                        if (row.version !== sent.version) {
+                            return { ok: false, status: 409 } as Response;
+                        }
+                        const updated = {
+                            ...row,
+                            body: sent.body,
+                            target: sent.target,
+                            visible_to:
+                                'visible_to' in sent
+                                    ? sent.visible_to
+                                    : row.visible_to,
+                            version: row.version + 1,
+                        };
+                        rows.set(id, updated);
+                        return {
+                            ok: true,
+                            json: async () => updated,
+                        } as Response;
+                    }
+                    if (method === 'DELETE') {
+                        rows.delete(id);
+                        return { ok: true, status: 204 } as Response;
+                    }
+                    return {
+                        ok: true,
+                        json: async () => Array.from(rows.values()),
+                    } as Response;
+                }
+            );
+            return rows;
+        }
+
+        function controllerOnSlide() {
+            const controller = new WsiAnnotationController(
+                'https://tiles.example',
+                'study1'
+            );
+            (controller as any).slideKey = SLIDE_KEY;
+            return controller;
+        }
+
+        const rect = {
+            '@context': 'http://www.w3.org/ns/anno.jsonld',
+            type: 'Annotation',
+            id: 'client-1',
+            body: [
+                {
+                    type: 'TextualBody',
+                    value: 'Tumor',
+                    purpose: 'commenting',
+                },
+            ],
+            target: {
+                source: SLIDE_KEY,
+                selector: {
+                    type: 'FragmentSelector',
+                    value: 'xywh=pixel:1,2,3,4',
+                },
+            },
+            layerName: 'Regions',
+            note: 'keep me',
+        };
+
+        it('undoes a create by deleting it', async () => {
+            const rows = fakeService();
+            const controller = controllerOnSlide();
+            await (controller as any).createAnnotation(rect);
+            expect(rows.size).toBe(1);
+            expect(controller.undoLabel).toBe('Undo create');
+
+            expect(await controller.undo()).toBe(true);
+            expect(rows.size).toBe(0);
+            expect(controller.annotations).toEqual([]);
+            expect(controller.canUndo).toBe(false);
+        });
+
+        it('undoes an edit by saving the previous version with the current version number', async () => {
+            const rows = fakeService();
+            const controller = controllerOnSlide();
+            const saved = await (controller as any).createAnnotation(rect);
+            await controller.renameAnnotation(saved.id, 'Stroma');
+            await controller.setAnnotationNote(saved.id, 'changed');
+            expect(rows.get(saved.id).version).toBe(3);
+
+            await controller.undo();
+            expect(rows.get(saved.id).body).toMatchObject({
+                label: 'Stroma',
+                comment: 'keep me',
+            });
+            expect(rows.get(saved.id).version).toBe(4);
+            await controller.undo();
+            expect(rows.get(saved.id).body).toMatchObject({
+                label: 'Tumor',
+                comment: 'keep me',
+                layer_name: 'Regions',
+            });
+            expect(controller.annotations[0].body[0].value).toBe('Tumor');
+            expect(controller.undoLabel).toBe('Undo create');
+        });
+
+        it('undoes a delete by creating it again, and keeps later undos working', async () => {
+            const rows = fakeService();
+            const controller = controllerOnSlide();
+            const saved = await (controller as any).createAnnotation({
+                ...rect,
+                visibleTo: null,
+            });
+            await controller.renameAnnotation(saved.id, 'Renamed');
+            await controller.removeAnnotation(saved.id);
+            expect(rows.size).toBe(0);
+            expect(controller.undoLabel).toBe('Undo delete');
+
+            await controller.undo();
+            expect(rows.size).toBe(1);
+            const [recreated] = Array.from(rows.values());
+            expect(recreated.id).not.toBe(saved.id);
+            expect(recreated.body).toMatchObject({
+                label: 'Renamed',
+                comment: 'keep me',
+                layer_name: 'Regions',
+            });
+            expect(recreated.visible_to).toBeNull();
+            // The rename's undo now applies to the re-created annotation.
+            await controller.undo();
+            expect(rows.get(recreated.id).body.label).toBe('Tumor');
+            await controller.undo();
+            expect(rows.size).toBe(0);
+        });
+
+        it('undoes a layer delete as one step', async () => {
+            const rows = fakeService();
+            const controller = controllerOnSlide();
+            await (controller as any).createAnnotation(rect, false);
+            await (controller as any).createAnnotation(
+                { ...rect, id: 'client-2' },
+                false
+            );
+            await controller.deleteLayer('Regions');
+            expect(rows.size).toBe(0);
+            expect(controller.undoLabel).toBe('Undo delete of 2 annotations');
+            await controller.undo();
+            expect(rows.size).toBe(2);
+            expect(controller.canUndo).toBe(false);
+        });
+
+        it('undoes with Ctrl+Z or Cmd+Z, but not while typing', async () => {
+            const rows = fakeService();
+            (createOSDAnnotator as jest.Mock).mockReturnValue({
+                on: jest.fn(),
+                setVisible: jest.fn(),
+                setAnnotations: jest.fn(),
+                setStyle: jest.fn(),
+            });
+            const controller = controllerOnSlide();
+            controller.attachViewer(
+                { element: document.createElement('div') },
+                {},
+                SLIDE_KEY
+            );
+            await (controller as any).createAnnotation(rect);
+            await (controller as any).createAnnotation({
+                ...rect,
+                id: 'client-2',
+            });
+
+            const input = document.createElement('input');
+            document.body.appendChild(input);
+            input.dispatchEvent(
+                new KeyboardEvent('keydown', {
+                    key: 'z',
+                    ctrlKey: true,
+                    bubbles: true,
+                })
+            );
+            await new Promise(resolve => setTimeout(resolve, 0));
+            expect(rows.size).toBe(2);
+            input.remove();
+
+            document.dispatchEvent(
+                new KeyboardEvent('keydown', { key: 'z', ctrlKey: true })
+            );
+            await new Promise(resolve => setTimeout(resolve, 0));
+            expect(rows.size).toBe(1);
+            document.dispatchEvent(
+                new KeyboardEvent('keydown', { key: 'Z', metaKey: true })
+            );
+            await new Promise(resolve => setTimeout(resolve, 0));
+            expect(rows.size).toBe(0);
+        });
+
+        it('forgets the history on another slide', async () => {
+            fakeService();
+            const controller = controllerOnSlide();
+            await (controller as any).createAnnotation(rect);
+            controller.beginSlide('fedcba987654');
+            expect(controller.canUndo).toBe(false);
+        });
+    });
+
+    it('saves a dragged vertex as a geometry edit that keeps the rest', async () => {
+        const handlers: Record<string, (...args: any[]) => void> = {};
+        (createOSDAnnotator as jest.Mock).mockReturnValue({
+            on: jest.fn((name: string, handler: (...args: any[]) => void) => {
+                handlers[name] = handler;
+            }),
+            setVisible: jest.fn(),
+            setAnnotations: jest.fn(),
+            setStyle: jest.fn(),
+        });
+        jest.spyOn(global, 'fetch').mockImplementation(
+            async (_url, init) =>
+                ({
+                    ok: true,
+                    json: async () => ({
+                        ...apiAnnotation('poly', 2),
+                        ...JSON.parse(init!.body as string),
+                        version: 2,
+                    }),
+                } as Response)
+        );
+        const controller = new WsiAnnotationController(
+            'https://tiles.example',
+            'study1'
+        );
+        (controller as any).slideKey = 'slide1';
+        (controller as any).annotations = [
+            (controller as any).fromApi(
+                {
+                    ...apiAnnotation('poly'),
+                    body: {
+                        label: 'Tumor',
+                        comment: 'note',
+                        layer_name: 'Regions',
+                        color: '#ef4444',
+                        provenance: { source: 'agent' },
+                    },
+                    target: {
+                        selector: {
+                            type: 'SvgSelector',
+                            value:
+                                '<svg><polygon points="0,0 10,0 10,10" /></svg>',
+                        },
+                    },
+                },
+                'slide1'
+            ),
+        ];
+        controller.attachViewer(
+            { element: document.createElement('div') },
+            {},
+            'slide1'
+        );
+
+        // Annotorious reports the edited shape without the viewer's fields.
+        handlers.updateAnnotation({
+            id: 'poly',
+            body: [],
+            target: {
+                source: 'slide1',
+                selector: {
+                    type: 'SvgSelector',
+                    value: '<svg><polygon points="0,0 20,0 10,10" /></svg>',
+                },
+            },
+        });
+        await new Promise(resolve => setTimeout(resolve, 0));
+
+        const sent = JSON.parse(
+            (global.fetch as jest.Mock).mock.calls[0][1].body
+        );
+        expect(sent.target.selector.value).toContain('20,0');
+        expect(sent.version).toBe(1);
+        expect(sent.body).toMatchObject({
+            label: 'Tumor',
+            comment: 'note',
+            layer_name: 'Regions',
+            provenance: { source: 'agent' },
+        });
+        expect(controller.undoLabel).toBe('Undo edit');
     });
 
     it('only offers removal for unused user-added colors', () => {
