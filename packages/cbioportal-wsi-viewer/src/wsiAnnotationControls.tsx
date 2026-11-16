@@ -2,6 +2,7 @@ import * as React from 'react';
 import { observer } from 'mobx-react';
 import {
     annotationVisibility,
+    BRUSH_WIDTHS,
     DEFAULT_COLOR,
     DEFAULT_LAYER,
     WsiAnnotationAiFilter,
@@ -58,6 +59,18 @@ const tools: Array<{
         label: 'Poly',
         icon: '⬡',
         hint: 'Draw a polygon — click to add points, double-click to close',
+    },
+    {
+        name: 'freehand',
+        label: 'Free',
+        icon: '✎',
+        hint: 'Draw freehand — hold the mouse button and trace an outline',
+    },
+    {
+        name: 'brush',
+        label: 'Brush',
+        icon: '🖌',
+        hint: 'Paint a band — hold the mouse button and brush over the region',
     },
     {
         name: 'point',
@@ -126,6 +139,11 @@ export const WsiAnnotationToolbar = observer(
                             key={tool.name}
                             data-testid={`annotation-tool-${tool.name}`}
                             title={active ? 'Cancel drawing (Esc)' : tool.hint}
+                            aria-label={
+                                active
+                                    ? `Cancel ${tool.label} drawing (Esc)`
+                                    : tool.hint
+                            }
                             aria-pressed={active}
                             onClick={() =>
                                 controller.setTool(active ? null : tool.name)
@@ -150,6 +168,24 @@ export const WsiAnnotationToolbar = observer(
                         </button>
                     );
                 })}
+                {controller.activeTool === 'brush' && (
+                    <select
+                        data-testid="annotation-brush-width"
+                        aria-label="Brush width in screen pixels"
+                        title="Brush width, in screen pixels at the current zoom"
+                        value={controller.brushWidth}
+                        onChange={event =>
+                            controller.setBrushWidth(Number(event.target.value))
+                        }
+                        style={{ fontSize: 11 }}
+                    >
+                        {BRUSH_WIDTHS.map(width => (
+                            <option key={width} value={width}>
+                                {width} px
+                            </option>
+                        ))}
+                    </select>
+                )}
                 {controller.activeTool === 'point' && (
                     <span
                         role="status"
@@ -1552,7 +1588,25 @@ export const WsiAnnotationDrawPreview = observer(
                     zIndex: 19,
                 }}
             >
-                {preview.tool === 'polygon' ? (
+                {preview.tool === 'freehand' || preview.tool === 'brush' ? (
+                    <polyline
+                        data-testid="annotation-stroke-preview"
+                        points={polygonPoints}
+                        stroke={controller.activeColor}
+                        strokeOpacity={preview.tool === 'brush' ? 0.45 : 1}
+                        strokeWidth={
+                            preview.tool === 'brush' ? controller.brushWidth : 2
+                        }
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        fill={
+                            preview.tool === 'freehand'
+                                ? controller.activeColor
+                                : 'none'
+                        }
+                        fillOpacity={0.15}
+                    />
+                ) : preview.tool === 'polygon' ? (
                     <polyline
                         points={polygonPreviewPoints}
                         stroke={controller.activeColor}

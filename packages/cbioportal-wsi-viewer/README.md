@@ -121,6 +121,12 @@ The sidebar's Annotations section lists the slide's annotations on visible layer
 
 Each annotation can carry a free-text note, kept in `body.comment` and separate from its label. The list shows it under the annotation, with **+ Note** / **Edit note** for users who can edit (Ctrl/Cmd+Enter saves, Esc cancels); saving sends a `PUT` with the annotation's `version`. The click tooltip shows it too.
 
+#### Freehand and brush
+
+**Free** draws while the mouse button is held and saves the outline as a polygon. **Brush** paints a band of a fixed on-screen width (8–64 px at the zoom it is drawn, chosen in the toolbar) and saves the band's outline as a polygon: the stroke is offset to both sides with mitred corners and round caps (`strokeOutline`). Both record a point every 2 screen pixels and simplify the stroke with Douglas–Peucker at 1.5 screen pixels before saving.
+
+The brush is stored as a polygon, not as a line with a width, so it has an area and perimeter, edits like any polygon, and exports to QuPath as a region. Its width is in screen pixels because that is how a brush feels; in image pixels it depends on the zoom. A stroke that doubles back sharply can give an outline that touches itself.
+
 #### Points
 
 The **Point** tool drops a point at each click (a drag still pans the slide) and stays on until Esc. A point is stored as an `SvgSelector` holding a circle of radius 0, in level-0 image pixels: `<svg><circle cx="…" cy="…" r="0" /></svg>`. Points are labelled with the active color's name, so counting mitoses means picking a "Mitosis" color and clicking. The viewer draws points itself, as fixed-size markers on one canvas redrawn per frame, because Annotorious has no point shape; that keeps hundreds of points fast. A point shows and counts at once, before its save returns. The toolbar shows the count for the active layer and label while the tool is on, and the Annotations section has a **Point counts** table per label and layer. Clicking a marker shows its tooltip.

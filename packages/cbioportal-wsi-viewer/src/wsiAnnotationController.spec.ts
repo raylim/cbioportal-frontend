@@ -9,6 +9,7 @@ import {
 } from './wsiAnnotationController';
 import { createOSDAnnotator } from '@annotorious/openseadragon';
 import { loadAnnotorious } from './wsiAnnotoriousLoader';
+import { parseAnnotationShape } from './wsiAnnotationGeometryUtils';
 
 jest.mock('@annotorious/openseadragon', () => ({
     createOSDAnnotator: jest.fn(),
@@ -1592,6 +1593,91 @@ describe('WsiAnnotationController', () => {
         // Annotorious keeps its 50 shapes; points are drawn on their own layer.
         expect(annotator.setAnnotations.mock.calls.length).toBe(setCalls);
         expect(elapsed).toBeLessThan(2000);
+    });
+
+    it('saves a freehand stroke as a simplified polygon and a brush stroke as its outline', async () => {
+        (createOSDAnnotator as jest.Mock).mockReturnValue({
+            on: jest.fn(),
+            setVisible: jest.fn(),
+            setAnnotations: jest.fn(),
+            setStyle: jest.fn(),
+            setDrawingEnabled: jest.fn(),
+            cancelDrawing: jest.fn(),
+        });
+        jest.spyOn(global, 'fetch').mockResolvedValue({
+            ok: true,
+            json: async () => apiAnnotation('saved'),
+        } as Response);
+        const controller = new WsiAnnotationController(
+            'https://tiles.example',
+            'study1'
+        );
+        (controller as any).slideKey = 'slide1';
+        const viewerElement = document.createElement('div');
+        controller.attachViewer({ element: viewerElement }, {}, 'slide1');
+        // Two image pixels per screen pixel.
+        jest.spyOn(controller as any, 'imagePoint').mockImplementation(
+            (x: number, y: number) => ({
+                x: x * 2,
+                y: y * 2,
+            })
+        );
+        const pointer = (type: string, x: number, y: number) =>
+            viewerElement.dispatchEvent(
+                new MouseEvent(type, { button: 0, clientX: x, clientY: y })
+            );
+        // A square traced with many samples along each side.
+        const trace = () => {
+            pointer('pointerdown', 0, 0);
+            for (const [x0, y0, x1, y1] of [
+                [0, 0, 100, 0],
+                [100, 0, 100, 100],
+                [100, 100, 0, 100],
+                [0, 100, 0, 0],
+            ]) {
+                for (let t = 1; t <= 20; t++) {
+                    pointer(
+                        'pointermove',
+                        x0 + ((x1 - x0) * t) / 20,
+                        y0 + ((y1 - y0) * t) / 20
+                    );
+                }
+            }
+        };
+
+        controller.setTool('freehand');
+        trace();
+        expect(controller.customDrawPreview?.points?.length).toBe(81);
+        pointer('pointerup', 0, 0);
+        await new Promise(resolve => setTimeout(resolve, 0));
+        let sent = JSON.parse(
+            (global.fetch as jest.Mock).mock.calls[0][1].body
+        );
+        expect(sent.target.selector.value).toBe(
+            '<svg><polygon points="0,0 200,0 200,200 0,200" /></svg>'
+        );
+        expect(controller.activeTool).toBeNull();
+
+        controller.setTool('brush');
+        controller.setBrushWidth(10);
+        pointer('pointerdown', 0, 0);
+        pointer('pointermove', 50, 0);
+        pointer('pointerup', 100, 0);
+        await new Promise(resolve => setTimeout(resolve, 0));
+        sent = JSON.parse((global.fetch as jest.Mock).mock.calls[1][1].body);
+        const shape = parseAnnotationShape(sent.target.selector)!;
+        expect(shape.kind).toBe('polygon');
+        const ys = (shape as any).points.map((p: any) => p.y);
+        // 10 screen pixels wide at 2 image pixels per screen pixel.
+        expect(Math.max(...ys) - Math.min(...ys)).toBeCloseTo(20, 1);
+
+        // A scribble with no area is dropped.
+        controller.setTool('freehand');
+        pointer('pointerdown', 0, 0);
+        pointer('pointermove', 50, 0);
+        pointer('pointerup', 100, 0);
+        await new Promise(resolve => setTimeout(resolve, 0));
+        expect(global.fetch).toHaveBeenCalledTimes(2);
     });
 
     it('only offers removal for unused user-added colors', () => {

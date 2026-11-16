@@ -5,7 +5,10 @@ import {
     measureShape,
     normalizeSvgSelector,
     parseAnnotationShape,
+    polygonArea,
     shapeBounds,
+    simplifyPath,
+    strokeOutline,
     WsiAnnotationShape,
     WsiMeasurement,
     WsiMpp,
@@ -37,6 +40,8 @@ export type WsiAnnotationTool =
     | 'line'
     | 'polygon'
     | 'point'
+    | 'freehand'
+    | 'brush'
     | null;
 
 type WsiPointerAnnotationTool = Exclude<WsiAnnotationTool, null>;
@@ -262,6 +267,16 @@ export function pointSelectorSvg(point: { x: number; y: number }): string {
 
 /** Pointer travel, in screen pixels, below which a press is a click. */
 const CLICK_TOLERANCE = 5;
+/** Freehand and brush strokes record a point per this many screen pixels. */
+const STROKE_SAMPLE_SPACING = 2;
+/** Douglas–Peucker tolerance for freehand and brush strokes, screen pixels. */
+const STROKE_SIMPLIFY_TOLERANCE = 1.5;
+/** Brush widths offered, in screen pixels at the zoom the stroke is drawn. */
+export const BRUSH_WIDTHS = [8, 16, 32, 64];
+
+function isStrokeTool(tool: WsiAnnotationTool): tool is 'freehand' | 'brush' {
+    return tool === 'freehand' || tool === 'brush';
+}
 
 export class WsiAnnotationController {
     @observable annotations: WsiAnnotation[] = [];
@@ -283,6 +298,8 @@ export class WsiAnnotationController {
     /** Hides assistant annotations no one has accepted, on the slide and list. */
     @observable hideUnreviewedAi = false;
     @observable.ref listFilter: WsiAnnotationListFilter = EMPTY_LIST_FILTER;
+    /** Brush width in screen pixels. */
+    @observable brushWidth = BRUSH_WIDTHS[1];
     /** Whether new annotations are shared with the study (else private). */
     @observable defaultShared = loadDefaultShared();
     @observable annotationTooltip: {
@@ -323,6 +340,9 @@ export class WsiAnnotationController {
         client: { x: number; y: number };
     } | null = null;
     private polygonPoints: Array<{ x: number; y: number }> = [];
+    /** The freehand or brush stroke being drawn, in image pixels. */
+    private strokePoints: Array<{ x: number; y: number }> = [];
+    private strokeScreenPoints: Array<{ x: number; y: number }> = [];
     private polygonScreenPoints: Array<{ x: number; y: number }> = [];
     private synchronizing = false;
     private pointLayer: WsiPointLayer | null = null;
@@ -800,6 +820,8 @@ export class WsiAnnotationController {
         this.activeTool = tool;
         this.customDrawPreview = null;
         this.pointerDown = null;
+        this.strokePoints = [];
+        this.strokeScreenPoints = [];
         this.polygonPoints = [];
         this.polygonScreenPoints = [];
         if (!this.annotorious) return;
@@ -811,7 +833,14 @@ export class WsiAnnotationController {
     }
 
     @action.bound
+    setBrushWidth(width: number) {
+        if (width > 0) this.brushWidth = width;
+    }
+
+    @action.bound
     cancelDrawing() {
+        this.strokePoints = [];
+        this.strokeScreenPoints = [];
         this.activeTool = null;
         this.annotorious?.cancelDrawing?.();
         this.annotorious?.setDrawingEnabled?.(false);
@@ -1472,6 +1501,19 @@ export class WsiAnnotationController {
                 x: event.clientX - rect.left,
                 y: event.clientY - rect.top,
             };
+            if (isStrokeTool(tool)) {
+                this.strokePoints = [image];
+                this.strokeScreenPoints = [screenPoint];
+                this.customDrawPreview = {
+                    tool,
+                    start: screenPoint,
+                    current: screenPoint,
+                    points: this.strokeScreenPoints,
+                };
+                event.preventDefault();
+                event.stopPropagation();
+                return;
+            }
             const previewPoints =
                 tool === 'polygon' ? this.polygonScreenPoints : undefined;
             this.customDrawPreview = {
@@ -1503,6 +1545,32 @@ export class WsiAnnotationController {
                 x: event.clientX - rect.left,
                 y: event.clientY - rect.top,
             };
+            if (isStrokeTool(tool)) {
+                const last = this.strokeScreenPoints[
+                    this.strokeScreenPoints.length - 1
+                ];
+                const image =
+                    !last ||
+                    Math.hypot(current.x - last.x, current.y - last.y) >=
+                        STROKE_SAMPLE_SPACING
+                        ? this.imagePoint(current.x, current.y)
+                        : null;
+                if (image) {
+                    this.strokePoints.push(image);
+                    this.strokeScreenPoints = [
+                        ...this.strokeScreenPoints,
+                        current,
+                    ];
+                }
+                this.customDrawPreview = {
+                    ...this.customDrawPreview,
+                    current,
+                    points: this.strokeScreenPoints,
+                };
+                event.preventDefault();
+                event.stopPropagation();
+                return;
+            }
             this.customDrawPreview = {
                 ...this.customDrawPreview,
                 current,
@@ -1524,6 +1592,18 @@ export class WsiAnnotationController {
                 event.clientY - rect.top
             );
             if (!endPoint) return;
+
+            if (isStrokeTool(start.tool)) {
+                const points = [...this.strokePoints, endPoint];
+                const scale = this.imagePixelsPerScreenPixel();
+                this.strokePoints = [];
+                this.strokeScreenPoints = [];
+                this.customDrawPreview = null;
+                void this.createStrokeShape(start.tool, points, scale);
+                event.preventDefault();
+                event.stopPropagation();
+                return;
+            }
 
             if (start.tool === 'point') {
                 const moved = Math.hypot(
@@ -1695,10 +1775,58 @@ export class WsiAnnotationController {
         await this.createAnnotation(annotation);
     }
 
+    /** Image pixels per screen pixel at the current zoom. */
+    private imagePixelsPerScreenPixel(): number {
+        const a = this.imagePoint(0, 0);
+        const b = this.imagePoint(100, 0);
+        return a && b ? Math.hypot(b.x - a.x, b.y - a.y) / 100 || 1 : 1;
+    }
+
+    /**
+     * Saves a freehand stroke as the polygon it encloses, or a brush stroke
+     * as the outline of a band `brushWidth` screen pixels wide along it.
+     * Either is simplified with Douglas–Peucker first.
+     */
+    private async createStrokeShape(
+        tool: 'freehand' | 'brush',
+        points: Array<{ x: number; y: number }>,
+        imagePerScreen: number
+    ) {
+        const path = simplifyPath(
+            points,
+            STROKE_SIMPLIFY_TOLERANCE * imagePerScreen
+        );
+        this.cancelDrawing();
+        if (tool === 'freehand') {
+            // The polygon closes itself; drop an end that returns to the start.
+            const first = path[0];
+            const last = path[path.length - 1];
+            if (
+                path.length > 3 &&
+                Math.hypot(last.x - first.x, last.y - first.y) <=
+                    STROKE_SIMPLIFY_TOLERANCE * imagePerScreen
+            ) {
+                path.pop();
+            }
+            // A scribble that encloses almost nothing is not a shape.
+            const minimum = 9 * imagePerScreen * imagePerScreen;
+            if (path.length >= 3 && polygonArea(path) >= minimum) {
+                await this.createPolygonShape(path);
+            }
+            return;
+        }
+        const outline = simplifyPath(
+            strokeOutline(path, (this.brushWidth / 2) * imagePerScreen),
+            (STROKE_SIMPLIFY_TOLERANCE / 3) * imagePerScreen
+        );
+        await this.createPolygonShape(outline);
+    }
+
     private async createPolygonShape(points: Array<{ x: number; y: number }>) {
         if (points.length < 3) return;
+        const round = (value: number) => Math.round(value * 100) / 100;
         const selector = `<svg><polygon points="${points
-            .map(point => `${point.x},${point.y}`)
+            .map(point => `${round(point.x)},${round(point.y)}`)
             .join(' ')}" /></svg>`;
         const annotation = this.draftAnnotation(selector, this.nextAutoLabel());
         this.cancelDrawing();

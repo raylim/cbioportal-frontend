@@ -8,6 +8,8 @@ import {
     parseAnnotationShape,
     pathLength,
     polygonArea,
+    simplifyPath,
+    strokeOutline,
 } from './wsiAnnotationGeometryUtils';
 
 const svg = (value: string) => ({ type: 'SvgSelector', value });
@@ -214,5 +216,83 @@ describe('measurement formatting', () => {
         expect(
             formatMeasurement({ unit: 'px', area: 100, perimeter: 40 })
         ).toBe('Area 100 px² · Perimeter 40 px');
+    });
+});
+
+describe('simplifyPath', () => {
+    it('drops points within the tolerance and keeps corners and ends', () => {
+        const jittery = [
+            { x: 0, y: 0 },
+            { x: 1, y: 0.2 },
+            { x: 2, y: -0.2 },
+            { x: 3, y: 0.1 },
+            { x: 4, y: 0 },
+            { x: 4.1, y: 1 },
+            { x: 3.9, y: 2 },
+            { x: 4, y: 3 },
+        ];
+        expect(simplifyPath(jittery, 0.5)).toEqual([
+            { x: 0, y: 0 },
+            { x: 4, y: 0 },
+            { x: 4, y: 3 },
+        ]);
+        expect(simplifyPath(jittery, 0.01)).toHaveLength(jittery.length);
+        expect(simplifyPath([{ x: 1, y: 1 }], 1)).toEqual([{ x: 1, y: 1 }]);
+    });
+
+    it('handles long strokes without recursion', () => {
+        const long = Array.from({ length: 100000 }, (_, i) => ({
+            x: i,
+            y: Math.sin(i / 1000) * 100,
+        }));
+        const simplified = simplifyPath(long, 1);
+        expect(simplified.length).toBeLessThan(500);
+        expect(simplified[0]).toEqual(long[0]);
+        expect(simplified[simplified.length - 1]).toEqual(
+            long[long.length - 1]
+        );
+    });
+});
+
+describe('strokeOutline', () => {
+    it('outlines a straight stroke as a capsule of the brush width', () => {
+        const outline = strokeOutline(
+            [
+                { x: 0, y: 0 },
+                { x: 100, y: 0 },
+            ],
+            10,
+            64
+        );
+        // A 100 x 20 band plus two half discs of radius 10.
+        expect(polygonArea(outline)).toBeCloseTo(100 * 20 + Math.PI * 100, -1);
+        const ys = outline.map(point => point.y);
+        const xs = outline.map(point => point.x);
+        expect(Math.max(...ys)).toBeCloseTo(10, 6);
+        expect(Math.min(...ys)).toBeCloseTo(-10, 6);
+        expect(Math.max(...xs)).toBeCloseTo(110, 1);
+        expect(Math.min(...xs)).toBeCloseTo(-10, 1);
+    });
+
+    it('mitres corners so a bent stroke keeps its width', () => {
+        const outline = strokeOutline(
+            [
+                { x: 0, y: 0 },
+                { x: 100, y: 0 },
+                { x: 100, y: 100 },
+            ],
+            5,
+            16
+        );
+        // Each 100-pixel arm is 10 wide; the corner adds about a square.
+        const area = polygonArea(outline);
+        expect(area).toBeGreaterThan(2000);
+        expect(area).toBeLessThan(2200);
+    });
+
+    it('outlines a dot as a disc and nothing for no width', () => {
+        const dot = strokeOutline([{ x: 5, y: 5 }], 3, 32);
+        expect(polygonArea(dot)).toBeCloseTo(Math.PI * 9, 0);
+        expect(strokeOutline([{ x: 0, y: 0 }], 0)).toEqual([]);
     });
 });

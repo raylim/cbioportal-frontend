@@ -349,3 +349,151 @@ export function shapeBounds(shape: WsiAnnotationShape): WsiBounds {
         }
     }
 }
+
+function distanceToSegment(point: WsiPoint, a: WsiPoint, b: WsiPoint): number {
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const lengthSquared = dx * dx + dy * dy;
+    if (lengthSquared === 0) return Math.hypot(point.x - a.x, point.y - a.y);
+    const t = Math.max(
+        0,
+        Math.min(
+            1,
+            ((point.x - a.x) * dx + (point.y - a.y) * dy) / lengthSquared
+        )
+    );
+    return Math.hypot(point.x - (a.x + t * dx), point.y - (a.y + t * dy));
+}
+
+/**
+ * Douglas–Peucker simplification: drops the points that lie within
+ * `tolerance` of the line between the points kept around them. The ends
+ * are always kept. Iterative, so long strokes cannot overflow the stack.
+ */
+export function simplifyPath(
+    points: WsiPoint[],
+    tolerance: number
+): WsiPoint[] {
+    if (points.length <= 2) return points.slice();
+    const keep = new Uint8Array(points.length);
+    keep[0] = 1;
+    keep[points.length - 1] = 1;
+    const stack: Array<[number, number]> = [[0, points.length - 1]];
+    while (stack.length) {
+        const [first, last] = stack.pop()!;
+        let farthest = -1;
+        let farthestDistance = tolerance;
+        for (let i = first + 1; i < last; i++) {
+            const distance = distanceToSegment(
+                points[i],
+                points[first],
+                points[last]
+            );
+            if (distance > farthestDistance) {
+                farthest = i;
+                farthestDistance = distance;
+            }
+        }
+        if (farthest >= 0) {
+            keep[farthest] = 1;
+            stack.push([first, farthest], [farthest, last]);
+        }
+    }
+    return points.filter((_, i) => keep[i]);
+}
+
+function normalize(x: number, y: number): WsiPoint {
+    const length = Math.hypot(x, y) || 1;
+    return { x: x / length, y: y / length };
+}
+
+/** Points on the arc around `center` from angle `from`, turning by `sweep`. */
+function arc(
+    center: WsiPoint,
+    radius: number,
+    from: number,
+    sweep: number,
+    segments: number
+): WsiPoint[] {
+    const points: WsiPoint[] = [];
+    for (let i = 1; i < segments; i++) {
+        const angle = from + (sweep * i) / segments;
+        points.push({
+            x: center.x + radius * Math.cos(angle),
+            y: center.y + radius * Math.sin(angle),
+        });
+    }
+    return points;
+}
+
+/**
+ * The outline of a stroke `2 * halfWidth` wide along `path`, as one polygon:
+ * the left edge, a round cap, the right edge back, and a round cap. Corners
+ * are mitred, with the miter limited to twice the half width. A stroke that
+ * doubles back sharply can produce a self-touching outline; simplifying the
+ * path first keeps that rare.
+ */
+export function strokeOutline(
+    path: WsiPoint[],
+    halfWidth: number,
+    capSegments = 8
+): WsiPoint[] {
+    const points = path.filter(
+        (point, i) =>
+            i === 0 ||
+            Math.hypot(point.x - path[i - 1].x, point.y - path[i - 1].y) > 1e-9
+    );
+    if (!points.length || halfWidth <= 0) return [];
+    if (points.length === 1) {
+        return [
+            { x: points[0].x + halfWidth, y: points[0].y },
+            ...arc(points[0], halfWidth, 0, 2 * Math.PI, capSegments * 2),
+        ];
+    }
+    const segmentNormals = points.slice(1).map((point, i) => {
+        const direction = normalize(
+            point.x - points[i].x,
+            point.y - points[i].y
+        );
+        return { x: -direction.y, y: direction.x };
+    });
+    const left: WsiPoint[] = [];
+    const right: WsiPoint[] = [];
+    points.forEach((point, i) => {
+        const before = segmentNormals[Math.max(0, i - 1)];
+        const after = segmentNormals[Math.min(segmentNormals.length - 1, i)];
+        const miter = normalize(before.x + after.x, before.y + after.y);
+        const cosine = miter.x * after.x + miter.y * after.y;
+        const length = Math.min(
+            halfWidth / Math.max(cosine, 1e-6),
+            2 * halfWidth
+        );
+        left.push({
+            x: point.x + miter.x * length,
+            y: point.y + miter.y * length,
+        });
+        right.push({
+            x: point.x - miter.x * length,
+            y: point.y - miter.y * length,
+        });
+    });
+    const last = points.length - 1;
+    const endNormal = segmentNormals[segmentNormals.length - 1];
+    const startNormal = segmentNormals[0];
+    // Each cap turns half a circle from the left edge to the right edge.
+    const endCap = arc(
+        points[last],
+        halfWidth,
+        Math.atan2(endNormal.y, endNormal.x),
+        -Math.PI,
+        capSegments
+    );
+    const startCap = arc(
+        points[0],
+        halfWidth,
+        Math.atan2(-startNormal.y, -startNormal.x),
+        -Math.PI,
+        capSegments
+    );
+    return [...left, ...endCap, ...right.reverse(), ...startCap];
+}
