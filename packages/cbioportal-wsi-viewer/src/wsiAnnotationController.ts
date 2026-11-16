@@ -1,6 +1,14 @@
 import { action, computed, makeObservable, observable } from 'mobx';
 import { WsiAnnotation } from './wsiViewerTypes';
-import { normalizeSvgSelector } from './wsiAnnotationGeometryUtils';
+import {
+    formatMeasurement,
+    measureShape,
+    normalizeSvgSelector,
+    parseAnnotationShape,
+    WsiAnnotationShape,
+    WsiMeasurement,
+    WsiMpp,
+} from './wsiAnnotationGeometryUtils';
 import {
     acceptedProvenance,
     isAssistantProvenance,
@@ -225,12 +233,16 @@ export class WsiAnnotationController {
         text: string;
         layerName?: string;
         ai?: 'unreviewed' | 'accepted';
+        measurement?: string;
     } | null = null;
     @observable.ref customDrawPreview: {
         tool: WsiPointerAnnotationTool;
         start: { x: number; y: number };
         current: { x: number; y: number };
         points?: Array<{ x: number; y: number }>;
+        /** The start and current points in image pixels, for measuring. */
+        imageStart?: { x: number; y: number };
+        imageCurrent?: { x: number; y: number };
     } | null = null;
 
     private generation = 0;
@@ -254,12 +266,76 @@ export class WsiAnnotationController {
     private polygonPoints: Array<{ x: number; y: number }> = [];
     private polygonScreenPoints: Array<{ x: number; y: number }> = [];
     private synchronizing = false;
+    @observable.ref private mppProvider: () => WsiMpp | null | undefined = () =>
+        undefined;
 
     constructor(
         private apiUrl: string | null | undefined,
         private studyId: string | undefined
     ) {
         makeObservable(this);
+    }
+
+    /**
+     * Supplies the open slide's microns-per-pixel, read when measuring; the
+     * viewer reads it from the slide's tile metadata.
+     */
+    @action
+    setMppProvider(provider: () => WsiMpp | null | undefined) {
+        this.mppProvider = provider;
+    }
+
+    /** The open slide's microns-per-pixel, when it has a valid one. */
+    @computed get mpp(): WsiMpp | undefined {
+        const mpp = this.mppProvider();
+        return mpp && mpp.x > 0 && mpp.y > 0 ? mpp : undefined;
+    }
+
+    /** An annotation's shape, or null for a selector the viewer cannot read. */
+    shapeOf(annotation: WsiAnnotation): WsiAnnotationShape | null {
+        return parseAnnotationShape(annotation.target?.selector);
+    }
+
+    /** An annotation's size, in microns, or in pixels without an mpp. */
+    measurementOf(annotation: WsiAnnotation): WsiMeasurement | null {
+        const shape = this.shapeOf(annotation);
+        return shape ? measureShape(shape, this.mpp) : null;
+    }
+
+    /** The size of the shape being drawn, for a live readout. */
+    @computed get drawPreviewMeasurement(): string | null {
+        const preview = this.customDrawPreview;
+        if (!preview?.imageStart || !preview.imageCurrent) return null;
+        const a = preview.imageStart;
+        const b = preview.imageCurrent;
+        let shape: WsiAnnotationShape | null = null;
+        if (preview.tool === 'line') {
+            shape = { kind: 'line', points: [a, b] };
+        } else if (preview.tool === 'rectangle') {
+            shape = {
+                kind: 'rectangle',
+                x: Math.min(a.x, b.x),
+                y: Math.min(a.y, b.y),
+                width: Math.abs(b.x - a.x),
+                height: Math.abs(b.y - a.y),
+            };
+        } else if (preview.tool === 'ellipse' || preview.tool === 'circle') {
+            const rx = Math.abs(b.x - a.x) / 2;
+            const ry = Math.abs(b.y - a.y) / 2;
+            const r = Math.min(rx, ry);
+            shape = {
+                kind: 'ellipse',
+                cx: (a.x + b.x) / 2,
+                cy: (a.y + b.y) / 2,
+                rx: preview.tool === 'circle' ? r : rx,
+                ry: preview.tool === 'circle' ? r : ry,
+            };
+        }
+        const measurement = shape && measureShape(shape, this.mpp);
+        if (!measurement) return null;
+        return preview.tool === 'line'
+            ? formatMeasurement(measurement)
+            : formatMeasurement({ ...measurement, perimeter: undefined });
     }
 
     /** Whether the user may draw, edit or delete annotations. */
@@ -1185,6 +1261,8 @@ export class WsiAnnotationController {
                 },
                 current: screenPoint,
                 points: previewPoints,
+                imageStart: tool === 'polygon' ? undefined : image,
+                imageCurrent: tool === 'polygon' ? undefined : image,
             };
             event.preventDefault();
             event.stopPropagation();
@@ -1201,6 +1279,10 @@ export class WsiAnnotationController {
             this.customDrawPreview = {
                 ...this.customDrawPreview,
                 current,
+                imageCurrent:
+                    tool === 'polygon'
+                        ? undefined
+                        : this.imagePoint(current.x, current.y) || undefined,
             };
             event.preventDefault();
             event.stopPropagation();
@@ -1443,7 +1525,9 @@ export class WsiAnnotationController {
         event: MouseEvent
     ) {
         const text = annotation.body?.[0]?.value || '';
-        if (!text) return;
+        const stored = this.annotations.find(item => item.id === annotation.id);
+        const measurement = this.measurementOf(stored || annotation);
+        if (!text && !measurement) return;
         this.annotationTooltip = {
             x: event.clientX,
             y: event.clientY,
@@ -1453,6 +1537,9 @@ export class WsiAnnotationController {
                 ? isUnreviewedAssistant(annotation.provenance)
                     ? 'unreviewed'
                     : 'accepted'
+                : undefined,
+            measurement: measurement
+                ? formatMeasurement(measurement)
                 : undefined,
         };
     }

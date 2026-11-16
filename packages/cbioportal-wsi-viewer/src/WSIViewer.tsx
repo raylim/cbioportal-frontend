@@ -301,6 +301,9 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
             props.annotationApiUrl,
             props.studyId
         );
+        this.annotationController.setMppProvider(
+            () => this.viewerState.selectedMpp
+        );
         this.controller = new WsiViewerController(
             this.createControllerHost(),
             this.viewerState,

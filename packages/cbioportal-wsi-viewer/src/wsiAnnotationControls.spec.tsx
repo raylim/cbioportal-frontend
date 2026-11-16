@@ -91,4 +91,36 @@ describe('WsiAnnotationPanel', () => {
             ['ours', false],
         ]);
     });
+
+    it('shows each annotation size, and says when the slide has no scale', () => {
+        const controller = controllerWith([
+            {
+                ...apiItem('box', {}),
+                target: {
+                    selector: {
+                        type: 'FragmentSelector',
+                        value: 'xywh=pixel:0,0,100,200',
+                    },
+                },
+            },
+        ]);
+        const { rerender } = render(
+            <WsiAnnotationPanel controller={controller} />
+        );
+        expect(
+            screen.getByTestId('annotation-measurement-box').textContent
+        ).toBe('Area 20,000 px² · Perimeter 600 px');
+        expect(
+            screen.getByTestId('annotation-measurement-scale-note')
+        ).toBeTruthy();
+
+        controller.setMppProvider(() => ({ x: 0.5, y: 0.5 }));
+        rerender(<WsiAnnotationPanel controller={controller} />);
+        expect(
+            screen.getByTestId('annotation-measurement-box').textContent
+        ).toBe('Area 5,000 µm² · Perimeter 300 µm');
+        expect(
+            screen.queryByTestId('annotation-measurement-scale-note')
+        ).toBeNull();
+    });
 });

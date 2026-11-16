@@ -1225,6 +1225,72 @@ describe('WsiAnnotationController', () => {
         ).not.toHaveProperty('visible_to');
     });
 
+    it('measures annotations with the slide scale, and shows a live line length', () => {
+        const controller = new WsiAnnotationController(
+            'https://tiles.example',
+            'study1'
+        );
+        (controller as any).slideKey = 'slide1';
+        const line = (controller as any).fromApi(
+            {
+                ...apiAnnotation('line'),
+                target: {
+                    selector: {
+                        type: 'SvgSelector',
+                        value:
+                            '<svg><line x1="0" y1="0" x2="300" y2="400" /></svg>',
+                    },
+                },
+            },
+            'slide1'
+        );
+        expect(controller.measurementOf(line)).toEqual({
+            unit: 'px',
+            length: 500,
+        });
+
+        let mpp: { x: number; y: number } | undefined = { x: 0.5, y: 0.5 };
+        controller.setMppProvider(() => mpp);
+        expect(controller.measurementOf(line)).toEqual({
+            unit: 'um',
+            length: 250,
+        });
+        mpp = { x: 0, y: 0 };
+        expect(controller.mpp).toBeUndefined();
+        mpp = { x: 0.25, y: 0.25 };
+
+        const viewerElement = document.createElement('div');
+        (createOSDAnnotator as jest.Mock).mockReturnValue({
+            on: jest.fn(),
+            setVisible: jest.fn(),
+            setAnnotations: jest.fn(),
+            setStyle: jest.fn(),
+            setDrawingEnabled: jest.fn(),
+            cancelDrawing: jest.fn(),
+        });
+        controller.attachViewer({ element: viewerElement }, {}, 'slide1');
+        jest.spyOn(controller as any, 'imagePoint').mockImplementation(
+            (x: number, y: number) => ({
+                x: x * 10,
+                y: y * 10,
+            })
+        );
+        controller.setTool('line');
+        const pointer = (type: string, x: number, y: number) =>
+            viewerElement.dispatchEvent(
+                new MouseEvent(type, { button: 0, clientX: x, clientY: y })
+            );
+        pointer('pointerdown', 0, 0);
+        pointer('pointermove', 30, 40);
+        // 500 image pixels at 0.25 µm per pixel.
+        expect(controller.drawPreviewMeasurement).toBe('Length 125 µm');
+        controller.setTool('rectangle');
+        pointer('pointerdown', 0, 0);
+        pointer('pointermove', 10, 20);
+        // 100 x 200 image pixels at 0.25 µm per pixel.
+        expect(controller.drawPreviewMeasurement).toBe('Area 1,250 µm²');
+    });
+
     it('only offers removal for unused user-added colors', () => {
         const controller = new WsiAnnotationController(
             'https://tiles.example',

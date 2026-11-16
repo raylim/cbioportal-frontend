@@ -8,6 +8,7 @@ import {
     WsiAnnotationTool,
 } from './wsiAnnotationController';
 import { WsiAnnotation } from './wsiViewerTypes';
+import { formatMeasurement } from './wsiAnnotationGeometryUtils';
 import {
     isAssistantProvenance,
     isUnreviewedAssistant,
@@ -633,6 +634,19 @@ export const WsiAnnotationPanel = observer(
                         {controller.unreviewedAiCount})
                     </label>
                 )}
+                {!controller.mpp && (
+                    <div
+                        data-testid="annotation-measurement-scale-note"
+                        style={{
+                            color: colors.muted,
+                            fontSize: 10,
+                            marginBottom: 4,
+                        }}
+                    >
+                        Sizes are in pixels: this slide has no microns-per-pixel
+                        scale.
+                    </div>
+                )}
                 {controller.shownAnnotations.map(annotation => (
                     <AnnotationRow
                         key={annotation.id}
@@ -662,6 +676,7 @@ const AnnotationRow = observer(
         const dotColor = annotation.color || DEFAULT_COLOR;
         const creator = annotation.creator || '';
         const unreviewedAi = isUnreviewedAssistant(annotation.provenance);
+        const measurement = controller.measurementOf(annotation);
         const created = annotation.created
             ? new Date(annotation.created).toLocaleDateString()
             : '';
@@ -760,6 +775,18 @@ const AnnotationRow = observer(
                                     />
                                 )}
                             </div>
+                            {measurement && (
+                                <div
+                                    data-testid={`annotation-measurement-${annotation.id}`}
+                                    style={{
+                                        color: colors.text,
+                                        fontSize: 10,
+                                        marginTop: 1,
+                                    }}
+                                >
+                                    {formatMeasurement(measurement)}
+                                </div>
+                            )}
                             {unreviewedAi && controller.canEdit && (
                                 <div
                                     style={{
@@ -1019,6 +1046,14 @@ export const WsiAnnotationTooltip = observer(
                 }}
             >
                 {tooltip.text}
+                {tooltip.measurement && (
+                    <div
+                        data-testid="annotation-tooltip-measurement"
+                        style={{ marginTop: 2, fontSize: 11 }}
+                    >
+                        {tooltip.measurement}
+                    </div>
+                )}
                 {tooltip.ai && (
                     <div style={{ marginTop: 2, fontSize: 10 }}>
                         {tooltip.ai === 'unreviewed'
@@ -1060,6 +1095,7 @@ export const WsiAnnotationDrawPreview = observer(
             `${x2},${y2}`,
         ].join(' ');
 
+        const measurement = controller.drawPreviewMeasurement;
         return (
             <svg
                 data-testid="annotation-draw-preview"
@@ -1111,6 +1147,21 @@ export const WsiAnnotationDrawPreview = observer(
                         fill={controller.activeColor}
                         fillOpacity={0.2}
                     />
+                )}
+                {measurement && (
+                    <text
+                        data-testid="annotation-draw-measurement"
+                        x={x2 + 12}
+                        y={y2 - 10}
+                        fontSize={12}
+                        fontWeight={600}
+                        fill="#fff"
+                        stroke="rgba(0,0,0,0.75)"
+                        strokeWidth={3}
+                        paintOrder="stroke"
+                    >
+                        {measurement}
+                    </text>
                 )}
             </svg>
         );
