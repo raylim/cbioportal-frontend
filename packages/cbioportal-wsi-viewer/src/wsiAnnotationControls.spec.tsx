@@ -152,4 +152,49 @@ describe('WsiAnnotationPanel', () => {
         fireEvent.keyDown(input, { key: 'Enter', ctrlKey: true });
         expect(setNote).toHaveBeenLastCalledWith('a2', 'Existing note');
     });
+
+    it('filters the list, counts labels and goes to an annotation', () => {
+        const controller = controllerWith([
+            apiItem('Tumor 1', { layer_name: 'Tumor' }),
+            apiItem('Tumor 2', { layer_name: 'Tumor' }),
+            apiItem('Stroma 1', { layer_name: 'Stroma' }),
+        ]);
+        const zoom = jest
+            .spyOn(controller, 'zoomToAnnotation')
+            .mockReturnValue(true);
+        render(<WsiAnnotationPanel controller={controller} />);
+
+        expect(
+            screen.getByTestId('annotation-count-layer-Tumor').textContent
+        ).toBe('Tumor 2');
+        expect(
+            screen.getByTestId('annotation-count-label-Stroma').textContent
+        ).toBe('Stroma 1');
+        expect(screen.getAllByRole('listitem')).toHaveLength(3);
+
+        fireEvent.change(screen.getByLabelText('Filter annotations by layer'), {
+            target: { value: 'Stroma' },
+        });
+        expect(screen.getAllByRole('listitem')).toHaveLength(1);
+        fireEvent.click(screen.getByTestId('annotation-filter-clear'));
+
+        fireEvent.click(screen.getByLabelText('Show the 2 Tumor annotations'));
+        expect(
+            (screen.getByLabelText(
+                'Filter annotations by label or note'
+            ) as HTMLInputElement).value
+        ).toBe('Tumor');
+        expect(screen.getAllByRole('listitem')).toHaveLength(2);
+
+        fireEvent.click(screen.getByLabelText('Go to annotation Tumor 2'));
+        expect(zoom).toHaveBeenCalledWith('Tumor 2');
+
+        fireEvent.change(
+            screen.getByLabelText('Filter annotations by label or note'),
+            { target: { value: 'nothing' } }
+        );
+        expect(screen.getByRole('status').textContent).toBe(
+            'No annotations match the filters.'
+        );
+    });
 });

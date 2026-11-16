@@ -4,6 +4,7 @@ import {
     annotationVisibility,
     DEFAULT_COLOR,
     DEFAULT_LAYER,
+    WsiAnnotationAiFilter,
     WsiAnnotationController,
     WsiAnnotationTool,
 } from './wsiAnnotationController';
@@ -599,11 +600,9 @@ export const WsiAnnotationPanel = observer(
                 </span>
             );
         }
+        const listed = controller.listedAnnotations;
         return (
-            <div
-                data-testid="wsi-annotation-panel"
-                style={{ maxHeight: 260, overflowY: 'auto', marginTop: 6 }}
-            >
+            <div data-testid="wsi-annotation-panel" style={{ marginTop: 6 }}>
                 {controller.error && (
                     <div
                         role="alert"
@@ -647,13 +646,30 @@ export const WsiAnnotationPanel = observer(
                         scale.
                     </div>
                 )}
-                {controller.shownAnnotations.map(annotation => (
-                    <AnnotationRow
-                        key={annotation.id}
-                        controller={controller}
-                        annotation={annotation}
-                    />
-                ))}
+                <AnnotationListFilters controller={controller} />
+                <AnnotationCounts controller={controller} />
+                <div
+                    role="list"
+                    aria-label="Annotations"
+                    data-testid="annotation-list"
+                    style={{ maxHeight: 260, overflowY: 'auto' }}
+                >
+                    {listed.map(annotation => (
+                        <AnnotationRow
+                            key={annotation.id}
+                            controller={controller}
+                            annotation={annotation}
+                        />
+                    ))}
+                    {!listed.length && (
+                        <div
+                            role="status"
+                            style={{ color: '#999', fontSize: 11, padding: 4 }}
+                        >
+                            No annotations match the filters.
+                        </div>
+                    )}
+                </div>
             </div>
         );
     }
@@ -688,6 +704,7 @@ const AnnotationRow = observer(
 
         return (
             <div
+                role="listitem"
                 data-testid={`annotation-row-${annotation.id}`}
                 style={{
                     display: 'flex',
@@ -740,9 +757,23 @@ const AnnotationRow = observer(
                         </div>
                     ) : (
                         <>
-                            <div
-                                title={rawLabel || '(unlabeled)'}
+                            <button
+                                data-testid={`annotation-goto-${annotation.id}`}
+                                aria-label={`Go to annotation ${rawLabel ||
+                                    '(unlabeled)'}`}
+                                title={`${rawLabel ||
+                                    '(unlabeled)'}: show on the slide`}
+                                onClick={() =>
+                                    controller.zoomToAnnotation(annotation.id)
+                                }
                                 style={{
+                                    display: 'block',
+                                    maxWidth: '100%',
+                                    padding: 0,
+                                    border: 'none',
+                                    background: 'transparent',
+                                    textAlign: 'left',
+                                    cursor: 'pointer',
                                     overflow: 'hidden',
                                     textOverflow: 'ellipsis',
                                     whiteSpace: 'nowrap',
@@ -752,7 +783,7 @@ const AnnotationRow = observer(
                                 }}
                             >
                                 {rawLabel || '(unlabeled)'}
-                            </div>
+                            </button>
                             <div
                                 style={{
                                     display: 'flex',
@@ -880,6 +911,195 @@ const AnnotationRow = observer(
         );
     }
 );
+
+const filterControlStyle: React.CSSProperties = {
+    fontSize: 11,
+    padding: '1px 4px',
+    minWidth: 0,
+    border: `1px solid ${colors.border}`,
+    borderRadius: 3,
+    background: '#fff',
+    color: colors.text,
+};
+
+/** Filters for the annotation list: label text, layer, author and AI. */
+const AnnotationListFilters = observer(
+    ({ controller }: { controller: WsiAnnotationController }) => {
+        const filter = controller.listFilter;
+        const anyAi = controller.annotations.some(annotation =>
+            isAssistantProvenance(annotation.provenance)
+        );
+        const filtered =
+            filter.text || filter.layer || filter.author || filter.ai !== 'all';
+        return (
+            <div
+                data-testid="annotation-list-filters"
+                style={{
+                    display: 'flex',
+                    flexWrap: 'wrap',
+                    gap: 4,
+                    marginBottom: 4,
+                }}
+            >
+                <input
+                    type="search"
+                    aria-label="Filter annotations by label or note"
+                    data-testid="annotation-filter-text"
+                    placeholder="Filter by label or note"
+                    value={filter.text}
+                    onChange={event =>
+                        controller.setListFilter({ text: event.target.value })
+                    }
+                    style={{ ...filterControlStyle, flex: '1 1 100%' }}
+                />
+                <select
+                    aria-label="Filter annotations by layer"
+                    data-testid="annotation-filter-layer"
+                    value={filter.layer}
+                    onChange={event =>
+                        controller.setListFilter({ layer: event.target.value })
+                    }
+                    style={{ ...filterControlStyle, flex: 1 }}
+                >
+                    <option value="">All layers</option>
+                    {controller.layerNames.map(layer => (
+                        <option key={layer} value={layer}>
+                            {layer}
+                        </option>
+                    ))}
+                </select>
+                {controller.authors.length > 1 && (
+                    <select
+                        aria-label="Filter annotations by author"
+                        data-testid="annotation-filter-author"
+                        value={filter.author}
+                        onChange={event =>
+                            controller.setListFilter({
+                                author: event.target.value,
+                            })
+                        }
+                        style={{ ...filterControlStyle, flex: 1 }}
+                    >
+                        <option value="">All authors</option>
+                        {controller.authors.map(author => (
+                            <option key={author} value={author}>
+                                {author}
+                            </option>
+                        ))}
+                    </select>
+                )}
+                {anyAi && (
+                    <select
+                        aria-label="Filter annotations by AI origin"
+                        data-testid="annotation-filter-ai"
+                        value={filter.ai}
+                        onChange={event =>
+                            controller.setListFilter({
+                                ai: event.target.value as WsiAnnotationAiFilter,
+                            })
+                        }
+                        style={{ ...filterControlStyle, flex: 1 }}
+                    >
+                        <option value="all">AI and manual</option>
+                        <option value="ai">AI only</option>
+                        <option value="unreviewed">Unreviewed AI</option>
+                        <option value="human">Manual only</option>
+                    </select>
+                )}
+                {filtered && (
+                    <button
+                        data-testid="annotation-filter-clear"
+                        onClick={controller.clearListFilter}
+                        style={{
+                            border: 'none',
+                            background: 'transparent',
+                            color: colors.blue,
+                            fontSize: 10,
+                            cursor: 'pointer',
+                            padding: 0,
+                        }}
+                    >
+                        Clear filters
+                    </button>
+                )}
+            </div>
+        );
+    }
+);
+
+/**
+ * How many listed annotations each layer and label has. A label chip
+ * filters the list to that label.
+ */
+const AnnotationCounts = observer(
+    ({ controller }: { controller: WsiAnnotationController }) => {
+        const layers = Array.from(controller.listedLayerCounts.entries());
+        const labels = Array.from(controller.listedLabelCounts.entries()).sort(
+            (a, b) => b[1] - a[1] || a[0].localeCompare(b[0])
+        );
+        if (!layers.length) return null;
+        const row = (title: string, children: React.ReactNode) => (
+            <div
+                style={{
+                    display: 'flex',
+                    flexWrap: 'wrap',
+                    alignItems: 'center',
+                    gap: 3,
+                    fontSize: 10,
+                    color: colors.muted,
+                    marginBottom: 3,
+                }}
+            >
+                <span>{title}</span>
+                {children}
+            </div>
+        );
+        return (
+            <div data-testid="annotation-counts">
+                {row(
+                    'By layer:',
+                    layers.map(([layer, count]) => (
+                        <span
+                            key={layer}
+                            data-testid={`annotation-count-layer-${layer}`}
+                            style={countChipStyle}
+                        >
+                            {layer} {count}
+                        </span>
+                    ))
+                )}
+                {row(
+                    'By label:',
+                    labels.map(([label, count]) => (
+                        <button
+                            key={label}
+                            data-testid={`annotation-count-label-${label}`}
+                            aria-label={`Show the ${count} ${label} annotation${
+                                count === 1 ? '' : 's'
+                            }`}
+                            onClick={() =>
+                                controller.setListFilter({ text: label })
+                            }
+                            style={{ ...countChipStyle, cursor: 'pointer' }}
+                        >
+                            {label} {count}
+                        </button>
+                    ))
+                )}
+            </div>
+        );
+    }
+);
+
+const countChipStyle: React.CSSProperties = {
+    padding: '0 5px',
+    borderRadius: 8,
+    border: `1px solid ${colors.border}`,
+    background: '#f7f7f7',
+    color: colors.text,
+    fontSize: 10,
+    lineHeight: '14px',
+};
 
 export const MAX_NOTE_LENGTH = 2000;
 

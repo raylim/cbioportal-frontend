@@ -2,7 +2,7 @@
  * @jest-environment jsdom
  */
 
-import { WsiAnnotationController } from './wsiAnnotationController';
+import { labelTerm, WsiAnnotationController } from './wsiAnnotationController';
 import { createOSDAnnotator } from '@annotorious/openseadragon';
 import { loadAnnotorious } from './wsiAnnotoriousLoader';
 
@@ -1333,6 +1333,129 @@ describe('WsiAnnotationController', () => {
             layerName: 'Tumor',
             version: 2,
         });
+    });
+
+    it('filters the list by layer, author, text and AI, and counts layers and labels', () => {
+        const controller = new WsiAnnotationController(
+            'https://tiles.example',
+            'study1'
+        );
+        const item = (
+            id: string,
+            label: string,
+            layer: string,
+            creator: string,
+            extra: Record<string, unknown> = {}
+        ) =>
+            (controller as any).fromApi(
+                {
+                    ...apiAnnotation(id),
+                    created_by: creator,
+                    body: {
+                        label,
+                        layer_name: layer,
+                        color: '#ef4444',
+                        ...extra,
+                    },
+                },
+                'slide1'
+            );
+        (controller as any).annotations = [
+            item('t1', 'Tumor 1', 'Tumor', 'ana'),
+            item('t2', 'Tumor 2', 'Tumor', 'ben', { comment: 'margin' }),
+            item('s1', 'Stroma 1', 'Stroma', 'ana'),
+            item('ai', 'Tumor', 'AI', 'ana', {
+                provenance: { source: 'agent' },
+            }),
+        ];
+        const ids = () => controller.listedAnnotations.map(a => a.id);
+
+        expect(controller.authors).toEqual(['ana', 'ben']);
+        expect(Array.from(controller.listedLayerCounts)).toEqual([
+            ['Tumor', 2],
+            ['Stroma', 1],
+            ['AI', 1],
+        ]);
+        expect(Array.from(controller.listedLabelCounts)).toEqual([
+            ['Tumor', 3],
+            ['Stroma', 1],
+        ]);
+
+        controller.setListFilter({ layer: 'Tumor' });
+        expect(ids()).toEqual(['t1', 't2']);
+        controller.setListFilter({ author: 'ben' });
+        expect(ids()).toEqual(['t2']);
+        controller.clearListFilter();
+        controller.setListFilter({ text: 'MARGIN' });
+        expect(ids()).toEqual(['t2']);
+        controller.setListFilter({ text: '', ai: 'unreviewed' });
+        expect(ids()).toEqual(['ai']);
+        controller.setListFilter({ ai: 'human' });
+        expect(ids()).toEqual(['t1', 't2', 's1']);
+        expect(Array.from(controller.listedLabelCounts)).toEqual([
+            ['Tumor', 2],
+            ['Stroma', 1],
+        ]);
+
+        // A new slide starts unfiltered.
+        controller.beginSlide('slide2');
+        expect(controller.listFilter.ai).toBe('all');
+        expect(labelTerm('Necrosis 12')).toBe('Necrosis');
+        expect(labelTerm('42')).toBe('42');
+    });
+
+    it('zooms the slide to an annotation with a margin', () => {
+        (createOSDAnnotator as jest.Mock).mockReturnValue({
+            on: jest.fn(),
+            setVisible: jest.fn(),
+            setAnnotations: jest.fn(),
+            setStyle: jest.fn(),
+        });
+        const controller = new WsiAnnotationController(
+            'https://tiles.example',
+            'study1'
+        );
+        (controller as any).slideKey = 'slide1';
+        (controller as any).annotations = [
+            (controller as any).fromApi(
+                {
+                    ...apiAnnotation('box'),
+                    target: {
+                        selector: {
+                            type: 'FragmentSelector',
+                            value: 'xywh=pixel:1000,2000,400,200',
+                        },
+                    },
+                },
+                'slide1'
+            ),
+        ];
+        const viewport = {
+            imageToViewportRectangle: jest.fn(rect => ({ viewport: rect })),
+            fitBounds: jest.fn(),
+        };
+        class Rect {
+            constructor(
+                public x: number,
+                public y: number,
+                public width: number,
+                public height: number
+            ) {}
+        }
+        controller.attachViewer(
+            { element: document.createElement('div'), viewport },
+            { Rect },
+            'slide1'
+        );
+
+        expect(controller.zoomToAnnotation('box')).toBe(true);
+        expect(viewport.imageToViewportRectangle).toHaveBeenCalledWith(
+            new Rect(800, 1800, 800, 600)
+        );
+        expect(viewport.fitBounds).toHaveBeenCalledWith({
+            viewport: new Rect(800, 1800, 800, 600),
+        });
+        expect(controller.zoomToAnnotation('missing')).toBe(false);
     });
 
     it('only offers removal for unused user-added colors', () => {

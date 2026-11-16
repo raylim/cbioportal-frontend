@@ -5,6 +5,7 @@ import {
     measureShape,
     normalizeSvgSelector,
     parseAnnotationShape,
+    shapeBounds,
     WsiAnnotationShape,
     WsiMeasurement,
     WsiMpp,
@@ -206,6 +207,41 @@ export const WSI_ANNOTATION_ACCESS_MESSAGES: Record<
         'Annotations are read-only: you do not have access to this study.',
 };
 
+/** Which annotations the list shows by their assistant provenance. */
+export type WsiAnnotationAiFilter = 'all' | 'ai' | 'unreviewed' | 'human';
+
+/** The annotation list's filters; empty strings match everything. */
+export interface WsiAnnotationListFilter {
+    layer: string;
+    author: string;
+    text: string;
+    ai: WsiAnnotationAiFilter;
+}
+
+const EMPTY_LIST_FILTER: WsiAnnotationListFilter = {
+    layer: '',
+    author: '',
+    text: '',
+    ai: 'all',
+};
+
+/**
+ * The term a label counts under: the label without a trailing number, so
+ * the auto-labels "Tumor 1" and "Tumor 2" both count as "Tumor".
+ */
+export function labelTerm(label: string): string {
+    return label.trim().replace(/\s+\d+$/, '') || label.trim();
+}
+
+function countBy<T>(items: T[], key: (item: T) => string): Map<string, number> {
+    const counts = new Map<string, number>();
+    items.forEach(item => {
+        const name = key(item);
+        counts.set(name, (counts.get(name) || 0) + 1);
+    });
+    return counts;
+}
+
 export class WsiAnnotationController {
     @observable annotations: WsiAnnotation[] = [];
     @observable loading = false;
@@ -225,6 +261,7 @@ export class WsiAnnotationController {
     @observable hiddenLayerNames = new Set<string>();
     /** Hides assistant annotations no one has accepted, on the slide and list. */
     @observable hideUnreviewedAi = false;
+    @observable.ref listFilter: WsiAnnotationListFilter = EMPTY_LIST_FILTER;
     /** Whether new annotations are shared with the study (else private). */
     @observable defaultShared = loadDefaultShared();
     @observable annotationTooltip: {
@@ -387,6 +424,97 @@ export class WsiAnnotationController {
         return this.annotations.filter(annotation => this.isShown(annotation));
     }
 
+    /** The annotations the list shows: those on the slide, filtered. */
+    @computed get listedAnnotations(): WsiAnnotation[] {
+        const { layer, author, text, ai } = this.listFilter;
+        const needle = text.trim().toLowerCase();
+        return this.shownAnnotations.filter(annotation => {
+            if (layer && (annotation.layerName || DEFAULT_LAYER) !== layer) {
+                return false;
+            }
+            if (author && (annotation.creator || '') !== author) return false;
+            if (
+                needle &&
+                !(annotation.body?.[0]?.value || '')
+                    .toLowerCase()
+                    .includes(needle) &&
+                !(annotation.note || '').toLowerCase().includes(needle)
+            ) {
+                return false;
+            }
+            const isAi = isAssistantProvenance(annotation.provenance);
+            if (ai === 'ai' && !isAi) return false;
+            if (ai === 'human' && isAi) return false;
+            if (
+                ai === 'unreviewed' &&
+                !isUnreviewedAssistant(annotation.provenance)
+            ) {
+                return false;
+            }
+            return true;
+        });
+    }
+
+    /** The creators of the slide's annotations, sorted. */
+    @computed get authors(): string[] {
+        return Array.from(
+            new Set(
+                this.annotations
+                    .map(annotation => annotation.creator || '')
+                    .filter(Boolean)
+            )
+        ).sort();
+    }
+
+    /** Listed annotations per layer. */
+    @computed get listedLayerCounts(): Map<string, number> {
+        return countBy(
+            this.listedAnnotations,
+            annotation => annotation.layerName || DEFAULT_LAYER
+        );
+    }
+
+    /** Listed annotations per label term (see `labelTerm`). */
+    @computed get listedLabelCounts(): Map<string, number> {
+        return countBy(this.listedAnnotations, annotation =>
+            labelTerm(annotation.body?.[0]?.value || '(unlabeled)')
+        );
+    }
+
+    @action.bound
+    setListFilter(filter: Partial<WsiAnnotationListFilter>) {
+        this.listFilter = { ...this.listFilter, ...filter };
+    }
+
+    @action.bound
+    clearListFilter() {
+        this.listFilter = EMPTY_LIST_FILTER;
+    }
+
+    /**
+     * Pans and zooms the slide to fit an annotation with a margin around it;
+     * returns whether it could.
+     */
+    zoomToAnnotation(id: string): boolean {
+        const annotation = this.annotations.find(item => item.id === id);
+        const shape = annotation && this.shapeOf(annotation);
+        const viewport = this.osdViewer?.viewport;
+        if (!shape || !viewport || !this.openSeadragon?.Rect) return false;
+        const bounds = shapeBounds(shape);
+        const width = bounds.maxX - bounds.minX;
+        const height = bounds.maxY - bounds.minY;
+        // Points and thin shapes still get a readable field of view.
+        const margin = Math.max(width, height, 128) * 0.5;
+        const rect = new this.openSeadragon.Rect(
+            bounds.minX - margin,
+            bounds.minY - margin,
+            width + 2 * margin,
+            height + 2 * margin
+        );
+        viewport.fitBounds(viewport.imageToViewportRectangle(rect));
+        return true;
+    }
+
     /** Assistant annotations that no one has accepted yet. */
     @computed get unreviewedAiCount(): number {
         return this.annotations.filter(annotation =>
@@ -420,6 +548,7 @@ export class WsiAnnotationController {
         this.restartRequests();
         this.slideKey = slideKey;
         this.annotations = [];
+        this.listFilter = EMPTY_LIST_FILTER;
         this.error = null;
         this.accessIssue = null;
         this.loading = Boolean(this.apiUrl);

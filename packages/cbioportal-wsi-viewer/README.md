@@ -113,6 +113,10 @@ The viewer writes the service's `AnnotationBody` fields as follows:
 
 Rows written before the viewer used `layer_name` kept the layer in `comment` and sent no `layer_name` or `color`, so the service stored its defaults (`Default`, `#2f80ed`). The viewer reads `comment` as the layer only for such rows: when `layer_name` is missing or `Default`, `color` is missing or exactly `#2f80ed`, and `comment` is one line of at most 100 characters. The viewer always writes `color`, and writes `#2f80ed` as `#2F80ED`, so a note on a row it wrote is never read as a layer. Saving an edit to a legacy row writes its layer to `layer_name` and clears `comment`. A `comment` that only repeats `layer_name`, as the service writes for a saved assistant proposal, is not shown as a note. `wsiAnnotationBody.ts` holds the rules.
 
+#### Annotation list
+
+The sidebar's Annotations section lists the slide's annotations on visible layers. It filters by label or note text, layer, author (when there is more than one) and AI origin (when any annotation is from the assistant), and shows how many listed annotations each layer and each label has. Labels count by their text without a trailing number, so "Tumor 1" and "Tumor 2" count as Tumor; clicking a label count filters the list to it. Clicking an annotation's label (or Enter on it) pans and zooms the slide to it. The filters reset when another slide opens.
+
 #### Notes
 
 Each annotation can carry a free-text note, kept in `body.comment` and separate from its label. The list shows it under the annotation, with **+ Note** / **Edit note** for users who can edit (Ctrl/Cmd+Enter saves, Esc cancels); saving sends a `PUT` with the annotation's `version`. The click tooltip shows it too.

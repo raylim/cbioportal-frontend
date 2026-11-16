@@ -298,3 +298,47 @@ export function formatMeasurement(measurement: WsiMeasurement): string {
     }
     return parts.join(' · ');
 }
+
+export interface WsiBounds {
+    minX: number;
+    minY: number;
+    maxX: number;
+    maxY: number;
+}
+
+/** The bounding box of a shape, in image pixels. */
+export function shapeBounds(shape: WsiAnnotationShape): WsiBounds {
+    switch (shape.kind) {
+        case 'rectangle':
+            return {
+                minX: Math.min(shape.x, shape.x + shape.width),
+                minY: Math.min(shape.y, shape.y + shape.height),
+                maxX: Math.max(shape.x, shape.x + shape.width),
+                maxY: Math.max(shape.y, shape.y + shape.height),
+            };
+        case 'ellipse':
+            return {
+                minX: shape.cx - shape.rx,
+                minY: shape.cy - shape.ry,
+                maxX: shape.cx + shape.rx,
+                maxY: shape.cy + shape.ry,
+            };
+        case 'point':
+            return {
+                minX: shape.x,
+                minY: shape.y,
+                maxX: shape.x,
+                maxY: shape.y,
+            };
+        default: {
+            const xs = shape.points.map(point => point.x);
+            const ys = shape.points.map(point => point.y);
+            return {
+                minX: Math.min(...xs),
+                minY: Math.min(...ys),
+                maxX: Math.max(...xs),
+                maxY: Math.max(...ys),
+            };
+        }
+    }
+}
