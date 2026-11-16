@@ -83,6 +83,18 @@ Only the ingress answers 401/403, meaning the session expired or lacks access to
 
 With `annotations: { apiUrl }` in the runtime (the portal's `wsi_annotation_api_url`, e.g. `/wsi`), the viewer adds annotation authoring:
 
+```ts
+annotations: {
+    apiUrl: '/wsi',
+    // Optional: terms the label field offers (wsi_annotation_label_vocabulary,
+    // comma-separated), and whether only those are allowed
+    // (wsi_annotation_label_vocabulary_strict).
+    labelVocabulary: ['Tumor', 'Stroma', 'Necrosis', 'Lymphocytes', 'Mitosis'],
+    labelVocabularyStrict: false,
+}
+```
+
+
 | Request | Use |
 | --- | --- |
 | `GET {apiUrl}/annotations?slide_id=…&studyId=…` | The slide's annotations in the authorized study |
@@ -116,6 +128,12 @@ Rows written before the viewer used `layer_name` kept the layer in `comment` and
 #### Annotation list
 
 The sidebar's Annotations section lists the slide's annotations on visible layers. It filters by label or note text, layer, author (when there is more than one) and AI origin (when any annotation is from the assistant), and shows how many listed annotations each layer and each label has. Labels count by their text without a trailing number, so "Tumor 1" and "Tumor 2" count as Tumor; clicking a label count filters the list to it. Clicking an annotation's label (or Enter on it) pans and zooms the slide to it. The filters reset when another slide opens.
+
+#### Labels
+
+The toolbar's label field sets the label of new annotations; left empty, a new shape is auto-labelled with the active color's name and a number (and a point with the color's name). With a `labelVocabulary` the field and the list's label editor suggest those terms, then the labels already used on the slide, and still accept free text. With `labelVocabularyStrict` they become a choice of the terms only, new shapes default to the first term, and a label outside the list cannot be saved (an annotation that already has one keeps it until it is relabelled). Strict is ignored without terms.
+
+The viewer ships no default vocabulary: which terms fit depends on the site and the study, and a built-in list would quietly steer labels everywhere. Without one the field suggests the slide's existing labels, which keeps them consistent within a slide.
 
 #### Notes
 

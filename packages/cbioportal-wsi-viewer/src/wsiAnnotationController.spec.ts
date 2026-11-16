@@ -10,6 +10,10 @@ import {
 import { createOSDAnnotator } from '@annotorious/openseadragon';
 import { loadAnnotorious } from './wsiAnnotoriousLoader';
 import { parseAnnotationShape } from './wsiAnnotationGeometryUtils';
+import {
+    configureWsiViewerRuntime,
+    resetWsiViewerRuntime,
+} from './wsiViewerConfig';
 
 jest.mock('@annotorious/openseadragon', () => ({
     createOSDAnnotator: jest.fn(),
@@ -1678,6 +1682,92 @@ describe('WsiAnnotationController', () => {
         pointer('pointerup', 100, 0);
         await new Promise(resolve => setTimeout(resolve, 0));
         expect(global.fetch).toHaveBeenCalledTimes(2);
+    });
+
+    describe('label vocabulary', () => {
+        const configure = (labelVocabulary?: string[], strict?: boolean) =>
+            configureWsiViewerRuntime({
+                buildApiUrl: path => path,
+                annotations: {
+                    apiUrl: 'https://tiles.example',
+                    labelVocabulary,
+                    labelVocabularyStrict: strict,
+                },
+            });
+        afterEach(() => resetWsiViewerRuntime());
+
+        it('suggests the vocabulary and used labels, and allows free text', () => {
+            configure([' Tumor', 'Stroma', 'Tumor', '']);
+            const controller = new WsiAnnotationController(
+                'https://tiles.example',
+                'study1'
+            );
+            (controller as any).annotations = [
+                (controller as any).fromApi(
+                    apiAnnotation('a', 1, 'Fibrosis 2'),
+                    'slide1'
+                ),
+                (controller as any).fromApi(
+                    apiAnnotation('b', 1, 'Stroma 1'),
+                    'slide1'
+                ),
+            ];
+            expect(controller.labelVocabulary).toEqual(['Tumor', 'Stroma']);
+            expect(controller.strictLabels).toBe(false);
+            expect(controller.labelSuggestions).toEqual([
+                'Tumor',
+                'Stroma',
+                'Fibrosis',
+            ]);
+            expect(controller.isAllowedLabel('Anything')).toBe(true);
+
+            // Without an active label, new shapes are auto-labelled.
+            expect((controller as any).newShapeLabel()).toBe('Default 1');
+            controller.setActiveLabel('  Necrosis ');
+            expect((controller as any).newShapeLabel()).toBe('Necrosis');
+            expect(controller.activePointLabel).toBe('Necrosis');
+        });
+
+        it('allows only vocabulary labels when strict', async () => {
+            configure(['Tumor', 'Stroma'], true);
+            jest.spyOn(global, 'fetch').mockResolvedValue({
+                ok: true,
+                json: async () => apiAnnotation('a1', 2, 'Stroma'),
+            } as Response);
+            const controller = new WsiAnnotationController(
+                'https://tiles.example',
+                'study1'
+            );
+            (controller as any).slideKey = 'slide1';
+            (controller as any).annotations = [
+                (controller as any).fromApi(
+                    apiAnnotation('a1', 1, 'Old label'),
+                    'slide1'
+                ),
+            ];
+            expect(controller.strictLabels).toBe(true);
+            expect(controller.labelSuggestions).toEqual(['Tumor', 'Stroma']);
+            expect((controller as any).newShapeLabel()).toBe('Tumor');
+            controller.setActiveLabel('Free text');
+            expect((controller as any).newShapeLabel()).toBe('Tumor');
+            controller.setActiveLabel('Stroma');
+            expect(controller.activePointLabel).toBe('Stroma');
+
+            await controller.renameAnnotation('a1', 'Free text');
+            expect(global.fetch).not.toHaveBeenCalled();
+            await controller.renameAnnotation('a1', 'Stroma');
+            expect(global.fetch).toHaveBeenCalledTimes(1);
+        });
+
+        it('ignores strict without a vocabulary', () => {
+            configure([], true);
+            const controller = new WsiAnnotationController(
+                'https://tiles.example',
+                'study1'
+            );
+            expect(controller.strictLabels).toBe(false);
+            expect(controller.isAllowedLabel('Anything')).toBe(true);
+        });
     });
 
     it('only offers removal for unused user-added colors', () => {

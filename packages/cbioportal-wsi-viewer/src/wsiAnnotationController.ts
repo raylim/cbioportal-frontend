@@ -32,6 +32,7 @@ import {
     loadAnnotorious,
 } from './wsiAnnotoriousLoader';
 import { WsiPointLayer } from './wsiAnnotationPointLayer';
+import { getWsiViewerRuntime } from './wsiViewerConfig';
 
 export type WsiAnnotationTool =
     | 'rectangle'
@@ -298,6 +299,11 @@ export class WsiAnnotationController {
     /** Hides assistant annotations no one has accepted, on the slide and list. */
     @observable hideUnreviewedAi = false;
     @observable.ref listFilter: WsiAnnotationListFilter = EMPTY_LIST_FILTER;
+    /**
+     * The label new annotations get. Empty: an auto-label from the active
+     * color's name and a number (only without a strict vocabulary).
+     */
+    @observable activeLabel = '';
     /** Brush width in screen pixels. */
     @observable brushWidth = BRUSH_WIDTHS[1];
     /** Whether new annotations are shared with the study (else private). */
@@ -417,8 +423,68 @@ export class WsiAnnotationController {
         );
     }
 
-    /** The label a new point gets: the active color's name. */
+    /** The configured label terms, trimmed and without duplicates. */
+    get labelVocabulary(): string[] {
+        const terms = getWsiViewerRuntime().annotations?.labelVocabulary || [];
+        return Array.from(
+            new Set(
+                terms
+                    .map(term => (typeof term === 'string' ? term.trim() : ''))
+                    .filter(Boolean)
+            )
+        );
+    }
+
+    /** Whether labels must come from the vocabulary. */
+    get strictLabels(): boolean {
+        return (
+            !!getWsiViewerRuntime().annotations?.labelVocabularyStrict &&
+            this.labelVocabulary.length > 0
+        );
+    }
+
+    /**
+     * Labels the label fields offer: the vocabulary, then (unless labels are
+     * strict) the label terms already used on this slide.
+     */
+    @computed get labelSuggestions(): string[] {
+        const suggestions = new Set(this.labelVocabulary);
+        if (!this.strictLabels) {
+            this.annotations
+                .map(annotation => labelTerm(annotation.body?.[0]?.value || ''))
+                .filter(Boolean)
+                .sort((a, b) => a.localeCompare(b))
+                .forEach(term => suggestions.add(term));
+        }
+        return Array.from(suggestions);
+    }
+
+    /** Whether `label` may be saved. */
+    isAllowedLabel(label: string): boolean {
+        return (
+            !this.strictLabels || this.labelVocabulary.includes(label.trim())
+        );
+    }
+
+    @action.bound
+    setActiveLabel(label: string) {
+        this.activeLabel = label.replace(/\s+/g, ' ').slice(0, 200);
+    }
+
+    /** The label new shapes get (see `activeLabel`). */
+    private newShapeLabel(): string {
+        const label = this.activeLabel.trim();
+        if (label && this.isAllowedLabel(label)) return label;
+        return this.strictLabels
+            ? this.labelVocabulary[0]
+            : this.nextAutoLabel();
+    }
+
+    /** The label a new point gets: the active label, else the color's name. */
     @computed get activePointLabel(): string {
+        const label = this.activeLabel.trim();
+        if (label && this.isAllowedLabel(label)) return label;
+        if (this.strictLabels) return this.labelVocabulary[0];
         return this.activeColorName.trim() || 'Point';
     }
 
@@ -753,7 +819,7 @@ export class WsiAnnotationController {
                 annotation.body = [
                     {
                         type: 'TextualBody',
-                        value: this.nextAutoLabel(),
+                        value: this.newShapeLabel(),
                         purpose: 'commenting',
                     },
                 ];
@@ -979,7 +1045,7 @@ export class WsiAnnotationController {
     @action.bound
     async renameAnnotation(id: string, label: string) {
         const annotation = this.annotations.find(item => item.id === id);
-        if (!annotation) return;
+        if (!annotation || !this.isAllowedLabel(label)) return;
         const updated = {
             ...annotation,
             body: [
@@ -1768,7 +1834,7 @@ export class WsiAnnotationController {
                 : `<svg><ellipse cx="${cx}" cy="${cy}" rx="${
                       tool === 'circle' ? radius : rx
                   }" ry="${tool === 'circle' ? radius : ry}" /></svg>`;
-        const annotation = this.draftAnnotation(selector, this.nextAutoLabel());
+        const annotation = this.draftAnnotation(selector, this.newShapeLabel());
         // Release the tool before saving so a slow save cannot cut short
         // the next shape.
         this.cancelDrawing();
@@ -1828,7 +1894,7 @@ export class WsiAnnotationController {
         const selector = `<svg><polygon points="${points
             .map(point => `${round(point.x)},${round(point.y)}`)
             .join(' ')}" /></svg>`;
-        const annotation = this.draftAnnotation(selector, this.nextAutoLabel());
+        const annotation = this.draftAnnotation(selector, this.newShapeLabel());
         this.cancelDrawing();
         await this.createAnnotation(annotation);
     }

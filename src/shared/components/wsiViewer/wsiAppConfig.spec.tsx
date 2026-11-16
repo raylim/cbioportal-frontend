@@ -64,7 +64,27 @@ describe('buildWsiViewerConfig', () => {
             'https://annotations.example/wsi/';
         expect(buildWsiViewerConfig().annotations).toEqual({
             apiUrl: 'https://annotations.example/wsi',
+            labelVocabulary: [],
+            labelVocabularyStrict: false,
         });
+    });
+
+    it('passes the annotation label vocabulary from the frontend properties', () => {
+        mockServerConfig.wsi_annotation_api_url = '/wsi';
+        mockServerConfig.wsi_annotation_label_vocabulary =
+            ' Tumor, Stroma ,,Necrosis,Tumor ';
+        mockServerConfig.wsi_annotation_label_vocabulary_strict = 'true';
+        expect(buildWsiViewerConfig().annotations).toEqual({
+            apiUrl: '/wsi',
+            labelVocabulary: ['Tumor', 'Stroma', 'Necrosis'],
+            labelVocabularyStrict: true,
+        });
+        mockServerConfig.wsi_annotation_label_vocabulary_strict = false;
+        expect(buildWsiViewerConfig().annotations?.labelVocabularyStrict).toBe(
+            false
+        );
+        delete mockServerConfig.wsi_annotation_label_vocabulary;
+        delete mockServerConfig.wsi_annotation_label_vocabulary_strict;
     });
 });
 

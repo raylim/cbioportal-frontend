@@ -4,7 +4,14 @@
 import * as React from 'react';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { WsiAnnotationController } from './wsiAnnotationController';
-import { WsiAnnotationPanel } from './wsiAnnotationControls';
+import {
+    WsiAnnotationPanel,
+    WsiAnnotationToolbar,
+} from './wsiAnnotationControls';
+import {
+    configureWsiViewerRuntime,
+    resetWsiViewerRuntime,
+} from './wsiViewerConfig';
 
 function controllerWith(items: any[]): WsiAnnotationController {
     const controller = new WsiAnnotationController(
@@ -226,5 +233,74 @@ describe('WsiAnnotationPanel', () => {
             screen.getByTestId('annotation-point-tally-Counts-Lymphocyte')
                 .textContent
         ).toBe('LymphocyteCounts1');
+    });
+
+    describe('label vocabulary', () => {
+        afterEach(() => resetWsiViewerRuntime());
+        const configure = (strict: boolean) =>
+            configureWsiViewerRuntime({
+                buildApiUrl: path => path,
+                annotations: {
+                    apiUrl: 'https://tiles.example',
+                    labelVocabulary: ['Tumor', 'Stroma', 'Necrosis'],
+                    labelVocabularyStrict: strict,
+                },
+            });
+
+        it('offers the terms while allowing free text', () => {
+            configure(false);
+            const controller = controllerWith([apiItem('Fibrosis 1', {})]);
+            render(<WsiAnnotationToolbar controller={controller} />);
+
+            const field = screen.getByLabelText(
+                'Label for new annotations'
+            ) as HTMLInputElement;
+            expect(field.tagName).toBe('INPUT');
+            const options = Array.from(
+                document.querySelectorAll(
+                    `#${field.getAttribute('list')} option`
+                )
+            ).map(option => option.getAttribute('value'));
+            expect(options).toEqual([
+                'Tumor',
+                'Stroma',
+                'Necrosis',
+                'Fibrosis',
+            ]);
+            fireEvent.change(field, { target: { value: 'Custom term' } });
+            expect(controller.activeLabel).toBe('Custom term');
+        });
+
+        it('limits labels to the terms when strict', () => {
+            configure(true);
+            const controller = controllerWith([apiItem('Old', {})]);
+            const rename = jest
+                .spyOn(controller, 'renameAnnotation')
+                .mockResolvedValue(undefined);
+            render(
+                <>
+                    <WsiAnnotationToolbar controller={controller} />
+                    <WsiAnnotationPanel controller={controller} />
+                </>
+            );
+
+            const field = screen.getByLabelText('Label for new annotations');
+            expect(field.tagName).toBe('SELECT');
+            fireEvent.change(field, { target: { value: 'Stroma' } });
+            expect(controller.activeLabel).toBe('Stroma');
+
+            fireEvent.click(screen.getByTestId('edit-label-Old'));
+            const rowField = screen.getByLabelText('Label for Old');
+            expect(rowField.tagName).toBe('SELECT');
+            // The stored label is not a term: saving waits for a choice.
+            expect(
+                (screen.getByLabelText(
+                    'Save annotation label'
+                ) as HTMLButtonElement).disabled
+            ).toBe(true);
+            fireEvent.change(rowField, { target: { value: 'Necrosis' } });
+            fireEvent.click(screen.getByLabelText('Save annotation label'));
+            expect(rename).toHaveBeenCalledWith('Old', 'Necrosis');
+        });
     });
 });

@@ -81,6 +81,98 @@ const tools: Array<{
     },
 ];
 
+let labelListCount = 0;
+
+/** A page-unique id for a label suggestion list. */
+function useLabelListId(): string {
+    const ref = React.useRef('');
+    if (!ref.current) ref.current = `wsi-annotation-labels-${++labelListCount}`;
+    return ref.current;
+}
+
+/**
+ * A label field: a select of the vocabulary when labels are strict, else a
+ * text field suggesting the vocabulary and the labels already used.
+ */
+export const AnnotationLabelField = observer(
+    ({
+        controller,
+        value,
+        onChange,
+        ariaLabel,
+        testId,
+        placeholder,
+        allowEmpty,
+        autoFocus,
+        onKeyDown,
+        style,
+    }: {
+        controller: WsiAnnotationController;
+        value: string;
+        onChange: (value: string) => void;
+        ariaLabel: string;
+        testId: string;
+        placeholder?: string;
+        /** Strict labels only: offer an empty choice labelled `placeholder`. */
+        allowEmpty?: boolean;
+        autoFocus?: boolean;
+        onKeyDown?: (event: React.KeyboardEvent) => void;
+        style?: React.CSSProperties;
+    }) => {
+        const listId = useLabelListId();
+        if (controller.strictLabels) {
+            return (
+                <select
+                    data-testid={testId}
+                    aria-label={ariaLabel}
+                    value={value}
+                    autoFocus={autoFocus}
+                    onChange={event => onChange(event.target.value)}
+                    onKeyDown={onKeyDown}
+                    style={style}
+                >
+                    {allowEmpty && (
+                        <option value="">{placeholder || '—'}</option>
+                    )}
+                    {!allowEmpty &&
+                        value &&
+                        !controller.labelVocabulary.includes(value) && (
+                            <option value={value} disabled>
+                                {value}
+                            </option>
+                        )}
+                    {controller.labelVocabulary.map(term => (
+                        <option key={term} value={term}>
+                            {term}
+                        </option>
+                    ))}
+                </select>
+            );
+        }
+        return (
+            <>
+                <input
+                    data-testid={testId}
+                    aria-label={ariaLabel}
+                    list={listId}
+                    value={value}
+                    placeholder={placeholder}
+                    maxLength={200}
+                    autoFocus={autoFocus}
+                    onChange={event => onChange(event.target.value)}
+                    onKeyDown={onKeyDown}
+                    style={style}
+                />
+                <datalist id={listId}>
+                    {controller.labelSuggestions.map(term => (
+                        <option key={term} value={term} />
+                    ))}
+                </datalist>
+            </>
+        );
+    }
+);
+
 const toolbarStyle: React.CSSProperties = {
     position: 'absolute',
     top: 0,
@@ -168,6 +260,17 @@ export const WsiAnnotationToolbar = observer(
                         </button>
                     );
                 })}
+                <AnnotationLabelField
+                    controller={controller}
+                    value={controller.activeLabel}
+                    onChange={controller.setActiveLabel}
+                    ariaLabel="Label for new annotations"
+                    testId="annotation-active-label"
+                    placeholder={
+                        controller.strictLabels ? undefined : 'Auto label'
+                    }
+                    style={{ width: 110, fontSize: 11, padding: '1px 4px' }}
+                />
                 {controller.activeTool === 'brush' && (
                     <select
                         data-testid="annotation-brush-width"
@@ -758,7 +861,7 @@ const AnnotationRow = observer(
             : '';
 
         const save = () => {
-            void controller.renameAnnotation(annotation.id, label);
+            void controller.renameAnnotation(annotation.id, label.trim());
             setEditing(false);
         };
 
@@ -790,12 +893,14 @@ const AnnotationRow = observer(
                 <div style={{ flex: 1, minWidth: 0 }}>
                     {editing ? (
                         <div style={{ display: 'flex', gap: 3 }}>
-                            <input
-                                data-testid={`annotation-label-input-${annotation.id}`}
+                            <AnnotationLabelField
+                                controller={controller}
+                                testId={`annotation-label-input-${annotation.id}`}
+                                ariaLabel={`Label for ${rawLabel ||
+                                    'annotation'}`}
                                 autoFocus
                                 value={label}
-                                maxLength={200}
-                                onChange={event => setLabel(event.target.value)}
+                                onChange={setLabel}
                                 onKeyDown={event => {
                                     if (event.key === 'Enter') save();
                                     if (event.key === 'Escape')
@@ -805,6 +910,8 @@ const AnnotationRow = observer(
                             />
                             <button
                                 title="Save annotation label"
+                                aria-label="Save annotation label"
+                                disabled={!controller.isAllowedLabel(label)}
                                 onClick={save}
                                 style={{
                                     border: 'none',

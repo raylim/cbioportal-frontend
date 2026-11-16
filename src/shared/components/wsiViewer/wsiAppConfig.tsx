@@ -12,6 +12,24 @@ function renderWsiLoading() {
     return <LoadingIndicator isLoading={true} center={true} size="big" />;
 }
 
+/** The terms of a comma-separated frontend property, trimmed. */
+export function parseWsiLabelVocabulary(value: unknown): string[] {
+    if (typeof value !== 'string') return [];
+    return Array.from(
+        new Set(
+            value
+                .split(',')
+                .map(term => term.trim())
+                .filter(Boolean)
+        )
+    );
+}
+
+/** A boolean frontend property, which may arrive as a string. */
+function isTrueProperty(value: unknown): boolean {
+    return value === true || value === 'true';
+}
+
 /** Viewer services from the portal configuration, installed at startup. */
 export function buildWsiViewerConfig(): WsiViewerConfig {
     const annotationApiUrl = getServerConfig().wsi_annotation_api_url?.trim();
@@ -21,7 +39,15 @@ export function buildWsiViewerConfig(): WsiViewerConfig {
             buildCBioPortalPageUrl(path, query),
         osdPrefixUrl: WSI_OSD_PREFIX_URL,
         annotations: annotationApiUrl
-            ? { apiUrl: annotationApiUrl.replace(/\/+$/, '') }
+            ? {
+                  apiUrl: annotationApiUrl.replace(/\/+$/, ''),
+                  labelVocabulary: parseWsiLabelVocabulary(
+                      getServerConfig().wsi_annotation_label_vocabulary
+                  ),
+                  labelVocabularyStrict: isTrueProperty(
+                      getServerConfig().wsi_annotation_label_vocabulary_strict
+                  ),
+              }
             : undefined,
     };
 }
