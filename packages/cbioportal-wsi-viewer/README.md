@@ -153,6 +153,17 @@ The **Point** tool drops a point at each click (a drag still pans the slide) and
 
 The list and the click tooltip show each annotation's size: the length of a line, and the area and perimeter of a rectangle, ellipse, circle or polygon (including freehand and brush shapes). Coordinates are level-0 image pixels, scaled by the slide's microns-per-pixel (`tile_metadata.mpp`, the scale the status bar uses) on each axis, so slides with unequal x and y scales measure correctly. Lengths are shown in µm, or mm from 1 mm; areas in µm², or mm² from 0.01 mm². An ellipse's perimeter uses Ramanujan's approximation. Without a valid mpp the sizes are in pixels and the list says so. Drawing a line, rectangle, ellipse or circle shows its length or area next to the cursor. `wsiAnnotationGeometryUtils.ts` holds the math.
 
+#### Export and import (GeoJSON)
+
+The Annotations section exports the slide's annotations, all of them or only those on visible layers, as a GeoJSON `FeatureCollection` that QuPath imports. Each annotation is a `Feature`:
+
+- `geometry`: a `Point`, `LineString` or `Polygon` in level-0 image pixels (x right, y down). Rectangles become 4-corner polygons and ellipses 72-vertex polygons.
+- `properties`: `objectType: "annotation"`, `name` (the label), `classification: { name, color: [r, g, b] }` (the label without a trailing number, and the annotation's color), `layer`, `note`, and `measurements` in QuPath's naming (`Area µm^2`, `Perimeter µm`, `Length µm`, or `px` without an mpp). Assistant annotations add `ai_generated` and `ai_review_status`.
+
+The collection's `wsi` member names the slide by its opaque slide key and gives the mpp. Exports never contain image ids, sealed sources or object keys, nor creators or provenance details.
+
+**Import…** reads a GeoJSON `FeatureCollection`, `Feature` or array of features, such as a QuPath export, and validates it before anything is saved: points, lines and polygons (and their multi- forms, split into one annotation each) with finite coordinates inside the slide and at most 5,000 vertices are kept; a polygon's holes are dropped; anything else is skipped with a reason. At most 2,000 annotations are imported at once. A preview shows how many points, lines and polygons will be created and what was skipped; **Create** then saves them, four requests at a time, with the file's name or class as the label, its class color, layer and note, else the active ones. With a strict vocabulary, features whose label is not a term are skipped.
+
 #### Private and shared annotations
 
 `visible_to` decides who sees an annotation: `null` keeps it private to its creator, and `[]` shares it with everyone who can read the study. The toolbar's **Shared**/**Private** button sets the default for new annotations (shared unless the user chose private; remembered in `localStorage`), and each list row shows a **Private** or **Shared** badge that switches the annotation with a versioned `PUT`. The service also accepts group names, but the proxy sends no groups, so the viewer offers no group choice; a row shared with groups shows **Groups**.

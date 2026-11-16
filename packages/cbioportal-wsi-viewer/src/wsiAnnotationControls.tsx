@@ -755,11 +755,16 @@ export const WsiAnnotationPanel = observer(
         }
         if (!controller.annotations.length) {
             return (
-                <span style={{ color: '#999', fontSize: 11 }}>
-                    {controller.canEdit
-                        ? 'No annotations yet. Draw on the slide to create one.'
-                        : 'No annotations.'}
-                </span>
+                <>
+                    <span style={{ color: '#999', fontSize: 11 }}>
+                        {controller.canEdit
+                            ? 'No annotations yet. Draw on the slide to create one.'
+                            : 'No annotations.'}
+                    </span>
+                    {controller.canEdit && (
+                        <AnnotationTransfer controller={controller} />
+                    )}
+                </>
             );
         }
         const listed = controller.listedAnnotations;
@@ -808,6 +813,7 @@ export const WsiAnnotationPanel = observer(
                         scale.
                     </div>
                 )}
+                <AnnotationTransfer controller={controller} />
                 <PointTally controller={controller} />
                 <AnnotationListFilters controller={controller} />
                 <AnnotationCounts controller={controller} />
@@ -1252,6 +1258,195 @@ const AnnotationCounts = observer(
                             {label} {count}
                         </button>
                     ))
+                )}
+            </div>
+        );
+    }
+);
+
+function transferButtonStyle(primary = false): React.CSSProperties {
+    return {
+        fontSize: 10,
+        padding: '1px 6px',
+        borderRadius: 3,
+        border: `1px solid ${primary ? colors.blue : colors.border}`,
+        background: primary ? colors.blue : '#fff',
+        color: primary ? '#fff' : colors.text,
+        cursor: 'pointer',
+    };
+}
+
+/**
+ * GeoJSON export of the slide's annotations, and import of a GeoJSON file
+ * after a preview and confirmation.
+ */
+const AnnotationTransfer = observer(
+    ({ controller }: { controller: WsiAnnotationController }) => {
+        const fileInput = React.useRef<HTMLInputElement>(null);
+        const preview = controller.importPreview;
+        const progress = controller.importProgress;
+        const total = controller.annotations.length;
+        const shown = controller.shownAnnotations.length;
+        const kinds = preview
+            ? (['polygon', 'line', 'point'] as const)
+                  .filter(kind => preview.counts[kind])
+                  .map(
+                      kind =>
+                          `${preview.counts[kind]} ${kind}${
+                              preview.counts[kind] === 1 ? '' : 's'
+                          }`
+                  )
+                  .join(', ')
+            : '';
+        return (
+            <div data-testid="annotation-transfer" style={{ marginBottom: 6 }}>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                    {total > 0 && (
+                        <>
+                            <button
+                                data-testid="annotation-export-all"
+                                aria-label={`Export all ${total} annotations of this slide as GeoJSON`}
+                                onClick={() =>
+                                    controller.downloadGeoJson('all')
+                                }
+                                style={transferButtonStyle()}
+                            >
+                                <i
+                                    aria-hidden="true"
+                                    className="fa fa-download"
+                                />{' '}
+                                Export all ({total})
+                            </button>
+                            {shown !== total && (
+                                <button
+                                    data-testid="annotation-export-visible"
+                                    aria-label={`Export the ${shown} annotation${
+                                        shown === 1 ? '' : 's'
+                                    } on visible layers as GeoJSON`}
+                                    onClick={() =>
+                                        controller.downloadGeoJson('visible')
+                                    }
+                                    style={transferButtonStyle()}
+                                >
+                                    Export visible ({shown})
+                                </button>
+                            )}
+                        </>
+                    )}
+                    {controller.canEdit && (
+                        <>
+                            <button
+                                data-testid="annotation-import"
+                                aria-label="Import annotations from a GeoJSON file"
+                                disabled={!!progress}
+                                onClick={() => fileInput.current?.click()}
+                                style={transferButtonStyle()}
+                            >
+                                <i
+                                    aria-hidden="true"
+                                    className="fa fa-upload"
+                                />{' '}
+                                Import…
+                            </button>
+                            <input
+                                ref={fileInput}
+                                type="file"
+                                data-testid="annotation-import-file"
+                                aria-label="GeoJSON file to import"
+                                accept=".geojson,.json,application/geo+json,application/json"
+                                style={{ display: 'none' }}
+                                onChange={event => {
+                                    const file = event.target.files?.[0];
+                                    event.target.value = '';
+                                    if (file)
+                                        void controller.previewImport(file);
+                                }}
+                            />
+                        </>
+                    )}
+                </div>
+                {controller.importError && (
+                    <div
+                        role="alert"
+                        data-testid="annotation-import-error"
+                        style={{ color: '#a00', fontSize: 11, marginTop: 4 }}
+                    >
+                        Import failed: {controller.importError}{' '}
+                        <button
+                            onClick={controller.cancelImport}
+                            style={transferButtonStyle()}
+                        >
+                            Dismiss
+                        </button>
+                    </div>
+                )}
+                {preview && (
+                    <div
+                        role="group"
+                        aria-label="Import preview"
+                        data-testid="annotation-import-preview"
+                        style={{
+                            marginTop: 4,
+                            padding: 6,
+                            border: `1px solid ${colors.border}`,
+                            borderRadius: 3,
+                            background: '#fafafa',
+                            fontSize: 11,
+                        }}
+                    >
+                        <div>
+                            <strong>{preview.fileName}</strong>:{' '}
+                            {preview.drafts.length
+                                ? `${preview.drafts.length} annotation${
+                                      preview.drafts.length === 1 ? '' : 's'
+                                  } (${kinds})`
+                                : 'no annotations to import'}
+                        </div>
+                        {preview.skipped.length > 0 && (
+                            <div
+                                data-testid="annotation-import-skipped"
+                                style={{ color: colors.muted, marginTop: 2 }}
+                            >
+                                {preview.skipped.length} skipped:{' '}
+                                {Array.from(
+                                    new Set(
+                                        preview.skipped.map(item => item.reason)
+                                    )
+                                ).join('; ')}
+                            </div>
+                        )}
+                        <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
+                            <button
+                                data-testid="annotation-import-confirm"
+                                disabled={!preview.drafts.length}
+                                onClick={() => void controller.confirmImport()}
+                                style={transferButtonStyle(true)}
+                            >
+                                Create {preview.drafts.length} annotation
+                                {preview.drafts.length === 1 ? '' : 's'}
+                            </button>
+                            <button
+                                data-testid="annotation-import-cancel"
+                                onClick={controller.cancelImport}
+                                style={transferButtonStyle()}
+                            >
+                                Cancel
+                            </button>
+                        </div>
+                    </div>
+                )}
+                {progress && (
+                    <div
+                        role="status"
+                        data-testid="annotation-import-progress"
+                        style={{
+                            fontSize: 11,
+                            color: colors.muted,
+                            marginTop: 4,
+                        }}
+                    >
+                        Importing {progress.done} of {progress.total}…
+                    </div>
                 )}
             </div>
         );

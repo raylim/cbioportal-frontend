@@ -1770,6 +1770,169 @@ describe('WsiAnnotationController', () => {
         });
     });
 
+    it('exports the slide or its visible layers as GeoJSON', () => {
+        const controller = new WsiAnnotationController(
+            'https://tiles.example',
+            'study1'
+        );
+        (controller as any).slideKey = SLIDE_KEY;
+        controller.setMppProvider(() => ({ x: 0.5, y: 0.5 }));
+        (controller as any).annotations = [
+            (controller as any).fromApi(
+                {
+                    ...apiAnnotation('a1', 1, 'Tumor 1'),
+                    body: {
+                        label: 'Tumor 1',
+                        layer_name: 'Regions',
+                        color: '#ef4444',
+                        type: 'Tumor|#ef4444',
+                        comment: 'note',
+                    },
+                },
+                SLIDE_KEY
+            ),
+            (controller as any).fromApi(
+                {
+                    ...apiAnnotation('p1', 1, 'Mitosis'),
+                    target: {
+                        selector: {
+                            type: 'SvgSelector',
+                            value: '<svg><circle cx="5" cy="6" r="0" /></svg>',
+                        },
+                    },
+                },
+                SLIDE_KEY
+            ),
+        ];
+
+        const all = controller.exportGeoJson('all');
+        expect(all.wsi.slide_key).toBe(SLIDE_KEY);
+        expect(all.features.map(feature => feature.geometry.type)).toEqual([
+            'Polygon',
+            'Point',
+        ]);
+        expect(all.features[0].properties).toMatchObject({
+            name: 'Tumor 1',
+            classification: { name: 'Tumor', color: [239, 68, 68] },
+            layer: 'Regions',
+            note: 'note',
+            // 3 x 4 pixels at 0.5 µm per pixel.
+            measurements: { 'Area µm^2': 3, 'Perimeter µm': 7 },
+        });
+
+        controller.toggleLayerVisibility('Regions');
+        expect(
+            controller.exportGeoJson('visible').features.map(f => f.id)
+        ).toEqual(['p1']);
+    });
+
+    it('previews a GeoJSON import and creates its annotations on confirmation', async () => {
+        let saved = 0;
+        jest.spyOn(global, 'fetch').mockImplementation(
+            async (_url, init) =>
+                ({
+                    ok: true,
+                    json: async () => ({
+                        ...JSON.parse(init!.body as string),
+                        id: `saved-${++saved}`,
+                        version: 1,
+                        created_by: 'user',
+                    }),
+                } as Response)
+        );
+        const controller = new WsiAnnotationController(
+            'https://tiles.example',
+            'study1'
+        );
+        (controller as any).slideKey = SLIDE_KEY;
+        const file = new File(
+            [
+                JSON.stringify({
+                    type: 'FeatureCollection',
+                    features: [
+                        {
+                            type: 'Feature',
+                            geometry: {
+                                type: 'Polygon',
+                                coordinates: [
+                                    [
+                                        [0, 0],
+                                        [10, 0],
+                                        [10, 10],
+                                        [0, 0],
+                                    ],
+                                ],
+                            },
+                            properties: {
+                                classification: {
+                                    name: 'Tumor',
+                                    color: [255, 0, 0],
+                                },
+                                layer: 'QuPath',
+                                note: 'imported',
+                            },
+                        },
+                        {
+                            type: 'Feature',
+                            geometry: { type: 'Point', coordinates: [4, 5] },
+                            properties: {},
+                        },
+                        {
+                            type: 'Feature',
+                            geometry: { type: 'Point', coordinates: ['x'] },
+                            properties: {},
+                        },
+                    ],
+                }),
+            ],
+            'cells.geojson'
+        );
+
+        await controller.previewImport(file);
+
+        expect(global.fetch).not.toHaveBeenCalled();
+        expect(controller.importPreview).toMatchObject({
+            fileName: 'cells.geojson',
+            counts: { point: 1, line: 0, polygon: 1 },
+            skipped: [{ index: 2, reason: 'invalid coordinates' }],
+        });
+
+        const created = await controller.confirmImport();
+
+        expect(created).toHaveLength(2);
+        expect(controller.importPreview).toBeNull();
+        expect(controller.importProgress).toBeNull();
+        const bodies = (global.fetch as jest.Mock).mock.calls.map(([, init]) =>
+            JSON.parse(init.body)
+        );
+        expect(bodies[0].body).toMatchObject({
+            label: 'Tumor',
+            layer_name: 'QuPath',
+            comment: 'imported',
+            color: '#ff0000',
+            type: 'Tumor|#ff0000',
+        });
+        expect(bodies[0].target.selector.value).toBe(
+            '<svg><polygon points="0,0 10,0 10,10" /></svg>'
+        );
+        expect(bodies[1].target.selector.value).toBe(
+            '<svg><circle cx="4" cy="5" r="0" /></svg>'
+        );
+        expect(bodies[1].body.layer_name).toBe('Default');
+        expect(controller.annotations).toHaveLength(2);
+    });
+
+    it('reports a file that is not JSON', async () => {
+        const controller = new WsiAnnotationController(
+            'https://tiles.example',
+            'study1'
+        );
+        (controller as any).slideKey = SLIDE_KEY;
+        await controller.previewImport(new File(['{nope'], 'bad.json'));
+        expect(controller.importError).toBe('The file is not valid JSON.');
+        expect(controller.importPreview).toBeNull();
+    });
+
     it('only offers removal for unused user-added colors', () => {
         const controller = new WsiAnnotationController(
             'https://tiles.example',

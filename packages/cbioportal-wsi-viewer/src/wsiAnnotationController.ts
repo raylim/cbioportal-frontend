@@ -33,6 +33,13 @@ import {
 } from './wsiAnnotoriousLoader';
 import { WsiPointLayer } from './wsiAnnotationPointLayer';
 import { getWsiViewerRuntime } from './wsiViewerConfig';
+import {
+    parseGeoJsonImport,
+    toGeoJsonFeatureCollection,
+    WsiExportItem,
+    WsiGeoJsonFeatureCollection,
+    WsiImportDraft,
+} from './wsiAnnotationGeoJson';
 
 export type WsiAnnotationTool =
     | 'rectangle'
@@ -266,6 +273,27 @@ export function pointSelectorSvg(point: { x: number; y: number }): string {
     )}" r="0" /></svg>`;
 }
 
+/** An import read and validated, waiting for the user to confirm it. */
+export interface WsiAnnotationImportPreview {
+    fileName: string;
+    drafts: WsiImportDraft[];
+    counts: { point: number; line: number; polygon: number };
+    skipped: Array<{ index: number; reason: string }>;
+}
+
+function readFileText(file: Blob): Promise<string> {
+    if (typeof file.text === 'function') return file.text();
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result));
+        reader.onerror = () => reject(reader.error);
+        reader.readAsText(file);
+    });
+}
+
+/** Imports save this many annotations at a time. */
+const IMPORT_CONCURRENCY = 4;
+
 /** Pointer travel, in screen pixels, below which a press is a click. */
 const CLICK_TOLERANCE = 5;
 /** Freehand and brush strokes record a point per this many screen pixels. */
@@ -304,6 +332,13 @@ export class WsiAnnotationController {
      * color's name and a number (only without a strict vocabulary).
      */
     @observable activeLabel = '';
+    @observable.ref importPreview: WsiAnnotationImportPreview | null = null;
+    @observable.ref importProgress: {
+        total: number;
+        done: number;
+        failed: number;
+    } | null = null;
+    @observable importError: string | null = null;
     /** Brush width in screen pixels. */
     @observable brushWidth = BRUSH_WIDTHS[1];
     /** Whether new annotations are shared with the study (else private). */
@@ -680,6 +715,169 @@ export class WsiAnnotationController {
         return true;
     }
 
+    /**
+     * The slide's annotations as a QuPath-compatible GeoJSON
+     * FeatureCollection: all of them, or those on the slide now (visible
+     * layers and filters). Named by the opaque slide key only.
+     */
+    exportGeoJson(scope: 'all' | 'visible'): WsiGeoJsonFeatureCollection {
+        const annotations =
+            scope === 'all' ? this.annotations : this.shownAnnotations;
+        const items: WsiExportItem[] = [];
+        annotations.forEach(annotation => {
+            const shape = this.shapeOf(annotation);
+            if (!shape) return;
+            const label = annotation.body?.[0]?.value || '';
+            const layer = annotation.layerName || DEFAULT_LAYER;
+            items.push({
+                id: annotation.id,
+                shape,
+                label,
+                classification: labelTerm(label) || layer,
+                color: annotation.color || DEFAULT_COLOR,
+                layer,
+                note: annotation.note,
+                measurement: measureShape(shape, this.mpp),
+                aiReviewStatus: isAssistantProvenance(annotation.provenance)
+                    ? isUnreviewedAssistant(annotation.provenance)
+                        ? 'unreviewed'
+                        : 'accepted'
+                    : undefined,
+            });
+        });
+        return toGeoJsonFeatureCollection(items, this.slideKey || '', this.mpp);
+    }
+
+    /** Downloads `exportGeoJson(scope)` as a .geojson file. */
+    downloadGeoJson(scope: 'all' | 'visible') {
+        const collection = this.exportGeoJson(scope);
+        const blob = new Blob([JSON.stringify(collection, null, 1)], {
+            type: 'application/geo+json',
+        });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `slide-${this.slideKey || 'annotations'}${
+            scope === 'visible' ? '-visible' : ''
+        }.geojson`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 0);
+    }
+
+    /** The open slide's level-0 size, when the viewer knows it. */
+    private slideSize(): { width: number; height: number } | null {
+        const size = this.osdViewer?.world?.getItemAt?.(0)?.getContentSize?.();
+        return size && size.x > 0 && size.y > 0
+            ? { width: size.x, height: size.y }
+            : null;
+    }
+
+    /** The label an imported annotation gets. */
+    private importLabel(draft: WsiImportDraft): string {
+        return draft.label || draft.className || this.newShapeLabel();
+    }
+
+    /**
+     * Reads and validates a GeoJSON file, and holds the annotations it would
+     * create for the user to confirm. Nothing is saved yet.
+     */
+    @action.bound
+    async previewImport(file: File) {
+        this.importError = null;
+        this.importPreview = null;
+        try {
+            const raw = await readFileText(file);
+            const result = parseGeoJsonImport(
+                JSON.parse(raw),
+                this.slideSize()
+            );
+            const drafts: WsiImportDraft[] = [];
+            const skipped = [...result.skipped];
+            result.drafts.forEach((draft, index) => {
+                if (this.isAllowedLabel(this.importLabel(draft))) {
+                    drafts.push(draft);
+                } else {
+                    skipped.push({
+                        index,
+                        reason: 'label not in the vocabulary',
+                    });
+                }
+            });
+            const counts = { point: 0, line: 0, polygon: 0 };
+            drafts.forEach(draft => (counts[draft.kind] += 1));
+            action(() => {
+                this.importPreview = {
+                    fileName: file.name,
+                    drafts,
+                    counts,
+                    skipped,
+                };
+            })();
+        } catch (error) {
+            action(() => {
+                this.importError =
+                    error instanceof SyntaxError
+                        ? 'The file is not valid JSON.'
+                        : (error as Error).message;
+            })();
+        }
+    }
+
+    @action.bound
+    cancelImport() {
+        this.importPreview = null;
+        this.importError = null;
+    }
+
+    /**
+     * Creates the previewed annotations, a few at a time. Each keeps its
+     * file's label, class color, layer and note, else the active ones.
+     */
+    @action.bound
+    async confirmImport(): Promise<WsiAnnotation[]> {
+        const preview = this.importPreview;
+        if (!preview || !this.canEdit || !this.slideKey) return [];
+        this.importPreview = null;
+        const progress = { total: preview.drafts.length, done: 0, failed: 0 };
+        this.importProgress = { ...progress };
+        const saved: WsiAnnotation[] = [];
+        const queue = preview.drafts.slice();
+        const worker = async () => {
+            while (queue.length) {
+                const draft = queue.shift()!;
+                const annotation = this.draftAnnotation(
+                    draft.svg,
+                    this.importLabel(draft)
+                );
+                if (draft.color) {
+                    annotation.color = draft.color;
+                    annotation.colorName = draft.className || '';
+                }
+                if (draft.layer) annotation.layerName = draft.layer;
+                if (draft.note) annotation.note = draft.note;
+                const result = await this.createAnnotation(annotation);
+                if (result) saved.push(result);
+                else progress.failed += 1;
+                progress.done += 1;
+                action(() => {
+                    this.importProgress = { ...progress };
+                })();
+            }
+        };
+        await Promise.all(
+            Array.from({ length: IMPORT_CONCURRENCY }, () => worker())
+        );
+        action(() => {
+            this.importProgress = null;
+            if (progress.failed) {
+                this.error = `Imported ${saved.length} of ${progress.total} annotations; ${progress.failed} could not be saved.`;
+            }
+        })();
+        return saved;
+    }
+
     /** Assistant annotations that no one has accepted yet. */
     @computed get unreviewedAiCount(): number {
         return this.annotations.filter(annotation =>
@@ -714,6 +912,8 @@ export class WsiAnnotationController {
         this.slideKey = slideKey;
         this.annotations = [];
         this.listFilter = EMPTY_LIST_FILTER;
+        this.importPreview = null;
+        this.importError = null;
         this.error = null;
         this.accessIssue = null;
         this.loading = Boolean(this.apiUrl);
@@ -1214,11 +1414,14 @@ export class WsiAnnotationController {
         }
     }
 
-    private async createAnnotation(annotation: WsiAnnotation) {
-        if (!this.slideKey) return;
+    /** Saves a new annotation; resolves to the saved one, or null. */
+    private async createAnnotation(
+        annotation: WsiAnnotation
+    ): Promise<WsiAnnotation | null> {
+        if (!this.slideKey) return null;
         if (!this.canEdit) {
             this.removeAnnotationLocally(annotation.id);
-            return;
+            return null;
         }
         const context = {
             generation: this.generation,
@@ -1249,7 +1452,7 @@ export class WsiAnnotationController {
             );
             if (this.isCurrent(context) && this.refuseAccess(response)) {
                 this.removeAnnotationLocally(annotation.id);
-                return;
+                return null;
             }
             if (!response.ok)
                 throw new Error(
@@ -1260,7 +1463,7 @@ export class WsiAnnotationController {
                 context.slideKey !== this.slideKey ||
                 context.signal?.aborted
             ) {
-                return;
+                return null;
             }
             const saved = this.fromApi(await response.json(), slideKey);
             this.synchronizing = true;
@@ -1278,16 +1481,18 @@ export class WsiAnnotationController {
             } finally {
                 this.synchronizing = false;
             }
+            return saved;
         } catch (_) {
             if (
                 context.generation !== this.generation ||
                 context.slideKey !== this.slideKey ||
                 context.signal?.aborted
             ) {
-                return;
+                return null;
             }
             this.removeAnnotationLocally(annotation.id);
             this.error = 'Unable to save annotation.';
+            return null;
         }
     }
 

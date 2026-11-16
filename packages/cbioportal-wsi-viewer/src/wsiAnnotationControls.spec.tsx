@@ -2,7 +2,7 @@
  * @jest-environment jsdom
  */
 import * as React from 'react';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { WsiAnnotationController } from './wsiAnnotationController';
 import {
     WsiAnnotationPanel,
@@ -302,5 +302,55 @@ describe('WsiAnnotationPanel', () => {
             fireEvent.click(screen.getByLabelText('Save annotation label'));
             expect(rename).toHaveBeenCalledWith('Old', 'Necrosis');
         });
+    });
+
+    it('exports and imports through the panel after a preview', async () => {
+        const controller = controllerWith([
+            apiItem('a1', { layer_name: 'Tumor' }),
+            apiItem('a2', { layer_name: 'Stroma' }),
+        ]);
+        const download = jest
+            .spyOn(controller, 'downloadGeoJson')
+            .mockImplementation(() => undefined);
+        const confirm = jest
+            .spyOn(controller, 'confirmImport')
+            .mockResolvedValue([]);
+        render(<WsiAnnotationPanel controller={controller} />);
+
+        fireEvent.click(
+            screen.getByLabelText(
+                'Export all 2 annotations of this slide as GeoJSON'
+            )
+        );
+        expect(download).toHaveBeenCalledWith('all');
+        expect(screen.queryByTestId('annotation-export-visible')).toBeNull();
+
+        act(() => controller.toggleLayerVisibility('Stroma'));
+        fireEvent.click(
+            screen.getByLabelText(
+                'Export the 1 annotation on visible layers as GeoJSON'
+            )
+        );
+        expect(download).toHaveBeenLastCalledWith('visible');
+
+        const file = new File(
+            [
+                JSON.stringify({
+                    type: 'Feature',
+                    geometry: { type: 'Point', coordinates: [1, 2] },
+                    properties: { name: 'Mitosis' },
+                }),
+            ],
+            'points.geojson'
+        );
+        fireEvent.change(screen.getByLabelText('GeoJSON file to import'), {
+            target: { files: [file] },
+        });
+        const preview = await screen.findByTestId('annotation-import-preview');
+        expect(preview.textContent).toContain(
+            'points.geojson: 1 annotation (1 point)'
+        );
+        fireEvent.click(screen.getByText('Create 1 annotation'));
+        expect(confirm).toHaveBeenCalled();
     });
 });
