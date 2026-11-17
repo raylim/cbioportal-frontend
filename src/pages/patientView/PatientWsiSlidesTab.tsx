@@ -59,9 +59,14 @@ export function wsiSlidesTabScopeFromQuery(
 
 type Props = Omit<
     AppWsiViewerProps,
-    keyof WsiSlidesTabScope | 'hostOwnsSampleScope'
+    keyof WsiSlidesTabScope | 'hostOwnsSampleScope' | 'userName'
 > & {
     query: WsiSlidesTabQuery;
+    /**
+     * The signed-in portal user (`AppStore.userName`), who owns the
+     * annotations they create; undefined when the page has none.
+     */
+    userName: string | undefined;
 };
 
 /**

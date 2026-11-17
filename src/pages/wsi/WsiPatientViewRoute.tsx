@@ -1,8 +1,18 @@
 import * as React from 'react';
 import { parse } from 'query-string';
+import { getBrowserWindow } from 'cbioportal-frontend-commons';
 import { getServerConfig } from 'config/config';
 import { AppWsiViewer } from 'shared/components/wsiViewer/wsiAppConfig';
 import { capWsiViewerHeight } from 'cbioportal-wsi-viewer';
+
+/**
+ * The signed-in portal user (`AppStore.userName`, the principal the study
+ * access check forwards as `X-Auth-Request-User`), when the app has one.
+ */
+export function portalUserName(): string | undefined {
+    const name = getBrowserWindow().globalStores?.appStore?.userName;
+    return typeof name === 'string' && name ? name : undefined;
+}
 
 interface Props {
     match: { params: { patientId: string } };
@@ -48,6 +58,7 @@ export default function WsiPatientViewRoute({ match, location }: Props) {
             tileServerUrl={tileServerUrl}
             height={height}
             requestedSlideKey={requestedSlideKey}
+            userName={portalUserName()}
         />
     );
 }

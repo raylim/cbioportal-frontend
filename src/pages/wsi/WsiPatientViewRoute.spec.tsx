@@ -30,6 +30,24 @@ describe('WsiPatientViewRoute', () => {
         mockEntryPoint.mockClear();
         mockServerConfig.wsi_tile_server_url = '/wsi';
     });
+    afterEach(() => {
+        delete (window as any).globalStores;
+    });
+
+    it("passes the portal's signed-in user name to the viewer", () => {
+        (window as any).globalStores = { appStore: { userName: 'user-a' } };
+        mockServerConfig.user_display_name = 'display-user';
+        renderRoute('?studyId=study-1');
+
+        expect(mockEntryPoint.mock.calls[0][0].userName).toBe('user-a');
+        delete mockServerConfig.user_display_name;
+    });
+
+    it('passes no user name without an app store', () => {
+        renderRoute('?studyId=study-1');
+
+        expect(mockEntryPoint.mock.calls[0][0].userName).toBeUndefined();
+    });
 
     it('passes the slideKey link parameter as the requested slide', () => {
         renderRoute('?studyId=study-1&slideKey=0123456789ab');

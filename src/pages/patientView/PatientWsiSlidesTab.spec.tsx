@@ -93,7 +93,13 @@ describe('PatientWsiSlidesTab', () => {
         studyId: 'study',
         tileServerUrl: 'https://tiles.example',
         height: 600,
+        userName: 'user-a',
     };
+
+    it("passes the portal's signed-in user name to the viewer", () => {
+        render(<PatientWsiSlidesTab {...baseProps} query={{}} />);
+        expect(mockEntryPoint.mock.calls[0][0].userName).toBe('user-a');
+    });
 
     it('passes the URL scope to the viewer', () => {
         render(<PatientWsiSlidesTab {...baseProps} query={LINK_QUERY} />);

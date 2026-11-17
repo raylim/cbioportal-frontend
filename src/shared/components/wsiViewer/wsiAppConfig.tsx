@@ -61,10 +61,11 @@ export function wsiAuthScope(userName?: string): string {
 }
 
 /**
- * The signed-in user as the annotation service names creators: the portal
- * user name (`Authentication.getName()`, which the study access check
- * forwards as `X-Auth-Request-User`), else the configured display name;
- * undefined when anonymous.
+ * The signed-in user as the annotation service names creators: the page's
+ * portal user name (`AppStore.userName`, the backend's
+ * `Authentication.getName()`, which the study access check forwards as
+ * `X-Auth-Request-User`); only when the page passes none, the configured
+ * display name. Undefined when anonymous.
  */
 export function wsiAnnotationUser(userName?: string): string | undefined {
     const user = userName || getServerConfig().user_display_name;
