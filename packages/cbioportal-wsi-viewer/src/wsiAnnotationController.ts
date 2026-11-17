@@ -58,6 +58,48 @@ export type WsiAnnotationTool =
 
 type WsiPointerAnnotationTool = Exclude<WsiAnnotationTool, null>;
 
+/** The tools of the toolbar's Shape menu. */
+export const SHAPE_TOOLS = ['rectangle', 'ellipse', 'circle'] as const;
+export type WsiShapeTool = typeof SHAPE_TOOLS[number];
+/** The tools of the toolbar's Outline menu. */
+export const OUTLINE_TOOLS = ['polygon', 'freehand', 'brush'] as const;
+export type WsiOutlineTool = typeof OUTLINE_TOOLS[number];
+
+function isShapeTool(tool: WsiAnnotationTool): tool is WsiShapeTool {
+    return (SHAPE_TOOLS as readonly WsiAnnotationTool[]).includes(tool);
+}
+
+function isOutlineTool(tool: WsiAnnotationTool): tool is WsiOutlineTool {
+    return (OUTLINE_TOOLS as readonly WsiAnnotationTool[]).includes(tool);
+}
+
+/**
+ * The toolbar's single-key shortcuts while Annotate is on: `select` is the
+ * Select tool (no drawing tool), `shape` the Shape menu's last tool.
+ */
+export const WSI_TOOL_SHORTCUTS: Record<
+    string,
+    'select' | 'shape' | WsiPointerAnnotationTool
+> = {
+    v: 'select',
+    r: 'shape',
+    l: 'line',
+    p: 'polygon',
+    f: 'freehand',
+    b: 'brush',
+    '.': 'point',
+};
+
+/** Whether `target` is a field the user types in. */
+export function isTypingTarget(target: EventTarget | null): boolean {
+    const element = target as HTMLElement | null;
+    return (
+        !!element &&
+        (/^(INPUT|TEXTAREA|SELECT)$/.test(element.tagName) ||
+            !!element.isContentEditable)
+    );
+}
+
 function isPointerAnnotationTool(
     tool: WsiAnnotationTool
 ): tool is WsiPointerAnnotationTool {
@@ -78,6 +120,8 @@ export const DEFAULT_NAMED_COLORS: NamedColor[] = [
 const LOCALSTORAGE_COLORS_KEY = 'wsi_annotation_colors_v2';
 const LOCALSTORAGE_LAYERS_KEY = 'wsi_annotation_layers_v1';
 const LOCALSTORAGE_DEFAULT_SHARED_KEY = 'wsi_annotation_default_shared_v1';
+const LOCALSTORAGE_TOOLBAR_KEY = 'wsi_annotation_toolbar_v1';
+const LOCALSTORAGE_LAYER_COLORS_KEY = 'wsi_annotation_layer_colors_v1';
 const HEX_COLOR_RE = /^#[0-9a-fA-F]{3,8}$/;
 
 function loadNamedColors(): NamedColor[] {
@@ -175,6 +219,94 @@ function saveLayerNames(layers: string[]) {
     }
 }
 
+/** The toolbar's remembered state: Annotate on or off, and the menus' tools. */
+interface WsiToolbarPrefs {
+    annotating: boolean;
+    shapeTool: WsiShapeTool;
+    outlineTool: WsiOutlineTool;
+}
+
+function loadToolbarPrefs(): WsiToolbarPrefs {
+    const prefs: WsiToolbarPrefs = {
+        annotating: false,
+        shapeTool: 'rectangle',
+        outlineTool: 'polygon',
+    };
+    try {
+        const parsed = JSON.parse(
+            localStorage.getItem(LOCALSTORAGE_TOOLBAR_KEY) || 'null'
+        );
+        if (parsed && typeof parsed === 'object') {
+            if (typeof parsed.annotating === 'boolean') {
+                prefs.annotating = parsed.annotating;
+            }
+            if (isShapeTool(parsed.shapeTool)) {
+                prefs.shapeTool = parsed.shapeTool;
+            }
+            if (isOutlineTool(parsed.outlineTool)) {
+                prefs.outlineTool = parsed.outlineTool;
+            }
+        }
+    } catch (_) {
+        // Ignore malformed or unavailable local storage.
+    }
+    return prefs;
+}
+
+function saveToolbarPrefs(prefs: WsiToolbarPrefs) {
+    try {
+        localStorage.setItem(LOCALSTORAGE_TOOLBAR_KEY, JSON.stringify(prefs));
+    } catch (_) {
+        // Ignore unavailable local storage.
+    }
+}
+
+/** The colors the user gave layers, by layer name. */
+function loadLayerColors(): Record<string, NamedColor> {
+    try {
+        const parsed = JSON.parse(
+            localStorage.getItem(LOCALSTORAGE_LAYER_COLORS_KEY) || 'null'
+        );
+        if (!parsed || typeof parsed !== 'object') return {};
+        const colors: Record<string, NamedColor> = {};
+        Object.keys(parsed).forEach(layer => {
+            const color = parsed[layer];
+            if (
+                typeof color?.name === 'string' &&
+                typeof color.hex === 'string' &&
+                HEX_COLOR_RE.test(color.hex)
+            ) {
+                colors[layer] = { name: color.name, hex: color.hex };
+            }
+        });
+        return colors;
+    } catch (_) {
+        return {};
+    }
+}
+
+function saveLayerColors(colors: Record<string, NamedColor>) {
+    try {
+        localStorage.setItem(
+            LOCALSTORAGE_LAYER_COLORS_KEY,
+            JSON.stringify(colors)
+        );
+    } catch (_) {
+        // Ignore unavailable local storage.
+    }
+}
+
+/** Colors new layers get in turn until the user picks one. */
+const LAYER_COLOR_CYCLE = [
+    '#ef4444',
+    '#22c55e',
+    '#f97316',
+    '#8b5cf6',
+    '#14b8a6',
+    '#eab308',
+    '#ec4899',
+];
+
 export function parseColorLabel(value: unknown): { name: string; hex: string } {
     const fallback = DEFAULT_COLOR;
     if (typeof value !== 'string' || !value) {
@@ -237,7 +369,7 @@ export interface WsiAnnotationListFilter {
     layer: string;
     author: string;
     text: string;
-    /** A label term (see `labelTerm`), matched exactly. */
+    /** A label group (see `labelGroup`), matched exactly. */
     label: string;
     ai: WsiAnnotationAiFilter;
 }
@@ -269,6 +401,30 @@ export function labelTerm(
     const match = /^(.*\S)\s+\d+$/.exec(trimmed);
     if (match && new Set(autoLabelBases).has(match[1])) return match[1];
     return trimmed;
+}
+
+/**
+ * A trailing parenthetical count, e.g. " (13 tiles)" or " (1 cell)": a
+ * number and a unit word. A bare number in brackets is not a count.
+ */
+const PARENTHETICAL_COUNT_RE = /^(.*\S)\s*\(\s*\d[\d,]*\s+[A-Za-z][A-Za-z-]*\s*\)$/;
+
+/**
+ * The group a label is counted under in the list's "By label" counts: its
+ * term (see `labelTerm`) without a trailing count such as " (13 tiles)",
+ * so "Solid region (13 tiles)" and "Solid region (9 tiles)" group as
+ * "Solid region". Vocabulary terms and labels such as "Grade 2" or
+ * "Gleason pattern 4" stay as they are.
+ */
+export function labelGroup(
+    label: string,
+    autoLabelBases: Iterable<string> = [],
+    vocabulary: string[] = []
+): string {
+    const trimmed = label.trim();
+    if (vocabulary.includes(trimmed)) return trimmed;
+    const match = PARENTHETICAL_COUNT_RE.exec(trimmed);
+    return labelTerm(match ? match[1] : trimmed, autoLabelBases, vocabulary);
 }
 
 function countBy<T>(items: T[], key: (item: T) => string): Map<string, number> {
@@ -304,6 +460,27 @@ export type WsiUndoEntry =
     | { kind: 'create'; ids: string[] }
     | { kind: 'update'; before: WsiAnnotation }
     | { kind: 'delete'; before: WsiAnnotation[] };
+
+/**
+ * The change an undo entry reverses, e.g. "delete of 2 annotations"; with
+ * `redo`, the change a redo entry applies again (undoing a create left a
+ * delete entry, which redoes the create).
+ */
+function describeChange(entry: WsiUndoEntry, redo = false): string {
+    const n =
+        entry.kind === 'create'
+            ? entry.ids.length
+            : entry.kind === 'delete'
+            ? entry.before.length
+            : 1;
+    const what =
+        entry.kind === 'update'
+            ? 'edit'
+            : (entry.kind === 'create') !== redo
+            ? 'create'
+            : 'delete';
+    return `${what}${n > 1 ? ` of ${n} annotations` : ''}`;
+}
 
 /**
  * Shown when the annotation service has no review route: reviews then fall
@@ -508,11 +685,25 @@ export class WsiAnnotationController {
     @observable accessIssue: WsiServiceAccessIssue | null = null;
     @observable visible = true;
     @observable activeTool: WsiAnnotationTool = null;
+    /**
+     * Whether Annotate is on: the drawing tools show, and the user's own
+     * shapes can be edited on the slide. Remembered between visits.
+     */
+    @observable annotating = loadToolbarPrefs().annotating;
+    /** The Shape menu's last tool, which its button reuses. */
+    @observable shapeTool: WsiShapeTool = loadToolbarPrefs().shapeTool;
+    /** The Outline menu's last tool, which its button reuses. */
+    @observable outlineTool: WsiOutlineTool = loadToolbarPrefs().outlineTool;
     @observable activeColor = DEFAULT_COLOR;
     @observable activeColorName = DEFAULT_LAYER;
     @observable activeLayer = DEFAULT_LAYER;
     @observable private customLayers: string[] = loadLayerNames();
     @observable private customColors: NamedColor[] = loadNamedColors();
+    /** The colors the user gave layers (see `layerColor`). */
+    @observable private layerColors: Record<
+        string,
+        NamedColor
+    > = loadLayerColors();
     @observable hiddenLayerNames = new Set<string>();
     /** Hides AI annotations no one has reviewed, on the slide and list. */
     @observable hideUnreviewedAi = false;
@@ -524,6 +715,11 @@ export class WsiAnnotationController {
     @observable activeLabel = '';
     /** This session's changes on the open slide, the latest last. */
     @observable.ref undoStack: WsiUndoEntry[] = [];
+    /**
+     * Undone changes that Redo applies again, the next last: each entry is
+     * what applying it does, as in `undoStack`. A new change clears it.
+     */
+    @observable.ref redoStack: WsiUndoEntry[] = [];
     @observable undoing = false;
     @observable.ref importPreview: WsiAnnotationImportPreview | null = null;
     @observable.ref importProgress: {
@@ -640,6 +836,9 @@ export class WsiAnnotationController {
         private studyId: string | undefined
     ) {
         makeObservable(this);
+        const color = this.layerColor(this.activeLayer);
+        this.activeColorName = color.name;
+        this.activeColor = color.hex;
     }
 
     /**
@@ -713,6 +912,11 @@ export class WsiAnnotationController {
         return labelTerm(label, this.autoLabelBases, this.labelVocabulary);
     }
 
+    /** The group `label` is listed under on this slide (see `labelGroup`). */
+    labelGroup(label: string): string {
+        return labelGroup(label, this.autoLabelBases, this.labelVocabulary);
+    }
+
     /** The configured label terms, trimmed and without duplicates. */
     get labelVocabulary(): string[] {
         const terms = getWsiViewerRuntime().annotations?.labelVocabulary || [];
@@ -742,7 +946,7 @@ export class WsiAnnotationController {
         if (!this.strictLabels) {
             this.annotations
                 .map(annotation =>
-                    this.labelTerm(annotation.body?.[0]?.value || '')
+                    this.labelGroup(annotation.body?.[0]?.value || '')
                 )
                 .filter(Boolean)
                 .sort((a, b) => a.localeCompare(b))
@@ -996,7 +1200,7 @@ export class WsiAnnotationController {
             if (author && (annotation.creator || '') !== author) return false;
             if (
                 label &&
-                this.labelTerm(annotation.body?.[0]?.value || UNLABELED) !==
+                this.labelGroup(annotation.body?.[0]?.value || UNLABELED) !==
                     label
             ) {
                 return false;
@@ -1039,10 +1243,10 @@ export class WsiAnnotationController {
         );
     }
 
-    /** Listed annotations per label term (see `labelTerm`). */
+    /** Listed annotations per label group (see `labelGroup`). */
     @computed get listedLabelCounts(): Map<string, number> {
         return countBy(this.listedAnnotations, annotation =>
-            this.labelTerm(annotation.body?.[0]?.value || UNLABELED)
+            this.labelGroup(annotation.body?.[0]?.value || UNLABELED)
         );
     }
 
@@ -1268,50 +1472,68 @@ export class WsiAnnotationController {
         return this.canEdit && !this.undoing && this.undoStack.length > 0;
     }
 
+    @computed get canRedo(): boolean {
+        return this.canEdit && !this.undoing && this.redoStack.length > 0;
+    }
+
     /** What undo would reverse, e.g. "Undo delete". */
     @computed get undoLabel(): string | null {
         const entry = this.undoStack[this.undoStack.length - 1];
-        if (!entry) return null;
-        const what =
-            entry.kind === 'create'
-                ? 'create'
-                : entry.kind === 'update'
-                ? 'edit'
-                : 'delete';
-        const n =
-            entry.kind === 'create'
-                ? entry.ids.length
-                : entry.kind === 'delete'
-                ? entry.before.length
-                : 1;
-        return `Undo ${what}${n > 1 ? ` of ${n} annotations` : ''}`;
+        return entry ? `Undo ${describeChange(entry)}` : null;
     }
 
+    /** What redo would apply again, e.g. "Redo delete". */
+    @computed get redoLabel(): string | null {
+        const entry = this.redoStack[this.redoStack.length - 1];
+        return entry ? `Redo ${describeChange(entry, true)}` : null;
+    }
+
+    /** Records a new change: it can be undone, and nothing can be redone. */
     @action
     private pushUndo(entry: WsiUndoEntry) {
         this.undoStack = [...this.undoStack, entry].slice(-MAX_UNDO);
+        this.redoStack = [];
     }
 
-    /** Points the undo history at an annotation's new id after it was re-created. */
+    /** Forgets the undo and redo history, e.g. on another slide. */
     @action
-    private renameInUndo(oldId: string, newId: string) {
-        this.undoStack = this.undoStack.map(entry =>
+    private clearHistory() {
+        this.undoStack = [];
+        this.redoStack = [];
+    }
+
+    /**
+     * Points the undo and redo history at an annotation's new id after it
+     * was re-created.
+     */
+    @action
+    private renameInHistory(oldId: string, newId: string) {
+        const rename = (entry: WsiUndoEntry): WsiUndoEntry =>
             entry.kind === 'create'
                 ? {
                       ...entry,
                       ids: entry.ids.map(id => (id === oldId ? newId : id)),
                   }
-                : entry.kind === 'update' && entry.before.id === oldId
-                ? { ...entry, before: { ...entry.before, id: newId } }
-                : entry
-        );
+                : entry.kind === 'update'
+                ? entry.before.id === oldId
+                    ? { ...entry, before: { ...entry.before, id: newId } }
+                    : entry
+                : {
+                      ...entry,
+                      before: entry.before.map(item =>
+                          item.id === oldId ? { ...item, id: newId } : item
+                      ),
+                  };
+        this.undoStack = this.undoStack.map(rename);
+        this.redoStack = this.redoStack.map(rename);
     }
 
     /**
      * Reverses this session's last create, edit or delete on the slide: a
      * created annotation is deleted, an edit is undone by saving the previous
      * version over the current one (with the current `version`), and a
-     * deleted annotation is created again, with a new id.
+     * deleted annotation is created again, with a new id. Redo can apply the
+     * change again.
      */
     @action.bound
     async undo(): Promise<boolean> {
@@ -1319,43 +1541,96 @@ export class WsiAnnotationController {
         if (!this.canUndo) return false;
         const entry = this.undoStack[this.undoStack.length - 1];
         this.undoStack = this.undoStack.slice(0, -1);
-        this.undoing = true;
+        const inverse = await this.applyHistoryEntry(entry);
+        if (inverse) {
+            action(() => {
+                this.redoStack = [...this.redoStack, inverse].slice(-MAX_UNDO);
+            })();
+        }
+        return !!inverse;
+    }
+
+    /**
+     * Applies the last undone change again, in one step as it was undone
+     * (an import or a layer delete too). Undo can reverse it again.
+     */
+    @action.bound
+    async redo(): Promise<boolean> {
+        await this.flushPoints();
+        if (!this.canRedo) return false;
+        const entry = this.redoStack[this.redoStack.length - 1];
+        this.redoStack = this.redoStack.slice(0, -1);
+        const inverse = await this.applyHistoryEntry(entry);
+        if (inverse) {
+            action(() => {
+                this.undoStack = [...this.undoStack, inverse].slice(-MAX_UNDO);
+            })();
+        }
+        return !!inverse;
+    }
+
+    /**
+     * Applies an undo or redo entry without recording it as a new change:
+     * deletes the created annotations, saves the previous version of an
+     * edit (with the current `version`), or creates deleted annotations
+     * again with new ids. Resolves to the entry that reverses what was
+     * applied, or null when nothing was.
+     */
+    private async applyHistoryEntry(
+        entry: WsiUndoEntry
+    ): Promise<WsiUndoEntry | null> {
+        action(() => {
+            this.undoing = true;
+        })();
         try {
             if (entry.kind === 'create') {
+                const deleted: WsiAnnotation[] = [];
                 for (const id of entry.ids) {
-                    if (this.annotations.some(item => item.id === id)) {
-                        await this.deleteAnnotation(id, false);
+                    const current = this.annotations.find(
+                        item => item.id === id
+                    );
+                    if (current && (await this.deleteAnnotation(id, false))) {
+                        deleted.push(current);
                     }
                 }
-            } else if (entry.kind === 'update') {
+                return deleted.length
+                    ? { kind: 'delete', before: deleted }
+                    : null;
+            }
+            if (entry.kind === 'update') {
                 const current = this.annotations.find(
                     item => item.id === entry.before.id
                 );
                 if (!current) {
                     action(() => {
-                        this.error = 'Cannot undo: the annotation was deleted.';
+                        this.error =
+                            'Cannot undo or redo: the annotation was deleted.';
                     })();
-                    return false;
+                    return null;
                 }
-                await this.updateAnnotation(
+                const saved = await this.updateAnnotation(
                     { ...entry.before, version: current.version },
                     false
                 );
-            } else {
-                for (const before of entry.before) {
-                    const saved = await this.createAnnotation(
-                        {
-                            ...before,
-                            id: `client-undo-${Date.now()}-${Math.random()
-                                .toString(36)
-                                .slice(2)}`,
-                        },
-                        false
-                    );
-                    if (saved) this.renameInUndo(before.id, saved.id);
+                return saved ? { kind: 'update', before: current } : null;
+            }
+            const created: string[] = [];
+            for (const before of entry.before) {
+                const saved = await this.createAnnotation(
+                    {
+                        ...before,
+                        id: `client-undo-${Date.now()}-${Math.random()
+                            .toString(36)
+                            .slice(2)}`,
+                    },
+                    false
+                );
+                if (saved) {
+                    this.renameInHistory(before.id, saved.id);
+                    created.push(saved.id);
                 }
             }
-            return true;
+            return created.length ? { kind: 'create', ids: created } : null;
         } finally {
             action(() => {
                 this.undoing = false;
@@ -1395,7 +1670,7 @@ export class WsiAnnotationController {
         this.slideKey = slideKey;
         this.annotations = [];
         this.listFilter = EMPTY_LIST_FILTER;
-        this.undoStack = [];
+        this.clearHistory();
         this.importPreview = null;
         this.importError = null;
         this.error = null;
@@ -1424,7 +1699,7 @@ export class WsiAnnotationController {
         }
         this.apiUrl = apiUrl;
         this.studyId = studyId;
-        this.undoStack = [];
+        this.clearHistory();
         this.restartRequests();
         this.cancelDrawing();
         this.annotations = [];
@@ -1557,8 +1832,11 @@ export class WsiAnnotationController {
         this.pointLayer.setVisible(this.visible);
         if (viewer.addHandler) {
             viewer.addHandler('canvas-click', this.handleCanvasClick);
-            this.canvasClickCleanup = () =>
+            viewer.addHandler('canvas-key', this.handleCanvasKey);
+            this.canvasClickCleanup = () => {
                 viewer.removeHandler?.('canvas-click', this.handleCanvasClick);
+                viewer.removeHandler?.('canvas-key', this.handleCanvasKey);
+            };
         }
         this.applySelectAction();
         this.applyLayerFilter();
@@ -1584,12 +1862,13 @@ export class WsiAnnotationController {
     }
 
     /**
-     * Lets Annotorious edit only the shapes the user may change; others can
-     * be selected, for their tooltip, but not moved.
+     * Lets Annotorious edit only the shapes the user may change, and only
+     * while Annotate is on; others can be selected, for their tooltip, but
+     * not moved.
      */
     private applySelectAction() {
         if (!this.annotorious) return;
-        if (!this.canEdit) {
+        if (!this.canEdit || !this.annotating) {
             this.annotorious.setUserSelectAction?.('SELECT');
         } else if (this.currentUser) {
             this.annotorious.setUserSelectAction?.(
@@ -1624,17 +1903,54 @@ export class WsiAnnotationController {
         this.loadAbortController = null;
         this.slideKey = null;
         this.annotations = [];
-        this.undoStack = [];
+        this.clearHistory();
         this.error = null;
         this.annotationTooltip = null;
         this.loading = false;
         this.destroyAnnotorious();
     }
 
+    /** Turns Annotate on or off; off, drawing stops and Select is on. */
+    @action.bound
+    setAnnotating(annotating: boolean) {
+        if (annotating && !this.canEdit) return;
+        if (!annotating) this.cancelDrawing();
+        this.annotating = annotating;
+        this.saveToolbarPrefs();
+        this.applySelectAction();
+    }
+
+    private saveToolbarPrefs() {
+        saveToolbarPrefs({
+            annotating: this.annotating,
+            shapeTool: this.shapeTool,
+            outlineTool: this.outlineTool,
+        });
+    }
+
+    /**
+     * Whether the toolbar's single-key shortcuts apply: Annotate is on and
+     * the user may draw.
+     */
+    @computed get toolShortcutsActive(): boolean {
+        return this.annotating && this.canEdit && this.visible;
+    }
+
+    /**
+     * Picks a drawing tool, or Select with null; a drawing tool turns
+     * Annotate on. The Shape and Outline menus remember their last tool.
+     */
     @action.bound
     setTool(tool: WsiAnnotationTool) {
         if (tool !== null && !this.canEdit) return;
         void this.flushPoints();
+        if (isShapeTool(tool)) this.shapeTool = tool;
+        if (isOutlineTool(tool)) this.outlineTool = tool;
+        if (tool !== null && !this.annotating) {
+            this.annotating = true;
+            this.applySelectAction();
+        }
+        if (tool !== null) this.saveToolbarPrefs();
         this.activeTool = tool;
         this.brushPointer = null;
         this.resetGesture();
@@ -1754,8 +2070,62 @@ export class WsiAnnotationController {
         this.activeColor = color || DEFAULT_COLOR;
     }
 
+    /**
+     * The color of `layer`'s new annotations: the one the user gave it,
+     * else the one most of its annotations have, else the default color for
+     * the default layer and a color of its own for any other.
+     */
+    layerColor(layer: string): NamedColor {
+        const chosen = this.layerColors[layer];
+        if (chosen) return chosen;
+        const counts = new Map<string, { color: NamedColor; n: number }>();
+        this.annotations.forEach(annotation => {
+            if (
+                (annotation.layerName || DEFAULT_LAYER) !== layer ||
+                !annotation.color
+            ) {
+                return;
+            }
+            const key = `${annotation.colorName || ''}|${annotation.color}`;
+            const entry = counts.get(key) || {
+                color: {
+                    name: annotation.colorName || '',
+                    hex: annotation.color,
+                },
+                n: 0,
+            };
+            entry.n += 1;
+            counts.set(key, entry);
+        });
+        const common = Array.from(counts.values()).sort((a, b) => b.n - a.n);
+        if (common.length) return common[0].color;
+        if (layer === DEFAULT_LAYER) return DEFAULT_NAMED_COLORS[0];
+        const index = Math.max(this.layerNames.indexOf(layer), 1) - 1;
+        return {
+            name: layer,
+            hex: LAYER_COLOR_CYCLE[index % LAYER_COLOR_CYCLE.length],
+        };
+    }
+
+    /**
+     * Sets the color of the active layer's new annotations; the layer keeps
+     * it from now on. Annotations already drawn keep their color.
+     */
     @action.bound
     setActiveNamedColor(name: string, hex: string) {
+        this.useColor(name, hex);
+        this.layerColors = {
+            ...this.layerColors,
+            [this.activeLayer]: {
+                name: this.activeColorName,
+                hex: this.activeColor,
+            },
+        };
+        saveLayerColors(this.layerColors);
+    }
+
+    @action
+    private useColor(name: string, hex: string) {
         this.activeColorName = name;
         this.activeColor = HEX_COLOR_RE.test(hex) ? hex : DEFAULT_COLOR;
         this.refreshStyle();
@@ -1806,6 +2176,7 @@ export class WsiAnnotationController {
         }
     }
 
+    /** Draws on `layer` from now on, in the layer's color. */
     @action.bound
     setActiveLayer(layer: string) {
         this.activeLayer = layer;
@@ -1813,6 +2184,8 @@ export class WsiAnnotationController {
             this.customLayers = [...this.customLayers, layer];
             saveLayerNames(this.customLayers);
         }
+        const color = this.layerColor(layer);
+        this.useColor(color.name, color.hex);
     }
 
     @action.bound
@@ -1821,7 +2194,7 @@ export class WsiAnnotationController {
         if (!normalized || this.customLayers.includes(normalized)) return;
         this.customLayers = [...this.customLayers, normalized];
         saveLayerNames(this.customLayers);
-        this.activeLayer = normalized;
+        this.setActiveLayer(normalized);
     }
 
     @action.bound
@@ -1874,7 +2247,7 @@ export class WsiAnnotationController {
         hidden.delete(layer);
         this.hiddenLayerNames = hidden;
         if (this.activeLayer === layer) {
-            this.activeLayer = this.layerNames[0] || DEFAULT_LAYER;
+            this.setActiveLayer(this.layerNames[0] || DEFAULT_LAYER);
         }
         this.applyLayerFilter();
     }
@@ -3170,26 +3543,53 @@ export class WsiAnnotationController {
     }
 
     private readonly handleKeyDown = (event: KeyboardEvent) => {
+        const typing = isTypingTarget(event.target);
         if (event.key === 'Escape' && this.activeTool) {
             this.cancelDrawing();
             return;
         }
-        // Ctrl+Z / Cmd+Z, unless the user is typing in a field.
-        const target = event.target as HTMLElement | null;
+        if (typing || event.altKey) return;
+        const key = event.key.toLowerCase();
+        if (event.ctrlKey || event.metaKey) {
+            // Ctrl/Cmd+Z undoes; Ctrl/Cmd+Shift+Z and Ctrl+Y redo.
+            const redo =
+                (key === 'z' && event.shiftKey) ||
+                (key === 'y' && event.ctrlKey && !event.shiftKey);
+            if (redo && this.canRedo) {
+                event.preventDefault();
+                void this.redo();
+            } else if (key === 'z' && !event.shiftKey && this.canUndo) {
+                event.preventDefault();
+                void this.undo();
+            }
+            return;
+        }
+        const shortcut = this.toolShortcutsActive
+            ? WSI_TOOL_SHORTCUTS[key]
+            : undefined;
+        if (!shortcut) return;
+        event.preventDefault();
+        if (shortcut === 'select') this.cancelDrawing();
+        else this.setTool(shortcut === 'shape' ? this.shapeTool : shortcut);
+    };
+
+    /**
+     * Keeps OpenSeadragon's own keys (R rotates, F flips) from acting on a
+     * key that picks a tool while the toolbar's shortcuts apply.
+     */
+    private readonly handleCanvasKey = (event: {
+        originalEvent: KeyboardEvent;
+        preventDefaultAction: boolean;
+    }) => {
+        const original = event.originalEvent;
         if (
-            (event.ctrlKey || event.metaKey) &&
-            !event.shiftKey &&
-            !event.altKey &&
-            event.key.toLowerCase() === 'z' &&
-            !(
-                target &&
-                (/^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName) ||
-                    target.isContentEditable)
-            ) &&
-            this.canUndo
+            this.toolShortcutsActive &&
+            !original.ctrlKey &&
+            !original.metaKey &&
+            !original.altKey &&
+            WSI_TOOL_SHORTCUTS[original.key.toLowerCase()]
         ) {
-            event.preventDefault();
-            void this.undo();
+            event.preventDefaultAction = true;
         }
     };
 

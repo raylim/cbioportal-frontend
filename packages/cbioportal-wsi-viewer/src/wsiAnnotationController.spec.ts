@@ -5,6 +5,7 @@
 import {
     batchItemErrors,
     chunkBySize,
+    labelGroup,
     labelTerm,
     POINT_SAVE_DELAY_MS,
     pointSelectorSvg,
@@ -1793,6 +1794,56 @@ describe('WsiAnnotationController', () => {
         expect(labelTerm('42', ['42'])).toBe('42');
     });
 
+    it('groups labels by base term without a trailing count, keeping graded labels apart', () => {
+        expect(labelGroup('Solid region (13 tiles)')).toBe('Solid region');
+        expect(labelGroup('Solid region (1 tile)')).toBe('Solid region');
+        expect(labelGroup('Mitoses (1,204 cells)')).toBe('Mitoses');
+        expect(labelGroup('Tumor 3 (5 tiles)', ['Tumor'])).toBe('Tumor');
+        // Graded and numbered labels, and bare bracketed numbers, stay.
+        expect(labelGroup('Grade 2')).toBe('Grade 2');
+        expect(labelGroup('Gleason pattern 4')).toBe('Gleason pattern 4');
+        expect(labelGroup('Grade (2)')).toBe('Grade (2)');
+        expect(labelGroup('Region (n=4)')).toBe('Region (n=4)');
+        // A vocabulary term is its own group, even with a count in it.
+        expect(
+            labelGroup('Tumor (2 foci)', [], ['Tumor (2 foci)', 'Tumor'])
+        ).toBe('Tumor (2 foci)');
+        expect(labelGroup('Grade 2 (3 tiles)', ['Grade'], ['Grade 2'])).toBe(
+            'Grade 2'
+        );
+
+        const controller = new WsiAnnotationController(
+            'https://tiles.example',
+            'study1'
+        );
+        (controller as any).annotations = [
+            'Solid region (13 tiles)',
+            'Solid region (9 tiles)',
+            'Grade 2',
+            'Grade 3',
+        ].map((label, i) =>
+            (controller as any).fromApi(
+                apiAnnotation(`a${i}`, 1, label),
+                SLIDE_KEY
+            )
+        );
+        expect(Array.from(controller.listedLabelCounts)).toEqual([
+            ['Solid region', 2],
+            ['Grade 2', 1],
+            ['Grade 3', 1],
+        ]);
+        controller.setListFilter({ label: 'Solid region' });
+        expect(controller.listedAnnotations.map(item => item.id)).toEqual([
+            'a0',
+            'a1',
+        ]);
+        expect(controller.labelSuggestions).toEqual([
+            'Grade 2',
+            'Grade 3',
+            'Solid region',
+        ]);
+    });
+
     it('keeps graded labels apart, and counts only auto-labels under their base', () => {
         configureWsiViewerRuntime({
             buildApiUrl: path => path,
@@ -3342,6 +3393,144 @@ describe('WsiAnnotationController', () => {
             );
             await new Promise(resolve => setTimeout(resolve, 0));
             expect(rows.size).toBe(0);
+            controller.detachViewer();
+        });
+
+        it('redoes an undone create, edit and delete, each as undo reversed it', async () => {
+            const rows = fakeService();
+            const controller = controllerOnSlide();
+            const saved = await (controller as any).createAnnotation(rect);
+            await controller.renameAnnotation(saved.id, 'Stroma');
+            expect(controller.canRedo).toBe(false);
+
+            // Undo the rename, then redo it on the current version.
+            await controller.undo();
+            expect(rows.get(saved.id).body.label).toBe('Tumor');
+            expect(controller.redoLabel).toBe('Redo edit');
+            expect(await controller.redo()).toBe(true);
+            expect(rows.get(saved.id).body.label).toBe('Stroma');
+            expect(rows.get(saved.id).version).toBe(4);
+            expect(controller.undoLabel).toBe('Undo edit');
+            expect(controller.canRedo).toBe(false);
+
+            // Undo the rename and the create; redo creates it again with a
+            // new id, and the rename's redo follows the new id.
+            await controller.undo();
+            await controller.undo();
+            expect(rows.size).toBe(0);
+            expect(controller.redoLabel).toBe('Redo create');
+            await controller.redo();
+            expect(rows.size).toBe(1);
+            const [recreated] = Array.from(rows.values());
+            expect(recreated.id).not.toBe(saved.id);
+            expect(recreated.body).toMatchObject({
+                label: 'Tumor',
+                comment: 'keep me',
+                layer_name: 'Regions',
+            });
+            expect(controller.redoLabel).toBe('Redo edit');
+            await controller.redo();
+            expect(rows.get(recreated.id).body.label).toBe('Stroma');
+
+            // A delete redoes as a delete.
+            await controller.removeAnnotation(recreated.id);
+            await controller.undo();
+            expect(rows.size).toBe(1);
+            expect(controller.redoLabel).toBe('Redo delete');
+            await controller.redo();
+            expect(rows.size).toBe(0);
+            expect(controller.undoLabel).toBe('Undo delete');
+        });
+
+        it('redoes an import or a layer delete as one step', async () => {
+            const rows = fakeService();
+            const controller = controllerOnSlide();
+            const a = await (controller as any).createAnnotation(rect, false);
+            const b = await (controller as any).createAnnotation(
+                { ...rect, id: 'client-2' },
+                false
+            );
+            // As an import records its annotations.
+            (controller as any).pushUndo({ kind: 'create', ids: [a.id, b.id] });
+            await controller.undo();
+            expect(rows.size).toBe(0);
+            expect(controller.redoLabel).toBe('Redo create of 2 annotations');
+            await controller.redo();
+            expect(rows.size).toBe(2);
+            expect(controller.undoLabel).toBe('Undo create of 2 annotations');
+
+            await controller.deleteLayer('Regions');
+            expect(rows.size).toBe(0);
+            await controller.undo();
+            expect(rows.size).toBe(2);
+            expect(controller.redoLabel).toBe('Redo delete of 2 annotations');
+            await controller.redo();
+            expect(rows.size).toBe(0);
+        });
+
+        it('forgets what can be redone on a new change, and keeps reviews out', async () => {
+            fakeService();
+            const controller = controllerOnSlide();
+            const saved = await (controller as any).createAnnotation(rect);
+            await controller.undo();
+            expect(controller.canRedo).toBe(true);
+            await (controller as any).createAnnotation({
+                ...rect,
+                id: 'client-2',
+            });
+            expect(controller.canRedo).toBe(false);
+            expect(saved).toBeTruthy();
+
+            await controller.undo();
+            expect(controller.canRedo).toBe(true);
+            controller.beginSlide('fedcba987654');
+            expect(controller.canRedo).toBe(false);
+        });
+
+        it('redoes with Ctrl+Shift+Z, Cmd+Shift+Z or Ctrl+Y, but not while typing', async () => {
+            fakeService();
+            (createOSDAnnotator as jest.Mock).mockReturnValue({
+                on: jest.fn(),
+                setVisible: jest.fn(),
+                setAnnotations: jest.fn(),
+                setStyle: jest.fn(),
+            });
+            const controller = controllerOnSlide();
+            controller.attachViewer(
+                { element: document.createElement('div') },
+                {},
+                SLIDE_KEY
+            );
+            const flush = () => new Promise(resolve => setTimeout(resolve, 0));
+            const press = (init: KeyboardEventInit, target: EventTarget) =>
+                target.dispatchEvent(
+                    new KeyboardEvent('keydown', { bubbles: true, ...init })
+                );
+            for (const id of ['client-1', 'client-2', 'client-3']) {
+                await (controller as any).createAnnotation({ ...rect, id });
+            }
+            for (let i = 0; i < 3; i++) await controller.undo();
+            // Other tests' viewers share the document: read this one's history.
+            expect(controller.redoStack).toHaveLength(3);
+
+            const input = document.createElement('textarea');
+            document.body.appendChild(input);
+            press({ key: 'y', ctrlKey: true }, input);
+            await flush();
+            expect(controller.redoStack).toHaveLength(3);
+            input.remove();
+
+            press({ key: 'Z', ctrlKey: true, shiftKey: true }, document);
+            await flush();
+            expect(controller.redoStack).toHaveLength(2);
+            press({ key: 'z', metaKey: true, shiftKey: true }, document);
+            await flush();
+            expect(controller.redoStack).toHaveLength(1);
+            press({ key: 'y', ctrlKey: true }, document);
+            await flush();
+            expect(controller.undoStack).toHaveLength(3);
+            expect(controller.canRedo).toBe(false);
+            controller.detachViewer();
         });
 
         it('forgets the history on another slide', async () => {
@@ -3823,6 +4012,190 @@ describe('WsiAnnotationController', () => {
                 // The point layer's handler is gone too.
                 0
             );
+        });
+    });
+
+    describe('toolbar state', () => {
+        let detach: (() => void) | null = null;
+        afterEach(() => {
+            detach?.();
+            detach = null;
+        });
+
+        function attached(items: any[] = []) {
+            const handlers: Record<string, (event: any) => void> = {};
+            const annotator = {
+                on: jest.fn(),
+                setVisible: jest.fn(),
+                setAnnotations: jest.fn(),
+                setStyle: jest.fn(),
+                setUserSelectAction: jest.fn(),
+                cancelDrawing: jest.fn(),
+                setDrawingEnabled: jest.fn(),
+            };
+            (createOSDAnnotator as jest.Mock).mockReturnValue(annotator);
+            const controller = new WsiAnnotationController(
+                'https://tiles.example',
+                'study1'
+            );
+            (controller as any).slideKey = SLIDE_KEY;
+            (controller as any).annotations = items.map(item =>
+                (controller as any).fromApi(item, SLIDE_KEY)
+            );
+            controller.attachViewer(
+                {
+                    element: document.createElement('div'),
+                    addHandler: (name: string, handler: any) =>
+                        (handlers[name] = handler),
+                    removeHandler: jest.fn(),
+                },
+                {},
+                SLIDE_KEY
+            );
+            const press = (key: string, init: KeyboardEventInit = {}) =>
+                document.dispatchEvent(
+                    new KeyboardEvent('keydown', { key, ...init })
+                );
+            detach = () => controller.detachViewer();
+            return { controller, annotator, handlers, press };
+        }
+
+        it('picks tools by key while Annotate is on, and not while typing', () => {
+            const { controller, press } = attached();
+            press('l');
+            expect(controller.activeTool).toBeNull();
+
+            controller.setAnnotating(true);
+            press('l');
+            expect(controller.activeTool).toBe('line');
+            press('R');
+            expect(controller.activeTool).toBe('rectangle');
+            controller.setTool('circle');
+            press('v');
+            expect(controller.activeTool).toBeNull();
+            // R reuses the Shape menu's last tool.
+            press('r');
+            expect(controller.activeTool).toBe('circle');
+            press('Escape');
+            expect(controller.activeTool).toBeNull();
+            press('p');
+            expect(controller.activeTool).toBe('polygon');
+            press('f');
+            expect(controller.activeTool).toBe('freehand');
+            press('b');
+            expect(controller.activeTool).toBe('brush');
+            press('.');
+            expect(controller.activeTool).toBe('point');
+            press('l', { ctrlKey: true });
+            expect(controller.activeTool).toBe('point');
+
+            const input = document.createElement('input');
+            document.body.appendChild(input);
+            input.dispatchEvent(
+                new KeyboardEvent('keydown', { key: 'l', bubbles: true })
+            );
+            expect(controller.activeTool).toBe('point');
+            input.remove();
+        });
+
+        it("keeps OpenSeadragon's R and F from rotating or flipping while Annotate is on", () => {
+            const { controller, handlers } = attached();
+            const canvasKey = (key: string) => {
+                const event = {
+                    originalEvent: new KeyboardEvent('keydown', { key }),
+                    preventDefaultAction: false,
+                };
+                handlers['canvas-key'](event);
+                return event.preventDefaultAction;
+            };
+            expect(canvasKey('r')).toBe(false);
+            controller.setAnnotating(true);
+            expect(canvasKey('r')).toBe(true);
+            expect(canvasKey('f')).toBe(true);
+            expect(canvasKey('w')).toBe(false);
+        });
+
+        it('edits shapes only while Annotate is on, and stops drawing when it goes off', () => {
+            const { controller, annotator } = attached();
+            expect(annotator.setUserSelectAction).toHaveBeenLastCalledWith(
+                'SELECT'
+            );
+            controller.setAnnotating(true);
+            expect(annotator.setUserSelectAction).toHaveBeenLastCalledWith(
+                'EDIT'
+            );
+            controller.setTool('polygon');
+            controller.setAnnotating(false);
+            expect(controller.activeTool).toBeNull();
+            expect(annotator.setUserSelectAction).toHaveBeenLastCalledWith(
+                'SELECT'
+            );
+            // A drawing tool turns Annotate on.
+            controller.setTool('line');
+            expect(controller.annotating).toBe(true);
+        });
+
+        it("remembers Annotate and the menus' last tools", () => {
+            const { controller } = attached();
+            controller.setTool('ellipse');
+            controller.setTool('brush');
+            const next = new WsiAnnotationController(
+                'https://tiles.example',
+                'study1'
+            );
+            expect(next.annotating).toBe(true);
+            expect(next.shapeTool).toBe('ellipse');
+            expect(next.outlineTool).toBe('brush');
+
+            jest.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+                throw new Error('blocked');
+            });
+            const blocked = new WsiAnnotationController(
+                'https://tiles.example',
+                'study1'
+            );
+            expect(blocked.annotating).toBe(false);
+            expect(blocked.shapeTool).toBe('rectangle');
+        });
+
+        it("gives each layer a color: chosen, else its annotations', else its own", () => {
+            const { controller } = attached([
+                {
+                    ...apiAnnotation('m1'),
+                    body: {
+                        label: 'Solid region (13 tiles)',
+                        layer_name: 'Model',
+                        type: 'Model|#dc2626',
+                        color: '#dc2626',
+                    },
+                },
+            ]);
+            expect(controller.activeColor).toBe('#3b82f6');
+            controller.setActiveLayer('Model');
+            expect(controller.activeColor).toBe('#dc2626');
+            expect(controller.activeColorName).toBe('Model');
+
+            controller.addLayer('Tumor');
+            expect(controller.activeLayer).toBe('Tumor');
+            expect(controller.activeColorName).toBe('Tumor');
+            const tumorColor = controller.activeColor;
+            expect(tumorColor).not.toBe('#3b82f6');
+
+            // The swatch's pick stays with the layer.
+            controller.setActiveNamedColor('Necrosis', '#f97316');
+            controller.setActiveLayer('Default');
+            expect(controller.activeColor).toBe('#3b82f6');
+            controller.setActiveLayer('Tumor');
+            expect(controller.activeColor).toBe('#f97316');
+            expect(controller.activeColorName).toBe('Necrosis');
+            const next = new WsiAnnotationController(
+                'https://tiles.example',
+                'study1'
+            );
+            expect(next.layerColor('Tumor')).toEqual({
+                name: 'Necrosis',
+                hex: '#f97316',
+            });
         });
     });
 });
