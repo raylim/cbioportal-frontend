@@ -424,14 +424,17 @@ export function batchItemErrors(detail: unknown): Map<number, string> {
 const CLICK_TOLERANCE = 5;
 /** Freehand and brush strokes record a point per this many screen pixels. */
 const STROKE_SAMPLE_SPACING = 2;
-/** Douglas–Peucker tolerance for freehand and brush strokes, screen pixels. */
+/**
+ * Douglas–Peucker tolerance for freehand and brush strokes, in screen pixels
+ * at the finest zoom the stroke was drawn at.
+ */
 const STROKE_SIMPLIFY_TOLERANCE = 1.5;
 /** Brush widths offered on a slide with a scale, in µm of tissue. */
 export const BRUSH_WIDTHS_UM = [10, 25, 50, 100, 250, 500];
 export const DEFAULT_BRUSH_WIDTH_UM = 50;
 /**
  * Brush widths offered on a slide without a scale, in screen pixels at the
- * zoom the stroke is drawn.
+ * zoom the stroke starts at (the width then stays fixed for the stroke).
  */
 export const BRUSH_WIDTHS_PX = [8, 16, 32, 64];
 export const DEFAULT_BRUSH_WIDTH_PX = 16;
@@ -439,6 +442,43 @@ export const DEFAULT_BRUSH_WIDTH_PX = 16;
 function isStrokeTool(tool: WsiAnnotationTool): tool is 'freehand' | 'brush' {
     return tool === 'freehand' || tool === 'brush';
 }
+
+type WsiXY = { x: number; y: number };
+
+/** A shape being drawn: in image pixels, but for the pointer. */
+interface WsiDrawGesture {
+    tool: WsiPointerAnnotationTool;
+    /** Where a drag shape started. */
+    imageStart?: WsiXY;
+    /** A stroke's points, or a polygon's vertices. */
+    imagePoints?: WsiXY[];
+    /** The pointer, in screen pixels over the slide. */
+    pointer: WsiXY;
+    /** A brush stroke's width. */
+    strokeImageWidth?: number;
+}
+
+/** The outline of the shape being drawn, in screen pixels at this zoom. */
+export interface WsiDrawPreview {
+    tool: WsiPointerAnnotationTool;
+    start: WsiXY;
+    current: WsiXY;
+    points?: WsiXY[];
+    /** A brush stroke's width on screen, in pixels. */
+    strokeWidth?: number;
+    /** The start and current points in image pixels, for measuring. */
+    imageStart?: WsiXY;
+    imageCurrent?: WsiXY;
+}
+
+/** OpenSeadragon events after which the slide sits elsewhere on screen. */
+const VIEWPORT_EVENTS = [
+    'animation',
+    'update-viewport',
+    'resize',
+    'rotate',
+    'flip',
+];
 
 /** The first few refused items, e.g. "#3: label: too long; #7: …". */
 function describeFailures(results: WsiSaveResult[], limit = 3): string {
@@ -496,15 +536,8 @@ export class WsiAnnotationController {
     @observable brushWidthUm = DEFAULT_BRUSH_WIDTH_UM;
     /** Brush width in screen pixels, used when the slide has no scale. */
     @observable brushWidthPx = DEFAULT_BRUSH_WIDTH_PX;
-    /**
-     * The brush outline under the pointer while the brush is on, in screen
-     * pixels: its centre and its diameter at the current zoom.
-     */
-    @observable.ref brushCursor: {
-        x: number;
-        y: number;
-        diameter: number;
-    } | null = null;
+    /** Where the pointer is over the slide while the brush is on, on screen. */
+    @observable.ref private brushPointer: WsiXY | null = null;
     /**
      * The signed-in user as the annotation service names creators, when the
      * host knows it. Unknown: every annotation offers edit and delete, and
@@ -539,17 +572,14 @@ export class WsiAnnotationController {
         measurement?: string;
         note?: string;
     } | null = null;
-    @observable.ref customDrawPreview: {
-        tool: WsiPointerAnnotationTool;
-        start: { x: number; y: number };
-        current: { x: number; y: number };
-        points?: Array<{ x: number; y: number }>;
-        /** A brush stroke's width on screen, in pixels. */
-        strokeWidth?: number;
-        /** The start and current points in image pixels, for measuring. */
-        imageStart?: { x: number; y: number };
-        imageCurrent?: { x: number; y: number };
-    } | null = null;
+    /**
+     * The shape being drawn, kept in image pixels so that it stays on the
+     * same tissue when the slide is panned or zoomed mid-gesture; only the
+     * pointer is kept on screen. See `customDrawPreview` for its outline.
+     */
+    @observable.ref private drawGesture: WsiDrawGesture | null = null;
+    /** Bumped when the slide moves on screen, so previews follow it. */
+    @observable private viewportRevision = 0;
 
     private generation = 0;
     private loadGeneration = 0;
@@ -564,11 +594,14 @@ export class WsiAnnotationController {
     private slideKey: string | null = null;
     private pointerCleanup: (() => void) | null = null;
     private keydownCleanup: (() => void) | null = null;
+    /** The press in progress: its tool, pointer and where it went down. */
     private pointerDown: {
         tool: WsiPointerAnnotationTool;
+        pointerId: number | undefined;
         image: { x: number; y: number };
         client: { x: number; y: number };
     } | null = null;
+    /** The polygon's vertices so far, in image pixels. */
     private polygonPoints: Array<{ x: number; y: number }> = [];
     /** Dropped points not yet sent, shown already; saved together. */
     private pointQueue: WsiAnnotation[] = [];
@@ -585,10 +618,11 @@ export class WsiAnnotationController {
         Promise<WsiAnnotation | null>
     >();
     private pageHideCleanup: (() => void) | null = null;
-    /** The freehand or brush stroke being drawn, in image pixels. */
-    private strokePoints: Array<{ x: number; y: number }> = [];
-    private strokeScreenPoints: Array<{ x: number; y: number }> = [];
-    private polygonScreenPoints: Array<{ x: number; y: number }> = [];
+    /**
+     * The fewest image pixels per screen pixel while the stroke was drawn:
+     * the finest zoom used, which sets how much detail simplifying keeps.
+     */
+    private strokeImagePerScreen = Infinity;
     private synchronizing = false;
     private pointLayer: WsiPointLayer | null = null;
     private canvasClickCleanup: (() => void) | null = null;
@@ -1602,13 +1636,8 @@ export class WsiAnnotationController {
         if (tool !== null && !this.canEdit) return;
         void this.flushPoints();
         this.activeTool = tool;
-        this.customDrawPreview = null;
-        this.brushCursor = null;
-        this.pointerDown = null;
-        this.strokePoints = [];
-        this.strokeScreenPoints = [];
-        this.polygonPoints = [];
-        this.polygonScreenPoints = [];
+        this.brushPointer = null;
+        this.resetGesture();
         if (!this.annotorious) return;
         const pointerDrawing = isPointerAnnotationTool(tool);
         this.annotorious.cancelDrawing?.();
@@ -1644,27 +1673,67 @@ export class WsiAnnotationController {
         );
     }
 
-    /** The brush width on screen at the current zoom, in pixels. */
-    private brushScreenWidth(): number {
+    /**
+     * The brush outline under the pointer while the brush is on, in screen
+     * pixels: its centre and its diameter at the current zoom (the stroke's
+     * width while one is drawn).
+     */
+    @computed get brushCursor(): {
+        x: number;
+        y: number;
+        diameter: number;
+    } | null {
+        const pointer = this.brushPointer;
+        if (!pointer || this.activeTool !== 'brush') return null;
+        // Read so that the outline resizes as the slide zooms.
+        void this.viewportRevision;
         const imagePerScreen = this.imagePixelsPerScreenPixel();
-        return this.brushImageWidth(imagePerScreen) / imagePerScreen;
+        const width =
+            this.drawGesture?.strokeImageWidth ??
+            this.brushImageWidth(imagePerScreen);
+        return { x: pointer.x, y: pointer.y, diameter: width / imagePerScreen };
+    }
+
+    /**
+     * The outline of the shape being drawn, in screen pixels: its image
+     * points placed with the viewport as it is now, so it stays on the same
+     * tissue when the slide is panned or zoomed mid-gesture.
+     */
+    @computed get customDrawPreview(): WsiDrawPreview | null {
+        const gesture = this.drawGesture;
+        if (!gesture) return null;
+        // Read so that the outline is redrawn as the slide moves.
+        void this.viewportRevision;
+        const current = gesture.pointer;
+        const points = gesture.imagePoints
+            ?.map(point => this.screenPoint(point))
+            .filter((point): point is WsiXY => !!point);
+        const first = gesture.imageStart ?? gesture.imagePoints?.[0];
+        const start = (first && this.screenPoint(first)) || current;
+        const preview: WsiDrawPreview = { tool: gesture.tool, start, current };
+        if (points) preview.points = points;
+        if (gesture.strokeImageWidth !== undefined) {
+            preview.strokeWidth =
+                gesture.strokeImageWidth / this.imagePixelsPerScreenPixel();
+        }
+        if (gesture.imageStart) {
+            preview.imageStart = gesture.imageStart;
+            preview.imageCurrent =
+                this.imagePoint(current.x, current.y) || undefined;
+        }
+        return preview;
     }
 
     @action.bound
     cancelDrawing() {
         void this.flushPoints();
-        this.strokePoints = [];
-        this.strokeScreenPoints = [];
         this.activeTool = null;
-        this.brushCursor = null;
+        this.brushPointer = null;
+        this.resetGesture();
         this.annotorious?.cancelDrawing?.();
         this.annotorious?.setDrawingEnabled?.(false);
         this.setAnnotoriousOverlayPointerEvents(true);
         this.setCustomPointerEvents(false);
-        this.customDrawPreview = null;
-        this.pointerDown = null;
-        this.polygonPoints = [];
-        this.polygonScreenPoints = [];
     }
 
     @action.bound
@@ -2818,140 +2887,145 @@ export class WsiAnnotationController {
         };
     }
 
+    /**
+     * Draws with the pointer. Every pointer position becomes image pixels
+     * when it happens, with the viewport of that moment, and the shape being
+     * drawn is kept in image pixels; so the wheel or the zoom buttons may
+     * pan and zoom the slide mid-gesture, and the outline follows the
+     * tissue. Only the pointer that started a press draws; a press the
+     * browser takes away (pointercancel, lost capture) drops the drag shape
+     * or stroke, and a polygon keeps the vertices placed so far.
+     */
     private installCustomDrawingHandlers() {
-        const element = this.osdViewer?.element as HTMLElement | undefined;
+        const viewer = this.osdViewer;
+        const element = viewer?.element as HTMLElement | undefined;
         if (!element) return;
-        const down = (event: PointerEvent) => {
+        const local = (event: MouseEvent): WsiXY => {
+            const rect = element.getBoundingClientRect();
+            return {
+                x: event.clientX - rect.left,
+                y: event.clientY - rect.top,
+            };
+        };
+        // Another pointer, such as a second finger, while one is pressed.
+        const otherPointer = (event: PointerEvent) =>
+            !!this.pointerDown &&
+            this.pointerDown.pointerId !== event.pointerId;
+        const stop = (event: Event) => {
+            event.preventDefault();
+            event.stopPropagation();
+        };
+        const down = action((event: PointerEvent) => {
             const tool = this.activeTool;
             if (!isPointerAnnotationTool(tool) || event.button !== 0) return;
-            const rect = element.getBoundingClientRect();
-            const image = this.imagePoint(
-                event.clientX - rect.left,
-                event.clientY - rect.top
-            );
+            if (otherPointer(event)) return;
+            const screen = local(event);
+            const image = this.imagePoint(screen.x, screen.y);
             if (!image) return;
             this.pointerDown = {
                 tool,
+                pointerId: event.pointerId,
                 image,
                 client: { x: event.clientX, y: event.clientY },
             };
             // A point drops on click; a drag still pans the slide.
             if (tool === 'point') return;
-            const screenPoint = {
-                x: event.clientX - rect.left,
-                y: event.clientY - rect.top,
-            };
-            if (isStrokeTool(tool)) {
-                this.strokePoints = [image];
-                this.strokeScreenPoints = [screenPoint];
-                this.customDrawPreview = {
-                    tool,
-                    start: screenPoint,
-                    current: screenPoint,
-                    points: this.strokeScreenPoints,
-                    strokeWidth:
-                        tool === 'brush' ? this.brushScreenWidth() : undefined,
-                };
-                event.preventDefault();
-                event.stopPropagation();
-                return;
-            }
-            const previewPoints =
-                tool === 'polygon' ? this.polygonScreenPoints : undefined;
-            this.customDrawPreview = {
-                tool,
-                start: {
-                    x:
-                        tool === 'polygon'
-                            ? this.polygonScreenPoints[0]?.x ?? screenPoint.x
-                            : screenPoint.x,
-                    y:
-                        tool === 'polygon'
-                            ? this.polygonScreenPoints[0]?.y ?? screenPoint.y
-                            : screenPoint.y,
-                },
-                current: screenPoint,
-                points: previewPoints,
-                imageStart: tool === 'polygon' ? undefined : image,
-                imageCurrent: tool === 'polygon' ? undefined : image,
-            };
-            event.preventDefault();
-            event.stopPropagation();
-        };
-        const move = (event: PointerEvent) => {
-            const tool = this.activeTool;
-            if (tool === 'brush') {
-                const rect = element.getBoundingClientRect();
-                this.brushCursor = {
-                    x: event.clientX - rect.left,
-                    y: event.clientY - rect.top,
-                    diameter: this.brushScreenWidth(),
-                };
-            }
-            if (!isPointerAnnotationTool(tool) || !this.customDrawPreview)
-                return;
-            const rect = element.getBoundingClientRect();
-            const current = {
-                x: event.clientX - rect.left,
-                y: event.clientY - rect.top,
-            };
-            if (isStrokeTool(tool)) {
-                const last = this.strokeScreenPoints[
-                    this.strokeScreenPoints.length - 1
-                ];
-                const image =
-                    !last ||
-                    Math.hypot(current.x - last.x, current.y - last.y) >=
-                        STROKE_SAMPLE_SPACING
-                        ? this.imagePoint(current.x, current.y)
-                        : null;
-                if (image) {
-                    this.strokePoints.push(image);
-                    this.strokeScreenPoints = [
-                        ...this.strokeScreenPoints,
-                        current,
-                    ];
+            // Keep the press when the pointer leaves the slide.
+            if (event.pointerId !== undefined) {
+                try {
+                    element.setPointerCapture?.(event.pointerId);
+                } catch (_) {
+                    /* the pointer is already gone */
                 }
-                this.customDrawPreview = {
-                    ...this.customDrawPreview,
-                    current,
-                    points: this.strokeScreenPoints,
+            }
+            if (isStrokeTool(tool)) {
+                const imagePerScreen = this.imagePixelsPerScreenPixel();
+                this.strokeImagePerScreen = imagePerScreen;
+                this.drawGesture = {
+                    tool,
+                    imagePoints: [image],
+                    pointer: screen,
+                    // Fixed for the stroke: µm of tissue, or screen pixels
+                    // at the zoom it starts without a scale.
+                    strokeImageWidth:
+                        tool === 'brush'
+                            ? this.brushImageWidth(imagePerScreen)
+                            : undefined,
                 };
-                event.preventDefault();
-                event.stopPropagation();
+            } else if (tool === 'polygon') {
+                this.drawGesture = {
+                    tool,
+                    imagePoints: this.polygonPoints,
+                    pointer: screen,
+                };
+            } else {
+                this.drawGesture = { tool, imageStart: image, pointer: screen };
+            }
+            stop(event);
+        });
+        const move = action((event: PointerEvent) => {
+            if (otherPointer(event)) return;
+            const tool = this.activeTool;
+            const screen = local(event);
+            if (tool === 'brush') this.brushPointer = screen;
+            const gesture = this.drawGesture;
+            if (!isPointerAnnotationTool(tool) || !gesture) return;
+            // A polygon's edge follows the pointer between clicks; other
+            // shapes follow only while pressed.
+            if (tool !== 'polygon' && !this.pointerDown) return;
+            if (isStrokeTool(tool)) {
+                const points = gesture.imagePoints || [];
+                const last = points[points.length - 1];
+                const imagePerScreen = this.imagePixelsPerScreenPixel();
+                const image = this.imagePoint(screen.x, screen.y);
+                const sampled =
+                    !!image &&
+                    (!last ||
+                        Math.hypot(image.x - last.x, image.y - last.y) >=
+                            STROKE_SAMPLE_SPACING * imagePerScreen);
+                if (sampled) {
+                    this.strokeImagePerScreen = Math.min(
+                        this.strokeImagePerScreen,
+                        imagePerScreen
+                    );
+                }
+                this.drawGesture = {
+                    ...gesture,
+                    imagePoints: sampled ? [...points, image!] : points,
+                    pointer: screen,
+                };
+            } else {
+                this.drawGesture = { ...gesture, pointer: screen };
+            }
+            stop(event);
+        });
+        const up = action((event: PointerEvent) => {
+            const start = this.pointerDown;
+            if (!start || otherPointer(event)) return;
+            this.pointerDown = null;
+            if (this.activeTool !== start.tool) return;
+            const screen = local(event);
+            const endPoint = this.imagePoint(screen.x, screen.y);
+            if (!endPoint) {
+                this.endPress(start.tool);
                 return;
             }
-            this.customDrawPreview = {
-                ...this.customDrawPreview,
-                current,
-                imageCurrent:
-                    tool === 'polygon'
-                        ? undefined
-                        : this.imagePoint(current.x, current.y) || undefined,
-            };
-            event.preventDefault();
-            event.stopPropagation();
-        };
-        const up = (event: PointerEvent) => {
-            const start = this.pointerDown;
-            if (!start || this.activeTool !== start.tool) return;
-            this.pointerDown = null;
-            const rect = element.getBoundingClientRect();
-            const endPoint = this.imagePoint(
-                event.clientX - rect.left,
-                event.clientY - rect.top
-            );
-            if (!endPoint) return;
 
             if (isStrokeTool(start.tool)) {
-                const points = [...this.strokePoints, endPoint];
-                const scale = this.imagePixelsPerScreenPixel();
-                this.strokePoints = [];
-                this.strokeScreenPoints = [];
-                this.customDrawPreview = null;
-                void this.createStrokeShape(start.tool, points, scale);
-                event.preventDefault();
-                event.stopPropagation();
+                const gesture = this.drawGesture;
+                const points = [...(gesture?.imagePoints || []), endPoint];
+                const imagePerScreen = Math.min(
+                    this.strokeImagePerScreen,
+                    this.imagePixelsPerScreenPixel()
+                );
+                this.endPress(start.tool);
+                void this.createStrokeShape(
+                    start.tool,
+                    points,
+                    imagePerScreen,
+                    gesture?.strokeImageWidth
+                );
+                stop(event);
                 return;
             }
 
@@ -2971,97 +3045,116 @@ export class WsiAnnotationController {
                 );
                 if (moved > 15) {
                     // A drag is not a vertex; keep showing the polygon so far.
-                    this.customDrawPreview = this.polygonScreenPoints.length
-                        ? {
-                              tool: 'polygon',
-                              start: this.polygonScreenPoints[0],
-                              current: this.polygonScreenPoints[
-                                  this.polygonScreenPoints.length - 1
-                              ],
-                              points: this.polygonScreenPoints,
-                          }
-                        : null;
-                    event.preventDefault();
-                    event.stopPropagation();
+                    this.endPress('polygon');
+                    stop(event);
                     return;
                 }
-                const screenPoint = {
-                    x: event.clientX - rect.left,
-                    y: event.clientY - rect.top,
-                };
-                const first = this.polygonScreenPoints[0];
-                const last = this.polygonScreenPoints[
-                    this.polygonScreenPoints.length - 1
-                ];
+                // The vertices where they are on screen now.
+                const vertices = this.polygonPoints;
+                const first = vertices[0] && this.screenPoint(vertices[0]);
+                const last =
+                    vertices.length > 0 &&
+                    this.screenPoint(vertices[vertices.length - 1]);
                 // The clicks of a closing double-click land on the last vertex.
                 const repeatsLast =
                     !!last &&
-                    Math.hypot(
-                        screenPoint.x - last.x,
-                        screenPoint.y - last.y
-                    ) <= 4;
+                    Math.hypot(screen.x - last.x, screen.y - last.y) <= 4;
                 const closes =
-                    this.polygonPoints.length >= 3 &&
-                    first &&
-                    Math.hypot(
-                        screenPoint.x - first.x,
-                        screenPoint.y - first.y
-                    ) <= 20;
+                    vertices.length >= 3 &&
+                    !!first &&
+                    Math.hypot(screen.x - first.x, screen.y - first.y) <= 20;
                 if (closes) {
-                    const points = this.polygonPoints;
                     this.polygonPoints = [];
-                    this.polygonScreenPoints = [];
-                    this.customDrawPreview = null;
-                    void this.createPolygonShape(points);
-                } else if (!repeatsLast) {
-                    this.polygonPoints = [...this.polygonPoints, endPoint];
-                    this.polygonScreenPoints = [
-                        ...this.polygonScreenPoints,
-                        screenPoint,
-                    ];
-                    this.customDrawPreview = {
+                    this.drawGesture = null;
+                    void this.createPolygonShape(vertices);
+                } else {
+                    if (!repeatsLast) {
+                        this.polygonPoints = [...vertices, endPoint];
+                    }
+                    this.drawGesture = {
                         tool: 'polygon',
-                        start: this.polygonScreenPoints[0],
-                        current: screenPoint,
-                        points: this.polygonScreenPoints,
+                        imagePoints: this.polygonPoints,
+                        pointer: screen,
                     };
                 }
-                event.preventDefault();
-                event.stopPropagation();
+                stop(event);
                 return;
             }
 
-            this.customDrawPreview = null;
+            this.drawGesture = null;
             void this.createCustomShape(start.image, endPoint, start.tool);
-            event.preventDefault();
-            event.stopPropagation();
-        };
-        const doubleClick = (event: MouseEvent) => {
+            stop(event);
+        });
+        // The browser ended the press without a pointerup here.
+        const lost = action((event: PointerEvent) => {
+            const start = this.pointerDown;
+            if (!start || otherPointer(event)) return;
+            this.pointerDown = null;
+            this.endPress(start.tool);
+        });
+        const doubleClick = action((event: MouseEvent) => {
             if (this.activeTool !== 'polygon' || this.polygonPoints.length < 3)
                 return;
             const points = this.polygonPoints;
             this.polygonPoints = [];
-            this.polygonScreenPoints = [];
-            this.customDrawPreview = null;
+            this.drawGesture = null;
             void this.createPolygonShape(points);
-            event.preventDefault();
-            event.stopPropagation();
-        };
-        element.addEventListener('pointerdown', down, true);
-        element.addEventListener('pointermove', move, true);
-        element.addEventListener('pointerup', up, true);
-        element.addEventListener('dblclick', doubleClick, true);
-        const leave = () => {
-            this.brushCursor = null;
-        };
-        element.addEventListener('pointerleave', leave, true);
+            stop(event);
+        });
+        const leave = action(() => {
+            this.brushPointer = null;
+        });
+        // Redraws the shape being drawn and the brush outline as the slide
+        // moves under them.
+        const viewportChanged = action(() => {
+            if (this.drawGesture || this.brushPointer) {
+                this.viewportRevision += 1;
+            }
+        });
+        const listeners: Array<[string, (event: any) => void]> = [
+            ['pointerdown', down],
+            ['pointermove', move],
+            ['pointerup', up],
+            ['pointercancel', lost],
+            ['lostpointercapture', lost],
+            ['dblclick', doubleClick],
+            ['pointerleave', leave],
+        ];
+        listeners.forEach(([name, listener]) =>
+            element.addEventListener(name, listener, true)
+        );
+        VIEWPORT_EVENTS.forEach(name =>
+            viewer.addHandler?.(name, viewportChanged)
+        );
         this.pointerCleanup = () => {
-            element.removeEventListener('pointerleave', leave, true);
-            element.removeEventListener('pointerdown', down, true);
-            element.removeEventListener('pointermove', move, true);
-            element.removeEventListener('pointerup', up, true);
-            element.removeEventListener('dblclick', doubleClick, true);
+            listeners.forEach(([name, listener]) =>
+                element.removeEventListener(name, listener, true)
+            );
+            VIEWPORT_EVENTS.forEach(name =>
+                viewer.removeHandler?.(name, viewportChanged)
+            );
         };
+    }
+
+    /**
+     * Ends a press: a drag shape or stroke is dropped (it is saved first,
+     * when it ended normally); a polygon keeps the vertices placed so far.
+     */
+    @action
+    private endPress(tool: WsiPointerAnnotationTool) {
+        this.strokeImagePerScreen = Infinity;
+        this.drawGesture =
+            tool === 'polygon' && this.polygonPoints.length && this.drawGesture
+                ? { ...this.drawGesture, imagePoints: this.polygonPoints }
+                : null;
+    }
+
+    /** Drops the shape being drawn and any press in progress. */
+    private resetGesture() {
+        this.drawGesture = null;
+        this.pointerDown = null;
+        this.strokeImagePerScreen = Infinity;
+        this.polygonPoints = [];
     }
 
     private setCustomPointerEvents(enabled: boolean) {
@@ -3100,15 +3193,32 @@ export class WsiAnnotationController {
         }
     };
 
-    private imagePoint(x: number, y: number): { x: number; y: number } | null {
-        if (!this.osdViewer?.viewport || !this.openSeadragon) return null;
-        const point = this.osdViewer.viewport.pointFromPixel(
-            new this.openSeadragon.Point(x, y)
+    /**
+     * The image point under screen pixel (`x`, `y`) of the slide, as the
+     * slide is shown now (mid-animation too, not where a zoom will end).
+     */
+    private imagePoint(x: number, y: number): WsiXY | null {
+        const viewport = this.osdViewer?.viewport;
+        if (!viewport || !this.openSeadragon) return null;
+        const point = viewport.pointFromPixel(
+            new this.openSeadragon.Point(x, y),
+            true
         );
-        const imagePoint = this.osdViewer.viewport.viewportToImageCoordinates(
-            point
-        );
+        const imagePoint = viewport.viewportToImageCoordinates(point);
         return { x: imagePoint.x, y: imagePoint.y };
+    }
+
+    /** Where image point `point` is shown now, in screen pixels. */
+    private screenPoint(point: WsiXY): WsiXY | null {
+        const viewport = this.osdViewer?.viewport;
+        if (!viewport || !this.openSeadragon) return null;
+        const pixel = viewport.pixelFromPoint(
+            viewport.imageToViewportCoordinates(
+                new this.openSeadragon.Point(point.x, point.y)
+            ),
+            true
+        );
+        return { x: pixel.x, y: pixel.y };
     }
 
     private async createCustomShape(
@@ -3148,7 +3258,7 @@ export class WsiAnnotationController {
         await this.createAnnotation(annotation);
     }
 
-    /** Image pixels per screen pixel at the current zoom. */
+    /** Image pixels per screen pixel as the slide is shown now. */
     private imagePixelsPerScreenPixel(): number {
         const a = this.imagePoint(0, 0);
         const b = this.imagePoint(100, 0);
@@ -3157,14 +3267,16 @@ export class WsiAnnotationController {
 
     /**
      * Saves a freehand stroke as the polygon it encloses, or a brush stroke
-     * as the outline of a band `brushWidth` wide along it (µm of tissue, or
-     * screen pixels at the stroke's zoom without a scale). Either is
-     * simplified with Douglas–Peucker first.
+     * as the outline of a band `strokeImageWidth` image pixels wide along it.
+     * Either is simplified with Douglas–Peucker first, to a tolerance in
+     * image pixels from `imagePerScreen`, the finest zoom the stroke was
+     * drawn at: zooming out mid-stroke does not erase detail drawn closer.
      */
     private async createStrokeShape(
         tool: 'freehand' | 'brush',
         points: Array<{ x: number; y: number }>,
-        imagePerScreen: number
+        imagePerScreen: number,
+        strokeImageWidth = this.brushImageWidth(imagePerScreen)
     ) {
         const path = simplifyPath(
             points,
@@ -3190,7 +3302,7 @@ export class WsiAnnotationController {
             return;
         }
         const outline = simplifyPath(
-            strokeOutline(path, this.brushImageWidth(imagePerScreen) / 2),
+            strokeOutline(path, strokeImageWidth / 2),
             (STROKE_SIMPLIFY_TOLERANCE / 3) * imagePerScreen
         );
         await this.createPolygonShape(outline);
@@ -3459,8 +3571,8 @@ export class WsiAnnotationController {
         this.pageHideCleanup?.();
         this.pageHideCleanup = null;
         this.setCustomPointerEvents(false);
-        this.customDrawPreview = null;
-        this.brushCursor = null;
+        this.brushPointer = null;
+        this.resetGesture();
         try {
             this.annotorious?.destroy?.();
         } catch (_) {
@@ -3470,9 +3582,6 @@ export class WsiAnnotationController {
         this.osdViewer = null;
         this.openSeadragon = null;
         this.activeTool = null;
-        this.pointerDown = null;
-        this.polygonPoints = [];
-        this.polygonScreenPoints = [];
     }
 
     /**

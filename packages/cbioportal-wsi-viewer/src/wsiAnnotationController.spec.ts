@@ -12,6 +12,7 @@ import {
     WSI_REVIEW_UNSUPPORTED_MESSAGE,
     WsiAnnotationController,
 } from './wsiAnnotationController';
+import { autorun } from 'mobx';
 import { createOSDAnnotator } from '@annotorious/openseadragon';
 import { loadAnnotorious } from './wsiAnnotoriousLoader';
 import { parseAnnotationShape } from './wsiAnnotationGeometryUtils';
@@ -24,6 +25,28 @@ jest.mock('@annotorious/openseadragon', () => ({
     createOSDAnnotator: jest.fn(),
     W3CImageFormat: jest.fn(() => ({})),
 }));
+
+/**
+ * Stands in for the viewport: `imagePerScreen()` image pixels per screen
+ * pixel, with image (0, 0) at the top left of the slide.
+ */
+function mockViewport(
+    controller: WsiAnnotationController,
+    imagePerScreen: () => number = () => 1
+) {
+    jest.spyOn(controller as any, 'imagePoint').mockImplementation(
+        (x: number, y: number) => ({
+            x: x * imagePerScreen(),
+            y: y * imagePerScreen(),
+        })
+    );
+    jest.spyOn(controller as any, 'screenPoint').mockImplementation(
+        (point: { x: number; y: number }) => ({
+            x: point.x / imagePerScreen(),
+            y: point.y / imagePerScreen(),
+        })
+    );
+}
 
 function apiAnnotation(
     id: string,
@@ -465,10 +488,7 @@ describe('WsiAnnotationController', () => {
         controller.setActiveNamedColor('Tumor', '#ef4444');
         const viewerElement = document.createElement('div');
         controller.attachViewer({ element: viewerElement }, {}, 'slide1');
-        jest.spyOn(
-            controller as any,
-            'imagePoint'
-        ).mockImplementation((x: number, y: number) => ({ x, y }));
+        mockViewport(controller);
 
         controller.setTool('ellipse');
         viewerElement.dispatchEvent(
@@ -537,10 +557,7 @@ describe('WsiAnnotationController', () => {
         annotationCanvas.className = 'a9s-gl-canvas';
         viewerElement.appendChild(annotationCanvas);
         controller.attachViewer({ element: viewerElement }, {}, 'slide1');
-        jest.spyOn(
-            controller as any,
-            'imagePoint'
-        ).mockImplementation((x: number, y: number) => ({ x, y }));
+        mockViewport(controller);
 
         const pointer = (type: string, x: number, y: number) =>
             viewerElement.dispatchEvent(
@@ -719,10 +736,7 @@ describe('WsiAnnotationController', () => {
         (controller as any).slideKey = 'slide1';
         const viewerElement = document.createElement('div');
         controller.attachViewer({ element: viewerElement }, {}, 'slide1');
-        jest.spyOn(
-            controller as any,
-            'imagePoint'
-        ).mockImplementation((x: number, y: number) => ({ x, y }));
+        mockViewport(controller);
         const pointer = (type: string, x: number, y: number) =>
             viewerElement.dispatchEvent(
                 new MouseEvent(type, {
@@ -1646,12 +1660,7 @@ describe('WsiAnnotationController', () => {
             cancelDrawing: jest.fn(),
         });
         controller.attachViewer({ element: viewerElement }, {}, 'slide1');
-        jest.spyOn(controller as any, 'imagePoint').mockImplementation(
-            (x: number, y: number) => ({
-                x: x * 10,
-                y: y * 10,
-            })
-        );
+        mockViewport(controller, () => 10);
         controller.setTool('line');
         const pointer = (type: string, x: number, y: number) =>
             viewerElement.dispatchEvent(
@@ -1939,10 +1948,7 @@ describe('WsiAnnotationController', () => {
         controller.addNamedColor('Mitosis', '#ef4444');
         const viewerElement = document.createElement('div');
         controller.attachViewer({ element: viewerElement }, {}, SLIDE_KEY);
-        jest.spyOn(
-            controller as any,
-            'imagePoint'
-        ).mockImplementation((x: number, y: number) => ({ x, y }));
+        mockViewport(controller);
         const click = (x: number, y: number, toX = x, toY = y) => {
             viewerElement.dispatchEvent(
                 new MouseEvent('pointerdown', {
@@ -2063,12 +2069,7 @@ describe('WsiAnnotationController', () => {
         const viewerElement = document.createElement('div');
         controller.attachViewer({ element: viewerElement }, {}, 'slide1');
         // Two image pixels per screen pixel.
-        jest.spyOn(controller as any, 'imagePoint').mockImplementation(
-            (x: number, y: number) => ({
-                x: x * 2,
-                y: y * 2,
-            })
-        );
+        mockViewport(controller, () => 2);
         const pointer = (type: string, x: number, y: number) =>
             viewerElement.dispatchEvent(
                 new MouseEvent(type, { button: 0, clientX: x, clientY: y })
@@ -2149,12 +2150,7 @@ describe('WsiAnnotationController', () => {
         const viewerElement = document.createElement('div');
         controller.attachViewer({ element: viewerElement }, {}, 'slide1');
         let imagePerScreen = 2;
-        jest.spyOn(controller as any, 'imagePoint').mockImplementation(
-            (x: number, y: number) => ({
-                x: x * imagePerScreen,
-                y: y * imagePerScreen,
-            })
-        );
+        mockViewport(controller, () => imagePerScreen);
         const pointer = (type: string, x: number, y: number) =>
             viewerElement.dispatchEvent(
                 new MouseEvent(type, { button: 0, clientX: x, clientY: y })
@@ -3465,5 +3461,368 @@ describe('WsiAnnotationController', () => {
         expect(controller.canRemoveNamedColor('Necrosis', '#f97316')).toBe(
             false
         );
+    });
+
+    describe('zooming or panning while drawing', () => {
+        type XY = { x: number; y: number };
+
+        /**
+         * A stand-in OpenSeadragon viewer: `zoom` screen pixels per image
+         * pixel, image point `origin` at the top left. Viewport and image
+         * coordinates are the same. While an animation runs, the slide is
+         * shown as before and `pointFromPixel`/`pixelFromPoint` without
+         * `current` read where it will end, as in OpenSeadragon.
+         */
+        function fakeViewer(zoom = 1) {
+            const handlers = new Map<string, Set<(...args: any[]) => void>>();
+            const element = document.createElement('div');
+            element.setPointerCapture = jest.fn();
+            let shown = { zoom, origin: { x: 0, y: 0 } };
+            let target: typeof shown | null = null;
+            function Point(this: any, x: number, y: number) {
+                this.x = x;
+                this.y = y;
+            }
+            const view = (current?: boolean) =>
+                current ? shown : target || shown;
+            const fire = (name: string) =>
+                handlers.get(name)?.forEach(handler => handler({}));
+            const viewer = {
+                element,
+                addHandler: (name: string, handler: any) => {
+                    if (!handlers.has(name)) handlers.set(name, new Set());
+                    handlers.get(name)!.add(handler);
+                },
+                removeHandler: (name: string, handler: any) =>
+                    handlers.get(name)?.delete(handler),
+                viewport: {
+                    pointFromPixel: (pixel: XY, current?: boolean) => {
+                        const v = view(current);
+                        return new (Point as any)(
+                            v.origin.x + pixel.x / v.zoom,
+                            v.origin.y + pixel.y / v.zoom
+                        );
+                    },
+                    pixelFromPoint: (point: XY, current?: boolean) => {
+                        const v = view(current);
+                        return new (Point as any)(
+                            (point.x - v.origin.x) * v.zoom,
+                            (point.y - v.origin.y) * v.zoom
+                        );
+                    },
+                    viewportToImageCoordinates: (point: XY) =>
+                        new (Point as any)(point.x, point.y),
+                    imageToViewportCoordinates: (point: XY) =>
+                        new (Point as any)(point.x, point.y),
+                },
+            };
+            return {
+                viewer,
+                openSeadragon: { Point },
+                element,
+                /** The image point at screen point `at`, as shown now. */
+                image: (at: XY) => ({
+                    x: shown.origin.x + at.x / shown.zoom,
+                    y: shown.origin.y + at.y / shown.zoom,
+                }),
+                /**
+                 * Zooms by `factor` keeping the tissue under `at` in place,
+                 * as the wheel does; `animating` leaves it mid-animation.
+                 */
+                zoomBy(factor: number, at: XY, animating = false) {
+                    const anchor = this.image(at);
+                    const next = {
+                        zoom: shown.zoom * factor,
+                        origin: {
+                            x: anchor.x - at.x / (shown.zoom * factor),
+                            y: anchor.y - at.y / (shown.zoom * factor),
+                        },
+                    };
+                    if (animating) target = next;
+                    else {
+                        shown = next;
+                        target = null;
+                    }
+                    fire('animation');
+                    fire('update-viewport');
+                },
+                /** Moves the slide `dx`, `dy` screen pixels. */
+                pan(dx: number, dy: number) {
+                    shown = {
+                        zoom: shown.zoom,
+                        origin: {
+                            x: shown.origin.x - dx / shown.zoom,
+                            y: shown.origin.y - dy / shown.zoom,
+                        },
+                    };
+                    fire('update-viewport');
+                },
+                handlerCount: (name: string) => handlers.get(name)?.size || 0,
+            };
+        }
+
+        function drawingSetup(zoom = 1) {
+            (createOSDAnnotator as jest.Mock).mockReturnValue({
+                on: jest.fn(),
+                setVisible: jest.fn(),
+                setAnnotations: jest.fn(),
+                setStyle: jest.fn(),
+                setDrawingEnabled: jest.fn(),
+                cancelDrawing: jest.fn(),
+            });
+            jest.spyOn(global, 'fetch').mockResolvedValue({
+                ok: true,
+                json: async () => apiAnnotation('saved'),
+            } as Response);
+            const controller = new WsiAnnotationController(
+                'https://tiles.example',
+                'study1'
+            );
+            (controller as any).slideKey = 'slide1';
+            const fake = fakeViewer(zoom);
+            controller.attachViewer(fake.viewer, fake.openSeadragon, 'slide1');
+            const pointer = (
+                type: string,
+                x: number,
+                y: number,
+                pointerId = 1
+            ) => {
+                const event = new MouseEvent(type, {
+                    bubbles: true,
+                    button: 0,
+                    clientX: x,
+                    clientY: y,
+                });
+                Object.defineProperty(event, 'pointerId', {
+                    value: pointerId,
+                });
+                fake.element.dispatchEvent(event);
+            };
+            const saved = async () => {
+                await new Promise(resolve => setTimeout(resolve, 0));
+                const calls = (global.fetch as jest.Mock).mock.calls.filter(
+                    call => call[1]?.method === 'POST'
+                );
+                return calls.map(
+                    call => JSON.parse(call[1].body).target.selector.value
+                );
+            };
+            return { controller, fake, pointer, saved };
+        }
+
+        it.each([
+            [
+                'rectangle',
+                '<svg><rect x="10" y="10" width="190" height="190" /></svg>',
+            ],
+            ['line', '<svg><line x1="10" y1="10" x2="200" y2="200" /></svg>'],
+            [
+                'ellipse',
+                '<svg><ellipse cx="105" cy="105" rx="95" ry="95" /></svg>',
+            ],
+            [
+                'circle',
+                '<svg><ellipse cx="105" cy="105" rx="95" ry="95" /></svg>',
+            ],
+        ])(
+            'keeps a %s on the tissue it was started on, and its preview follows the zoom',
+            async (tool, expected) => {
+                const { controller, fake, pointer, saved } = drawingSetup();
+                controller.setTool(tool as any);
+                pointer('pointerdown', 10, 10);
+                pointer('pointermove', 60, 60);
+                expect(controller.customDrawPreview!.start).toEqual({
+                    x: 10,
+                    y: 10,
+                });
+                // Zoom in 2x about (100, 100) mid-drag: image (10, 10) is
+                // now on screen at (-80, -80).
+                fake.zoomBy(2, { x: 100, y: 100 });
+                expect(controller.customDrawPreview!.start).toEqual({
+                    x: -80,
+                    y: -80,
+                });
+                pointer('pointermove', 300, 300);
+                expect(controller.customDrawPreview!.imageCurrent).toEqual({
+                    x: 200,
+                    y: 200,
+                });
+                pointer('pointerup', 300, 300);
+                expect(await saved()).toEqual([expected]);
+            }
+        );
+
+        it('reads the pointer with the slide as shown mid-animation, not where the zoom will end', async () => {
+            const { controller, fake, pointer, saved } = drawingSetup();
+            controller.setTool('rectangle');
+            pointer('pointerdown', 10, 10);
+            fake.zoomBy(2, { x: 100, y: 100 }, true);
+            pointer('pointerup', 300, 300);
+            expect(await saved()).toEqual([
+                '<svg><rect x="10" y="10" width="290" height="290" /></svg>',
+            ]);
+        });
+
+        it('redraws the preview and the brush outline when the slide moves', () => {
+            const { controller, fake, pointer } = drawingSetup();
+            controller.setMppProvider(() => ({ x: 0.5, y: 0.5 }));
+            controller.setTool('brush');
+            controller.setBrushWidth(10);
+            const starts: Array<XY | undefined> = [];
+            const diameters: Array<number | undefined> = [];
+            const disposers = [
+                autorun(() => starts.push(controller.customDrawPreview?.start)),
+                autorun(() => diameters.push(controller.brushCursor?.diameter)),
+            ];
+            pointer('pointermove', 50, 50);
+            // 10 µm at 0.5 µm per pixel: 20 image pixels.
+            expect(controller.brushCursor!.diameter).toBeCloseTo(20, 5);
+            pointer('pointerdown', 50, 50);
+            pointer('pointermove', 80, 50);
+            fake.pan(5, 7);
+            expect(starts[starts.length - 1]).toEqual({ x: 55, y: 57 });
+            fake.zoomBy(2, { x: 0, y: 0 });
+            expect(starts[starts.length - 1]).toEqual({ x: 110, y: 114 });
+            expect(diameters[diameters.length - 1]).toBeCloseTo(40, 5);
+            expect(controller.customDrawPreview!.strokeWidth).toBeCloseTo(
+                40,
+                5
+            );
+            disposers.forEach(dispose => dispose());
+        });
+
+        it('keeps the detail of a freehand stroke drawn zoomed in when it ends zoomed out', async () => {
+            // 8 screen pixels per image pixel: a 40 px square on screen is
+            // 5 image pixels of tissue.
+            const { controller, fake, pointer, saved } = drawingSetup(8);
+            controller.setTool('freehand');
+            pointer('pointerdown', 40, 40);
+            for (const [x0, y0, x1, y1] of [
+                [40, 40, 80, 40],
+                [80, 40, 80, 80],
+                [80, 80, 40, 80],
+                [40, 80, 40, 40],
+            ]) {
+                for (let t = 1; t <= 10; t++) {
+                    pointer(
+                        'pointermove',
+                        x0 + ((x1 - x0) * t) / 10,
+                        y0 + ((y1 - y0) * t) / 10
+                    );
+                }
+            }
+            // Zoom out 16x about the pointer, then let go there.
+            fake.zoomBy(1 / 16, { x: 40, y: 40 });
+            const corner = controller.customDrawPreview!.points![10];
+            expect(corner.x).toBeCloseTo(42.5, 5);
+            expect(corner.y).toBeCloseTo(40, 5);
+            pointer('pointerup', 40, 40);
+            expect(await saved()).toEqual([
+                '<svg><polygon points="5,5 10,5 10,10 5,10" /></svg>',
+            ]);
+        });
+
+        it('keeps the brush width chosen at the start of a stroke without a slide scale', async () => {
+            const { controller, fake, pointer, saved } = drawingSetup();
+            controller.setTool('brush');
+            controller.setBrushWidth(10);
+            pointer('pointerdown', 0, 100);
+            pointer('pointermove', 50, 100);
+            fake.zoomBy(2, { x: 50, y: 100 });
+            expect(controller.customDrawPreview!.strokeWidth).toBeCloseTo(
+                20,
+                5
+            );
+            pointer('pointermove', 100, 100);
+            pointer('pointerup', 150, 100);
+            const [selector] = await saved();
+            const ys = (parseAnnotationShape({
+                type: 'SvgSelector',
+                value: selector,
+            }) as any).points.map((point: XY) => point.y);
+            // 10 screen pixels at the starting zoom: 10 image pixels.
+            expect(Math.max(...ys) - Math.min(...ys)).toBeCloseTo(10, 1);
+        });
+
+        it('closes a polygon on its first vertex where it is after a zoom', async () => {
+            const { controller, fake, pointer, saved } = drawingSetup();
+            controller.setTool('polygon');
+            for (const [x, y] of [
+                [10, 10],
+                [110, 10],
+                [110, 110],
+            ]) {
+                pointer('pointerdown', x, y);
+                pointer('pointerup', x, y);
+            }
+            fake.zoomBy(4, { x: 0, y: 0 });
+            expect(controller.customDrawPreview!.points).toEqual([
+                { x: 40, y: 40 },
+                { x: 440, y: 40 },
+                { x: 440, y: 440 },
+            ]);
+            pointer('pointerdown', 40, 40);
+            pointer('pointerup', 40, 40);
+            expect(await saved()).toEqual([
+                '<svg><polygon points="10,10 110,10 110,110" /></svg>',
+            ]);
+        });
+
+        it('ignores a second pointer and drops a press the browser cancels', async () => {
+            const { controller, fake, pointer, saved } = drawingSetup();
+            controller.setTool('freehand');
+            pointer('pointerdown', 0, 0, 1);
+            expect(fake.element.setPointerCapture).toHaveBeenCalledWith(1);
+            pointer('pointermove', 50, 0, 1);
+            // A second finger neither restarts nor extends the stroke.
+            pointer('pointerdown', 200, 200, 2);
+            pointer('pointermove', 210, 210, 2);
+            pointer('pointerup', 210, 210, 2);
+            expect(controller.customDrawPreview!.points).toEqual([
+                { x: 0, y: 0 },
+                { x: 50, y: 0 },
+            ]);
+            pointer('pointercancel', 50, 0, 1);
+            expect(controller.customDrawPreview).toBeNull();
+            pointer('pointermove', 60, 60, 1);
+            pointer('pointerup', 60, 60, 1);
+            expect(controller.customDrawPreview).toBeNull();
+            expect(await saved()).toEqual([]);
+            expect(controller.activeTool).toBe('freehand');
+
+            // A polygon keeps its vertices when capture is lost mid-press.
+            controller.setTool('polygon');
+            pointer('pointerdown', 10, 10);
+            pointer('pointerup', 10, 10);
+            pointer('pointerdown', 50, 10);
+            pointer('lostpointercapture', 50, 10);
+            expect(controller.customDrawPreview!.points).toEqual([
+                { x: 10, y: 10 },
+            ]);
+        });
+
+        it('stops drawing and following the slide on Esc and on a slide change', () => {
+            const { controller, fake, pointer } = drawingSetup();
+            controller.setTool('line');
+            pointer('pointerdown', 10, 10);
+            document.dispatchEvent(
+                new KeyboardEvent('keydown', { key: 'Escape' })
+            );
+            expect(controller.customDrawPreview).toBeNull();
+            expect(controller.activeTool).toBeNull();
+            expect(fake.handlerCount('animation')).toBe(1);
+
+            controller.setTool('brush');
+            pointer('pointermove', 10, 10);
+            pointer('pointerdown', 10, 10);
+            controller.detachViewer();
+            expect(controller.customDrawPreview).toBeNull();
+            expect(controller.brushCursor).toBeNull();
+            expect(fake.handlerCount('animation')).toBe(0);
+            expect(fake.handlerCount('update-viewport')).toBe(
+                // The point layer's handler is gone too.
+                0
+            );
+        });
     });
 });

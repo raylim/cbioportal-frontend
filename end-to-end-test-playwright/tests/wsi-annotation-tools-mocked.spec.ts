@@ -517,6 +517,103 @@ if (process.env.PW_SUITE === 'wsi') {
             expect(await stroke()).toBeCloseTo(100, -1);
         });
 
+        test('keeps shapes on their tissue when the slide is zoomed mid-gesture', async ({
+            page,
+        }) => {
+            await openAnnotatedSlide(page, 2048);
+            const service = await routeAnnotationService(page);
+            const at = await gotoSlide(page);
+            const preview = page.getByTestId('annotation-draw-preview');
+            const rectSelector = (index: number) =>
+                /<rect x="([\d.]+)" y="([\d.]+)" width="([\d.]+)" height="([\d.]+)"/
+                    .exec(service.writes[index].body.target.selector.value)!
+                    .slice(1)
+                    .map(Number);
+
+            // A rectangle drawn without zooming, for reference.
+            const from = at(0.4, 0.4);
+            const to = at(0.55, 0.5);
+            await page.getByTestId('annotation-tool-rectangle').click();
+            await page.mouse.move(from.x, from.y);
+            await page.mouse.down();
+            await page.mouse.move(to.x, to.y, { steps: 5 });
+            await page.mouse.up();
+            await expect.poll(() => service.writes.length).toBe(1);
+
+            // The same drag, zoomed in with the wheel at its end: the
+            // outline grows with the tissue, and the same tissue is saved.
+            await page.getByTestId('annotation-tool-rectangle').click();
+            await page.mouse.move(from.x, from.y);
+            await page.mouse.down();
+            await page.mouse.move(to.x, to.y, { steps: 5 });
+            const outline = preview.locator('rect');
+            const width = Number(await outline.getAttribute('width'));
+            for (let i = 0; i < 3; i++) await page.mouse.wheel(0, -100);
+            await expect
+                .poll(async () => Number(await outline.getAttribute('width')))
+                .toBeGreaterThan(width * 1.5);
+            await page.mouse.up();
+            await expect.poll(() => service.writes.length).toBe(2);
+            const [ax, ay, aw, ah] = rectSelector(0);
+            const [bx, by, bw, bh] = rectSelector(1);
+            expect(Math.abs(bx - ax)).toBeLessThan(2);
+            expect(Math.abs(by - ay)).toBeLessThan(2);
+            expect(Math.abs(bw - aw)).toBeLessThan(2);
+            expect(Math.abs(bh - ah)).toBeLessThan(2);
+
+            // A polygon closes on its first vertex where the zoom put it.
+            await page.getByTestId('annotation-tool-polygon').click();
+            const centre = at(0.5, 0.5);
+            for (const [dx, dy] of [
+                [-50, -50],
+                [50, -50],
+                [50, 50],
+            ]) {
+                await page.mouse.click(centre.x + dx, centre.y + dy);
+            }
+            const vertices = async () =>
+                (
+                    (await preview
+                        .locator('polyline')
+                        .getAttribute('points')) || ''
+                )
+                    .trim()
+                    .split(/\s+/)
+                    .map(pair => pair.split(',').map(Number));
+            const [[x0]] = await vertices();
+            await page.mouse.move(centre.x, centre.y);
+            for (let i = 0; i < 3; i++) await page.mouse.wheel(0, -100);
+            // Zoomed in about the centre, the first vertex moves away from it.
+            await expect
+                .poll(async () => (await vertices())[0][0])
+                .toBeLessThan(x0 - 10);
+            let last = NaN;
+            await expect
+                .poll(async () => {
+                    const x = (await vertices())[0][0];
+                    const settled = x === last;
+                    last = x;
+                    return settled;
+                })
+                .toBe(true);
+            const box = (await page
+                .locator('.openseadragon-container')
+                .first()
+                .boundingBox())!;
+            const first = (await vertices())[0];
+            await page.mouse.click(box.x + first[0], box.y + first[1]);
+            await expect.poll(() => service.writes.length).toBe(3);
+            const triangle = polygonPoints(
+                service.writes[2].body.target.selector.value
+            );
+            expect(triangle).toHaveLength(3);
+            // A right angle with equal sides, as clicked.
+            const [p, q, r] = triangle;
+            expect(Math.abs(q.y - p.y)).toBeLessThan(2);
+            expect(Math.abs(r.x - q.x)).toBeLessThan(2);
+            expect(Math.abs(q.x - p.x - (r.y - q.y))).toBeLessThan(2);
+        });
+
         test('imports GeoJSON in one batch request and reports refused features', async ({
             page,
         }) => {
