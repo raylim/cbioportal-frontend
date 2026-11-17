@@ -300,11 +300,11 @@ if (process.env.PW_SUITE === 'wsi') {
                 await page.mouse.click(point.x, point.y);
             }
             await expect(page.getByTestId('annotation-point-count')).toHaveText(
-                'Default: 3'
+                'Point: 3'
             );
             await page.keyboard.press('Escape');
             await expect(
-                page.getByTestId('annotation-point-tally-Default-Default')
+                page.getByTestId('annotation-point-tally-Default-Point')
             ).toContainText('3');
             await expect.poll(() => service.rows.size).toBe(4);
             // The three points were saved together in one batch request.

@@ -6,6 +6,7 @@ import { act, fireEvent, render, screen } from '@testing-library/react';
 import { WsiAnnotationController } from './wsiAnnotationController';
 import { runInAction } from 'mobx';
 import {
+    layerDeleteMessage,
     readableTextColor,
     WsiAnnotationLayersPanel,
     WsiAnnotationPanel,
@@ -266,6 +267,7 @@ describe('WsiAnnotationPanel', () => {
             apiItem('Stroma 1', {
                 layer_name: 'Stroma',
                 type: 'Stroma|#22c55e',
+                comment: 'Tumor margin',
             }),
         ]);
         const zoom = jest
@@ -287,13 +289,17 @@ describe('WsiAnnotationPanel', () => {
         expect(screen.getAllByRole('listitem')).toHaveLength(1);
         fireEvent.click(screen.getByTestId('annotation-filter-clear'));
 
-        fireEvent.click(screen.getByLabelText('Show the 2 Tumor annotations'));
+        // A label chip matches the label term exactly, not notes.
+        const chip = screen.getByLabelText('Show only the 2 Tumor annotations');
+        fireEvent.click(chip);
+        expect(chip.getAttribute('aria-pressed')).toBe('true');
         expect(
             (screen.getByLabelText(
                 'Filter annotations by label or note'
             ) as HTMLInputElement).value
-        ).toBe('Tumor');
+        ).toBe('');
         expect(screen.getAllByRole('listitem')).toHaveLength(2);
+        expect(screen.queryByTestId('annotation-row-Stroma 1')).toBeNull();
 
         fireEvent.click(screen.getByLabelText('Go to annotation Tumor 2'));
         expect(zoom).toHaveBeenCalledWith('Tumor 2');
@@ -406,6 +412,59 @@ describe('WsiAnnotationPanel', () => {
             fireEvent.click(screen.getByLabelText('Save label of Old'));
             expect(rename).toHaveBeenCalledWith('Old', 'Necrosis');
         });
+    });
+
+    it('says how much a layer delete removes, and that others keep the layer', () => {
+        expect(layerDeleteMessage('Tumor', { own: 0, others: 0 })).toBeNull();
+        expect(layerDeleteMessage('Tumor', { own: 2, others: 0 })).toBe(
+            'Delete layer "Tumor" and your 2 annotations in it?'
+        );
+        expect(layerDeleteMessage('Tumor', { own: 1, others: 3 })).toBe(
+            'Delete layer "Tumor" and your 1 annotation in it? The layer stays on the slide while 3 annotations by other users are in it.'
+        );
+        expect(layerDeleteMessage('Tumor', { own: 0, others: 1 })).toBe(
+            'Delete layer "Tumor"? None of its annotations are yours. The layer stays on the slide while 1 annotation by other users is in it.'
+        );
+
+        const controller = controllerWith([
+            { ...apiItem('mine', { layer_name: 'Tumor' }), created_by: 'me' },
+            {
+                ...apiItem('theirs', { layer_name: 'Tumor' }),
+                created_by: 'other',
+            },
+        ]);
+        controller.setCurrentUser('me');
+        const confirm = jest.spyOn(window, 'confirm').mockReturnValue(false);
+        render(<WsiAnnotationLayersPanel controller={controller} />);
+        fireEvent.click(screen.getByLabelText('Delete layer Tumor'));
+        expect(confirm).toHaveBeenCalledWith(
+            'Delete layer "Tumor" and your 1 annotation in it? The layer stays on the slide while 1 annotation by other users is in it.'
+        );
+        confirm.mockRestore();
+    });
+
+    it('shows a failed load as an alert with Retry', async () => {
+        const controller = controllerWith([]);
+        runInAction(() => {
+            controller.loadFailed = true;
+            controller.error = 'Unable to load annotations.';
+        });
+        const retry = jest
+            .spyOn(controller, 'retryLoad')
+            .mockResolvedValue(undefined);
+        render(<WsiAnnotationPanel controller={controller} />);
+        const alert = screen.getByRole('alert');
+        expect(alert.textContent).toContain('Unable to load annotations.');
+        fireEvent.click(screen.getByTestId('annotation-load-retry'));
+        expect(retry).toHaveBeenCalled();
+    });
+
+    it('notes a slide without a scale before any annotation exists', () => {
+        const controller = controllerWith([]);
+        render(<WsiAnnotationPanel controller={controller} />);
+        expect(
+            screen.getByTestId('annotation-measurement-scale-note')
+        ).toBeTruthy();
     });
 
     describe('accessibility', () => {

@@ -584,6 +584,30 @@ function ToolbarDivider() {
     );
 }
 
+const plural = (n: number, noun: string) => `${n} ${noun}${n === 1 ? '' : 's'}`;
+
+/**
+ * The confirmation for deleting a layer: it deletes only the user's own
+ * annotations, and the layer stays while other users have annotations in
+ * it. Null when there is nothing in the layer.
+ */
+export function layerDeleteMessage(
+    layer: string,
+    counts: { own: number; others: number }
+): string | null {
+    const { own, others } = counts;
+    if (!own && !others) return null;
+    const deletes = own
+        ? `Delete layer "${layer}" and your ${plural(own, 'annotation')} in it?`
+        : `Delete layer "${layer}"? None of its annotations are yours.`;
+    return others
+        ? `${deletes} The layer stays on the slide while ${plural(
+              others,
+              'annotation'
+          )} by other users ${others === 1 ? 'is' : 'are'} in it.`
+        : deletes;
+}
+
 export const WsiAnnotationLayersPanel = observer(
     ({ controller }: { controller: WsiAnnotationController }) => {
         const [showAddLayer, setShowAddLayer] = React.useState(false);
@@ -693,13 +717,13 @@ export const WsiAnnotationLayersPanel = observer(
                                     title={`Delete layer "${layer}"`}
                                     aria-label={`Delete layer ${layer}`}
                                     onClick={() => {
+                                        const message = layerDeleteMessage(
+                                            layer,
+                                            controller.layerDeleteCounts(layer)
+                                        );
                                         if (
-                                            count > 0 &&
-                                            !window.confirm(
-                                                `Delete layer "${layer}" and ${count} associated annotation${
-                                                    count === 1 ? '' : 's'
-                                                }?`
-                                            )
+                                            message &&
+                                            !window.confirm(message)
                                         ) {
                                             return;
                                         }
@@ -833,6 +857,49 @@ const UnsavedPointsNotice = observer(
     }
 );
 
+/** Says that sizes are in pixels, on a slide without a scale. */
+const MeasurementScaleNote = observer(
+    ({ controller }: { controller: WsiAnnotationController }) =>
+        controller.mpp ? null : (
+            <div
+                data-testid="annotation-measurement-scale-note"
+                style={{
+                    color: colors.muted,
+                    fontSize: 10,
+                    marginBottom: 4,
+                }}
+            >
+                Sizes are in pixels: this slide has no microns-per-pixel scale.
+            </div>
+        )
+);
+
+/** The panel's error, with Retry when the annotations failed to load. */
+const AnnotationError = observer(
+    ({ controller }: { controller: WsiAnnotationController }) =>
+        controller.error ? (
+            <div
+                role="alert"
+                data-testid="annotation-error"
+                style={{ color: '#a00', fontSize: 11, marginBottom: 4 }}
+            >
+                {controller.error}
+                {controller.loadFailed && (
+                    <>
+                        {' '}
+                        <button
+                            data-testid="annotation-load-retry"
+                            onClick={() => void controller.retryLoad()}
+                            style={transferButtonStyle()}
+                        >
+                            Retry
+                        </button>
+                    </>
+                )}
+            </div>
+        ) : null
+);
+
 export const WsiAnnotationPanel = observer(
     ({ controller }: { controller: WsiAnnotationController }) => {
         if (!controller || !controller.visible) return null;
@@ -844,16 +911,15 @@ export const WsiAnnotationPanel = observer(
             );
         }
         if (controller.error && !controller.annotations.length) {
-            return (
-                <span style={{ color: '#a00', fontSize: 11 }}>
-                    {controller.error}
-                </span>
-            );
+            return <AnnotationError controller={controller} />;
         }
         if (!controller.annotations.length) {
             return (
                 <>
                     <UnsavedPointsNotice controller={controller} />
+                    {controller.canEdit && (
+                        <MeasurementScaleNote controller={controller} />
+                    )}
                     <span style={{ color: colors.muted, fontSize: 11 }}>
                         {controller.canEdit
                             ? 'No annotations yet. Draw on the slide to create one.'
@@ -868,14 +934,7 @@ export const WsiAnnotationPanel = observer(
         const listed = controller.listedAnnotations;
         return (
             <div data-testid="wsi-annotation-panel" style={{ marginTop: 6 }}>
-                {controller.error && (
-                    <div
-                        role="alert"
-                        style={{ color: '#a00', fontSize: 11, marginBottom: 4 }}
-                    >
-                        {controller.error}
-                    </div>
-                )}
+                <AnnotationError controller={controller} />
                 {controller.notice && (
                     <div
                         role="status"
@@ -918,19 +977,7 @@ export const WsiAnnotationPanel = observer(
                         {controller.unreviewedAiCount})
                     </label>
                 )}
-                {!controller.mpp && (
-                    <div
-                        data-testid="annotation-measurement-scale-note"
-                        style={{
-                            color: colors.muted,
-                            fontSize: 10,
-                            marginBottom: 4,
-                        }}
-                    >
-                        Sizes are in pixels: this slide has no microns-per-pixel
-                        scale.
-                    </div>
-                )}
+                <MeasurementScaleNote controller={controller} />
                 <AnnotationTransfer controller={controller} />
                 <PointTally controller={controller} />
                 <AnnotationListFilters controller={controller} />
@@ -1274,7 +1321,11 @@ const AnnotationListFilters = observer(
             isAiProvenance(annotation.provenance)
         );
         const filtered =
-            filter.text || filter.layer || filter.author || filter.ai !== 'all';
+            filter.text ||
+            filter.label ||
+            filter.layer ||
+            filter.author ||
+            filter.ai !== 'all';
         return (
             <div
                 data-testid="annotation-list-filters"
@@ -1414,21 +1465,34 @@ const AnnotationCounts = observer(
                 )}
                 {row(
                     'By label:',
-                    labels.map(([label, count]) => (
-                        <button
-                            key={label}
-                            data-testid={`annotation-count-label-${label}`}
-                            aria-label={`Show the ${count} ${label} annotation${
-                                count === 1 ? '' : 's'
-                            }`}
-                            onClick={() =>
-                                controller.setListFilter({ text: label })
-                            }
-                            style={{ ...countChipStyle, cursor: 'pointer' }}
-                        >
-                            {label} {count}
-                        </button>
-                    ))
+                    labels.map(([label, count]) => {
+                        const active = controller.listFilter.label === label;
+                        return (
+                            <button
+                                key={label}
+                                data-testid={`annotation-count-label-${label}`}
+                                aria-label={`Show only the ${count} ${label} annotation${
+                                    count === 1 ? '' : 's'
+                                }`}
+                                aria-pressed={active}
+                                onClick={() =>
+                                    controller.setListFilter({
+                                        label: active ? '' : label,
+                                    })
+                                }
+                                style={{
+                                    ...countChipStyle,
+                                    cursor: 'pointer',
+                                    fontWeight: active ? 700 : 400,
+                                    borderColor: active
+                                        ? colors.text
+                                        : colors.border,
+                                }}
+                            >
+                                {label} {count}
+                            </button>
+                        );
+                    })
                 )}
             </div>
         );

@@ -3056,6 +3056,71 @@ describe('WsiAnnotationController', () => {
         expect(controller.importPreview).toBeNull();
     });
 
+    it('labels points "Point" with the default color, else by the color name', () => {
+        const controller = new WsiAnnotationController(
+            'https://tiles.example',
+            'study1'
+        );
+        expect(controller.activeColorName).toBe('Default');
+        expect(controller.activePointLabel).toBe('Point');
+        controller.setActiveNamedColor('Mitosis', '#ef4444');
+        expect(controller.activePointLabel).toBe('Mitosis');
+    });
+
+    it('turns editing off until the annotations load, and offers a retry after a failure', async () => {
+        const responses: any[] = [
+            { ok: false, status: 500 },
+            { ok: true, json: async () => [apiAnnotation('a1')] },
+        ];
+        jest.spyOn(global, 'fetch').mockImplementation(
+            async () => responses.shift() as Response
+        );
+        const controller = new WsiAnnotationController(
+            'https://tiles.example',
+            'study1'
+        );
+        controller.beginSlide(SLIDE_KEY);
+        expect(controller.loading).toBe(true);
+        expect(controller.canEdit).toBe(false);
+        await new Promise(resolve => setTimeout(resolve, 0));
+        expect(controller.loadFailed).toBe(true);
+        expect(controller.canEdit).toBe(false);
+        expect(controller.error).toBe('Unable to load annotations.');
+
+        await controller.retryLoad();
+        expect(controller.loadFailed).toBe(false);
+        expect(controller.canEdit).toBe(true);
+        expect(controller.error).toBeNull();
+        expect(controller.annotations.map(item => item.id)).toEqual(['a1']);
+    });
+
+    it('filters the list by an exact label term, not by notes', () => {
+        const controller = new WsiAnnotationController(
+            'https://tiles.example',
+            'study1'
+        );
+        const item = (id: string, label: string, comment = '') =>
+            (controller as any).fromApi(
+                {
+                    ...apiAnnotation(id),
+                    body: {
+                        label,
+                        comment,
+                        layer_name: 'Default',
+                        color: '#ef4444',
+                    },
+                },
+                'slide1'
+            );
+        (controller as any).annotations = [
+            item('a', 'Tumor'),
+            item('b', 'Tumor bed'),
+            item('c', 'Stroma', 'near the Tumor'),
+        ];
+        controller.setListFilter({ label: 'Tumor' });
+        expect(controller.listedAnnotations.map(a => a.id)).toEqual(['a']);
+    });
+
     it('reports a file that is not JSON', async () => {
         const controller = new WsiAnnotationController(
             'https://tiles.example',

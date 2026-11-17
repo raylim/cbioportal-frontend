@@ -237,6 +237,8 @@ export interface WsiAnnotationListFilter {
     layer: string;
     author: string;
     text: string;
+    /** A label term (see `labelTerm`), matched exactly. */
+    label: string;
     ai: WsiAnnotationAiFilter;
 }
 
@@ -244,8 +246,11 @@ const EMPTY_LIST_FILTER: WsiAnnotationListFilter = {
     layer: '',
     author: '',
     text: '',
+    label: '',
     ai: 'all',
 };
+
+const UNLABELED = '(unlabeled)';
 
 /**
  * The term a label counts under. A viewer auto-label, one of
@@ -451,6 +456,8 @@ function describeFailures(results: WsiSaveResult[], limit = 3): string {
 export class WsiAnnotationController {
     @observable annotations: WsiAnnotation[] = [];
     @observable loading = false;
+    /** The last load of the slide's annotations failed; see `retryLoad`. */
+    @observable loadFailed = false;
     @observable error: string | null = null;
     /** An informational note, e.g. how a review was recorded. */
     @observable notice: string | null = null;
@@ -731,12 +738,16 @@ export class WsiAnnotationController {
             : this.nextAutoLabel();
     }
 
-    /** The label a new point gets: the active label, else the color's name. */
+    /**
+     * The label a new point gets: the active label, else the active color's
+     * name, else (for the default color) "Point".
+     */
     @computed get activePointLabel(): string {
         const label = this.activeLabel.trim();
         if (label && this.isAllowedLabel(label)) return label;
         if (this.strictLabels) return this.labelVocabulary[0];
-        return this.activeColorName.trim() || 'Point';
+        const name = this.activeColorName.trim();
+        return name && name !== DEFAULT_LAYER ? name : 'Point';
     }
 
     /** Points with the active layer and point label, for the toolbar. */
@@ -824,9 +835,26 @@ export class WsiAnnotationController {
         );
     }
 
-    /** Whether the user may draw, edit or delete annotations. */
+    /**
+     * Whether the user may draw, edit or delete annotations: not until the
+     * slide's annotations have loaded.
+     */
     @computed get canEdit(): boolean {
-        return this.canWrite;
+        return this.canWrite && !this.loading && !this.loadFailed;
+    }
+
+    /** Loads the slide's annotations again after a failed load. */
+    @action.bound
+    retryLoad() {
+        const slideKey = this.slideKey;
+        if (!this.apiUrl || !slideKey) return Promise.resolve();
+        this.loadGeneration += 1;
+        this.loadAbortController?.abort();
+        this.loadAbortController = new AbortController();
+        this.loading = true;
+        this.loadFailed = false;
+        this.error = null;
+        return this.loadAnnotations(slideKey, this.loadGeneration);
     }
 
     /** Whether writes may be sent: a service, and no refusal of the study. */
@@ -925,13 +953,20 @@ export class WsiAnnotationController {
 
     /** The annotations the list shows: those on the slide, filtered. */
     @computed get listedAnnotations(): WsiAnnotation[] {
-        const { layer, author, text, ai } = this.listFilter;
+        const { layer, author, text, label, ai } = this.listFilter;
         const needle = text.trim().toLowerCase();
         return this.shownAnnotations.filter(annotation => {
             if (layer && (annotation.layerName || DEFAULT_LAYER) !== layer) {
                 return false;
             }
             if (author && (annotation.creator || '') !== author) return false;
+            if (
+                label &&
+                this.labelTerm(annotation.body?.[0]?.value || UNLABELED) !==
+                    label
+            ) {
+                return false;
+            }
             if (
                 needle &&
                 !(annotation.body?.[0]?.value || '')
@@ -973,7 +1008,7 @@ export class WsiAnnotationController {
     /** Listed annotations per label term (see `labelTerm`). */
     @computed get listedLabelCounts(): Map<string, number> {
         return countBy(this.listedAnnotations, annotation =>
-            this.labelTerm(annotation.body?.[0]?.value || '(unlabeled)')
+            this.labelTerm(annotation.body?.[0]?.value || UNLABELED)
         );
     }
 
@@ -1333,6 +1368,7 @@ export class WsiAnnotationController {
         this.notice = null;
         this.accessIssue = null;
         this.pointsLeftUnsaved = leftUnsaved;
+        this.loadFailed = false;
         this.loading = Boolean(this.apiUrl);
         this.destroyAnnotorious();
         if (this.apiUrl) {
@@ -1362,6 +1398,7 @@ export class WsiAnnotationController {
         this.notice = null;
         this.accessIssue = null;
         this.pointsLeftUnsaved = leftUnsaved;
+        this.loadFailed = false;
         this.annotationTooltip = null;
         this.applyLayerFilter();
         const slideKey = this.slideKey;
@@ -1734,6 +1771,19 @@ export class WsiAnnotationController {
         this.applyLayerFilter();
     }
 
+    /**
+     * The user's annotations in `layer`, which deleting it deletes, and
+     * other users' annotations there, which keep it on the slide.
+     */
+    layerDeleteCounts(layer: string): { own: number; others: number } {
+        const inLayer = this.annotations.filter(
+            annotation => (annotation.layerName || DEFAULT_LAYER) === layer
+        );
+        const own = inLayer.filter(annotation => this.canModify(annotation))
+            .length;
+        return { own, others: inLayer.length - own };
+    }
+
     @action.bound
     async deleteLayer(layer: string) {
         if (layer === DEFAULT_LAYER) return;
@@ -2068,7 +2118,9 @@ export class WsiAnnotationController {
             action(() => {
                 this.annotations = annotations;
                 this.loading = false;
+                this.loadFailed = false;
                 this.error = null;
+                this.applySelectAction();
                 this.applyLayerFilter();
             })();
         } catch (error) {
@@ -2079,7 +2131,10 @@ export class WsiAnnotationController {
                 return;
             action(() => {
                 this.loading = false;
+                this.loadFailed = true;
                 this.error = 'Unable to load annotations.';
+                this.cancelDrawing();
+                this.annotorious?.setUserSelectAction?.('SELECT');
             })();
         }
     }
