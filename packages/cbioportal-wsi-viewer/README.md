@@ -125,15 +125,15 @@ The viewer writes the service's `AnnotationBody` fields as follows:
 
 Rows written before the viewer used `layer_name` kept the layer in `comment` and sent no `layer_name` or `color`, so the service stored its defaults (`Default`, `#2f80ed`). The viewer reads `comment` as the layer only for such rows: when `layer_name` is missing or `Default`, `color` is missing or exactly `#2f80ed`, and `comment` is one line of at most 100 characters. The viewer always writes `color`, and writes `#2f80ed` as `#2F80ED`, so a note on a row it wrote is never read as a layer. Saving an edit to a legacy row writes its layer to `layer_name` and clears `comment`. A `comment` that only repeats `layer_name`, as the service writes for a saved assistant proposal, is not shown as a note. `wsiAnnotationBody.ts` holds the rules.
 
-#### Annotation list
+#### Private and shared annotations
 
-The sidebar's Annotations section lists the slide's annotations on visible layers. It filters by label or note text, layer, author (when there is more than one) and AI origin (when any annotation is from the assistant), and shows how many listed annotations each layer and each label has. Labels count by their text without a trailing number, so "Tumor 1" and "Tumor 2" count as Tumor; clicking a label count filters the list to it. Clicking an annotation's label (or Enter on it) pans and zooms the slide to it. The filters reset when another slide opens.
+`visible_to` decides who sees an annotation: `null` keeps it private to its creator, and `[]` shares it with everyone who can read the study. The toolbar's **Shared**/**Private** button sets the default for new annotations (shared unless the user chose private; remembered in `localStorage`), and each list row shows a **Private** or **Shared** badge that switches the annotation with a versioned `PUT`. The service also accepts group names, but the proxy sends no groups, so the viewer offers no group choice; a row shared with groups shows **Groups**.
 
-#### Editing and undo
+#### Assistant annotations
 
-Clicking a rectangle, ellipse, line or polygon (including freehand and brush shapes) selects it for editing: Annotorious shows handles to move it or drag its vertices. The viewer saves the new geometry with a versioned `PUT` and keeps the label, note, layer, sharing and provenance as stored. Points are not draggable; delete one and drop it again.
+An annotation whose `provenance.source` is `agent` (as the service writes when it saves a research-assistant proposal) shows an **AI** badge, "unreviewed" until a user accepts it. **Accept** saves `provenance.review_status: "accepted"` and `reviewed_at` with a `PUT` carrying the annotation's `version`; **Reject** deletes it. The list can hide unreviewed AI annotations, on the slide too.
 
-**Undo** in the toolbar, or Ctrl+Z / Cmd+Z outside text fields, reverses this session's last change on the slide: a created annotation is deleted, an edit is reversed by saving the previous version over the current one (with the current `version`), and a deleted annotation is created again (with a new id, so later undos follow it). A layer delete and an import each undo as one step. The history holds 50 changes and is cleared when another slide or study opens.
+Only an annotation's creator may change it. The service answers another user's edit with a 403 whose `detail` says so; the viewer shows that and keeps the study editable. Any other 403 means no access to the study.
 
 #### Labels
 
@@ -145,19 +145,29 @@ The viewer ships no default vocabulary: which terms fit depends on the site and 
 
 Each annotation can carry a free-text note, kept in `body.comment` and separate from its label. The list shows it under the annotation, with **+ Note** / **Edit note** for users who can edit (Ctrl/Cmd+Enter saves, Esc cancels); saving sends a `PUT` with the annotation's `version`. The click tooltip shows it too.
 
+#### Measurements
+
+The list and the click tooltip show each annotation's size: the length of a line, and the area and perimeter of a rectangle, ellipse, circle or polygon (including freehand and brush shapes). Coordinates are level-0 image pixels, scaled by the slide's microns-per-pixel (`tile_metadata.mpp`, the scale the status bar uses) on each axis, so slides with unequal x and y scales measure correctly. Lengths are shown in µm, or mm from 1 mm; areas in µm², or mm² from 0.01 mm². An ellipse's perimeter uses Ramanujan's approximation. Without a valid mpp the sizes are in pixels and the list says so. Drawing a line, rectangle, ellipse or circle shows its length or area next to the cursor. `wsiAnnotationGeometryUtils.ts` holds the math.
+
+#### Points
+
+The **Point** tool drops a point at each click (a drag still pans the slide) and stays on until Esc. A point is stored as an `SvgSelector` holding a circle of radius 0, in level-0 image pixels: `<svg><circle cx="…" cy="…" r="0" /></svg>`. Points are labelled with the active color's name, so counting mitoses means picking a "Mitosis" color and clicking. The viewer draws points itself, as fixed-size markers on one canvas redrawn per frame, because Annotorious has no point shape; that keeps hundreds of points fast. A point shows and counts at once, before its save returns. The toolbar shows the count for the active layer and label while the tool is on, and the Annotations section has a **Point counts** table per label and layer. Clicking a marker shows its tooltip.
+
 #### Freehand and brush
 
 **Free** draws while the mouse button is held and saves the outline as a polygon. **Brush** paints a band of a fixed on-screen width (8–64 px at the zoom it is drawn, chosen in the toolbar) and saves the band's outline as a polygon: the stroke is offset to both sides with mitred corners and round caps (`strokeOutline`). Both record a point every 2 screen pixels and simplify the stroke with Douglas–Peucker at 1.5 screen pixels before saving.
 
 The brush is stored as a polygon, not as a line with a width, so it has an area and perimeter, edits like any polygon, and exports to QuPath as a region. Its width is in screen pixels because that is how a brush feels; in image pixels it depends on the zoom. A stroke that doubles back sharply can give an outline that touches itself.
 
-#### Points
+#### Editing and undo
 
-The **Point** tool drops a point at each click (a drag still pans the slide) and stays on until Esc. A point is stored as an `SvgSelector` holding a circle of radius 0, in level-0 image pixels: `<svg><circle cx="…" cy="…" r="0" /></svg>`. Points are labelled with the active color's name, so counting mitoses means picking a "Mitosis" color and clicking. The viewer draws points itself, as fixed-size markers on one canvas redrawn per frame, because Annotorious has no point shape; that keeps hundreds of points fast. A point shows and counts at once, before its save returns. The toolbar shows the count for the active layer and label while the tool is on, and the Annotations section has a **Point counts** table per label and layer. Clicking a marker shows its tooltip.
+Clicking a rectangle, ellipse, line or polygon (including freehand and brush shapes) selects it for editing: Annotorious shows handles to move it or drag its vertices. The viewer saves the new geometry with a versioned `PUT` and keeps the label, note, layer, sharing and provenance as stored. Points are not draggable; delete one and drop it again.
 
-#### Measurements
+**Undo** in the toolbar, or Ctrl+Z / Cmd+Z outside text fields, reverses this session's last change on the slide: a created annotation is deleted, an edit is reversed by saving the previous version over the current one (with the current `version`), and a deleted annotation is created again (with a new id, so later undos follow it). A layer delete and an import each undo as one step. The history holds 50 changes and is cleared when another slide or study opens.
 
-The list and the click tooltip show each annotation's size: the length of a line, and the area and perimeter of a rectangle, ellipse, circle or polygon (including freehand and brush shapes). Coordinates are level-0 image pixels, scaled by the slide's microns-per-pixel (`tile_metadata.mpp`, the scale the status bar uses) on each axis, so slides with unequal x and y scales measure correctly. Lengths are shown in µm, or mm from 1 mm; areas in µm², or mm² from 0.01 mm². An ellipse's perimeter uses Ramanujan's approximation. Without a valid mpp the sizes are in pixels and the list says so. Drawing a line, rectangle, ellipse or circle shows its length or area next to the cursor. `wsiAnnotationGeometryUtils.ts` holds the math.
+#### Annotation list
+
+The sidebar's Annotations section lists the slide's annotations on visible layers. It filters by label or note text, layer, author (when there is more than one) and AI origin (when any annotation is from the assistant), and shows how many listed annotations each layer and each label has. Labels count by their text without a trailing number, so "Tumor 1" and "Tumor 2" count as Tumor; clicking a label count filters the list to it. Clicking an annotation's label (or Enter on it) pans and zooms the slide to it. The filters reset when another slide opens.
 
 #### Export and import (GeoJSON)
 
@@ -169,16 +179,6 @@ The Annotations section exports the slide's annotations, all of them or only tho
 The collection's `wsi` member names the slide by its opaque slide key and gives the mpp. Exports never contain image ids, sealed sources or object keys, nor creators or provenance details.
 
 **Import…** reads a GeoJSON `FeatureCollection`, `Feature` or array of features, such as a QuPath export, and validates it before anything is saved: points, lines and polygons (and their multi- forms, split into one annotation each) with finite coordinates inside the slide and at most 5,000 vertices are kept; a polygon's holes are dropped; anything else is skipped with a reason. At most 2,000 annotations are imported at once. A preview shows how many points, lines and polygons will be created and what was skipped; **Create** then saves them, four requests at a time, with the file's name or class as the label, its class color, layer and note, else the active ones. With a strict vocabulary, features whose label is not a term are skipped.
-
-#### Private and shared annotations
-
-`visible_to` decides who sees an annotation: `null` keeps it private to its creator, and `[]` shares it with everyone who can read the study. The toolbar's **Shared**/**Private** button sets the default for new annotations (shared unless the user chose private; remembered in `localStorage`), and each list row shows a **Private** or **Shared** badge that switches the annotation with a versioned `PUT`. The service also accepts group names, but the proxy sends no groups, so the viewer offers no group choice; a row shared with groups shows **Groups**.
-
-#### Assistant annotations
-
-An annotation whose `provenance.source` is `agent` (as the service writes when it saves a research-assistant proposal) shows an **AI** badge, "unreviewed" until a user accepts it. **Accept** saves `provenance.review_status: "accepted"` and `reviewed_at` with a `PUT` carrying the annotation's `version`; **Reject** deletes it. The list can hide unreviewed AI annotations, on the slide too.
-
-Only an annotation's creator may change it. The service answers another user's edit with a 403 whose `detail` says so; the viewer shows that and keeps the study editable. Any other 403 means no access to the study.
 
 The viewer stores the selected slide and viewport in the URL hash (`#wsi:slide=…&x=…&y=…&z=…`) so a view can be shared.
 
