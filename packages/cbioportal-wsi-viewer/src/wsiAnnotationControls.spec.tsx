@@ -258,9 +258,12 @@ describe('WsiAnnotationPanel', () => {
 
     it('filters the list, counts labels and goes to an annotation', () => {
         const controller = controllerWith([
-            apiItem('Tumor 1', { layer_name: 'Tumor' }),
-            apiItem('Tumor 2', { layer_name: 'Tumor' }),
-            apiItem('Stroma 1', { layer_name: 'Stroma' }),
+            apiItem('Tumor 1', { layer_name: 'Tumor', type: 'Tumor|#ef4444' }),
+            apiItem('Tumor 2', { layer_name: 'Tumor', type: 'Tumor|#ef4444' }),
+            apiItem('Stroma 1', {
+                layer_name: 'Stroma',
+                type: 'Stroma|#22c55e',
+            }),
         ]);
         const zoom = jest
             .spyOn(controller, 'zoomToAnnotation')
@@ -345,7 +348,9 @@ describe('WsiAnnotationPanel', () => {
 
         it('offers the terms while allowing free text', () => {
             configure(false);
-            const controller = controllerWith([apiItem('Fibrosis 1', {})]);
+            const controller = controllerWith([
+                apiItem('Fibrosis 1', { type: 'Fibrosis|#ef4444' }),
+            ]);
             render(<WsiAnnotationToolbar controller={controller} />);
 
             const field = screen.getByLabelText(

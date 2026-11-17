@@ -1678,6 +1678,8 @@ describe('WsiAnnotationController', () => {
                         label,
                         layer_name: layer,
                         color: '#ef4444',
+                        // Auto-labels: a color's name and a number.
+                        type: `${layer}|#ef4444`,
                         ...extra,
                     },
                 },
@@ -1723,8 +1725,74 @@ describe('WsiAnnotationController', () => {
         // A new slide starts unfiltered.
         controller.beginSlide('slide2');
         expect(controller.listFilter.ai).toBe('all');
-        expect(labelTerm('Necrosis 12')).toBe('Necrosis');
-        expect(labelTerm('42')).toBe('42');
+        expect(labelTerm('Necrosis 12', ['Necrosis'])).toBe('Necrosis');
+        expect(labelTerm('Necrosis 12')).toBe('Necrosis 12');
+        expect(labelTerm('42', ['42'])).toBe('42');
+    });
+
+    it('keeps graded labels apart, and counts only auto-labels under their base', () => {
+        configureWsiViewerRuntime({
+            buildApiUrl: path => path,
+            annotations: {
+                apiUrl: 'https://tiles.example',
+                labelVocabulary: ['Grade 1', 'Grade 2'],
+            },
+        });
+        try {
+            const controller = new WsiAnnotationController(
+                'https://tiles.example',
+                'study1'
+            );
+            const item = (id: string, label: string, type = '') =>
+                (controller as any).fromApi(
+                    {
+                        ...apiAnnotation(id),
+                        body: {
+                            label,
+                            layer_name: 'Default',
+                            color: '#ef4444',
+                            type,
+                        },
+                    },
+                    'slide1'
+                );
+            (controller as any).annotations = [
+                item('g1', 'Grade 1'),
+                item('g2', 'Grade 2'),
+                item('g3', 'Grade 2'),
+                item('p3', 'Gleason pattern 3'),
+                item('p4', 'Gleason pattern 4'),
+                item('t1', 'Tumor 1', 'Tumor|#ef4444'),
+                item('t2', 'Tumor 2', 'Tumor|#ef4444'),
+            ];
+            expect(Array.from(controller.listedLabelCounts)).toEqual([
+                ['Grade 1', 1],
+                ['Grade 2', 2],
+                ['Gleason pattern 3', 1],
+                ['Gleason pattern 4', 1],
+                ['Tumor', 2],
+            ]);
+            // Even a vocabulary term that looks like an auto-label.
+            expect(labelTerm('Tumor 1', ['Tumor'], ['Tumor 1'])).toBe(
+                'Tumor 1'
+            );
+            const classes = controller
+                .exportGeoJson('all')
+                .features.map(
+                    (feature: any) => feature.properties.classification.name
+                );
+            expect(classes).toEqual([
+                'Grade 1',
+                'Grade 2',
+                'Grade 2',
+                'Gleason pattern 3',
+                'Gleason pattern 4',
+                'Tumor',
+                'Tumor',
+            ]);
+        } finally {
+            resetWsiViewerRuntime();
+        }
     });
 
     it('zooms the slide to an annotation with a margin', () => {
@@ -2105,11 +2173,23 @@ describe('WsiAnnotationController', () => {
             );
             (controller as any).annotations = [
                 (controller as any).fromApi(
-                    apiAnnotation('a', 1, 'Fibrosis 2'),
+                    apiAnnotation(
+                        'a',
+                        1,
+                        'Fibrosis 2',
+                        'Default',
+                        'Fibrosis|#aa0000'
+                    ),
                     'slide1'
                 ),
                 (controller as any).fromApi(
-                    apiAnnotation('b', 1, 'Stroma 1'),
+                    apiAnnotation(
+                        'b',
+                        1,
+                        'Stroma 1',
+                        'Default',
+                        'Stroma|#22c55e'
+                    ),
                     'slide1'
                 ),
             ];

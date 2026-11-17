@@ -247,11 +247,22 @@ const EMPTY_LIST_FILTER: WsiAnnotationListFilter = {
 };
 
 /**
- * The term a label counts under: the label without a trailing number, so
- * the auto-labels "Tumor 1" and "Tumor 2" both count as "Tumor".
+ * The term a label counts under. A viewer auto-label, one of
+ * `autoLabelBases` (a color's name or hex) and a number as `nextAutoLabel`
+ * makes it, counts under its base: "Tumor 1" and "Tumor 2" count as
+ * "Tumor". Any other label, and any `vocabulary` term, is its own term, so
+ * "Grade 1" and "Grade 2" stay apart.
  */
-export function labelTerm(label: string): string {
-    return label.trim().replace(/\s+\d+$/, '') || label.trim();
+export function labelTerm(
+    label: string,
+    autoLabelBases: Iterable<string> = [],
+    vocabulary: string[] = []
+): string {
+    const trimmed = label.trim();
+    if (vocabulary.includes(trimmed)) return trimmed;
+    const match = /^(.*\S)\s+\d+$/.exec(trimmed);
+    if (match && new Set(autoLabelBases).has(match[1])) return match[1];
+    return trimmed;
 }
 
 function countBy<T>(items: T[], key: (item: T) => string): Map<string, number> {
@@ -614,7 +625,9 @@ export class WsiAnnotationController {
         this.shownAnnotations.forEach(annotation => {
             if (!this.isPoint(annotation)) return;
             const layer = annotation.layerName || DEFAULT_LAYER;
-            const label = labelTerm(annotation.body?.[0]?.value || 'Point');
+            const label = this.labelTerm(
+                annotation.body?.[0]?.value || 'Point'
+            );
             const key = `${layer}\u0000${label}`;
             const row = rows.get(key) || {
                 layer,
@@ -631,6 +644,21 @@ export class WsiAnnotationController {
                 a.layer.localeCompare(b.layer) ||
                 a.label.localeCompare(b.label)
         );
+    }
+
+    /** What auto-labels start with: the palette's color names and hexes. */
+    @computed private get autoLabelBases(): Set<string> {
+        const bases = new Set<string>();
+        this.namedColors.forEach(color => {
+            if (color.name.trim()) bases.add(color.name.trim());
+            bases.add(color.hex);
+        });
+        return bases;
+    }
+
+    /** The term `label` counts under on this slide (see `labelTerm`). */
+    labelTerm(label: string): string {
+        return labelTerm(label, this.autoLabelBases, this.labelVocabulary);
     }
 
     /** The configured label terms, trimmed and without duplicates. */
@@ -661,7 +689,9 @@ export class WsiAnnotationController {
         const suggestions = new Set(this.labelVocabulary);
         if (!this.strictLabels) {
             this.annotations
-                .map(annotation => labelTerm(annotation.body?.[0]?.value || ''))
+                .map(annotation =>
+                    this.labelTerm(annotation.body?.[0]?.value || '')
+                )
                 .filter(Boolean)
                 .sort((a, b) => a.localeCompare(b))
                 .forEach(term => suggestions.add(term));
@@ -704,7 +734,7 @@ export class WsiAnnotationController {
             this.pointTally.find(
                 row =>
                     row.layer === this.activeLayer &&
-                    row.label === labelTerm(this.activePointLabel)
+                    row.label === this.labelTerm(this.activePointLabel)
             )?.count || 0
         );
     }
@@ -932,7 +962,7 @@ export class WsiAnnotationController {
     /** Listed annotations per label term (see `labelTerm`). */
     @computed get listedLabelCounts(): Map<string, number> {
         return countBy(this.listedAnnotations, annotation =>
-            labelTerm(annotation.body?.[0]?.value || '(unlabeled)')
+            this.labelTerm(annotation.body?.[0]?.value || '(unlabeled)')
         );
     }
 
@@ -988,7 +1018,7 @@ export class WsiAnnotationController {
                 id: annotation.id,
                 shape,
                 label,
-                classification: labelTerm(label) || layer,
+                classification: this.labelTerm(label) || layer,
                 color: annotation.color || DEFAULT_COLOR,
                 layer,
                 note: annotation.note,
