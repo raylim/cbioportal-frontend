@@ -316,8 +316,84 @@ function readFileText(file: Blob): Promise<string> {
     });
 }
 
-/** Imports save this many annotations at a time. */
-const IMPORT_CONCURRENCY = 4;
+/** Single saves run this many at a time when the service has no batch route. */
+const SINGLE_SAVE_CONCURRENCY = 4;
+/** The most annotations the service's batch route takes in one request. */
+export const BATCH_MAX_ITEMS = 100;
+/** Batch request bodies stay below the service's 4 MiB cap. */
+const BATCH_MAX_BYTES = 3 * 1024 * 1024;
+/** `keepalive` requests may carry 64 KiB in all; stay below it. */
+const KEEPALIVE_MAX_BYTES = 60 * 1024;
+/** Points dropped within this many milliseconds are saved together. */
+export const POINT_SAVE_DELAY_MS = 500;
+
+/** The service's body for creating one annotation. */
+interface WsiCreatePayload {
+    slide_id: string;
+    study_id: string;
+    body: WsiAnnotationApiBody;
+    target: { selector: unknown };
+    visible_to: string[] | null;
+}
+
+/** One annotation's save: the saved annotation, or why it was not saved. */
+export type WsiSaveResult =
+    | { annotation: WsiAnnotation; reason?: undefined }
+    | { annotation?: undefined; reason: string };
+
+/**
+ * Splits items, given each one's serialized size, into consecutive groups
+ * of at most `maxItems` and about `maxBytes`; an item larger than
+ * `maxBytes` goes alone.
+ */
+export function chunkBySize(
+    sizes: number[],
+    maxItems: number,
+    maxBytes: number
+): number[][] {
+    const chunks: number[][] = [];
+    let current: number[] = [];
+    let bytes = 0;
+    sizes.forEach((size, index) => {
+        if (
+            current.length &&
+            (current.length >= maxItems || bytes + size + 1 > maxBytes)
+        ) {
+            chunks.push(current);
+            current = [];
+            bytes = 0;
+        }
+        current.push(index);
+        bytes += size + 1;
+    });
+    if (current.length) chunks.push(current);
+    return chunks;
+}
+
+/**
+ * The batch items a 422 names, by position in the request, with the first
+ * message for each; empty when the refusal names no item.
+ */
+export function batchItemErrors(detail: unknown): Map<number, string> {
+    const errors = new Map<number, string>();
+    if (!Array.isArray(detail)) return errors;
+    detail.forEach(error => {
+        const loc = error?.loc;
+        const at = Array.isArray(loc) ? loc.indexOf('annotations') : -1;
+        const index = at >= 0 ? loc[at + 1] : undefined;
+        if (typeof index === 'number' && !errors.has(index)) {
+            const field = loc
+                .slice(at + 2)
+                .filter((part: unknown) => typeof part === 'string')
+                .filter((part: string) => !/^Annotation/.test(part))
+                .join('.');
+            const message =
+                typeof error.msg === 'string' ? error.msg : 'invalid';
+            errors.set(index, field ? `${field}: ${message}` : message);
+        }
+    });
+    return errors;
+}
 
 /** Pointer travel, in screen pixels, below which a press is a click. */
 const CLICK_TOLERANCE = 5;
@@ -337,6 +413,19 @@ export const DEFAULT_BRUSH_WIDTH_PX = 16;
 
 function isStrokeTool(tool: WsiAnnotationTool): tool is 'freehand' | 'brush' {
     return tool === 'freehand' || tool === 'brush';
+}
+
+/** The first few refused items, e.g. "#3: label: too long; #7: …". */
+function describeFailures(results: WsiSaveResult[], limit = 3): string {
+    const failures = results
+        .map((result, index) =>
+            result.reason ? `#${index + 1}: ${result.reason}` : null
+        )
+        .filter((item): item is string => item !== null);
+    const shown = failures.slice(0, limit).join('; ');
+    return failures.length > limit
+        ? `${shown}; and ${failures.length - limit} more`
+        : shown;
 }
 
 export class WsiAnnotationController {
@@ -398,6 +487,11 @@ export class WsiAnnotationController {
      * /annotations/{id}/review`): unknown until the first review.
      */
     @observable reviewRoute: boolean | null = null;
+    /**
+     * Whether the service has the batch route (`POST /annotations/batch`):
+     * unknown until the first batch save.
+     */
+    @observable batchRoute: boolean | null = null;
     /** Whether new annotations are shared with the study (else private). */
     @observable defaultShared = loadDefaultShared();
     @observable annotationTooltip: {
@@ -442,6 +536,12 @@ export class WsiAnnotationController {
         client: { x: number; y: number };
     } | null = null;
     private polygonPoints: Array<{ x: number; y: number }> = [];
+    /** Dropped points not yet sent, shown already; saved together. */
+    private pointQueue: WsiAnnotation[] = [];
+    private pointTimer: ReturnType<typeof setTimeout> | null = null;
+    /** The point save in flight, which undo waits for. */
+    private pointSave: Promise<void> | null = null;
+    private pageHideCleanup: (() => void) | null = null;
     /** The freehand or brush stroke being drawn, in image pixels. */
     private strokePoints: Array<{ x: number; y: number }> = [];
     private strokeScreenPoints: Array<{ x: number; y: number }> = [];
@@ -922,50 +1022,58 @@ export class WsiAnnotationController {
     }
 
     /**
-     * Creates the previewed annotations, a few at a time. Each keeps its
-     * file's label, class color, layer and note, else the active ones.
+     * Creates the previewed annotations with batch saves (up to
+     * `BATCH_MAX_ITEMS` per request). Each keeps its file's label, class
+     * color, layer and note, else the active ones. The ones saved undo as one
+     * step; the ones refused are reported by feature number.
      */
     @action.bound
     async confirmImport(): Promise<WsiAnnotation[]> {
         const preview = this.importPreview;
         if (!preview || !this.canEdit || !this.slideKey) return [];
         this.importPreview = null;
-        const progress = { total: preview.drafts.length, done: 0, failed: 0 };
-        this.importProgress = { ...progress };
-        const saved: WsiAnnotation[] = [];
-        const queue = preview.drafts.slice();
-        const worker = async () => {
-            while (queue.length) {
-                const draft = queue.shift()!;
-                const annotation = this.draftAnnotation(
-                    draft.svg,
-                    this.importLabel(draft)
-                );
-                if (draft.color) {
-                    annotation.color = draft.color;
-                    annotation.colorName = draft.className || '';
-                }
-                if (draft.layer) annotation.layerName = draft.layer;
-                if (draft.note) annotation.note = draft.note;
-                const result = await this.createAnnotation(annotation, false);
-                if (result) saved.push(result);
-                else progress.failed += 1;
-                progress.done += 1;
-                action(() => {
-                    this.importProgress = { ...progress };
-                })();
+        const total = preview.drafts.length;
+        this.importProgress = { total, done: 0, failed: 0 };
+        const drafts = preview.drafts.map(draft => {
+            const annotation = this.draftAnnotation(
+                draft.svg,
+                this.importLabel(draft)
+            );
+            if (draft.color) {
+                annotation.color = draft.color;
+                annotation.colorName = draft.className || '';
             }
-        };
-        await Promise.all(
-            Array.from({ length: IMPORT_CONCURRENCY }, () => worker())
-        );
+            if (draft.layer) annotation.layerName = draft.layer;
+            if (draft.note) annotation.note = draft.note;
+            return annotation;
+        });
+        const generation = this.generation;
+        const slideKey = this.slideKey;
+        const results = await this.saveAnnotations(drafts, {
+            onProgress: (done, failed) =>
+                action(() => {
+                    this.importProgress = { total, done, failed };
+                })(),
+        });
+        if (generation !== this.generation || slideKey !== this.slideKey) {
+            action(() => {
+                this.importProgress = null;
+            })();
+            return [];
+        }
+        const saved = this.addSaved(results);
         if (saved.length) {
             this.pushUndo({ kind: 'create', ids: saved.map(item => item.id) });
         }
         action(() => {
             this.importProgress = null;
-            if (progress.failed) {
-                this.error = `Imported ${saved.length} of ${progress.total} annotations; ${progress.failed} could not be saved.`;
+            const failed = total - saved.length;
+            if (failed && this.accessIssue === null) {
+                this.error = `Imported ${
+                    saved.length
+                } of ${total} annotations; ${failed} could not be saved (${describeFailures(
+                    results
+                )}).`;
             }
         })();
         return saved;
@@ -1022,6 +1130,7 @@ export class WsiAnnotationController {
      */
     @action.bound
     async undo(): Promise<boolean> {
+        await this.flushPoints();
         if (!this.canUndo) return false;
         const entry = this.undoStack[this.undoStack.length - 1];
         this.undoStack = this.undoStack.slice(0, -1);
@@ -1096,6 +1205,7 @@ export class WsiAnnotationController {
 
     @action.bound
     beginSlide(slideKey: string) {
+        this.flushPointsDetached();
         this.restartRequests();
         this.slideKey = slideKey;
         this.annotations = [];
@@ -1119,7 +1229,11 @@ export class WsiAnnotationController {
      */
     @action.bound
     setContext(apiUrl: string | null | undefined, studyId: string | undefined) {
-        if (apiUrl !== this.apiUrl) this.reviewRoute = null;
+        this.flushPointsDetached();
+        if (apiUrl !== this.apiUrl) {
+            this.reviewRoute = null;
+            this.batchRoute = null;
+        }
         this.apiUrl = apiUrl;
         this.studyId = studyId;
         this.undoStack = [];
@@ -1263,6 +1377,18 @@ export class WsiAnnotationController {
             document.addEventListener('keydown', this.handleKeyDown);
             this.keydownCleanup = () =>
                 document.removeEventListener('keydown', this.handleKeyDown);
+            document.addEventListener(
+                'visibilitychange',
+                this.handleVisibilityChange
+            );
+            window.addEventListener('pagehide', this.handlePageHide);
+            this.pageHideCleanup = () => {
+                document.removeEventListener(
+                    'visibilitychange',
+                    this.handleVisibilityChange
+                );
+                window.removeEventListener('pagehide', this.handlePageHide);
+            };
         }
     }
 
@@ -1292,11 +1418,13 @@ export class WsiAnnotationController {
 
     @action.bound
     detachViewer() {
+        void this.flushPoints();
         this.destroyAnnotorious();
     }
 
     @action.bound
     invalidatePendingRequests() {
+        this.flushPointsDetached();
         this.generation += 1;
         this.loadGeneration += 1;
         this.abortController?.abort();
@@ -1315,6 +1443,7 @@ export class WsiAnnotationController {
     @action.bound
     setTool(tool: WsiAnnotationTool) {
         if (tool !== null && !this.canEdit) return;
+        void this.flushPoints();
         this.activeTool = tool;
         this.customDrawPreview = null;
         this.brushCursor = null;
@@ -1366,6 +1495,7 @@ export class WsiAnnotationController {
 
     @action.bound
     cancelDrawing() {
+        void this.flushPoints();
         this.strokePoints = [];
         this.strokeScreenPoints = [];
         this.activeTool = null;
@@ -1830,18 +1960,7 @@ export class WsiAnnotationController {
             signal: this.abortController?.signal,
         };
         const slideKey = context.slideKey;
-        const payload = {
-            slide_id: slideKey,
-            study_id: this.studyId || '',
-            body: this.toApiBody(annotation),
-            target: { selector: annotation.target.selector },
-            visible_to:
-                annotation.visibleTo !== undefined
-                    ? annotation.visibleTo
-                    : this.defaultShared
-                    ? []
-                    : null,
-        };
+        const payload = this.createPayload(annotation, slideKey);
         try {
             const response = await this.request(
                 '/annotations',
@@ -1910,6 +2029,15 @@ export class WsiAnnotationController {
         if (!this.canEdit) {
             this.applyLayerFilter();
             return null;
+        }
+        const queued = this.pointQueue.findIndex(
+            item => item.id === annotation.id
+        );
+        if (queued >= 0) {
+            // Not sent yet: the save sends the edited point.
+            this.pointQueue[queued] = annotation;
+            this.replaceAnnotation(annotation.id, annotation);
+            return annotation;
         }
         const context = {
             generation: this.generation,
@@ -2003,6 +2131,13 @@ export class WsiAnnotationController {
             this.applyLayerFilter();
             return false;
         }
+        const queued = this.pointQueue.findIndex(item => item.id === id);
+        if (queued >= 0) {
+            // Not sent yet: drop it from the save.
+            this.pointQueue.splice(queued, 1);
+            this.removeAnnotationLocally(id);
+            return true;
+        }
         const context = {
             generation: this.generation,
             slideKey: this.slideKey,
@@ -2055,6 +2190,280 @@ export class WsiAnnotationController {
             await this.reloadCurrentSlide('Unable to delete annotation.');
             return false;
         }
+    }
+
+    /** The service's create body for `annotation` on `slideKey`. */
+    private createPayload(
+        annotation: WsiAnnotation,
+        slideKey: string
+    ): WsiCreatePayload {
+        return {
+            slide_id: slideKey,
+            study_id: this.studyId || '',
+            body: this.toApiBody(annotation),
+            target: { selector: annotation.target.selector },
+            visible_to:
+                annotation.visibleTo !== undefined
+                    ? annotation.visibleTo
+                    : this.defaultShared
+                    ? []
+                    : null,
+        };
+    }
+
+    /**
+     * Saves new annotations with the service's batch route, in requests of at
+     * most `BATCH_MAX_ITEMS` and about 3 MiB (60 KiB with `keepalive`).
+     * Resolves to one result per annotation, in order. Nothing changes in
+     * `annotations`; see `addSaved`.
+     *
+     * The service saves a batch whole or not at all. A 422 that names items
+     * marks those refused and sends the rest again, once; a 413 halves the
+     * request. A service without the route (404 or 405) gets single POSTs
+     * from then on.
+     */
+    private async saveAnnotations(
+        annotations: WsiAnnotation[],
+        options: {
+            keepalive?: boolean;
+            onProgress?: (done: number, failed: number) => void;
+        } = {}
+    ): Promise<WsiSaveResult[]> {
+        const results: WsiSaveResult[] = annotations.map(() => ({
+            reason: 'not saved',
+        }));
+        const slideKey = this.slideKey;
+        if (!slideKey || !this.canEdit) return results;
+        const context = {
+            generation: this.generation,
+            slideKey,
+            signal: this.abortController?.signal,
+        };
+        const payloads = annotations.map(annotation =>
+            this.createPayload(annotation, slideKey)
+        );
+        const sizes = payloads.map(payload => JSON.stringify(payload).length);
+        const chunks = chunkBySize(
+            sizes,
+            BATCH_MAX_ITEMS,
+            options.keepalive ? KEEPALIVE_MAX_BYTES : BATCH_MAX_BYTES
+        );
+        let done = 0;
+        let failed = 0;
+        for (const chunk of chunks) {
+            if (!this.isCurrent(context)) break;
+            await this.saveChunk(chunk, payloads, results, context, {
+                keepalive: !!options.keepalive,
+                retry: true,
+            });
+            done += chunk.length;
+            failed += chunk.filter(index => results[index].reason).length;
+            options.onProgress?.(done, failed);
+        }
+        return results;
+    }
+
+    private async saveChunk(
+        indices: number[],
+        payloads: WsiCreatePayload[],
+        results: WsiSaveResult[],
+        context: {
+            generation: number;
+            slideKey: string;
+            signal?: AbortSignal;
+        },
+        options: { keepalive: boolean; retry: boolean }
+    ): Promise<void> {
+        const fail = (index: number, reason: string) => {
+            results[index] = { reason };
+        };
+        if (this.batchRoute === false) {
+            await this.saveSingles(
+                indices,
+                payloads,
+                results,
+                context,
+                options
+            );
+            return;
+        }
+        let response: Response;
+        try {
+            response = await this.request(
+                '/annotations/batch',
+                {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        annotations: indices.map(index => payloads[index]),
+                    }),
+                    keepalive: options.keepalive || undefined,
+                },
+                context.signal
+            );
+        } catch (_) {
+            indices.forEach(index => fail(index, 'network error'));
+            return;
+        }
+        if (!this.isCurrent(context)) return;
+        if (response.status === 404 || response.status === 405) {
+            action(() => {
+                this.batchRoute = false;
+            })();
+            await this.saveSingles(
+                indices,
+                payloads,
+                results,
+                context,
+                options
+            );
+            return;
+        }
+        if (this.refuseAccess(response)) {
+            indices.forEach(index => fail(index, 'no access'));
+            return;
+        }
+        if (response.status === 413 && indices.length > 1) {
+            const half = Math.ceil(indices.length / 2);
+            for (const part of [indices.slice(0, half), indices.slice(half)]) {
+                await this.saveChunk(part, payloads, results, context, options);
+            }
+            return;
+        }
+        if (response.status === 422) {
+            let detail: unknown;
+            try {
+                detail = (await response.json())?.detail;
+            } catch (_) {
+                detail = undefined;
+            }
+            const errors = batchItemErrors(detail);
+            if (!errors.size || !options.retry) {
+                const reason = typeof detail === 'string' ? detail : 'refused';
+                indices.forEach(index => fail(index, reason));
+                return;
+            }
+            indices.forEach((index, position) => {
+                const reason = errors.get(position);
+                if (reason) fail(index, reason);
+            });
+            const rest = indices.filter((_, position) => !errors.has(position));
+            if (rest.length) {
+                await this.saveChunk(rest, payloads, results, context, {
+                    ...options,
+                    retry: false,
+                });
+            }
+            return;
+        }
+        if (!response.ok) {
+            indices.forEach(index =>
+                fail(index, `save failed (${response.status})`)
+            );
+            return;
+        }
+        let rows: unknown;
+        try {
+            rows = await response.json();
+        } catch (_) {
+            rows = null;
+        }
+        if (!Array.isArray(rows) || rows.length !== indices.length) {
+            indices.forEach(index => fail(index, 'unexpected response'));
+            return;
+        }
+        action(() => {
+            this.batchRoute = true;
+        })();
+        rows.forEach((row, position) => {
+            results[indices[position]] = {
+                annotation: this.fromApi(row, context.slideKey),
+            };
+        });
+    }
+
+    /** Saves annotations one POST each, a few at a time. */
+    private async saveSingles(
+        indices: number[],
+        payloads: WsiCreatePayload[],
+        results: WsiSaveResult[],
+        context: {
+            generation: number;
+            slideKey: string;
+            signal?: AbortSignal;
+        },
+        options: { keepalive: boolean }
+    ): Promise<void> {
+        const queue = indices.slice();
+        const worker = async () => {
+            while (queue.length && this.isCurrent(context)) {
+                const index = queue.shift()!;
+                try {
+                    const response = await this.request(
+                        '/annotations',
+                        {
+                            method: 'POST',
+                            body: JSON.stringify(payloads[index]),
+                            keepalive: options.keepalive || undefined,
+                        },
+                        context.signal
+                    );
+                    if (!this.isCurrent(context)) return;
+                    if (this.refuseAccess(response)) {
+                        results[index] = { reason: 'no access' };
+                    } else if (!response.ok) {
+                        results[index] = {
+                            reason: `save failed (${response.status})`,
+                        };
+                    } else {
+                        results[index] = {
+                            annotation: this.fromApi(
+                                await response.json(),
+                                context.slideKey
+                            ),
+                        };
+                    }
+                } catch (_) {
+                    results[index] = { reason: 'network error' };
+                }
+            }
+        };
+        await Promise.all(
+            Array.from({ length: SINGLE_SAVE_CONCURRENCY }, () => worker())
+        );
+    }
+
+    /**
+     * Puts saved annotations in `annotations`, in place of their `drafts`
+     * when those are shown, and removes the drafts that were not saved;
+     * returns the saved ones. A reload may already have brought one in.
+     */
+    private addSaved(
+        results: WsiSaveResult[],
+        drafts: WsiAnnotation[] = []
+    ): WsiAnnotation[] {
+        const saved = results
+            .map(result => result.annotation)
+            .filter((item): item is WsiAnnotation => !!item);
+        if (!drafts.length && !saved.length) return saved;
+        const draftIds = new Set(drafts.map(draft => draft.id));
+        const savedIds = new Set(saved.map(item => item.id));
+        action(() => {
+            this.synchronizing = true;
+            try {
+                this.annotations = [
+                    ...this.annotations.filter(
+                        item => !draftIds.has(item.id) && !savedIds.has(item.id)
+                    ),
+                    ...saved,
+                ];
+                const shapes = saved.some(item => !this.isPoint(item));
+                this.applyLayerFilter(shapes);
+                if (shapes) this.refreshStyle();
+            } finally {
+                this.synchronizing = false;
+            }
+        })();
+        return saved;
     }
 
     private isCurrent(context: {
@@ -2603,8 +3012,118 @@ export class WsiAnnotationController {
         );
         this.annotations = [...this.annotations, annotation];
         this.applyLayerFilter(false);
-        void this.createAnnotation(annotation);
+        this.pointQueue.push(annotation);
+        if (this.pointTimer) clearTimeout(this.pointTimer);
+        this.pointTimer = null;
+        if (this.pointQueue.length >= BATCH_MAX_ITEMS) {
+            void this.flushPoints();
+        } else {
+            this.pointTimer = setTimeout(
+                () => void this.flushPoints(),
+                POINT_SAVE_DELAY_MS
+            );
+        }
     }
+
+    /**
+     * Saves the dropped points not yet sent, in batch saves; resolves once
+     * they and any save in flight are done. Each saved point undoes on its
+     * own; a refused one is removed and reported.
+     */
+    flushPoints(options: { keepalive?: boolean } = {}): Promise<void> {
+        if (this.pointTimer) clearTimeout(this.pointTimer);
+        this.pointTimer = null;
+        const drafts = this.pointQueue.splice(0);
+        const previous = this.pointSave;
+        if (!drafts.length) return previous || Promise.resolve();
+        const generation = this.generation;
+        const slideKey = this.slideKey;
+        const save = (async () => {
+            const results = await this.saveAnnotations(drafts, options);
+            if (generation !== this.generation || slideKey !== this.slideKey) {
+                await previous;
+                return;
+            }
+            const saved = this.addSaved(results, drafts);
+            saved.forEach(item =>
+                this.pushUndo({ kind: 'create', ids: [item.id] })
+            );
+            const failed = results.filter(result => result.reason);
+            if (failed.length && this.accessIssue === null) {
+                action(() => {
+                    this.error = `${failed.length} point${
+                        failed.length === 1 ? '' : 's'
+                    } could not be saved (${failed[0].reason}).`;
+                })();
+            }
+            await previous;
+        })();
+        const tracked = save.finally(() => {
+            if (this.pointSave === tracked) this.pointSave = null;
+        });
+        this.pointSave = tracked;
+        return tracked;
+    }
+
+    /**
+     * Sends the unsent points before the slide or study changes or the page
+     * goes away: `keepalive`, not cancelled with the slide's requests, and
+     * without waiting for the answer.
+     */
+    private flushPointsDetached() {
+        if (this.pointTimer) clearTimeout(this.pointTimer);
+        this.pointTimer = null;
+        const drafts = this.pointQueue.splice(0);
+        if (!drafts.length || !this.slideKey || !this.canEdit) return;
+        const slideKey = this.slideKey;
+        const payloads = drafts.map(draft =>
+            this.createPayload(draft, slideKey)
+        );
+        const sizes = payloads.map(payload => JSON.stringify(payload).length);
+        chunkBySize(sizes, BATCH_MAX_ITEMS, KEEPALIVE_MAX_BYTES).forEach(
+            chunk => {
+                const send =
+                    this.batchRoute === false
+                        ? chunk.map(index =>
+                              this.request(
+                                  '/annotations',
+                                  {
+                                      method: 'POST',
+                                      body: JSON.stringify(payloads[index]),
+                                      keepalive: true,
+                                  },
+                                  undefined
+                              )
+                          )
+                        : [
+                              this.request(
+                                  '/annotations/batch',
+                                  {
+                                      method: 'POST',
+                                      body: JSON.stringify({
+                                          annotations: chunk.map(
+                                              index => payloads[index]
+                                          ),
+                                      }),
+                                      keepalive: true,
+                                  },
+                                  undefined
+                              ),
+                          ];
+                send.forEach(request => request.catch(() => undefined));
+            }
+        );
+    }
+
+    private readonly handleVisibilityChange = () => {
+        if (document.visibilityState === 'hidden') {
+            void this.flushPoints({ keepalive: true });
+        }
+    };
+
+    private readonly handlePageHide = () => {
+        void this.flushPoints({ keepalive: true });
+    };
 
     private nextAutoLabel(): string {
         const base = this.activeColorName.trim() || this.activeColor;
@@ -2656,6 +3175,8 @@ export class WsiAnnotationController {
         this.pointerCleanup = null;
         this.keydownCleanup?.();
         this.keydownCleanup = null;
+        this.pageHideCleanup?.();
+        this.pageHideCleanup = null;
         this.setCustomPointerEvents(false);
         this.customDrawPreview = null;
         this.brushCursor = null;

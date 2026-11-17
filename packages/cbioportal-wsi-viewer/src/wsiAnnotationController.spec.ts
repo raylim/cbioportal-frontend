@@ -3,7 +3,10 @@
  */
 
 import {
+    batchItemErrors,
+    chunkBySize,
     labelTerm,
+    POINT_SAVE_DELAY_MS,
     pointSelectorSvg,
     WSI_REVIEW_UNSUPPORTED_MESSAGE,
     WsiAnnotationController,
@@ -1681,12 +1684,16 @@ describe('WsiAnnotationController', () => {
             async (_url, init) =>
                 ({
                     ok: true,
-                    json: async () => ({
-                        ...JSON.parse(init!.body as string),
-                        id: `saved-${++saved}`,
-                        version: 1,
-                        created_by: 'user',
-                    }),
+                    status: 201,
+                    json: async () =>
+                        JSON.parse(init!.body as string).annotations.map(
+                            (item: any) => ({
+                                ...item,
+                                id: `saved-${++saved}`,
+                                version: 1,
+                                created_by: 'user',
+                            })
+                        ),
                 } as Response)
         );
         const controller = new WsiAnnotationController(
@@ -1730,10 +1737,13 @@ describe('WsiAnnotationController', () => {
         expect(controller.pointTally).toEqual([
             { layer: 'Counts', label: 'Mitosis', color: '#ef4444', count: 2 },
         ]);
-        await new Promise(resolve => setTimeout(resolve, 0));
-        const bodies = (global.fetch as jest.Mock).mock.calls.map(([, init]) =>
-            JSON.parse(init.body)
-        );
+        // Points dropped close together are saved in one batch request.
+        expect(global.fetch).not.toHaveBeenCalled();
+        await controller.flushPoints();
+        const calls = (global.fetch as jest.Mock).mock.calls;
+        expect(calls).toHaveLength(1);
+        expect(new URL(calls[0][0]).pathname).toBe('/annotations/batch');
+        const bodies = JSON.parse(calls[0][1].body).annotations;
         expect(bodies).toHaveLength(2);
         expect(bodies[0].target.selector).toEqual({
             type: 'SvgSelector',
@@ -2111,12 +2121,16 @@ describe('WsiAnnotationController', () => {
             async (_url, init) =>
                 ({
                     ok: true,
-                    json: async () => ({
-                        ...JSON.parse(init!.body as string),
-                        id: `saved-${++saved}`,
-                        version: 1,
-                        created_by: 'user',
-                    }),
+                    status: 201,
+                    json: async () =>
+                        JSON.parse(init!.body as string).annotations.map(
+                            (item: any) => ({
+                                ...item,
+                                id: `saved-${++saved}`,
+                                version: 1,
+                                created_by: 'user',
+                            })
+                        ),
                 } as Response)
         );
         const controller = new WsiAnnotationController(
@@ -2183,9 +2197,12 @@ describe('WsiAnnotationController', () => {
         expect(controller.undoLabel).toBe('Undo create of 2 annotations');
         expect(controller.importPreview).toBeNull();
         expect(controller.importProgress).toBeNull();
-        const bodies = (global.fetch as jest.Mock).mock.calls.map(([, init]) =>
-            JSON.parse(init.body)
-        );
+        // One batch request for the whole import.
+        const calls = (global.fetch as jest.Mock).mock.calls;
+        expect(calls).toHaveLength(1);
+        expect(new URL(calls[0][0]).pathname).toBe('/annotations/batch');
+        expect(calls[0][1].method).toBe('POST');
+        const bodies = JSON.parse(calls[0][1].body).annotations;
         expect(bodies[0].body).toMatchObject({
             label: 'Tumor',
             layer_name: 'QuPath',
@@ -2201,6 +2218,334 @@ describe('WsiAnnotationController', () => {
         );
         expect(bodies[1].body.layer_name).toBe('Default');
         expect(controller.annotations).toHaveLength(2);
+    });
+
+    describe('batch saves', () => {
+        const pointDraft = (controller: WsiAnnotationController, i: number) =>
+            (controller as any).draftAnnotation(
+                pointSelectorSvg({ x: i, y: i }),
+                `P${i}`
+            );
+        const savedRows = (init: RequestInit, from = 0) =>
+            JSON.parse(init.body as string).annotations.map(
+                (item: any, k: number) => ({
+                    ...item,
+                    id: `saved-${from + k}`,
+                    version: 1,
+                    created_by: 'user',
+                })
+            );
+        const newController = () => {
+            const controller = new WsiAnnotationController(
+                'https://tiles.example',
+                'study1'
+            );
+            (controller as any).slideKey = SLIDE_KEY;
+            return controller;
+        };
+
+        it('splits large saves into requests of at most 100 annotations', async () => {
+            let next = 0;
+            jest.spyOn(global, 'fetch').mockImplementation(
+                async (_url, init) => {
+                    const rows = savedRows(init!, next);
+                    next += rows.length;
+                    return {
+                        ok: true,
+                        status: 201,
+                        json: async () => rows,
+                    } as Response;
+                }
+            );
+            const controller = newController();
+            const drafts = Array.from({ length: 250 }, (_, i) =>
+                pointDraft(controller, i)
+            );
+            const progress: number[] = [];
+            const results = await (controller as any).saveAnnotations(drafts, {
+                onProgress: (done: number) => progress.push(done),
+            });
+            const sizes = (global.fetch as jest.Mock).mock.calls.map(
+                ([, init]) => JSON.parse(init.body).annotations.length
+            );
+            expect(sizes).toEqual([100, 100, 50]);
+            expect(progress).toEqual([100, 200, 250]);
+            expect(results.every((r: any) => r.annotation)).toBe(true);
+            expect(results[249].annotation.id).toBe('saved-249');
+            expect(controller.batchRoute).toBe(true);
+        });
+
+        it('reports the items a 422 names and saves the rest again', async () => {
+            const responses = [
+                {
+                    ok: false,
+                    status: 422,
+                    json: async () => ({
+                        detail: [
+                            {
+                                loc: [
+                                    'body',
+                                    'annotations',
+                                    1,
+                                    'AnnotationIn',
+                                    'body',
+                                    'label',
+                                ],
+                                msg: 'too long',
+                            },
+                        ],
+                    }),
+                },
+            ];
+            jest.spyOn(global, 'fetch').mockImplementation(
+                async (_url, init) =>
+                    (responses.shift() || {
+                        ok: true,
+                        status: 201,
+                        json: async () => savedRows(init!),
+                    }) as Response
+            );
+            const controller = newController();
+            const drafts = [0, 1, 2].map(i => pointDraft(controller, i));
+            const results = await (controller as any).saveAnnotations(drafts);
+
+            expect(results.map((r: any) => r.reason)).toEqual([
+                undefined,
+                'body.label: too long',
+                undefined,
+            ]);
+            const retried = JSON.parse(
+                (global.fetch as jest.Mock).mock.calls[1][1].body
+            ).annotations;
+            expect(retried.map((item: any) => item.body.label)).toEqual([
+                'P0',
+                'P2',
+            ]);
+        });
+
+        it('imports what it can, as one undo step, and names what failed', async () => {
+            jest.spyOn(global, 'fetch').mockImplementation(
+                async (_url, init) => {
+                    const items = JSON.parse(init!.body as string).annotations;
+                    if (items.length === 3) {
+                        return {
+                            ok: false,
+                            status: 422,
+                            json: async () => ({
+                                detail: [
+                                    {
+                                        loc: ['body', 'annotations', 0],
+                                        msg: 'invalid',
+                                    },
+                                ],
+                            }),
+                        } as Response;
+                    }
+                    return {
+                        ok: true,
+                        status: 201,
+                        json: async () => savedRows(init!),
+                    } as Response;
+                }
+            );
+            const controller = newController();
+            controller.importPreview = {
+                fileName: 'cells.geojson',
+                drafts: [0, 1, 2].map(i => ({
+                    kind: 'point' as const,
+                    svg: pointSelectorSvg({ x: i, y: i }),
+                    label: `P${i}`,
+                })),
+                counts: { point: 3, line: 0, polygon: 0 },
+                skipped: [],
+            } as any;
+            const saved = await controller.confirmImport();
+
+            expect(saved).toHaveLength(2);
+            expect(controller.annotations).toHaveLength(2);
+            expect(controller.undoLabel).toBe('Undo create of 2 annotations');
+            expect(controller.error).toBe(
+                'Imported 2 of 3 annotations; 1 could not be saved (#1: invalid).'
+            );
+            (global.fetch as jest.Mock).mockResolvedValue({
+                ok: true,
+                status: 204,
+            } as Response);
+            await controller.undo();
+            expect(controller.annotations).toHaveLength(0);
+        });
+
+        it('falls back to single saves when the service has no batch route', async () => {
+            let next = 0;
+            jest.spyOn(global, 'fetch').mockImplementation(
+                async (url, init) => {
+                    if (new URL(url as string).pathname.endsWith('/batch')) {
+                        return { ok: false, status: 404 } as Response;
+                    }
+                    return {
+                        ok: true,
+                        status: 201,
+                        json: async () => ({
+                            ...JSON.parse(init!.body as string),
+                            id: `single-${next++}`,
+                            version: 1,
+                        }),
+                    } as Response;
+                }
+            );
+            const controller = newController();
+            const drafts = [0, 1, 2].map(i => pointDraft(controller, i));
+            let results = await (controller as any).saveAnnotations(drafts);
+            expect(controller.batchRoute).toBe(false);
+            expect(results.map((r: any) => r.annotation.id).sort()).toEqual([
+                'single-0',
+                'single-1',
+                'single-2',
+            ]);
+            // Later saves go straight to single POSTs.
+            (global.fetch as jest.Mock).mockClear();
+            results = await (controller as any).saveAnnotations(drafts);
+            const paths = (global.fetch as jest.Mock).mock.calls.map(
+                ([url]) => new URL(url).pathname
+            );
+            expect(paths).toEqual([
+                '/annotations',
+                '/annotations',
+                '/annotations',
+            ]);
+        });
+
+        it('saves dropped points after a pause, on tool change and when the page is hidden', async () => {
+            jest.useFakeTimers();
+            try {
+                jest.spyOn(global, 'fetch').mockImplementation(
+                    async (_url, init) =>
+                        ({
+                            ok: true,
+                            status: 201,
+                            json: async () => savedRows(init!),
+                        } as Response)
+                );
+                const controller = newController();
+                (controller as any).createPoint({ x: 1, y: 1 });
+                (controller as any).createPoint({ x: 2, y: 2 });
+                expect(global.fetch).not.toHaveBeenCalled();
+                jest.advanceTimersByTime(POINT_SAVE_DELAY_MS);
+                expect(global.fetch).toHaveBeenCalledTimes(1);
+
+                (controller as any).createPoint({ x: 3, y: 3 });
+                controller.setTool(null);
+                expect(global.fetch).toHaveBeenCalledTimes(2);
+
+                (controller as any).createPoint({ x: 4, y: 4 });
+                (controller as any).handlePageHide();
+                const calls = (global.fetch as jest.Mock).mock.calls;
+                expect(calls).toHaveLength(3);
+                expect(calls[2][1].keepalive).toBe(true);
+            } finally {
+                jest.useRealTimers();
+            }
+        });
+
+        it('sends unsent points before another slide opens, and undo waits for them', async () => {
+            jest.spyOn(global, 'fetch').mockImplementation(
+                async (_url, init) =>
+                    ({
+                        ok: true,
+                        status: 201,
+                        json: async () =>
+                            init?.method === 'POST' ? savedRows(init!) : [],
+                    } as Response)
+            );
+            const controller = newController();
+            (controller as any).createPoint({ x: 1, y: 1 });
+            await controller.undo();
+            // The point was saved, then its creation undone.
+            const methods = (global.fetch as jest.Mock).mock.calls.map(
+                ([, init]) => init.method || 'GET'
+            );
+            expect(methods).toEqual(['POST', 'DELETE']);
+
+            (global.fetch as jest.Mock).mockClear();
+            (controller as any).createPoint({ x: 2, y: 2 });
+            controller.beginSlide('ba9876543210');
+            const [url, init] = (global.fetch as jest.Mock).mock.calls[0];
+            expect(new URL(url).pathname).toBe('/annotations/batch');
+            expect(init.keepalive).toBe(true);
+            expect(init.signal).toBeUndefined();
+            expect(JSON.parse(init.body).annotations[0].slide_id).toBe(
+                SLIDE_KEY
+            );
+        });
+
+        it('edits and deletes an unsent point without a request', async () => {
+            jest.spyOn(global, 'fetch').mockImplementation(
+                async (_url, init) =>
+                    ({
+                        ok: true,
+                        status: 201,
+                        json: async () => savedRows(init!),
+                    } as Response)
+            );
+            const controller = newController();
+            (controller as any).createPoint({ x: 1, y: 1 });
+            (controller as any).createPoint({ x: 2, y: 2 });
+            const [first, second] = controller.annotations;
+            await controller.renameAnnotation(first.id, 'Renamed');
+            await controller.removeAnnotation(second.id);
+            expect(global.fetch).not.toHaveBeenCalled();
+            await controller.flushPoints();
+            const sent = JSON.parse(
+                (global.fetch as jest.Mock).mock.calls[0][1].body
+            ).annotations;
+            expect(sent.map((item: any) => item.body.label)).toEqual([
+                'Renamed',
+            ]);
+            expect(controller.annotations.map(item => item.id)).toEqual([
+                'saved-0',
+            ]);
+        });
+    });
+
+    describe('chunkBySize and batchItemErrors', () => {
+        it('groups by count and size, an oversized item alone', () => {
+            expect(chunkBySize([1, 1, 1, 1, 1], 2, 100)).toEqual([
+                [0, 1],
+                [2, 3],
+                [4],
+            ]);
+            expect(chunkBySize([40, 40, 200, 10], 10, 100)).toEqual([
+                [0, 1],
+                [2],
+                [3],
+            ]);
+            expect(chunkBySize([], 10, 100)).toEqual([]);
+        });
+
+        it('reads per-item errors from a 422 detail', () => {
+            expect(
+                Array.from(
+                    batchItemErrors([
+                        {
+                            loc: ['body', 'annotations', 2, 'slide_id'],
+                            msg: 'bad',
+                        },
+                        {
+                            loc: ['body', 'annotations', 2, 'body'],
+                            msg: 'second',
+                        },
+                        { loc: ['body', 'annotations', 0], msg: 'missing' },
+                        { loc: ['body', 'slide_id'], msg: 'scope' },
+                    ]).entries()
+                )
+            ).toEqual([
+                [2, 'slide_id: bad'],
+                [0, 'missing'],
+            ]);
+            expect(batchItemErrors('A batch must contain one study').size).toBe(
+                0
+            );
+        });
     });
 
     it('reports a file that is not JSON', async () => {

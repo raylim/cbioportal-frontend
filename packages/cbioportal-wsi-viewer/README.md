@@ -99,6 +99,7 @@ annotations: {
 | --- | --- |
 | `GET {apiUrl}/annotations?slide_id=…&studyId=…` | The slide's annotations in the authorized study |
 | `POST {apiUrl}/annotations?studyId=…` | Create one; the body names `slide_id` and `study_id` |
+| `POST {apiUrl}/annotations/batch?studyId=…` | Create 1–100 in one request, `{annotations: [...]}`; saved all or none |
 | `PUT {apiUrl}/annotations/{id}?studyId=…` | Update one, with its `version` (creator only) |
 | `POST {apiUrl}/annotations/{id}/review?studyId=…` | Accept or reject an AI annotation, with its `version` (any user of the study) |
 | `DELETE {apiUrl}/annotations/{id}?studyId=…` | Delete one (creator only) |
@@ -161,7 +162,7 @@ The list and the click tooltip show each annotation's size: the length of a line
 
 #### Points
 
-The **Point** tool drops a point at each click (a drag still pans the slide) and stays on until Esc. A point is stored as an `SvgSelector` holding a circle of radius 0, in level-0 image pixels: `<svg><circle cx="…" cy="…" r="0" /></svg>`. Points are labelled with the active color's name, so counting mitoses means picking a "Mitosis" color and clicking. The viewer draws points itself, as fixed-size markers on one canvas redrawn per frame, because Annotorious has no point shape; that keeps hundreds of points fast. A point shows and counts at once, before its save returns. The toolbar shows the count for the active layer and label while the tool is on, and the Annotations section has a **Point counts** table per label and layer. Clicking a marker shows its tooltip.
+The **Point** tool drops a point at each click (a drag still pans the slide) and stays on until Esc. A point is stored as an `SvgSelector` holding a circle of radius 0, in level-0 image pixels: `<svg><circle cx="…" cy="…" r="0" /></svg>`. Points are labelled with the active color's name, so counting mitoses means picking a "Mitosis" color and clicking. The viewer draws points itself, as fixed-size markers on one canvas redrawn per frame, because Annotorious has no point shape; that keeps hundreds of points fast. A point shows and counts at once, before it is saved. Points are saved together: half a second after the last click, when the tool changes, and when the page is hidden, in batch requests of up to 100 (see Batch saves). Each saved point still undoes on its own, and undo first waits for unsent points. A point not yet sent can be relabelled or deleted without a request. Points still unsent when another slide or study opens, or the page unloads, are sent with `keepalive`. The toolbar shows the count for the active layer and label while the tool is on, and the Annotations section has a **Point counts** table per label and layer. Clicking a marker shows its tooltip.
 
 #### Freehand and brush
 
@@ -190,7 +191,16 @@ The Annotations section exports the slide's annotations, all of them or only tho
 
 The collection's `wsi` member names the slide by its opaque slide key and gives the mpp. Exports never contain image ids, sealed sources or object keys, nor creators or provenance details.
 
-**Import…** reads a GeoJSON `FeatureCollection`, `Feature` or array of features, such as a QuPath export, and validates it before anything is saved: points, lines and polygons (and their multi- forms, split into one annotation each) with finite coordinates inside the slide and at most 5,000 vertices are kept; a polygon's holes are dropped; anything else is skipped with a reason. At most 2,000 annotations are imported at once. A preview shows how many points, lines and polygons will be created and what was skipped; **Create** then saves them, four requests at a time, with the file's name or class as the label, its class color, layer and note, else the active ones. With a strict vocabulary, features whose label is not a term are skipped.
+**Import…** reads a GeoJSON `FeatureCollection`, `Feature` or array of features, such as a QuPath export, and validates it before anything is saved: points, lines and polygons (and their multi- forms, split into one annotation each) with finite coordinates inside the slide and at most 5,000 vertices are kept; a polygon's holes are dropped; anything else is skipped with a reason. At most 2,000 annotations are imported at once. A preview shows how many points, lines and polygons will be created and what was skipped; **Create** then saves them in batch requests (see Batch saves), with the file's name or class as the label, its class color, layer and note, else the active ones; the annotations saved undo as one step. If some are refused, the rest are still created and the message names the refused ones by their number in the preview and the service's reason. With a strict vocabulary, features whose label is not a term are skipped.
+
+#### Batch saves
+
+Imports and dropped points are created with `POST /annotations/batch`, at most 100 annotations and about 3 MiB per request (the service caps bodies at 4 MiB; `keepalive` requests at 60 KiB). The service saves a request whole or not at all and returns the saved annotations in request order.
+
+- A 422 that names items (its `loc` gives each item's index) marks those as refused, with the service's message, and sends the rest once more.
+- A 413 splits the request in two.
+- Any other failure marks the request's annotations as not saved.
+- A 404 or 405 means the service has no batch route: that save and later ones in the session use one `POST /annotations` each, four at a time.
 
 The viewer stores the selected slide and viewport in the URL hash (`#wsi:slide=…&x=…&y=…&z=…`) so a view can be shared.
 

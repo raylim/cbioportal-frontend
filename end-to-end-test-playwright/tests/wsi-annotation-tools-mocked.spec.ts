@@ -19,10 +19,11 @@ const USER = 'e2e-user';
 const MACHINE_SOURCES = ['agent', 'assistant', 'ai', 'model', 'precomputed'];
 
 /**
- * The annotation service, kept in memory: creates get an id and version 1;
- * updates and deletes are creator-only and check the version; any user may
- * review a machine-made annotation, and a rejected one is kept but not
- * listed. Returns the rows and the writes it received.
+ * The annotation service, kept in memory: creates (one, or a batch) get an
+ * id and version 1; updates and deletes are creator-only and check the
+ * version; any user may review a machine-made annotation, and a rejected one
+ * is kept but not listed. A batch item labelled "refuse" is refused with a
+ * 422 naming it. Returns the rows and the writes it received.
  */
 async function routeAnnotationService(page: Page, seed: any[] = []) {
     const rows = new Map<string, any>(seed.map(row => [row.id, row]));
@@ -68,6 +69,22 @@ async function routeAnnotationService(page: Page, seed: any[] = []) {
                     row => row.body?.provenance?.review_status !== 'rejected'
                 )
             );
+        }
+        if (method === 'POST' && id === 'batch') {
+            const refused = body.annotations
+                .map((item: any, index: number) =>
+                    item.body.label === 'refuse' ? index : -1
+                )
+                .filter((index: number) => index >= 0);
+            if (refused.length) {
+                return json(422, {
+                    detail: refused.map((index: number) => ({
+                        loc: ['body', 'annotations', index, 'body', 'label'],
+                        msg: 'label is not allowed',
+                    })),
+                });
+            }
+            return json(201, body.annotations.map(create));
         }
         if (method === 'POST' && !id) return json(201, create(body));
         const row = rows.get(id);
@@ -290,11 +307,15 @@ if (process.env.PW_SUITE === 'wsi') {
                 page.getByTestId('annotation-point-tally-Default-Default')
             ).toContainText('3');
             await expect.poll(() => service.rows.size).toBe(4);
-            const points = service.writes
-                .filter(write => write.method === 'POST')
-                .slice(1);
-            for (const write of points) {
-                expect(write.body.target.selector.value).toMatch(
+            // The three points were saved together in one batch request.
+            const batches = service.writes.filter(
+                write => write.path === '/wsi/annotations/batch'
+            );
+            expect(batches).toHaveLength(1);
+            expect(batches[0].body.annotations).toHaveLength(3);
+            for (const point of batches[0].body.annotations) {
+                expect(point.slide_id).toBe(SLIDE_KEY);
+                expect(point.target.selector.value).toMatch(
                     /^<svg><circle cx="[\d.]+" cy="[\d.]+" r="0" \/><\/svg>$/
                 );
             }
@@ -494,6 +515,86 @@ if (process.env.PW_SUITE === 'wsi') {
                 .poll(cursorDiameter, { timeout: 10_000 })
                 .toBeGreaterThan(before * 1.5);
             expect(await stroke()).toBeCloseTo(100, -1);
+        });
+
+        test('imports GeoJSON in one batch request and reports refused features', async ({
+            page,
+        }) => {
+            await openAnnotatedSlide(page);
+            const service = await routeAnnotationService(page);
+            await gotoSlide(page);
+
+            const feature = (label: string, x: number) => ({
+                type: 'Feature',
+                geometry: { type: 'Point', coordinates: [x, 100] },
+                properties: { name: label },
+            });
+            await page.getByTestId('annotation-import-file').setInputFiles({
+                name: 'cells.geojson',
+                mimeType: 'application/geo+json',
+                buffer: Buffer.from(
+                    JSON.stringify({
+                        type: 'FeatureCollection',
+                        features: [
+                            feature('Mitosis', 50),
+                            feature('refuse', 100),
+                            feature('Mitosis', 150),
+                            {
+                                type: 'Feature',
+                                geometry: {
+                                    type: 'Polygon',
+                                    coordinates: [
+                                        [
+                                            [200, 200],
+                                            [260, 200],
+                                            [260, 260],
+                                            [200, 200],
+                                        ],
+                                    ],
+                                },
+                                properties: { name: 'Tumor' },
+                            },
+                        ],
+                    })
+                ),
+            });
+            await expect(
+                page.getByTestId('annotation-import-preview')
+            ).toBeVisible();
+            await page.getByTestId('annotation-import-confirm').click();
+            await expect(
+                page.getByRole('alert').filter({ hasText: 'Imported' })
+            ).toContainText(
+                'Imported 3 of 4 annotations; 1 could not be saved (#2: body.label: label is not allowed).',
+                { timeout: 15_000 }
+            );
+            await expect.poll(() => service.rows.size).toBe(3);
+
+            // One batch with all four, then the three the service accepted.
+            const batches = service.writes.filter(
+                write => write.path === '/wsi/annotations/batch'
+            );
+            expect(
+                batches.map(write =>
+                    write.body.annotations.map((item: any) => item.body.label)
+                )
+            ).toEqual([
+                ['Mitosis', 'refuse', 'Mitosis', 'Tumor'],
+                ['Mitosis', 'Mitosis', 'Tumor'],
+            ]);
+            expect(
+                service.writes.filter(
+                    write => write.path === '/wsi/annotations'
+                )
+            ).toHaveLength(0);
+
+            // The import undoes as one step.
+            await expect(page.getByTestId('annotation-undo')).toHaveAttribute(
+                'title',
+                /Undo create of 3 annotations/
+            );
+            await page.getByTestId('annotation-undo').click();
+            await expect.poll(() => service.rows.size).toBe(0);
         });
     });
 }
