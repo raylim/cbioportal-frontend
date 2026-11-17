@@ -2317,7 +2317,12 @@ export class WsiAnnotationController {
         const fail = (index: number, reason: string) => {
             results[index] = { reason };
         };
-        if (this.batchRoute === false) {
+        // A `keepalive` save may be the page's last request, with no chance
+        // to fall back on a 404: it uses the batch route only when known.
+        if (
+            this.batchRoute === false ||
+            (options.keepalive && this.batchRoute !== true)
+        ) {
             await this.saveSingles(
                 indices,
                 payloads,
@@ -2421,7 +2426,10 @@ export class WsiAnnotationController {
         });
     }
 
-    /** Saves annotations one POST each, a few at a time. */
+    /**
+     * Saves annotations one POST each, a few at a time; with `keepalive`
+     * (the page may be going away), all at once.
+     */
     private async saveSingles(
         indices: number[],
         payloads: WsiCreatePayload[],
@@ -2467,9 +2475,10 @@ export class WsiAnnotationController {
                 }
             }
         };
-        await Promise.all(
-            Array.from({ length: SINGLE_SAVE_CONCURRENCY }, () => worker())
-        );
+        const workers = options.keepalive
+            ? indices.length
+            : SINGLE_SAVE_CONCURRENCY;
+        await Promise.all(Array.from({ length: workers }, () => worker()));
     }
 
     /**
@@ -3132,7 +3141,9 @@ export class WsiAnnotationController {
     /**
      * Sends the unsent points before the slide or study changes or the page
      * goes away: `keepalive`, not cancelled with the slide's requests, and
-     * without waiting for the answer.
+     * without waiting for the answer. The batch route is used only when it
+     * is known to exist; otherwise every point gets its own POST, all sent
+     * at once, since no answer is read to fall back on.
      */
     private flushPointsDetached() {
         if (this.pointTimer) clearTimeout(this.pointTimer);
@@ -3147,7 +3158,7 @@ export class WsiAnnotationController {
         chunkBySize(sizes, BATCH_MAX_ITEMS, KEEPALIVE_MAX_BYTES).forEach(
             chunk => {
                 const send =
-                    this.batchRoute === false
+                    this.batchRoute !== true
                         ? chunk.map(index =>
                               this.request(
                                   '/annotations',

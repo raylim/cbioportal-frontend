@@ -2590,6 +2590,65 @@ describe('WsiAnnotationController', () => {
             );
         });
 
+        it.each([
+            ['unknown', null],
+            ['missing', false],
+        ])(
+            'sends unsent points as single POSTs, all at once, before another slide opens when the batch route is %s',
+            (_name, route) => {
+                // A service without the batch route: a batch would be lost.
+                jest.spyOn(global, 'fetch').mockImplementation(
+                    async (url, init) =>
+                        new URL(String(url)).pathname.endsWith('/batch')
+                            ? ({ ok: false, status: 404 } as Response)
+                            : ({
+                                  ok: true,
+                                  status: 201,
+                                  json: async () => [],
+                              } as Response)
+                );
+                const controller = newController();
+                controller.batchRoute = route as boolean | null;
+                for (let i = 0; i < 6; i++) {
+                    (controller as any).createPoint({ x: i, y: i });
+                }
+                controller.beginSlide('ba9876543210');
+
+                const posts = (global.fetch as jest.Mock).mock.calls.filter(
+                    ([, init]) => init?.method === 'POST'
+                );
+                expect(posts).toHaveLength(6);
+                posts.forEach(([url, init]) => {
+                    expect(new URL(url).pathname).toBe('/annotations');
+                    expect(init.keepalive).toBe(true);
+                    expect(init.signal).toBeUndefined();
+                    expect(JSON.parse(init.body).slide_id).toBe(SLIDE_KEY);
+                });
+            }
+        );
+
+        it('sends every unsent point at once when the page hides and the batch route is unknown', async () => {
+            // Answers never come: the page is gone.
+            jest.spyOn(global, 'fetch').mockImplementation(
+                () => new Promise<Response>(() => undefined)
+            );
+            const controller = newController();
+            expect(controller.batchRoute).toBeNull();
+            for (let i = 0; i < 10; i++) {
+                (controller as any).createPoint({ x: i, y: i });
+            }
+            (controller as any).handlePageHide();
+            await Promise.resolve();
+            await Promise.resolve();
+
+            const calls = (global.fetch as jest.Mock).mock.calls;
+            expect(calls).toHaveLength(10);
+            calls.forEach(([url, init]) => {
+                expect(new URL(url).pathname).toBe('/annotations');
+                expect(init.keepalive).toBe(true);
+            });
+        });
+
         it('applies an edit or delete made during a point save to the saved point', async () => {
             jest.useFakeTimers();
             try {
