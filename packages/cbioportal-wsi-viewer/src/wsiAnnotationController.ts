@@ -306,6 +306,14 @@ export type WsiUndoEntry =
 export const WSI_REVIEW_UNSUPPORTED_MESSAGE =
     "This annotation service cannot record reviews: only an AI annotation's creator can accept it or reject it, and Reject deletes it.";
 
+/** Shown after a creator's accept or reject without the review route. */
+export const WSI_REVIEW_FALLBACK_NOTICE = {
+    accept:
+        'Accepted. This annotation service cannot record reviews, so the acceptance was saved as an edit.',
+    reject:
+        'Rejected. This annotation service cannot record reviews, so the annotation was deleted.',
+} as const;
+
 /** How many changes undo remembers. */
 const MAX_UNDO = 50;
 
@@ -443,6 +451,8 @@ export class WsiAnnotationController {
     @observable annotations: WsiAnnotation[] = [];
     @observable loading = false;
     @observable error: string | null = null;
+    /** An informational note, e.g. how a review was recorded. */
+    @observable notice: string | null = null;
     /**
      * Set when the service refused this study (signed out, or no access).
      * Editing is then off until the slide or study changes.
@@ -1309,6 +1319,7 @@ export class WsiAnnotationController {
         this.importPreview = null;
         this.importError = null;
         this.error = null;
+        this.notice = null;
         this.accessIssue = null;
         this.pointsLeftUnsaved = leftUnsaved;
         this.loading = Boolean(this.apiUrl);
@@ -1337,6 +1348,7 @@ export class WsiAnnotationController {
         this.cancelDrawing();
         this.annotations = [];
         this.error = null;
+        this.notice = null;
         this.accessIssue = null;
         this.pointsLeftUnsaved = leftUnsaved;
         this.annotationTooltip = null;
@@ -1789,8 +1801,10 @@ export class WsiAnnotationController {
      * and shows as accepted; rejected, the service keeps it for its audit
      * trail and the viewer stops showing it. Reviews are not undone by Undo.
      *
-     * A service without the route (404 or 405 not about the annotation)
-     * falls back to the creator-only update (accept) and delete (reject).
+     * A service without the route falls back to the creator-only update
+     * (accept) and delete (reject). The route is missing on a 405, or on a
+     * 404 whose JSON `detail` is the framework's "Not Found"; any other 404
+     * (a proxy's page, or the annotation gone) does not decide it.
      */
     @action.bound
     async reviewAnnotation(
@@ -1820,9 +1834,13 @@ export class WsiAnnotationController {
                 context.signal
             );
             if (!this.isCurrent(context)) return false;
+            const detail =
+                response.status === 404
+                    ? await this.errorDetail(response)
+                    : undefined;
             if (
-                (response.status === 404 || response.status === 405) &&
-                !(await this.isMissingAnnotation(response))
+                response.status === 405 ||
+                (response.status === 404 && detail === 'Not Found')
             ) {
                 action(() => {
                     this.reviewRoute = false;
@@ -1833,7 +1851,9 @@ export class WsiAnnotationController {
             if (this.refuseAccess(response)) return false;
             if (response.status === 404) {
                 await this.reloadCurrentSlide(
-                    'The annotation was deleted elsewhere; reloaded latest data.'
+                    typeof detail === 'string' && /annotation/i.test(detail)
+                        ? 'The annotation was deleted elsewhere; reloaded latest data.'
+                        : 'Unable to save the review.'
                 );
                 return false;
             }
@@ -1869,22 +1889,20 @@ export class WsiAnnotationController {
         }
     }
 
-    /** Whether a 404 says the annotation is missing, not the route. */
-    private async isMissingAnnotation(response: Response): Promise<boolean> {
-        if (response.status !== 404 || typeof response.clone !== 'function') {
-            return false;
-        }
+    /** The JSON `detail` of an error response; undefined if it has none. */
+    private async errorDetail(response: Response): Promise<unknown> {
+        if (typeof response.clone !== 'function') return undefined;
         try {
-            const detail = (await response.clone().json())?.detail;
-            return typeof detail === 'string' && /annotation/i.test(detail);
+            return (await response.clone().json())?.detail;
         } catch (_) {
-            return false;
+            return undefined;
         }
     }
 
     /**
      * A review against a service without the review route: its creator
-     * accepts with a versioned update and rejects by deleting.
+     * accepts with a versioned update and rejects by deleting. Like a
+     * review, neither is recorded for undo.
      */
     private async reviewWithoutRoute(
         annotation: WsiAnnotation,
@@ -1898,15 +1916,25 @@ export class WsiAnnotationController {
         }
         const done =
             decision === 'accept'
-                ? !!(await this.updateAnnotation({
-                      ...annotation,
-                      provenance: acceptedProvenance(annotation.provenance),
-                  }))
-                : await this.deleteAnnotation(annotation.id);
-        action(() => {
-            this.error = WSI_REVIEW_UNSUPPORTED_MESSAGE;
-        })();
+                ? !!(await this.updateAnnotation(
+                      {
+                          ...annotation,
+                          provenance: acceptedProvenance(annotation.provenance),
+                      },
+                      false
+                  ))
+                : await this.deleteAnnotation(annotation.id, false);
+        if (done) {
+            action(() => {
+                this.notice = WSI_REVIEW_FALLBACK_NOTICE[decision];
+            })();
+        }
         return done;
+    }
+
+    @action.bound
+    dismissNotice() {
+        this.notice = null;
     }
 
     @action.bound

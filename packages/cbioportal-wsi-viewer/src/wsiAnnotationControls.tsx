@@ -825,6 +825,25 @@ export const WsiAnnotationPanel = observer(
                         {controller.error}
                     </div>
                 )}
+                {controller.notice && (
+                    <div
+                        role="status"
+                        data-testid="annotation-notice"
+                        style={{
+                            color: colors.text,
+                            fontSize: 11,
+                            marginBottom: 4,
+                        }}
+                    >
+                        {controller.notice}{' '}
+                        <button
+                            onClick={controller.dismissNotice}
+                            style={transferButtonStyle()}
+                        >
+                            Dismiss
+                        </button>
+                    </div>
+                )}
                 <UnsavedPointsNotice controller={controller} />
                 {(controller.unreviewedAiCount > 0 ||
                     controller.hideUnreviewedAi) && (

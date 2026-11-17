@@ -8,6 +8,7 @@ import {
     labelTerm,
     POINT_SAVE_DELAY_MS,
     pointSelectorSvg,
+    WSI_REVIEW_FALLBACK_NOTICE,
     WSI_REVIEW_UNSUPPORTED_MESSAGE,
     WsiAnnotationController,
 } from './wsiAnnotationController';
@@ -1289,7 +1290,10 @@ describe('WsiAnnotationController', () => {
             source: 'precomputed',
             review_status: 'accepted',
         });
-        expect(creator.error).toBe(WSI_REVIEW_UNSUPPORTED_MESSAGE);
+        // Done: a note on how it was recorded, not an error, and not undoable.
+        expect(creator.error).toBeNull();
+        expect(creator.notice).toBe(WSI_REVIEW_FALLBACK_NOTICE.accept);
+        expect(creator.undoStack).toEqual([]);
 
         await creator.rejectAnnotation('ai-2');
         expect(calls.map(([, init]) => init.method)).toEqual([
@@ -1299,6 +1303,56 @@ describe('WsiAnnotationController', () => {
         ]);
         expect(new URL(calls[2][0]).pathname).toBe('/annotations/ai-2');
         expect(creator.annotations.map(item => item.id)).not.toContain('ai-2');
+        expect(creator.error).toBeNull();
+        expect(creator.notice).toBe(WSI_REVIEW_FALLBACK_NOTICE.reject);
+        expect(creator.undoStack).toEqual([]);
+    });
+
+    it('falls back without a review route when the service answers 405', async () => {
+        jest.spyOn(global, 'fetch').mockImplementation(async (_url, init) => {
+            if (init?.method === 'DELETE') {
+                return { ok: true, status: 204 } as Response;
+            }
+            return { ok: false, status: 405 } as Response;
+        });
+        const creator = reviewController('loader');
+        expect(await creator.rejectAnnotation('ai-1')).toBeUndefined();
+        expect(creator.reviewRoute).toBe(false);
+        const methods = (global.fetch as jest.Mock).mock.calls.map(
+            ([, init]) => init.method
+        );
+        expect(methods).toEqual(['POST', 'DELETE']);
+        expect(creator.annotations.map(item => item.id)).not.toContain('ai-1');
+        expect(creator.notice).toBe(WSI_REVIEW_FALLBACK_NOTICE.reject);
+    });
+
+    it("does not decide the review route from a 404 that is not the service's JSON", async () => {
+        const responses: any[] = [
+            {
+                ok: false,
+                status: 404,
+                clone() {
+                    return this;
+                },
+                json: async () => {
+                    throw new SyntaxError('Unexpected token <');
+                },
+            },
+            { ok: true, json: async () => [] },
+        ];
+        jest.spyOn(global, 'fetch').mockImplementation(
+            async () => responses.shift() as Response
+        );
+        const controller = reviewController('loader');
+        await controller.acceptAnnotation('ai-1');
+        expect(controller.reviewRoute).toBeNull();
+        expect(controller.error).toBe('Unable to save the review.');
+        // No fallback write was sent.
+        expect(
+            (global.fetch as jest.Mock).mock.calls.map(
+                ([, init]) => init?.method || 'GET'
+            )
+        ).toEqual(['POST', 'GET']);
     });
 
     it('reloads when the reviewed annotation is gone or changed', async () => {
