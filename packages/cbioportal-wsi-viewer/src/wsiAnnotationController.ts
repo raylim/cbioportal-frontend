@@ -1,6 +1,7 @@
 import { action, computed, makeObservable, observable } from 'mobx';
 import { WsiAnnotation } from './wsiViewerTypes';
 import {
+    brushWidthInImagePixels,
     formatMeasurement,
     measureShape,
     normalizeSvgSelector,
@@ -324,8 +325,15 @@ const CLICK_TOLERANCE = 5;
 const STROKE_SAMPLE_SPACING = 2;
 /** Douglas–Peucker tolerance for freehand and brush strokes, screen pixels. */
 const STROKE_SIMPLIFY_TOLERANCE = 1.5;
-/** Brush widths offered, in screen pixels at the zoom the stroke is drawn. */
-export const BRUSH_WIDTHS = [8, 16, 32, 64];
+/** Brush widths offered on a slide with a scale, in µm of tissue. */
+export const BRUSH_WIDTHS_UM = [10, 25, 50, 100, 250, 500];
+export const DEFAULT_BRUSH_WIDTH_UM = 50;
+/**
+ * Brush widths offered on a slide without a scale, in screen pixels at the
+ * zoom the stroke is drawn.
+ */
+export const BRUSH_WIDTHS_PX = [8, 16, 32, 64];
+export const DEFAULT_BRUSH_WIDTH_PX = 16;
 
 function isStrokeTool(tool: WsiAnnotationTool): tool is 'freehand' | 'brush' {
     return tool === 'freehand' || tool === 'brush';
@@ -366,8 +374,19 @@ export class WsiAnnotationController {
         failed: number;
     } | null = null;
     @observable importError: string | null = null;
-    /** Brush width in screen pixels. */
-    @observable brushWidth = BRUSH_WIDTHS[1];
+    /** Brush width in µm, used when the slide has a scale (`mpp`). */
+    @observable brushWidthUm = DEFAULT_BRUSH_WIDTH_UM;
+    /** Brush width in screen pixels, used when the slide has no scale. */
+    @observable brushWidthPx = DEFAULT_BRUSH_WIDTH_PX;
+    /**
+     * The brush outline under the pointer while the brush is on, in screen
+     * pixels: its centre and its diameter at the current zoom.
+     */
+    @observable.ref brushCursor: {
+        x: number;
+        y: number;
+        diameter: number;
+    } | null = null;
     /**
      * The signed-in user as the annotation service names creators, when the
      * host knows it. Unknown: every annotation offers edit and delete, and
@@ -397,6 +416,8 @@ export class WsiAnnotationController {
         start: { x: number; y: number };
         current: { x: number; y: number };
         points?: Array<{ x: number; y: number }>;
+        /** A brush stroke's width on screen, in pixels. */
+        strokeWidth?: number;
         /** The start and current points in image pixels, for measuring. */
         imageStart?: { x: number; y: number };
         imageCurrent?: { x: number; y: number };
@@ -1296,6 +1317,7 @@ export class WsiAnnotationController {
         if (tool !== null && !this.canEdit) return;
         this.activeTool = tool;
         this.customDrawPreview = null;
+        this.brushCursor = null;
         this.pointerDown = null;
         this.strokePoints = [];
         this.strokeScreenPoints = [];
@@ -1309,9 +1331,37 @@ export class WsiAnnotationController {
         this.setCustomPointerEvents(pointerDrawing);
     }
 
+    /** Whether the brush width is in µm (the slide has a scale). */
+    @computed get brushInMicrons(): boolean {
+        return !!this.mpp;
+    }
+
+    /** The brush width in its unit: µm, or screen pixels without a scale. */
+    @computed get brushWidth(): number {
+        return this.brushInMicrons ? this.brushWidthUm : this.brushWidthPx;
+    }
+
+    /** Sets the brush width in its current unit (see `brushWidth`). */
     @action.bound
     setBrushWidth(width: number) {
-        if (width > 0) this.brushWidth = width;
+        if (!(width > 0)) return;
+        if (this.brushInMicrons) this.brushWidthUm = width;
+        else this.brushWidthPx = width;
+    }
+
+    /** The brush width in image pixels, with `imagePerScreen` at this zoom. */
+    private brushImageWidth(imagePerScreen: number): number {
+        return brushWidthInImagePixels(
+            { microns: this.brushWidthUm, screenPixels: this.brushWidthPx },
+            this.mpp,
+            imagePerScreen
+        );
+    }
+
+    /** The brush width on screen at the current zoom, in pixels. */
+    private brushScreenWidth(): number {
+        const imagePerScreen = this.imagePixelsPerScreenPixel();
+        return this.brushImageWidth(imagePerScreen) / imagePerScreen;
     }
 
     @action.bound
@@ -1319,6 +1369,7 @@ export class WsiAnnotationController {
         this.strokePoints = [];
         this.strokeScreenPoints = [];
         this.activeTool = null;
+        this.brushCursor = null;
         this.annotorious?.cancelDrawing?.();
         this.annotorious?.setDrawingEnabled?.(false);
         this.setAnnotoriousOverlayPointerEvents(true);
@@ -2156,6 +2207,8 @@ export class WsiAnnotationController {
                     start: screenPoint,
                     current: screenPoint,
                     points: this.strokeScreenPoints,
+                    strokeWidth:
+                        tool === 'brush' ? this.brushScreenWidth() : undefined,
                 };
                 event.preventDefault();
                 event.stopPropagation();
@@ -2185,6 +2238,14 @@ export class WsiAnnotationController {
         };
         const move = (event: PointerEvent) => {
             const tool = this.activeTool;
+            if (tool === 'brush') {
+                const rect = element.getBoundingClientRect();
+                this.brushCursor = {
+                    x: event.clientX - rect.left,
+                    y: event.clientY - rect.top,
+                    diameter: this.brushScreenWidth(),
+                };
+            }
             if (!isPointerAnnotationTool(tool) || !this.customDrawPreview)
                 return;
             const rect = element.getBoundingClientRect();
@@ -2348,7 +2409,12 @@ export class WsiAnnotationController {
         element.addEventListener('pointermove', move, true);
         element.addEventListener('pointerup', up, true);
         element.addEventListener('dblclick', doubleClick, true);
+        const leave = () => {
+            this.brushCursor = null;
+        };
+        element.addEventListener('pointerleave', leave, true);
         this.pointerCleanup = () => {
+            element.removeEventListener('pointerleave', leave, true);
             element.removeEventListener('pointerdown', down, true);
             element.removeEventListener('pointermove', move, true);
             element.removeEventListener('pointerup', up, true);
@@ -2449,8 +2515,9 @@ export class WsiAnnotationController {
 
     /**
      * Saves a freehand stroke as the polygon it encloses, or a brush stroke
-     * as the outline of a band `brushWidth` screen pixels wide along it.
-     * Either is simplified with Douglas–Peucker first.
+     * as the outline of a band `brushWidth` wide along it (µm of tissue, or
+     * screen pixels at the stroke's zoom without a scale). Either is
+     * simplified with Douglas–Peucker first.
      */
     private async createStrokeShape(
         tool: 'freehand' | 'brush',
@@ -2481,7 +2548,7 @@ export class WsiAnnotationController {
             return;
         }
         const outline = simplifyPath(
-            strokeOutline(path, (this.brushWidth / 2) * imagePerScreen),
+            strokeOutline(path, this.brushImageWidth(imagePerScreen) / 2),
             (STROKE_SIMPLIFY_TOLERANCE / 3) * imagePerScreen
         );
         await this.createPolygonShape(outline);
@@ -2591,6 +2658,7 @@ export class WsiAnnotationController {
         this.keydownCleanup = null;
         this.setCustomPointerEvents(false);
         this.customDrawPreview = null;
+        this.brushCursor = null;
         try {
             this.annotorious?.destroy?.();
         } catch (_) {

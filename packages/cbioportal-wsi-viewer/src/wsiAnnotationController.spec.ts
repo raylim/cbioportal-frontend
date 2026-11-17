@@ -1883,6 +1883,86 @@ describe('WsiAnnotationController', () => {
         expect(global.fetch).toHaveBeenCalledTimes(2);
     });
 
+    it('paints the same width of tissue in µm at every zoom when the slide has a scale', async () => {
+        (createOSDAnnotator as jest.Mock).mockReturnValue({
+            on: jest.fn(),
+            setVisible: jest.fn(),
+            setAnnotations: jest.fn(),
+            setStyle: jest.fn(),
+            setDrawingEnabled: jest.fn(),
+            cancelDrawing: jest.fn(),
+        });
+        jest.spyOn(global, 'fetch').mockResolvedValue({
+            ok: true,
+            json: async () => apiAnnotation('saved'),
+        } as Response);
+        const controller = new WsiAnnotationController(
+            'https://tiles.example',
+            'study1'
+        );
+        controller.setMppProvider(() => ({ x: 0.25, y: 0.25 }));
+        (controller as any).slideKey = 'slide1';
+        const viewerElement = document.createElement('div');
+        controller.attachViewer({ element: viewerElement }, {}, 'slide1');
+        let imagePerScreen = 2;
+        jest.spyOn(controller as any, 'imagePoint').mockImplementation(
+            (x: number, y: number) => ({
+                x: x * imagePerScreen,
+                y: y * imagePerScreen,
+            })
+        );
+        const pointer = (type: string, x: number, y: number) =>
+            viewerElement.dispatchEvent(
+                new MouseEvent(type, { button: 0, clientX: x, clientY: y })
+            );
+
+        controller.setTool('brush');
+        expect(controller.brushInMicrons).toBe(true);
+        expect(controller.brushWidth).toBe(50);
+        controller.setBrushWidth(25);
+        expect(controller.brushWidthUm).toBe(25);
+
+        const bandHeights: number[] = [];
+        for (const zoom of [2, 8]) {
+            imagePerScreen = zoom;
+            controller.setTool('brush');
+            pointer('pointermove', 10, 10);
+            // 25 µm at 0.25 µm/px is 100 image pixels: 50 or 12.5 on screen.
+            expect(controller.brushCursor!.diameter).toBeCloseTo(100 / zoom, 5);
+            pointer('pointerdown', 0, 0);
+            expect(controller.customDrawPreview!.strokeWidth).toBeCloseTo(
+                100 / zoom,
+                5
+            );
+            pointer('pointermove', 50, 0);
+            pointer('pointerup', 100, 0);
+            await new Promise(resolve => setTimeout(resolve, 0));
+            const calls = (global.fetch as jest.Mock).mock.calls;
+            const sent = JSON.parse(calls[calls.length - 1][1].body);
+            const ys = (parseAnnotationShape(
+                sent.target.selector
+            ) as any).points.map((p: any) => p.y);
+            bandHeights.push(Math.max(...ys) - Math.min(...ys));
+        }
+        expect(bandHeights[0]).toBeCloseTo(100, 1);
+        expect(bandHeights[1]).toBeCloseTo(100, 1);
+        expect(controller.brushCursor).toBeNull();
+    });
+
+    it('falls back to a brush width in screen pixels without a slide scale', () => {
+        const controller = new WsiAnnotationController(
+            'https://tiles.example',
+            'study1'
+        );
+        expect(controller.brushInMicrons).toBe(false);
+        expect(controller.brushWidth).toBe(16);
+        controller.setBrushWidth(32);
+        expect(controller.brushWidthPx).toBe(32);
+        expect(controller.brushWidthUm).toBe(50);
+        controller.setMppProvider(() => ({ x: 0.5, y: 0.5 }));
+        expect(controller.brushWidth).toBe(50);
+    });
+
     describe('label vocabulary', () => {
         const configure = (labelVocabulary?: string[], strict?: boolean) =>
             configureWsiViewerRuntime({

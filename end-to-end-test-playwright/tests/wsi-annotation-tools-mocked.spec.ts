@@ -161,10 +161,10 @@ function seededAnnotation(
 }
 
 /**
- * Opens the mocked slide (512 × 512 pixels at `MPP` µm per pixel) with
- * annotations on, signed in as `USER`.
+ * Opens the mocked slide (`size` pixels square, 512 by default, at `MPP` µm
+ * per pixel) with annotations on, signed in as `USER`.
  */
-async function openAnnotatedSlide(page: Page) {
+async function openAnnotatedSlide(page: Page, size = 512) {
     await installFoundationMocks(page);
     await page.route('**/config_service', route =>
         route.fulfill({
@@ -182,6 +182,8 @@ async function openAnnotatedSlide(page: Page) {
     const row = makeSlideRow(SLIDE_KEY, 'H&E initial', 'H&E (Initial)');
     row.metadata.serving.tile_metadata_json = {
         ...tileMetadata,
+        dimensions: { width: size, height: size },
+        level_dimensions: [{ width: size, height: size }],
         mpp: { x: MPP, y: MPP },
     } as typeof tileMetadata;
     await page.route('**/api/resource-table/query/fetch', route => {
@@ -211,6 +213,15 @@ async function gotoSlide(page: Page) {
     return (fx: number, fy: number) => ({
         x: box.x + box.width * fx,
         y: box.y + box.height * fy,
+    });
+}
+
+/** The vertices of a saved polygon selector. */
+function polygonPoints(selector: string): Array<{ x: number; y: number }> {
+    const match = /points="([^"]+)"/.exec(selector);
+    return (match ? match[1].trim().split(/\s+/) : []).map(pair => {
+        const [x, y] = pair.split(',').map(Number);
+        return { x, y };
     });
 }
 
@@ -421,6 +432,68 @@ if (process.env.PW_SUITE === 'wsi') {
             expect(
                 service.rows.get('model-1').body.provenance.reviewed_by
             ).toBe(USER);
+        });
+
+        test('paints a brush stroke of the chosen width in µm at any zoom', async ({
+            page,
+        }) => {
+            // A slide large enough to zoom into.
+            await openAnnotatedSlide(page, 2048);
+            const service = await routeAnnotationService(page);
+            const at = await gotoSlide(page);
+
+            await page.getByTestId('annotation-tool-brush').click();
+            const width = page.getByTestId('annotation-brush-width');
+            await expect(width).toHaveAttribute(
+                'aria-label',
+                'Brush width in micrometres'
+            );
+            await expect(width).toHaveValue('50');
+            await expect(
+                page.getByTestId('annotation-brush-unit-note')
+            ).toHaveCount(0);
+            // 25 µm at 0.25 µm per pixel: 100 image pixels.
+            await width.selectOption('25');
+
+            const centre = at(0.5, 0.5);
+            const cursorDiameter = async () => {
+                await page.mouse.move(centre.x + 1, centre.y);
+                await page.mouse.move(centre.x, centre.y);
+                return Number(
+                    await page
+                        .getByTestId('annotation-brush-cursor')
+                        .getAttribute('data-diameter')
+                );
+            };
+            const before = await cursorDiameter();
+            expect(before).toBeGreaterThan(0);
+
+            const stroke = async () => {
+                const saves = service.writes.length;
+                const start = at(0.4, 0.5);
+                const end = at(0.6, 0.5);
+                await page.mouse.move(start.x, start.y);
+                await page.mouse.down();
+                await page.mouse.move(end.x, end.y, { steps: 10 });
+                await page.mouse.up();
+                await expect.poll(() => service.writes.length).toBe(saves + 1);
+                const points = polygonPoints(
+                    service.writes[saves].body.target.selector.value
+                );
+                const ys = points.map(point => point.y);
+                return Math.max(...ys) - Math.min(...ys);
+            };
+            expect(await stroke()).toBeCloseTo(100, -1);
+
+            // Zoomed in, the cursor grows and the band covers the same tissue.
+            const zoomIn = page.getByTitle('Zoom in');
+            await zoomIn.click();
+            await zoomIn.click();
+            await page.getByTestId('annotation-tool-brush').click();
+            await expect
+                .poll(cursorDiameter, { timeout: 10_000 })
+                .toBeGreaterThan(before * 1.5);
+            expect(await stroke()).toBeCloseTo(100, -1);
         });
     });
 }

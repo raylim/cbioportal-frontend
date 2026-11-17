@@ -133,6 +133,44 @@ describe('WsiAnnotationPanel', () => {
         ).toContain('keeps it as a review record');
     });
 
+    it('offers the brush width in µm with a scale, and screen pixels without one', () => {
+        const controller = controllerWith([]);
+        (controller as any).apiUrl = 'https://tiles.example';
+        controller.activeTool = 'brush';
+        const { rerender } = render(
+            <WsiAnnotationToolbar controller={controller} />
+        );
+        let select = screen.getByTestId(
+            'annotation-brush-width'
+        ) as HTMLSelectElement;
+        expect(select.getAttribute('aria-label')).toBe(
+            'Brush width in screen pixels'
+        );
+        expect(select.value).toBe('16');
+        expect(screen.getByTestId('annotation-brush-unit-note')).toBeTruthy();
+
+        act(() => controller.setMppProvider(() => ({ x: 0.5, y: 0.5 })));
+        rerender(<WsiAnnotationToolbar controller={controller} />);
+        select = screen.getByTestId(
+            'annotation-brush-width'
+        ) as HTMLSelectElement;
+        expect(select.getAttribute('aria-label')).toBe(
+            'Brush width in micrometres'
+        );
+        expect(Array.from(select.options).map(o => o.textContent)).toEqual([
+            '10 µm',
+            '25 µm',
+            '50 µm',
+            '100 µm',
+            '250 µm',
+            '500 µm',
+        ]);
+        expect(select.value).toBe('50');
+        expect(screen.queryByTestId('annotation-brush-unit-note')).toBeNull();
+        fireEvent.change(select, { target: { value: '100' } });
+        expect(controller.brushWidthUm).toBe(100);
+    });
+
     it('shows whether each annotation is private or shared and switches it', () => {
         const controller = controllerWith([
             { ...apiItem('mine', {}), visible_to: null },

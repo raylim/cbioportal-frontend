@@ -1,4 +1,5 @@
 import {
+    brushWidthInImagePixels,
     ellipsePerimeter,
     formatArea,
     formatLength,
@@ -294,5 +295,29 @@ describe('strokeOutline', () => {
         const dot = strokeOutline([{ x: 5, y: 5 }], 3, 32);
         expect(polygonArea(dot)).toBeCloseTo(Math.PI * 9, 0);
         expect(strokeOutline([{ x: 0, y: 0 }], 0)).toEqual([]);
+    });
+});
+
+describe('brushWidthInImagePixels', () => {
+    const width = { microns: 50, screenPixels: 16 };
+
+    it('converts µm with the slide scale, whatever the zoom', () => {
+        expect(brushWidthInImagePixels(width, { x: 0.5, y: 0.5 }, 1)).toBe(100);
+        expect(brushWidthInImagePixels(width, { x: 0.5, y: 0.5 }, 32)).toBe(
+            100
+        );
+        expect(brushWidthInImagePixels(width, { x: 0.25, y: 0.25 }, 4)).toBe(
+            200
+        );
+    });
+
+    it('uses the mean scale when x and y differ', () => {
+        expect(brushWidthInImagePixels(width, { x: 0.4, y: 0.6 }, 1)).toBe(100);
+    });
+
+    it('falls back to screen pixels at the zoom without a valid scale', () => {
+        expect(brushWidthInImagePixels(width, undefined, 4)).toBe(64);
+        expect(brushWidthInImagePixels(width, null, 0.5)).toBe(8);
+        expect(brushWidthInImagePixels(width, { x: 0, y: 0.5 }, 2)).toBe(32);
     });
 });

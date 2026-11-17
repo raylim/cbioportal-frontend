@@ -2,7 +2,8 @@ import * as React from 'react';
 import { observer } from 'mobx-react';
 import {
     annotationVisibility,
-    BRUSH_WIDTHS,
+    BRUSH_WIDTHS_PX,
+    BRUSH_WIDTHS_UM,
     DEFAULT_COLOR,
     DEFAULT_LAYER,
     WsiAnnotationAiFilter,
@@ -273,22 +274,7 @@ export const WsiAnnotationToolbar = observer(
                     style={{ width: 110, fontSize: 11, padding: '1px 4px' }}
                 />
                 {controller.activeTool === 'brush' && (
-                    <select
-                        data-testid="annotation-brush-width"
-                        aria-label="Brush width in screen pixels"
-                        title="Brush width, in screen pixels at the current zoom"
-                        value={controller.brushWidth}
-                        onChange={event =>
-                            controller.setBrushWidth(Number(event.target.value))
-                        }
-                        style={{ fontSize: 11 }}
-                    >
-                        {BRUSH_WIDTHS.map(width => (
-                            <option key={width} value={width}>
-                                {width} px
-                            </option>
-                        ))}
-                    </select>
+                    <BrushWidthControl controller={controller} />
                 )}
                 {controller.activeTool === 'point' && (
                     <span
@@ -1890,10 +1876,94 @@ export const WsiAnnotationTooltip = observer(
     }
 );
 
+/**
+ * The brush width: in µm of tissue on a slide with a scale, else in screen
+ * pixels, with a note saying so.
+ */
+const BrushWidthControl = observer(
+    ({ controller }: { controller: WsiAnnotationController }) => {
+        const microns = controller.brushInMicrons;
+        const widths = microns ? BRUSH_WIDTHS_UM : BRUSH_WIDTHS_PX;
+        return (
+            <>
+                <select
+                    data-testid="annotation-brush-width"
+                    aria-label={
+                        microns
+                            ? 'Brush width in micrometres'
+                            : 'Brush width in screen pixels'
+                    }
+                    title={
+                        microns
+                            ? 'Brush width, in µm of tissue at every zoom'
+                            : 'Brush width, in screen pixels at the current zoom: this slide has no scale'
+                    }
+                    value={controller.brushWidth}
+                    onChange={event =>
+                        controller.setBrushWidth(Number(event.target.value))
+                    }
+                    style={{ fontSize: 11 }}
+                >
+                    {widths.map(width => (
+                        <option key={width} value={width}>
+                            {width} {microns ? 'µm' : 'px'}
+                        </option>
+                    ))}
+                </select>
+                {!microns && (
+                    <span
+                        data-testid="annotation-brush-unit-note"
+                        style={{ fontSize: 10, color: colors.muted }}
+                    >
+                        No slide scale: screen px
+                    </span>
+                )}
+            </>
+        );
+    }
+);
+
+/** The brush's size under the pointer while the brush tool is on. */
+const BrushCursor = observer(
+    ({ controller }: { controller: WsiAnnotationController }) => {
+        const cursor = controller.brushCursor;
+        if (!cursor || controller.activeTool !== 'brush') return null;
+        return (
+            <circle
+                data-testid="annotation-brush-cursor"
+                data-diameter={Math.round(cursor.diameter * 10) / 10}
+                cx={cursor.x}
+                cy={cursor.y}
+                r={Math.max(cursor.diameter / 2, 1)}
+                stroke={controller.activeColor}
+                strokeWidth={1}
+                fill={controller.activeColor}
+                fillOpacity={0.15}
+            />
+        );
+    }
+);
+
 export const WsiAnnotationDrawPreview = observer(
     ({ controller }: { controller: WsiAnnotationController }) => {
         const preview = controller.customDrawPreview;
-        if (!preview) return null;
+        if (!preview) {
+            return controller.brushCursor ? (
+                <svg
+                    data-testid="annotation-brush-cursor-layer"
+                    style={{
+                        position: 'absolute',
+                        inset: 0,
+                        width: '100%',
+                        height: '100%',
+                        pointerEvents: 'none',
+                        zIndex: 19,
+                    }}
+                >
+                    <BrushCursor controller={controller} />
+                </svg>
+            ) : null;
+        }
 
         const x1 = preview.start.x;
         const y1 = preview.start.y;
@@ -1934,7 +2004,9 @@ export const WsiAnnotationDrawPreview = observer(
                         stroke={controller.activeColor}
                         strokeOpacity={preview.tool === 'brush' ? 0.45 : 1}
                         strokeWidth={
-                            preview.tool === 'brush' ? controller.brushWidth : 2
+                            preview.tool === 'brush'
+                                ? preview.strokeWidth || 1
+                                : 2
                         }
                         strokeLinecap="round"
                         strokeLinejoin="round"
@@ -1985,6 +2057,7 @@ export const WsiAnnotationDrawPreview = observer(
                         fillOpacity={0.2}
                     />
                 )}
+                <BrushCursor controller={controller} />
                 {measurement && (
                     <text
                         data-testid="annotation-draw-measurement"

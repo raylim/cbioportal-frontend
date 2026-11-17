@@ -169,6 +169,24 @@ export interface WsiMpp {
 }
 
 /**
+ * A brush width in level-0 image pixels. With the slide's microns-per-pixel
+ * the width is `microns` of tissue, the same at every zoom; a slide whose x
+ * and y scales differ uses their mean, since the brush band is round.
+ * Without an mpp it is `screenPixels` at the zoom of the stroke, where one
+ * screen pixel is `imagePerScreen` image pixels.
+ */
+export function brushWidthInImagePixels(
+    width: { microns: number; screenPixels: number },
+    mpp: WsiMpp | null | undefined,
+    imagePerScreen: number
+): number {
+    if (mpp && mpp.x > 0 && mpp.y > 0) {
+        return width.microns / ((mpp.x + mpp.y) / 2);
+    }
+    return width.screenPixels * imagePerScreen;
+}
+
+/**
  * An annotation's size: in microns when the slide has microns-per-pixel,
  * else in level-0 image pixels.
  */

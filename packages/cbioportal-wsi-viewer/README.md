@@ -165,9 +165,11 @@ The **Point** tool drops a point at each click (a drag still pans the slide) and
 
 #### Freehand and brush
 
-**Free** draws while the mouse button is held and saves the outline as a polygon. **Brush** paints a band of a fixed on-screen width (8–64 px at the zoom it is drawn, chosen in the toolbar) and saves the band's outline as a polygon: the stroke is offset to both sides with mitred corners and round caps (`strokeOutline`). Both record a point every 2 screen pixels and simplify the stroke with Douglas–Peucker at 1.5 screen pixels before saving.
+**Free** draws while the mouse button is held and saves the outline as a polygon. **Brush** paints a band and saves the band's outline as a polygon: the stroke is offset to both sides with mitred corners and round caps (`strokeOutline`). Both record a point every 2 screen pixels and simplify the stroke with Douglas–Peucker at 1.5 screen pixels before saving.
 
-The brush is stored as a polygon, not as a line with a width, so it has an area and perimeter, edits like any polygon, and exports to QuPath as a region. Its width is in screen pixels because that is how a brush feels; in image pixels it depends on the zoom. A stroke that doubles back sharply can give an outline that touches itself.
+The brush width is chosen in the toolbar in µm of tissue (10–500 µm, 50 µm by default). It is converted to image pixels with the slide's microns-per-pixel (the mean of x and y, since the band is round), so a stroke covers the same tissue at every zoom. While the brush is on, a circle under the pointer shows its size on screen at the current zoom, and the stroke previews at that width. A slide without a valid mpp has no scale: the width is then in screen pixels (8–64 px at the zoom the stroke is drawn), and the toolbar says so. `brushWidthInImagePixels` holds the conversion.
+
+The brush is stored as a polygon, not as a line with a width, so it has an area and perimeter, edits like any polygon, and exports to QuPath as a region. A stroke that doubles back sharply can give an outline that touches itself.
 
 #### Editing and undo
 
