@@ -985,6 +985,7 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
 
         return (
             <div
+                data-wsi-viewer-root
                 style={{
                     display: 'flex',
                     height,

@@ -701,6 +701,103 @@ if (process.env.PW_SUITE === 'wsi') {
             });
         });
 
+        test('selects with Shift+drag, relabels in bulk and undoes it in one step', async ({
+            page,
+        }) => {
+            await openAnnotatedSlide(page);
+            const mine = (id: string, points: string) => ({
+                ...seededAnnotation(id, 'Unsure', points),
+                created_by: USER,
+            });
+            const service = await routeAnnotationService(page, [
+                mine('mine-1', '40,40 120,40 120,120'),
+                mine('mine-2', '160,40 240,40 240,120'),
+                seededAnnotation('theirs', 'Unsure', '280,40 360,40 360,120'),
+                mine('far', '400,400 480,400 480,480'),
+            ]);
+            await gotoSlide(page);
+            await expect(page.getByTestId('annotation-row-far')).toBeVisible({
+                timeout: 15_000,
+            });
+            // The labels on the slide show where the shapes are on screen:
+            // each sits 2 pixels inside its shape's top-left corner.
+            await page.getByTestId('annotation-display-button').click();
+            await page.getByTestId('annotation-slide-labels').check();
+            await page.keyboard.press('Escape');
+            const corner = async (id: string) =>
+                (await page
+                    .getByTestId(`annotation-slide-label-${id}`)
+                    .locator('rect')
+                    .boundingBox())!;
+            const a = await corner('mine-1');
+            const b = await corner('mine-2');
+            const scale = (b.x - a.x) / 120;
+            const screenAt = (x: number, y: number) => ({
+                x: a.x - 2 + (x - 40) * scale,
+                y: a.y - 2 + (y - 40) * scale,
+            });
+
+            // Shift+drag with Select adds what lies inside the box, drawn
+            // up and to the left (the zoom buttons are at the top left).
+            const from = screenAt(380, 140);
+            const to = screenAt(20, 20);
+            await page.keyboard.down('Shift');
+            await page.mouse.move(from.x, from.y);
+            await page.mouse.down();
+            await page.mouse.move(to.x, to.y, { steps: 5 });
+            await expect(
+                page.getByTestId('annotation-selection-box')
+            ).toBeVisible();
+            await page.mouse.up();
+            await page.keyboard.up('Shift');
+            const count = page.getByTestId('annotation-bulk-count');
+            await expect(count).toHaveText('3 selected');
+            await expect(
+                page.getByTestId('annotation-select-far')
+            ).not.toBeChecked();
+            await expect(
+                page.getByTestId('annotation-selection-frame-theirs')
+            ).toBeVisible();
+
+            await page
+                .getByLabel('New label for the selected annotations')
+                .fill('Tumor');
+            const relabel = page.getByTestId('annotation-bulk-relabel');
+            await expect(relabel).toHaveText('Relabel (2)');
+            await relabel.click();
+            await expect(
+                page.getByTestId('annotation-bulk-message')
+            ).toHaveText(
+                'Relabelled 2 annotations; skipped 1 that is not yours.'
+            );
+            expect(
+                service.writes.map(write => [write.method, write.path])
+            ).toEqual([
+                ['PUT', '/wsi/annotations/mine-1'],
+                ['PUT', '/wsi/annotations/mine-2'],
+            ]);
+            expect(service.rows.get('mine-2').body.label).toBe('Tumor');
+            expect(service.rows.get('theirs').body.label).toBe('Unsure');
+
+            // One undo puts both labels back.
+            await startAnnotating(page);
+            const undo = page.getByTestId('annotation-undo');
+            await expect(undo).toHaveAttribute(
+                'title',
+                /Undo edit of 2 annotations/
+            );
+            await undo.click();
+            await expect
+                .poll(() => service.rows.get('mine-1').body.label)
+                .toBe('Unsure');
+            expect(service.rows.get('mine-2').body.label).toBe('Unsure');
+
+            await page.getByTestId('annotation-bulk-clear').click();
+            await expect(page.getByTestId('annotation-bulk-bar')).toHaveCount(
+                0
+            );
+        });
+
         test('paints a brush stroke of the chosen width in µm at any zoom', async ({
             page,
         }) => {

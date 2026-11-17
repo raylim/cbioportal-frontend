@@ -46,7 +46,10 @@ import {
     WsiImportDraft,
 } from './wsiAnnotationGeoJson';
 import {
+    boundsInside,
     placeSlideLabels,
+    runLimited,
+    shapeContainsPoint,
     spatialOrder,
     WsiPlacedLabel,
     WsiScreenBox,
@@ -535,7 +538,9 @@ export function pointSelectorSvg(point: { x: number; y: number }): string {
 export type WsiUndoEntry =
     | { kind: 'create'; ids: string[] }
     | { kind: 'update'; before: WsiAnnotation }
-    | { kind: 'delete'; before: WsiAnnotation[] };
+    | { kind: 'delete'; before: WsiAnnotation[] }
+    /** Edits of several annotations made together, e.g. a bulk relabel. */
+    | { kind: 'group'; entries: WsiUndoEntry[] };
 
 /**
  * The change an undo entry reverses, e.g. "delete of 2 annotations"; with
@@ -543,6 +548,10 @@ export type WsiUndoEntry =
  * delete entry, which redoes the create).
  */
 function describeChange(entry: WsiUndoEntry, redo = false): string {
+    if (entry.kind === 'group') {
+        const n = entry.entries.length;
+        return `edit${n > 1 ? ` of ${n} annotations` : ''}`;
+    }
     const n =
         entry.kind === 'create'
             ? entry.ids.length
@@ -602,6 +611,9 @@ export const WSI_REVIEW_KEYS: Record<
     arrowleft: 'previous',
     escape: 'exit',
 };
+
+/** The most selection frames drawn on the slide at once. */
+const SELECTION_FRAME_LIMIT = 500;
 
 /** How many changes undo remembers. */
 const MAX_UNDO = 50;
@@ -992,6 +1004,19 @@ export class WsiAnnotationController {
         | null = null;
     /** An annotation a link asked for, shown once the slide has loaded. */
     private requestedAnnotationId: string | null = null;
+    /** The annotations selected for bulk actions (see `selectedAnnotations`). */
+    @observable.ref selectedIds: ReadonlySet<string> = new Set<string>();
+    /** A Shift+drag selection box in progress, in image pixels. */
+    @observable.ref selectionDrag: {
+        pointerId: number | undefined;
+        start: WsiXY;
+        current: WsiXY;
+        client: WsiXY;
+    } | null = null;
+    /** A bulk action is being saved. */
+    @observable bulkBusy = false;
+    /** What the last bulk action did, and what it skipped. */
+    @observable bulkMessage: string | null = null;
     /** The link messages, e.g. "Link copied." */
     @observable linkMessage: string | null = null;
 
@@ -1844,7 +1869,9 @@ export class WsiAnnotationController {
     @action
     private renameInHistory(oldId: string, newId: string) {
         const rename = (entry: WsiUndoEntry): WsiUndoEntry =>
-            entry.kind === 'create'
+            entry.kind === 'group'
+                ? { ...entry, entries: entry.entries.map(rename) }
+                : entry.kind === 'create'
                 ? {
                       ...entry,
                       ids: entry.ids.map(id => (id === oldId ? newId : id)),
@@ -1918,59 +1945,73 @@ export class WsiAnnotationController {
             this.undoing = true;
         })();
         try {
-            if (entry.kind === 'create') {
-                const deleted: WsiAnnotation[] = [];
-                for (const id of entry.ids) {
-                    const current = this.annotations.find(
-                        item => item.id === id
-                    );
-                    if (current && (await this.deleteAnnotation(id, false))) {
-                        deleted.push(current);
-                    }
-                }
-                return deleted.length
-                    ? { kind: 'delete', before: deleted }
-                    : null;
-            }
-            if (entry.kind === 'update') {
-                const current = this.annotations.find(
-                    item => item.id === entry.before.id
-                );
-                if (!current) {
-                    action(() => {
-                        this.error =
-                            'Cannot undo or redo: the annotation was deleted.';
-                    })();
-                    return null;
-                }
-                const saved = await this.updateAnnotation(
-                    { ...entry.before, version: current.version },
-                    false
-                );
-                return saved ? { kind: 'update', before: current } : null;
-            }
-            const created: string[] = [];
-            for (const before of entry.before) {
-                const saved = await this.createAnnotation(
-                    {
-                        ...before,
-                        id: `client-undo-${Date.now()}-${Math.random()
-                            .toString(36)
-                            .slice(2)}`,
-                    },
-                    false
-                );
-                if (saved) {
-                    this.renameInHistory(before.id, saved.id);
-                    created.push(saved.id);
-                }
-            }
-            return created.length ? { kind: 'create', ids: created } : null;
+            return await this.applyEntry(entry);
         } finally {
             action(() => {
                 this.undoing = false;
             })();
         }
+    }
+
+    /** Applies one undo or redo entry (see `applyHistoryEntry`). */
+    private async applyEntry(
+        entry: WsiUndoEntry
+    ): Promise<WsiUndoEntry | null> {
+        if (entry.kind === 'group') {
+            // A few at a time; each part reverses on its own.
+            const inverses = (
+                await runLimited(entry.entries, SINGLE_SAVE_CONCURRENCY, part =>
+                    this.applyEntry(part)
+                )
+            ).filter((part): part is WsiUndoEntry => !!part);
+            return inverses.length
+                ? { kind: 'group', entries: inverses }
+                : null;
+        }
+        if (entry.kind === 'create') {
+            const deleted: WsiAnnotation[] = [];
+            for (const id of entry.ids) {
+                const current = this.annotations.find(item => item.id === id);
+                if (current && (await this.deleteAnnotation(id, false))) {
+                    deleted.push(current);
+                }
+            }
+            return deleted.length ? { kind: 'delete', before: deleted } : null;
+        }
+        if (entry.kind === 'update') {
+            const current = this.annotations.find(
+                item => item.id === entry.before.id
+            );
+            if (!current) {
+                action(() => {
+                    this.error =
+                        'Cannot undo or redo: the annotation was deleted.';
+                })();
+                return null;
+            }
+            const saved = await this.updateAnnotation(
+                { ...entry.before, version: current.version },
+                false
+            );
+            return saved ? { kind: 'update', before: current } : null;
+        }
+        const created: string[] = [];
+        for (const before of entry.before) {
+            const saved = await this.createAnnotation(
+                {
+                    ...before,
+                    id: `client-undo-${Date.now()}-${Math.random()
+                        .toString(36)
+                        .slice(2)}`,
+                },
+                false
+            );
+            if (saved) {
+                this.renameInHistory(before.id, saved.id);
+                created.push(saved.id);
+            }
+        }
+        return created.length ? { kind: 'create', ids: created } : null;
     }
 
     /** AI annotations that no one has reviewed yet. */
@@ -2163,7 +2204,8 @@ export class WsiAnnotationController {
         this.annotorious.on(
             'clickAnnotation',
             (annotation: WsiAnnotation, event: MouseEvent) => {
-                this.showAnnotationTooltip(annotation, event);
+                if (event?.shiftKey) this.toggleSelected(annotation.id);
+                else this.showAnnotationTooltip(annotation, event);
             }
         );
         this.pointLayer = new WsiPointLayer(viewer, openSeadragon);
@@ -2985,6 +3027,9 @@ export class WsiAnnotationController {
         this.reviewQueue = null;
         this.focusedAnnotationId = null;
         this.linkMessage = null;
+        this.selectedIds = new Set<string>();
+        this.selectionDrag = null;
+        this.bulkMessage = null;
     }
 
     /**
@@ -3019,6 +3064,8 @@ export class WsiAnnotationController {
     @computed get overlayActive(): boolean {
         return (
             !!this.focusedAnnotationId ||
+            this.selectedIds.size > 0 ||
+            !!this.selectionDrag ||
             (this.showSlideLabels && !this.hideAll)
         );
     }
@@ -3111,6 +3158,343 @@ export class WsiAnnotationController {
                 } => !!candidate.box
             );
         return placeSlideLabels(candidates, view);
+    }
+
+    // ---- selection and bulk actions ----
+
+    /** The selected annotations still on the slide, in list order. */
+    @computed get selectedAnnotations(): WsiAnnotation[] {
+        if (!this.selectedIds.size) return [];
+        return this.annotations.filter(item => this.selectedIds.has(item.id));
+    }
+
+    isSelected(id: string): boolean {
+        return this.selectedIds.has(id);
+    }
+
+    @action.bound
+    toggleSelected(id: string) {
+        const next = new Set(this.selectedIds);
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+        this.setSelection(next);
+    }
+
+    /** Selects `ids`, added to the selection or in place of it. */
+    @action.bound
+    select(ids: string[], add = true) {
+        const next = new Set(add ? this.selectedIds : []);
+        ids.forEach(id => next.add(id));
+        this.setSelection(next);
+    }
+
+    /** Selects every annotation the list shows (Ctrl/Cmd+A). */
+    @action.bound
+    selectAllListed() {
+        this.select(
+            this.listedAnnotations.map(item => item.id),
+            false
+        );
+    }
+
+    @action.bound
+    clearSelection() {
+        this.setSelection(new Set<string>());
+    }
+
+    @action
+    private setSelection(ids: Set<string>) {
+        this.selectedIds = ids;
+        this.bulkMessage = null;
+        this.refreshStyle();
+    }
+
+    /** The selected annotations' boxes on screen, following the slide. */
+    @computed get selectedBoxes(): Array<{ id: string; box: WsiScreenBox }> {
+        void this.viewportRevision;
+        if (!this.selectedIds.size || this.hideAll || !this.visible) return [];
+        const transform = this.screenTransform();
+        if (!transform) return [];
+        const boxes: Array<{ id: string; box: WsiScreenBox }> = [];
+        for (const annotation of this.selectedAnnotations) {
+            if (boxes.length >= SELECTION_FRAME_LIMIT) break;
+            if (!this.isShown(annotation)) continue;
+            const box = this.screenBox(annotation, transform);
+            if (box) boxes.push({ id: annotation.id, box });
+        }
+        return boxes;
+    }
+
+    /** The Shift+drag selection box on screen. */
+    @computed get selectionDragBox(): WsiScreenBox | null {
+        void this.viewportRevision;
+        const drag = this.selectionDrag;
+        const transform = drag && this.screenTransform();
+        if (!drag || !transform) return null;
+        const a = transform(drag.start);
+        const b = transform(drag.current);
+        return {
+            x: Math.min(a.x, b.x),
+            y: Math.min(a.y, b.y),
+            width: Math.abs(b.x - a.x),
+            height: Math.abs(b.y - a.y),
+        };
+    }
+
+    /** Whether Shift+click and Shift+drag select on the slide now. */
+    private get canSelectOnSlide(): boolean {
+        return this.visible && !this.hideAll && this.activeTool === null;
+    }
+
+    /**
+     * The topmost annotation on the slide at image point `point` (a click,
+     * with a few screen pixels' tolerance); the smallest when several
+     * overlap, so a shape inside another can be picked.
+     */
+    annotationAt(point: WsiXY): WsiAnnotation | null {
+        const tolerance = 6 * this.imagePixelsPerScreenPixel();
+        let best: WsiAnnotation | null = null;
+        let bestArea = Infinity;
+        this.shownAnnotations.forEach(annotation => {
+            const shape = this.shapeOf(annotation);
+            if (!shape || !shapeContainsPoint(shape, point, tolerance)) return;
+            const bounds = shapeBounds(shape);
+            const area =
+                (bounds.maxX - bounds.minX) * (bounds.maxY - bounds.minY);
+            if (area <= bestArea) {
+                best = annotation;
+                bestArea = area;
+            }
+        });
+        return best;
+    }
+
+    /**
+     * Ends a Shift+drag: a click toggles the annotation under it; a box
+     * adds the annotations that lie wholly inside it.
+     */
+    @action
+    private finishSelectionDrag(end: WsiXY, moved: number) {
+        const drag = this.selectionDrag;
+        this.selectionDrag = null;
+        if (!drag) return;
+        if (moved <= CLICK_TOLERANCE) {
+            const hit = this.annotationAt(end);
+            if (hit) this.toggleSelected(hit.id);
+            return;
+        }
+        const box = {
+            minX: Math.min(drag.start.x, end.x),
+            maxX: Math.max(drag.start.x, end.x),
+            minY: Math.min(drag.start.y, end.y),
+            maxY: Math.max(drag.start.y, end.y),
+        };
+        this.select(
+            this.shownAnnotations
+                .filter(annotation => {
+                    const shape = this.shapeOf(annotation);
+                    return !!shape && boundsInside(shapeBounds(shape), box);
+                })
+                .map(annotation => annotation.id)
+        );
+    }
+
+    /** How many selected annotations a bulk action applies to. */
+    @computed get bulkCounts(): {
+        modifiable: number;
+        reviewable: number;
+        ai: number;
+    } {
+        const selected = this.selectedAnnotations;
+        return {
+            modifiable: selected.filter(item => this.canModify(item)).length,
+            reviewable: selected.filter(item => this.canReview(item)).length,
+            ai: selected.filter(item => isAiProvenance(item.provenance)).length,
+        };
+    }
+
+    /**
+     * Applies `task` to the selected annotations `eligible` allows, a few
+     * at a time (the service has no bulk update, delete or review), and
+     * says what was done, skipped (`why`) and not saved.
+     */
+    private async runBulk(
+        verb: string,
+        eligible: (annotation: WsiAnnotation) => boolean,
+        why: string,
+        task: (annotation: WsiAnnotation) => Promise<boolean>
+    ): Promise<{ done: number; skipped: number; failed: number }> {
+        const selected = this.selectedAnnotations;
+        const targets = selected.filter(eligible);
+        const skipped = selected.length - targets.length;
+        action(() => {
+            this.bulkBusy = true;
+            this.bulkMessage = null;
+            this.error = null;
+        })();
+        let results: boolean[] = [];
+        try {
+            results = await runLimited(
+                targets,
+                SINGLE_SAVE_CONCURRENCY,
+                async target => {
+                    // The latest version: a conflict may have reloaded it.
+                    const current = this.annotations.find(
+                        item => item.id === target.id
+                    );
+                    return !!current && eligible(current) && task(current);
+                }
+            );
+        } finally {
+            const done = results.filter(Boolean).length;
+            const failed = targets.length - done;
+            const plural = (n: number) =>
+                `${n} annotation${n === 1 ? '' : 's'}`;
+            const parts = [`${verb} ${plural(done)}`];
+            if (skipped) {
+                parts.push(
+                    `skipped ${skipped} ${
+                        skipped === 1 ? 'that is' : 'that are'
+                    } ${why}`
+                );
+            }
+            if (failed) {
+                parts.push(
+                    `${failed} could not be saved${
+                        this.error ? ` (${this.error})` : ''
+                    }`
+                );
+            }
+            action(() => {
+                this.bulkBusy = false;
+                this.bulkMessage = `${parts.join('; ')}.`;
+            })();
+        }
+        const done = results.filter(Boolean).length;
+        return { done, skipped, failed: targets.length - done };
+    }
+
+    /**
+     * Saves `change` on each selected annotation the user may modify, as
+     * one undo step.
+     */
+    private async bulkUpdate(
+        verb: string,
+        change: (annotation: WsiAnnotation) => WsiAnnotation | null
+    ) {
+        const before: WsiAnnotation[] = [];
+        const result = await this.runBulk(
+            verb,
+            annotation => this.canModify(annotation),
+            'not yours',
+            async annotation => {
+                const updated = change(annotation);
+                if (!updated) return true;
+                const saved = await this.updateAnnotation(updated, false);
+                if (saved) before.push(annotation);
+                return !!saved;
+            }
+        );
+        if (before.length) {
+            this.pushUndo({
+                kind: 'group',
+                entries: before.map(item => ({ kind: 'update', before: item })),
+            });
+        }
+        return result;
+    }
+
+    /** Relabels the selected annotations the user may modify. */
+    @action.bound
+    bulkRelabel(label: string) {
+        const value = label
+            .replace(/\s+/g, ' ')
+            .trim()
+            .slice(0, 200);
+        if (!value || !this.isAllowedLabel(value)) {
+            this.bulkMessage = value
+                ? `"${value}" is not one of the allowed labels.`
+                : 'Type a label first.';
+            return Promise.resolve(null);
+        }
+        return this.bulkUpdate('Relabelled', annotation =>
+            annotation.body?.[0]?.value === value
+                ? null
+                : {
+                      ...annotation,
+                      body: [
+                          {
+                              type: 'TextualBody',
+                              value,
+                              purpose: 'commenting',
+                          },
+                      ],
+                  }
+        );
+    }
+
+    /** Moves the selected annotations the user may modify to `layer`. */
+    @action.bound
+    bulkMoveToLayer(layer: string) {
+        const name = layer.replace(/\|/g, '').trim();
+        if (!name) return Promise.resolve(null);
+        if (!this.customLayers.includes(name)) {
+            this.customLayers = [...this.customLayers, name];
+            saveLayerNames(this.customLayers);
+        }
+        return this.bulkUpdate(`Moved to "${name}"`, annotation =>
+            (annotation.layerName || DEFAULT_LAYER) === name
+                ? null
+                : { ...annotation, layerName: name, legacyComment: undefined }
+        );
+    }
+
+    /** Shares the selected annotations the user may modify, or makes them private. */
+    @action.bound
+    bulkSetShared(shared: boolean) {
+        return this.bulkUpdate(shared ? 'Shared' : 'Made private', annotation =>
+            annotationVisibility(annotation.visibleTo) ===
+            (shared ? 'shared' : 'private')
+                ? null
+                : { ...annotation, visibleTo: shared ? [] : null }
+        );
+    }
+
+    /**
+     * Accepts or rejects the selected unreviewed AI annotations with the
+     * review route; reviews are not on the undo history.
+     */
+    @action.bound
+    bulkReview(decision: 'accept' | 'reject') {
+        return this.runBulk(
+            decision === 'accept' ? 'Accepted' : 'Rejected',
+            annotation => this.canReview(annotation),
+            'not unreviewed AI annotations you can review',
+            annotation => this.reviewAnnotation(annotation.id, decision)
+        );
+    }
+
+    /** Deletes the selected annotations the user may modify, as one undo step. */
+    @action.bound
+    async bulkDelete() {
+        const deleted: WsiAnnotation[] = [];
+        const result = await this.runBulk(
+            'Deleted',
+            annotation => this.canModify(annotation),
+            'not yours',
+            async annotation => {
+                const done = await this.deleteAnnotation(annotation.id, false);
+                if (done) deleted.push(annotation);
+                return done;
+            }
+        );
+        if (deleted.length) this.pushUndo({ kind: 'delete', before: deleted });
+        return result;
+    }
+
+    @action.bound
+    dismissBulkMessage() {
+        this.bulkMessage = null;
     }
 
     // ---- display ----
@@ -4022,6 +4406,32 @@ export class WsiAnnotationController {
             event.stopPropagation();
         };
         const down = action((event: PointerEvent) => {
+            if (
+                event.shiftKey &&
+                event.button === 0 &&
+                this.canSelectOnSlide &&
+                !otherPointer(event) &&
+                !this.selectionDrag
+            ) {
+                const screen = local(event);
+                const image = this.imagePoint(screen.x, screen.y);
+                if (!image) return;
+                this.selectionDrag = {
+                    pointerId: event.pointerId,
+                    start: image,
+                    current: image,
+                    client: { x: event.clientX, y: event.clientY },
+                };
+                try {
+                    if (event.pointerId !== undefined) {
+                        element.setPointerCapture?.(event.pointerId);
+                    }
+                } catch (_) {
+                    /* the pointer is already gone */
+                }
+                stop(event);
+                return;
+            }
             const tool = this.activeTool;
             if (!isPointerAnnotationTool(tool) || event.button !== 0) return;
             if (otherPointer(event)) return;
@@ -4071,6 +4481,16 @@ export class WsiAnnotationController {
             stop(event);
         });
         const move = action((event: PointerEvent) => {
+            const drag = this.selectionDrag;
+            if (drag) {
+                if (drag.pointerId !== event.pointerId) return;
+                const screen = local(event);
+                const image = this.imagePoint(screen.x, screen.y);
+                if (image) this.selectionDrag = { ...drag, current: image };
+                this.reportCursor(screen, image);
+                stop(event);
+                return;
+            }
             if (otherPointer(event)) return;
             const tool = this.activeTool;
             const screen = local(event);
@@ -4109,6 +4529,20 @@ export class WsiAnnotationController {
             stop(event);
         });
         const up = action((event: PointerEvent) => {
+            const drag = this.selectionDrag;
+            if (drag) {
+                if (drag.pointerId !== event.pointerId) return;
+                const screen = local(event);
+                this.finishSelectionDrag(
+                    this.imagePoint(screen.x, screen.y) || drag.current,
+                    Math.hypot(
+                        event.clientX - drag.client.x,
+                        event.clientY - drag.client.y
+                    )
+                );
+                stop(event);
+                return;
+            }
             const start = this.pointerDown;
             if (!start || otherPointer(event)) return;
             this.pointerDown = null;
@@ -4196,6 +4630,10 @@ export class WsiAnnotationController {
         });
         // The browser ended the press without a pointerup here.
         const lost = action((event: PointerEvent) => {
+            if (this.selectionDrag?.pointerId === event.pointerId) {
+                this.selectionDrag = null;
+                return;
+            }
             const start = this.pointerDown;
             if (!start || otherPointer(event)) return;
             this.pointerDown = null;
@@ -4288,6 +4726,17 @@ export class WsiAnnotationController {
         if (typing || event.altKey) return;
         const key = event.key.toLowerCase();
         if (event.ctrlKey || event.metaKey) {
+            // Ctrl/Cmd+A selects the listed annotations, from the viewer.
+            if (
+                key === 'a' &&
+                !event.shiftKey &&
+                this.visible &&
+                this.inViewer(event.target)
+            ) {
+                event.preventDefault();
+                this.selectAllListed();
+                return;
+            }
             // Ctrl/Cmd+Z undoes; Ctrl/Cmd+Shift+Z and Ctrl+Y redo.
             const redo =
                 (key === 'z' && event.shiftKey) ||
@@ -4311,6 +4760,10 @@ export class WsiAnnotationController {
             this.stepAnnotation(event.key === WSI_NEXT_ANNOTATION_KEY ? 1 : -1);
             return;
         }
+        if (event.key === 'Escape' && this.selectedIds.size) {
+            this.clearSelection();
+            return;
+        }
         if (
             event.key === 'Escape' &&
             this.focusedAnnotationId &&
@@ -4332,6 +4785,16 @@ export class WsiAnnotationController {
         if (shortcut === 'select') this.cancelDrawing();
         else this.setTool(shortcut === 'shape' ? this.shapeTool : shortcut);
     };
+
+    /**
+     * Whether a key went to the viewer: the focus is in it, or nowhere
+     * while Annotate is on (Ctrl/Cmd+A elsewhere selects the page's text).
+     */
+    private inViewer(target: EventTarget | null): boolean {
+        const element = target as HTMLElement | null;
+        if (!element || element === document.body) return this.annotating;
+        return !!element.closest?.('[data-wsi-viewer-root]');
+    }
 
     /**
      * Keeps OpenSeadragon's own keys (R rotates, F flips) from acting on a
@@ -4812,13 +5275,14 @@ export class WsiAnnotationController {
     private refreshStyle() {
         if (!this.annotorious) return;
         const fillOpacity = this.outlineOnly ? 0 : this.fillOpacity;
+        const selected = this.selectedIds;
         this.annotorious.setStyle?.((annotation: WsiAnnotation) => {
             const color = annotation.color || this.activeColor;
             return {
                 stroke: color,
                 fill: color,
                 fillOpacity,
-                strokeWidth: 2,
+                strokeWidth: selected.has(annotation.id) ? 4 : 2,
             };
         });
     }

@@ -144,7 +144,7 @@ The toolbar is a `role="toolbar"`: the arrow keys, Home and End move between its
 - **Labels on the slide**: each shape's label at the top-left corner of its box, in white on a dark band (at least 7:1 on any tissue). Larger shapes are labelled first; a label that would overlap one already shown is left out, shapes under 24 screen pixels on both sides get none (so zooming out drops them), points get none, and at most 150 show. The labels move with the slide.
 - **Hide all annotations** (H): hides every annotation on the slide, also while Annotate is off; the list, counts and tools stay. A dot on the eye marks any setting that differs from the default, and the eye is crossed out while all are hidden.
 
-Fill, outlines only and labels are remembered in `localStorage` (and the viewer works without it); hiding all is not, so a slide never opens looking empty. Labels and highlights are drawn over the slide in their own layer that ignores the pointer: GeoJSON exports hold annotation data only, and the downloaded view is the slide's canvas without them.
+Fill, outlines only and labels are remembered in `localStorage` (and the viewer works without it); hiding all is not, so a slide never opens looking empty. Labels, highlights and selection frames are drawn over the slide in their own layer that ignores the pointer: GeoJSON exports hold annotation data only, and the downloaded view is the slide's canvas without them.
 
 Each row under **Layers** has a solo button (a circle, filled when on) that shows only that layer; pressing it again, or **Show all layers** in the Display popover, shows the layers hidden before again. Showing or hiding a layer with its eye ends the solo.
 
@@ -162,7 +162,9 @@ Keys do nothing while the focus is in a text field. On a Mac, ⌘ works for Ctrl
 | Esc | Back to Select | A drawing tool is on |
 | H | Hide or show all annotations on the slide | Always |
 | ] and [ | Next and previous listed annotation, fitted and highlighted | Review card closed |
-| Esc | Stop highlighting the annotation | No drawing tool on |
+| Shift+click; Shift+drag | Add or remove an annotation; add those inside the box | No drawing tool on |
+| Ctrl+A | Select every listed annotation | Focus in the viewer, or nowhere with Annotate on |
+| Esc | Clear the selection, else stop highlighting the annotation | No drawing tool on |
 | Ctrl+Z; Ctrl+Shift+Z or Ctrl+Y | Undo; redo | Something to undo or redo |
 | A | Accept the annotation under review, then the next | Review card open |
 | R | Reject it, then the next | Review card open |
@@ -268,6 +270,22 @@ Drawing and editing stay off until the slide's annotations have loaded; a failed
 - the `/wsi/patient/{patient}` permalink: `?studyId=…&slideKey=…&annotationId=…`.
 
 The host passes the link's annotation as `requestedAnnotationId`. Once the slide's annotations have loaded it is opened once: its layer is shown if hidden (ending a solo), "Hide unreviewed AI annotations" and hide all are turned off for it, and it is fitted and highlighted. A link to an annotation that is not there (deleted, rejected in review, or private to another user, which the service does not list) shows "The linked annotation is not on this slide…" in the bar instead. Without the Clipboard API the bar shows the link to copy by hand. Without `annotationLink`, there is no Copy link.
+
+#### Selecting several annotations
+
+With Select (no drawing tool on), Annotate on or off:
+
+- **Shift+click** a shape or point on the slide adds or removes it; where shapes overlap, the smallest under the pointer is picked. **Shift+drag** draws a box and adds the annotations that lie wholly inside it.
+- Each list row has a checkbox. **Ctrl+A** (⌘A) selects every annotation the list shows (visible layers and filters) when the focus is in the viewer, or nowhere while Annotate is on; elsewhere it selects the page's text as usual.
+- **Esc** clears the selection. Selected shapes are drawn with a thicker outline and a dashed blue frame.
+
+While any are selected, a bar under the toolbar says "N selected" and offers, each button naming how many it applies to:
+
+- **Relabel**, **Move to layer…** and **Sharing…** (shared or private): for the user's own annotations; a layer move keeps their colors.
+- **Accept** and **Reject**: for the unreviewed AI annotations the user may review, anyone's, with the review route as above (without the route, only the user's own).
+- **Delete**: the user's own, after a confirmation.
+
+Others are skipped, and a status says what was done and skipped, e.g. "Relabelled 2 annotations; skipped 1 that is not yours.", and how many could not be saved. Relabel, move and sharing undo and redo as one step, as does a delete; reviews are not on the history. The service has no bulk update, delete or review route, so these send one request per annotation, four at a time, each with the annotation's current `version`; a 409 reloads the slide and the rest go on from the reloaded versions. The selection is cleared when another slide opens.
 
 #### Export and import (GeoJSON)
 

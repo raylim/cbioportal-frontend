@@ -729,6 +729,14 @@ const AnnotationRow = observer(
                     borderBottom: `1px solid ${colors.border}`,
                 }}
             >
+                <input
+                    type="checkbox"
+                    data-testid={`annotation-select-${annotation.id}`}
+                    aria-label={`Select ${name}`}
+                    checked={controller.isSelected(annotation.id)}
+                    onChange={() => controller.toggleSelected(annotation.id)}
+                    style={{ margin: '2px 0 0', flexShrink: 0 }}
+                />
                 <span
                     aria-hidden="true"
                     data-annotation-color={dotColor}

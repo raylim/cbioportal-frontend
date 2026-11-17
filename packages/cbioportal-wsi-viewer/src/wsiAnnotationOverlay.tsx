@@ -29,7 +29,11 @@ export const WsiAnnotationOverlay = observer(
     ({ controller }: { controller: WsiAnnotationController }) => {
         const focused = controller.focusedBox;
         const labels = controller.slideLabels;
-        if (!focused && !labels.length) return null;
+        const selected = controller.selectedBoxes;
+        const drag = controller.selectionDragBox;
+        if (!focused && !labels.length && !selected.length && !drag) {
+            return null;
+        }
         const box =
             focused && padded(focused, HIGHLIGHT_PADDING, HIGHLIGHT_MIN);
         return (
@@ -74,6 +78,43 @@ export const WsiAnnotationOverlay = observer(
                             </g>
                         ))}
                     </g>
+                )}
+                {selected.length > 0 && (
+                    <g data-testid="annotation-selection-frames">
+                        {selected.map(({ id, box: frame }) => {
+                            const at = padded(frame, 3, 12);
+                            return (
+                                <g
+                                    key={id}
+                                    data-testid={`annotation-selection-frame-${id}`}
+                                >
+                                    <rect
+                                        {...at}
+                                        fill="none"
+                                        stroke="#fff"
+                                        strokeWidth={3}
+                                    />
+                                    <rect
+                                        {...at}
+                                        fill="none"
+                                        stroke="#1f6fbf"
+                                        strokeWidth={1.5}
+                                        strokeDasharray="4 3"
+                                    />
+                                </g>
+                            );
+                        })}
+                    </g>
+                )}
+                {drag && (
+                    <rect
+                        data-testid="annotation-selection-box"
+                        {...drag}
+                        fill="rgba(31,111,191,0.12)"
+                        stroke="#1f6fbf"
+                        strokeWidth={1}
+                        strokeDasharray="4 3"
+                    />
                 )}
                 {box && (
                     <g data-testid="annotation-focus-highlight">

@@ -13,6 +13,7 @@ import {
     readableTextColor,
     SoloIcon,
 } from './wsiAnnotationControls';
+import { WsiAnnotationBulkBar } from './wsiAnnotationBulkBar';
 
 type DrawingTool = Exclude<WsiAnnotationTool, null>;
 
@@ -111,7 +112,17 @@ export const SHORTCUT_HELP: ShortcutSection[] = [
             [['H'], 'Hide or show all annotations on the slide'],
             [[']'], 'Next annotation in the list, fitted in the view'],
             [['['], 'Previous annotation in the list'],
-            [['Esc'], 'Stop highlighting the annotation'],
+            [['Esc'], 'Clear the selection, else stop highlighting'],
+        ],
+    },
+    {
+        title: 'Selecting',
+        when: 'With Select (no drawing tool on), Annotate on or off',
+        keys: [
+            [['Shift+click'], 'Add or remove an annotation'],
+            [['Shift+drag'], 'Add the annotations inside the box'],
+            [['Ctrl+A'], 'Select all the list shows'],
+            [['Esc'], 'Clear the selection'],
         ],
     },
     {
@@ -1838,6 +1849,7 @@ export const WsiAnnotationToolbar = observer(
                     />
                 )}
                 <ImportStatus controller={controller} />
+                <WsiAnnotationBulkBar controller={controller} />
             </div>
         );
     }

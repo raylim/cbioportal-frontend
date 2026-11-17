@@ -1,4 +1,8 @@
-import { WsiBounds } from './wsiAnnotationGeometryUtils';
+import {
+    WsiAnnotationShape,
+    WsiBounds,
+    WsiPoint,
+} from './wsiAnnotationGeometryUtils';
 
 /** An item to order by where it is on the slide. */
 export interface WsiSpatialItem {
@@ -177,4 +181,114 @@ export function placeSlideLabels(
         if (!placed.some(other => overlaps(label, other))) placed.push(label);
     }
     return placed;
+}
+
+/** Whether box `inner` lies inside box `outer`. */
+export function boundsInside(inner: WsiBounds, outer: WsiBounds): boolean {
+    return (
+        inner.minX >= outer.minX &&
+        inner.maxX <= outer.maxX &&
+        inner.minY >= outer.minY &&
+        inner.maxY <= outer.maxY
+    );
+}
+
+function distanceToSegment(p: WsiPoint, a: WsiPoint, b: WsiPoint): number {
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const length = dx * dx + dy * dy;
+    const t = length
+        ? Math.max(
+              0,
+              Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / length)
+          )
+        : 0;
+    return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+}
+
+function insidePolygon(p: WsiPoint, points: WsiPoint[]): boolean {
+    let inside = false;
+    for (let i = 0, j = points.length - 1; i < points.length; j = i++) {
+        const a = points[i];
+        const b = points[j];
+        if (
+            a.y > p.y !== b.y > p.y &&
+            p.x < ((b.x - a.x) * (p.y - a.y)) / (b.y - a.y) + a.x
+        ) {
+            inside = !inside;
+        }
+    }
+    return inside;
+}
+
+/**
+ * Whether `point` (image pixels) is on `shape`: inside an area, or within
+ * `tolerance` image pixels of a line or point.
+ */
+export function shapeContainsPoint(
+    shape: WsiAnnotationShape,
+    point: WsiPoint,
+    tolerance: number
+): boolean {
+    switch (shape.kind) {
+        case 'rectangle':
+            return (
+                point.x >= shape.x - tolerance &&
+                point.x <= shape.x + shape.width + tolerance &&
+                point.y >= shape.y - tolerance &&
+                point.y <= shape.y + shape.height + tolerance
+            );
+        case 'ellipse': {
+            const rx = shape.rx + tolerance;
+            const ry = shape.ry + tolerance;
+            return (
+                ((point.x - shape.cx) / rx) ** 2 +
+                    ((point.y - shape.cy) / ry) ** 2 <=
+                1
+            );
+        }
+        case 'point':
+            return (
+                Math.hypot(point.x - shape.x, point.y - shape.y) <= tolerance
+            );
+        case 'polygon':
+            return (
+                insidePolygon(point, shape.points) ||
+                shape.points.some(
+                    (a, i) =>
+                        distanceToSegment(
+                            point,
+                            a,
+                            shape.points[(i + 1) % shape.points.length]
+                        ) <= tolerance
+                )
+            );
+        default:
+            return shape.points.some(
+                (a, i) =>
+                    i + 1 < shape.points.length &&
+                    distanceToSegment(point, a, shape.points[i + 1]) <=
+                        tolerance
+            );
+    }
+}
+
+/** Runs `task` on each item, at most `limit` at a time; results in order. */
+export async function runLimited<T, R>(
+    items: T[],
+    limit: number,
+    task: (item: T) => Promise<R>
+): Promise<R[]> {
+    const results: R[] = new Array(items.length);
+    let next = 0;
+    const worker = async () => {
+        while (next < items.length) {
+            const index = next++;
+            results[index] = await task(items[index]);
+        }
+    };
+    await Promise.all(
+        Array.from({ length: Math.min(limit, items.length) }, worker)
+    );
+    return results;
 }
