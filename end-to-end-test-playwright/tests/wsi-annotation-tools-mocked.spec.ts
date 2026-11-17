@@ -233,6 +233,34 @@ async function gotoSlide(page: Page) {
     });
 }
 
+/** Turns Annotate on once the slide's annotations have loaded. */
+async function startAnnotating(page: Page) {
+    const toggle = page.getByTestId('annotation-mode-toggle');
+    await expect(toggle).toHaveAttribute('aria-disabled', 'false', {
+        timeout: 15_000,
+    });
+    await toggle.click();
+    await expect(toggle).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.getByTestId('annotation-tools')).toBeVisible();
+}
+
+/** Picks a tool from the Shape or Outline menu. */
+async function pickFromMenu(
+    page: Page,
+    group: 'shape' | 'outline',
+    tool: string
+) {
+    await page.getByTestId(`annotation-tool-${group}-menu`).click();
+    await page.getByTestId(`annotation-tool-${tool}`).click();
+    await expect(page.getByRole('menu')).toHaveCount(0);
+}
+
+/** Runs an item of the toolbar's ⋯ menu. */
+async function moreMenu(page: Page, item: string) {
+    await page.getByTestId('annotation-more-menu-button').click();
+    await page.getByTestId(item).click();
+}
+
 /** The vertices of a saved polygon selector. */
 function polygonPoints(selector: string): Array<{ x: number; y: number }> {
     const match = /points="([^"]+)"/.exec(selector);
@@ -253,8 +281,15 @@ if (process.env.PW_SUITE === 'wsi') {
             const pageErrors: string[] = [];
             page.on('pageerror', error => pageErrors.push(error.message));
             const at = await gotoSlide(page);
+            // Viewing shows only Annotate and the ⋯ menu.
+            await expect(page.getByTestId('annotation-tools')).toHaveCount(0);
+            await startAnnotating(page);
 
             // A line shows its length while it is drawn, then in the list.
+            await page
+                .getByTestId('annotation-drawing-as')
+                .getByLabel('Label for new annotations')
+                .fill('Depth');
             await page.getByTestId('annotation-tool-line').click();
             const start = at(0.35, 0.5);
             const end = at(0.6, 0.5);
@@ -271,6 +306,10 @@ if (process.env.PW_SUITE === 'wsi') {
             const line = service.writes[0].body;
             expect(line.target.selector.value).toMatch(/^<svg><line /);
             expect(line.body.layer_name).toBe('Default');
+            expect(line.body.label).toBe('Depth');
+            const label = page.getByLabel('Label for new annotations');
+            await label.fill('');
+            await label.blur();
             expect(line.visible_to).toEqual([]);
 
             // A note is saved in comment with the annotation's version.
@@ -290,7 +329,10 @@ if (process.env.PW_SUITE === 'wsi') {
             );
 
             // Points count as they are dropped; the tool stays on.
-            await page.getByTestId('annotation-tool-point').click();
+            await page.keyboard.press('.');
+            await expect(
+                page.getByTestId('annotation-tool-point')
+            ).toHaveAttribute('aria-pressed', 'true');
             for (const [fx, fy] of [
                 [0.4, 0.3],
                 [0.45, 0.35],
@@ -303,6 +345,9 @@ if (process.env.PW_SUITE === 'wsi') {
                 'Point: 3'
             );
             await page.keyboard.press('Escape');
+            await expect(
+                page.getByTestId('annotation-tool-select')
+            ).toHaveAttribute('aria-pressed', 'true');
             await expect(
                 page.getByTestId('annotation-point-tally-Default-Point')
             ).toContainText('3');
@@ -323,7 +368,7 @@ if (process.env.PW_SUITE === 'wsi') {
             // Export: a QuPath-style FeatureCollection named by the slide key.
             const [download] = await Promise.all([
                 page.waitForEvent('download'),
-                page.getByTestId('annotation-export-all').click(),
+                moreMenu(page, 'annotation-export-all'),
             ]);
             expect(download.suggestedFilename()).toBe(
                 `slide-${SLIDE_KEY}.geojson`
@@ -346,7 +391,8 @@ if (process.env.PW_SUITE === 'wsi') {
             expect(exportedLine.properties).toMatchObject({
                 objectType: 'annotation',
                 note: 'Depth of invasion, measured to the deepest cells.',
-                classification: { name: 'Default' },
+                name: 'Depth',
+                classification: { name: 'Depth' },
             });
             expect(
                 exportedLine.properties.measurements['Length µm']
@@ -462,9 +508,11 @@ if (process.env.PW_SUITE === 'wsi') {
             await openAnnotatedSlide(page, 2048);
             const service = await routeAnnotationService(page);
             const at = await gotoSlide(page);
+            await startAnnotating(page);
 
-            await page.getByTestId('annotation-tool-brush').click();
             const width = page.getByTestId('annotation-brush-width');
+            await expect(width).toHaveCount(0);
+            await pickFromMenu(page, 'outline', 'brush');
             await expect(width).toHaveAttribute(
                 'aria-label',
                 'Brush width in micrometres'
@@ -510,7 +558,8 @@ if (process.env.PW_SUITE === 'wsi') {
             const zoomIn = page.getByTitle('Zoom in');
             await zoomIn.click();
             await zoomIn.click();
-            await page.getByTestId('annotation-tool-brush').click();
+            // The Outline button reuses the brush.
+            await page.getByTestId('annotation-tool-outline').click();
             await expect
                 .poll(cursorDiameter, { timeout: 10_000 })
                 .toBeGreaterThan(before * 1.5);
@@ -523,6 +572,7 @@ if (process.env.PW_SUITE === 'wsi') {
             await openAnnotatedSlide(page, 2048);
             const service = await routeAnnotationService(page);
             const at = await gotoSlide(page);
+            await startAnnotating(page);
             const preview = page.getByTestId('annotation-draw-preview');
             const rectSelector = (index: number) =>
                 /<rect x="([\d.]+)" y="([\d.]+)" width="([\d.]+)" height="([\d.]+)"/
@@ -533,7 +583,7 @@ if (process.env.PW_SUITE === 'wsi') {
             // A rectangle drawn without zooming, for reference.
             const from = at(0.4, 0.4);
             const to = at(0.55, 0.5);
-            await page.getByTestId('annotation-tool-rectangle').click();
+            await pickFromMenu(page, 'shape', 'rectangle');
             await page.mouse.move(from.x, from.y);
             await page.mouse.down();
             await page.mouse.move(to.x, to.y, { steps: 5 });
@@ -542,7 +592,11 @@ if (process.env.PW_SUITE === 'wsi') {
 
             // The same drag, zoomed in with the wheel at its end: the
             // outline grows with the tissue, and the same tissue is saved.
-            await page.getByTestId('annotation-tool-rectangle').click();
+            // R picks the Shape menu's last tool again.
+            await page.keyboard.press('r');
+            await expect(
+                page.getByTestId('annotation-tool-shape')
+            ).toHaveAttribute('aria-pressed', 'true');
             await page.mouse.move(from.x, from.y);
             await page.mouse.down();
             await page.mouse.move(to.x, to.y, { steps: 5 });
@@ -562,7 +616,10 @@ if (process.env.PW_SUITE === 'wsi') {
             expect(Math.abs(bh - ah)).toBeLessThan(2);
 
             // A polygon closes on its first vertex where the zoom put it.
-            await page.getByTestId('annotation-tool-polygon').click();
+            await page.keyboard.press('p');
+            await expect(
+                page.getByTestId('annotation-tool-outline')
+            ).toHaveAttribute('aria-label', 'Outline: Polygon (P)');
             const centre = at(0.5, 0.5);
             for (const [dx, dy] of [
                 [-50, -50],
@@ -620,13 +677,18 @@ if (process.env.PW_SUITE === 'wsi') {
             await openAnnotatedSlide(page);
             const service = await routeAnnotationService(page);
             await gotoSlide(page);
+            await startAnnotating(page);
 
             const feature = (label: string, x: number) => ({
                 type: 'Feature',
                 geometry: { type: 'Point', coordinates: [x, 100] },
                 properties: { name: label },
             });
-            await page.getByTestId('annotation-import-file').setInputFiles({
+            const [chooser] = await Promise.all([
+                page.waitForEvent('filechooser'),
+                moreMenu(page, 'annotation-import'),
+            ]);
+            await chooser.setFiles({
                 name: 'cells.geojson',
                 mimeType: 'application/geo+json',
                 buffer: Buffer.from(
@@ -692,6 +754,18 @@ if (process.env.PW_SUITE === 'wsi') {
             );
             await page.getByTestId('annotation-undo').click();
             await expect.poll(() => service.rows.size).toBe(0);
+
+            // Redo creates the three again, in one step.
+            await expect(page.getByTestId('annotation-redo')).toHaveAttribute(
+                'title',
+                /Redo create of 3 annotations/
+            );
+            await page.keyboard.press('Control+Shift+Z');
+            await expect.poll(() => service.rows.size).toBe(3);
+            await expect(page.getByTestId('annotation-undo')).toHaveAttribute(
+                'title',
+                /Undo create of 3 annotations/
+            );
         });
     });
 }

@@ -10,8 +10,8 @@ import {
     readableTextColor,
     WsiAnnotationLayersPanel,
     WsiAnnotationPanel,
-    WsiAnnotationToolbar,
 } from './wsiAnnotationControls';
+import { WsiAnnotationToolbar } from './wsiAnnotationToolbar';
 import {
     configureWsiViewerRuntime,
     resetWsiViewerRuntime,
@@ -139,8 +139,7 @@ describe('WsiAnnotationPanel', () => {
 
     it('offers the brush width in µm with a scale, and screen pixels without one', () => {
         const controller = controllerWith([]);
-        (controller as any).apiUrl = 'https://tiles.example';
-        controller.activeTool = 'brush';
+        controller.setTool('brush');
         const { rerender } = render(
             <WsiAnnotationToolbar controller={controller} />
         );
@@ -360,6 +359,7 @@ describe('WsiAnnotationPanel', () => {
             const controller = controllerWith([
                 apiItem('Fibrosis 1', { type: 'Fibrosis|#ef4444' }),
             ]);
+            controller.setAnnotating(true);
             render(<WsiAnnotationToolbar controller={controller} />);
 
             const field = screen.getByLabelText(
@@ -384,6 +384,7 @@ describe('WsiAnnotationPanel', () => {
         it('limits labels to the terms when strict', () => {
             configure(true);
             const controller = controllerWith([apiItem('Old', {})]);
+            controller.setAnnotating(true);
             const rename = jest
                 .spyOn(controller, 'renameAnnotation')
                 .mockResolvedValue(undefined);
@@ -503,21 +504,6 @@ describe('WsiAnnotationPanel', () => {
             expect(badge.style.color).toBe('rgb(0, 0, 0)');
         });
 
-        it('keeps the sharing toggle label fixed and reports its state with aria-pressed', () => {
-            const controller = controllerWith([]);
-            render(<WsiAnnotationToolbar controller={controller} />);
-            const toggle = screen.getByTestId('annotation-default-sharing');
-            expect(toggle.getAttribute('aria-label')).toBe(
-                'Share new annotations with the study'
-            );
-            const pressed = toggle.getAttribute('aria-pressed');
-            fireEvent.click(toggle);
-            expect(toggle.getAttribute('aria-label')).toBe(
-                'Share new annotations with the study'
-            );
-            expect(toggle.getAttribute('aria-pressed')).not.toBe(pressed);
-        });
-
         it('moves focus to the next row after a delete, and back to the row after accept', async () => {
             const controller = controllerWith([
                 apiItem('a1', {}),
@@ -553,53 +539,55 @@ describe('WsiAnnotationPanel', () => {
         });
     });
 
-    it('exports and imports through the panel after a preview', async () => {
-        const controller = controllerWith([
-            apiItem('a1', { layer_name: 'Tumor' }),
-            apiItem('a2', { layer_name: 'Stroma' }),
-        ]);
-        const download = jest
-            .spyOn(controller, 'downloadGeoJson')
-            .mockImplementation(() => undefined);
-        const confirm = jest
-            .spyOn(controller, 'confirmImport')
-            .mockResolvedValue([]);
+    it('shows the most common label groups, the rest behind "+N more"', () => {
+        const items: any[] = [];
+        const add = (label: string, n: number) => {
+            for (let i = 0; i < n; i++) {
+                items.push(apiItem(`${label}-${i}`, { label }));
+            }
+        };
+        // Model labels with tile counts group under their base term.
+        [13, 9, 11].forEach((tiles, i) =>
+            add(`Solid region (${tiles} tiles)`, 3 - i)
+        );
+        [
+            'Grade 1',
+            'Grade 2',
+            'Grade 3',
+            'A',
+            'B',
+            'C',
+            'D',
+            'E',
+            'F',
+        ].forEach((label, i) => add(label, i < 3 ? 2 : 1));
+        const controller = controllerWith(items);
         render(<WsiAnnotationPanel controller={controller} />);
+        const chips = () =>
+            screen
+                .getAllByTestId(/^annotation-count-label-/)
+                .map(chip => chip.textContent);
+
+        expect(chips()).toEqual([
+            'Solid region 6',
+            'Grade 1 2',
+            'Grade 2 2',
+            'Grade 3 2',
+            'A 1',
+            'B 1',
+            'C 1',
+            'D 1',
+            '+2 more',
+        ]);
+        fireEvent.click(screen.getByText('+2 more'));
+        expect(chips()).toHaveLength(11);
+        expect(chips()[10]).toBe('Show fewer');
+        fireEvent.click(screen.getByText('Show fewer'));
+        expect(chips()).toHaveLength(9);
 
         fireEvent.click(
-            screen.getByLabelText(
-                'Export all 2 annotations of this slide as GeoJSON'
-            )
+            screen.getByLabelText('Show only the 6 Solid region annotations')
         );
-        expect(download).toHaveBeenCalledWith('all');
-        expect(screen.queryByTestId('annotation-export-visible')).toBeNull();
-
-        act(() => controller.toggleLayerVisibility('Stroma'));
-        fireEvent.click(
-            screen.getByLabelText(
-                'Export the 1 annotation on visible layers as GeoJSON'
-            )
-        );
-        expect(download).toHaveBeenLastCalledWith('visible');
-
-        const file = new File(
-            [
-                JSON.stringify({
-                    type: 'Feature',
-                    geometry: { type: 'Point', coordinates: [1, 2] },
-                    properties: { name: 'Mitosis' },
-                }),
-            ],
-            'points.geojson'
-        );
-        fireEvent.change(screen.getByLabelText('GeoJSON file to import'), {
-            target: { files: [file] },
-        });
-        const preview = await screen.findByTestId('annotation-import-preview');
-        expect(preview.textContent).toContain(
-            'points.geojson: 1 annotation (1 point)'
-        );
-        fireEvent.click(screen.getByText('Create 1 annotation'));
-        expect(confirm).toHaveBeenCalled();
+        expect(screen.getAllByRole('listitem')).toHaveLength(6);
     });
 });

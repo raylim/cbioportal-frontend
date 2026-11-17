@@ -110,7 +110,29 @@ The service sits behind a proxy that authorizes each request with the portal ses
 - carries `studyId` exactly once in the query string;
 - if it is a write (POST, PUT, PATCH, DELETE), sends `X-Requested-With: XMLHttpRequest`, and `Content-Type: application/json` with its body.
 
-A 401 means the user is signed out: the toolbar asks them to sign in and editing is off. A 403 means no access to the study: annotations are read-only. Neither is retried; a new slide or study tries again. `wsiServiceRequest.ts` holds the request rules.
+A 401 means the user is signed out: the **Annotate** button is disabled and says to sign in. A 403 means no access to the study: annotations are read-only. Neither is retried; a new slide or study tries again. `wsiServiceRequest.ts` holds the request rules.
+
+#### Toolbar
+
+The toolbar over the slide starts with only **Annotate** and a **⋯** menu, so viewing stays uncluttered. **Annotate** shows the drawing tools in one compact row, which wraps between groups on a narrow viewer:
+
+| Control | Contents |
+| --- | --- |
+| **Select** (V) | Pan, and click a shape to select it; the user's own shapes can then be moved or reshaped |
+| **Shape** (R) | Rectangle, ellipse or circle. The button draws with the last one picked; the arrow next to it opens the menu |
+| **Line** (L) | A line, with its length shown while drawing |
+| **Outline** | Polygon (P), freehand (F) or brush (B); like Shape, the button reuses the last one |
+| **Point** (.) | Points, one per click |
+| **Drawing as** | The layer, label and color of new annotations (see below) |
+| **Undo**, **Redo** | See Editing and undo |
+
+The brush width shows next to the tools only while the brush is on, and the point count only while the Point tool is on. Esc goes back to Select. Clicking the active tool again goes back to Select too. Single-key shortcuts work only while Annotate is on and the focus is not in a text field or menu; while Annotate is on, "." picks the Point tool instead of toggling the details sidebar, and OpenSeadragon's R (rotate) and F (flip) keys are off. **⋯** holds the sharing of new annotations (Shared or Private), **Export** (all annotations, or those on visible layers), **Import…**, and a list of the keyboard shortcuts.
+
+**Drawing as** has a layer choice, the label field (see Labels) and a color swatch. The color belongs to the layer: choosing a layer switches to its color, and the swatch's palette (the named colors, plus a custom color with an optional name) sets the color of that layer's new annotations; annotations already drawn keep theirs. A layer's color is the one the user gave it, else the most common color of its annotations, else the default blue for **Default** and a color of its own for a new layer. Layer colors, Annotate on or off, and the Shape and Outline menus' last tools are remembered in `localStorage`.
+
+While annotations load, after a failed load, signed out, or without access to the study, **Annotate** is disabled and a status next to it says why; only the ⋯ menu's export and shortcut list stay. Annotate off also turns shape editing off, so a click on a shape only shows its tooltip.
+
+The toolbar is a `role="toolbar"`: the arrow keys, Home and End move between its controls (fields keep their own arrow keys). The Shape, Outline and ⋯ buttons are menu buttons (`aria-haspopup`, `aria-expanded`); their menus open with Enter, Space or the down arrow, move with the arrow keys, Home and End, and close with Escape or a pick, returning focus to the button. Every icon button has an `aria-label` that names its shortcut, and a tooltip.
 
 #### Annotation body
 
@@ -129,7 +151,7 @@ Rows written before the viewer used `layer_name` kept the layer in `comment` and
 
 #### Private and shared annotations
 
-`visible_to` decides who sees an annotation: `null` keeps it private to its creator, and `[]` shares it with everyone who can read the study. The toolbar's **Shared**/**Private** button sets the default for new annotations (shared unless the user chose private; remembered in `localStorage`), and each list row shows a **Private** or **Shared** badge that switches the annotation with a versioned `PUT`. The service also accepts group names, but the proxy sends no groups, so the viewer offers no group choice; a row shared with groups shows **Groups**.
+`visible_to` decides who sees an annotation: `null` keeps it private to its creator, and `[]` shares it with everyone who can read the study. The toolbar's ⋯ menu sets whether new annotations are **Shared** or **Private** (shared unless the user chose private; remembered in `localStorage`), and each list row shows a **Private** or **Shared** badge that switches the annotation with a versioned `PUT`. The service also accepts group names, but the proxy sends no groups, so the viewer offers no group choice; a row shared with groups shows **Groups**.
 
 #### AI annotations
 
@@ -148,7 +170,7 @@ Only an annotation's creator may edit, move or delete it, or change its note or 
 
 #### Labels
 
-The toolbar's label field sets the label of new annotations; left empty, a new shape is auto-labelled with the active color's name and a number (and a point with the color's name, or "Point" for the default color). With a `labelVocabulary` the field and the list's label editor suggest those terms, then the labels already used on the slide, and still accept free text. With `labelVocabularyStrict` they become a choice of the terms only, new shapes default to the first term, and a label outside the list cannot be saved (an annotation that already has one keeps it until it is relabelled). Strict is ignored without terms.
+The **Drawing as** label field sets the label of new annotations; left empty, a new shape is auto-labelled with the layer color's name and a number (and a point with the color's name, or "Point" for the default color). With a `labelVocabulary` the field and the list's label editor suggest those terms, then the labels already used on the slide, and still accept free text. With `labelVocabularyStrict` they become a choice of the terms only, new shapes default to the first term, and a label outside the list cannot be saved (an annotation that already has one keeps it until it is relabelled). Strict is ignored without terms.
 
 The viewer ships no default vocabulary: which terms fit depends on the site and the study, and a built-in list would quietly steer labels everywhere. Without one the field suggests the slide's existing labels, which keeps them consistent within a slide.
 
@@ -170,7 +192,7 @@ The wheel and the zoom buttons pan and zoom the slide while a shape is being dra
 
 #### Freehand and brush
 
-**Free** draws while the mouse button is held and saves the outline as a polygon. **Brush** paints a band and saves the band's outline as a polygon: the stroke is offset to both sides with mitred corners and round caps (`strokeOutline`). Both record a point every 2 screen pixels and simplify the stroke with Douglas–Peucker at 1.5 screen pixels before saving, measured at the finest zoom the stroke was drawn at, so zooming out mid-stroke does not erase detail drawn closer in.
+**Freehand** draws while the mouse button is held and saves the outline as a polygon. **Brush** paints a band and saves the band's outline as a polygon: the stroke is offset to both sides with mitred corners and round caps (`strokeOutline`). Both record a point every 2 screen pixels and simplify the stroke with Douglas–Peucker at 1.5 screen pixels before saving, measured at the finest zoom the stroke was drawn at, so zooming out mid-stroke does not erase detail drawn closer in.
 
 The brush width is chosen in the toolbar in µm of tissue (10–500 µm, 50 µm by default). It is converted to image pixels with the slide's microns-per-pixel (the mean of x and y, since the band is round), so a stroke covers the same tissue at every zoom. While the brush is on, a circle under the pointer shows its size on screen at the current zoom, and the stroke previews at that width. A slide without a valid mpp has no scale: the width is then in screen pixels (8–64 px at the zoom the stroke starts at, kept for the whole stroke), and the toolbar says so. `brushWidthInImagePixels` holds the conversion.
 
@@ -178,26 +200,26 @@ The brush is stored as a polygon, not as a line with a width, so it has an area 
 
 #### Editing and undo
 
-Clicking a rectangle, ellipse, line or polygon (including freehand and brush shapes) selects it for editing: Annotorious shows handles to move it or drag its vertices. The viewer saves the new geometry with a versioned `PUT` and keeps the label, note, layer, sharing and provenance as stored. Points are not draggable; delete one and drop it again.
+While Annotate is on, clicking a rectangle, ellipse, line or polygon (including freehand and brush shapes) with Select selects it for editing: Annotorious shows handles to move it or drag its vertices. The viewer saves the new geometry with a versioned `PUT` and keeps the label, note, layer, sharing and provenance as stored. Points are not draggable; delete one and drop it again.
 
-**Undo** in the toolbar, or Ctrl+Z / Cmd+Z outside text fields, reverses this session's last change on the slide: a created annotation is deleted, an edit is reversed by saving the previous version over the current one (with the current `version`), and a deleted annotation is created again (with a new id, so later undos follow it). A layer delete and an import each undo as one step. The history holds 50 changes and is cleared when another slide or study opens.
+**Undo** in the toolbar, or Ctrl+Z / Cmd+Z outside text fields, reverses this session's last change on the slide: a created annotation is deleted, an edit is reversed by saving the previous version over the current one (with the current `version`), and a deleted annotation is created again (with a new id, so later undos follow it). A layer delete and an import each undo as one step. **Redo**, or Ctrl+Shift+Z / Cmd+Shift+Z / Ctrl+Y, applies an undone change again the same way, in one step for an import or a layer delete; annotations created again get new ids, and the rest of the history follows them. A new change clears what can be redone. Reviews are on neither history. The history holds 50 changes each way and is cleared when another slide or study opens.
 
 #### Annotation list
 
-The sidebar's Annotations section lists the slide's annotations on visible layers. It filters by label or note text, layer, author (when there is more than one) and AI origin (when any annotation is from the assistant or a model), and shows how many listed annotations each layer and each label has. An auto-label (a palette color's name or hex and a number) counts under its base, so "Tumor 1" and "Tumor 2" count as Tumor; vocabulary terms and other labels count as written, so "Grade 1" and "Grade 2" stay apart. Clicking a label count filters the list to that exact label term, and clicking it again clears it. Clicking an annotation's label (or Enter on it) pans and zooms the slide to it. The filters reset when another slide opens.
+The sidebar's Annotations section lists the slide's annotations on visible layers. It filters by label or note text, layer, author (when there is more than one) and AI origin (when any annotation is from the assistant or a model), and shows how many listed annotations each layer and each label group has. A label groups under its base term: a trailing count such as " (13 tiles)" is dropped, so "Solid region (13 tiles)" and "Solid region (9 tiles)" group as Solid region, and an auto-label (a palette color's name or hex and a number) counts under its base, so "Tumor 1" and "Tumor 2" count as Tumor. Vocabulary terms and other labels count as written, so "Grade 1" and "Grade 2" or "Gleason pattern 4" stay apart. The eight largest groups show, the rest behind **+N more**. Clicking a label count filters the list to that group, and clicking it again clears it. Clicking an annotation's label (or Enter on it) pans and zooms the slide to it. The filters reset when another slide opens.
 
 Drawing and editing stay off until the slide's annotations have loaded; a failed load shows an alert with **Retry**. Icon buttons are labelled by their target (for example "Delete annotation Tumor 1"), and after an accept, reject, delete or label save the focus moves to the row, else the next row, else the list. Text on an annotation's color is black or white by luminance.
 
 #### Export and import (GeoJSON)
 
-The Annotations section exports the slide's annotations, all of them or only those on visible layers, as a GeoJSON `FeatureCollection` that QuPath imports. Each annotation is a `Feature`:
+The toolbar's ⋯ menu exports the slide's annotations, all of them or only those on visible layers, as a GeoJSON `FeatureCollection` that QuPath imports. Each annotation is a `Feature`:
 
 - `geometry`: a `Point`, `LineString` or `Polygon` in level-0 image pixels (x right, y down). Rectangles become 4-corner polygons and ellipses 72-vertex polygons.
-- `properties`: `objectType: "annotation"`, `name` (the label), `classification: { name, color: [r, g, b] }` (the label term, as the list counts it, and the annotation's color), `layer`, `note`, and `measurements` in QuPath's naming (`Area µm^2`, `Perimeter µm`, `Length µm`, or `px` without an mpp). AI annotations add `ai_generated` and `ai_review_status`.
+- `properties`: `objectType: "annotation"`, `name` (the label), `classification: { name, color: [r, g, b] }` (the label, or an auto-label's base, and the annotation's color), `layer`, `note`, and `measurements` in QuPath's naming (`Area µm^2`, `Perimeter µm`, `Length µm`, or `px` without an mpp). AI annotations add `ai_generated` and `ai_review_status`.
 
 The collection's `wsi` member names the slide by its opaque slide key and gives the mpp. Exports never contain image ids, sealed sources or object keys, nor creators or provenance details.
 
-**Import…** refuses a file over 25 MB before reading it. It reads a GeoJSON `FeatureCollection`, `Feature` or array of features, such as a QuPath export, and validates it before anything is saved: points, lines and polygons (and their multi- forms, split into one annotation each) with finite coordinates inside the slide and at most 5,000 vertices are kept; a polygon's holes are dropped; anything else is skipped with a reason. At most 2,000 annotations are imported at once. A preview shows how many points, lines and polygons will be created and what was skipped; **Create** then saves them in batch requests (see Batch saves), with the file's name or class as the label, its class color, layer and note, else the active ones; the annotations saved undo as one step. If some are refused, the rest are still created and the message names the refused ones by their number in the preview and the service's reason. With a strict vocabulary, features whose label is not a term are skipped, named by their feature number.
+**Import…** in the ⋯ menu refuses a file over 25 MB before reading it. It reads a GeoJSON `FeatureCollection`, `Feature` or array of features, such as a QuPath export, and validates it before anything is saved: points, lines and polygons (and their multi- forms, split into one annotation each) with finite coordinates inside the slide and at most 5,000 vertices are kept; a polygon's holes are dropped; anything else is skipped with a reason. At most 2,000 annotations are imported at once. A preview under the toolbar shows how many points, lines and polygons will be created and what was skipped; **Create** then saves them in batch requests (see Batch saves), with the file's name or class as the label, its class color, layer and note, else the active ones; the annotations saved undo as one step. If some are refused, the rest are still created and the message names the refused ones by their number in the preview and the service's reason. With a strict vocabulary, features whose label is not a term are skipped, named by their feature number.
 
 #### Batch saves
 

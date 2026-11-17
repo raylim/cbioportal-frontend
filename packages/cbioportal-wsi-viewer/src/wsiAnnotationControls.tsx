@@ -2,13 +2,10 @@ import * as React from 'react';
 import { observer } from 'mobx-react';
 import {
     annotationVisibility,
-    BRUSH_WIDTHS_PX,
-    BRUSH_WIDTHS_UM,
     DEFAULT_COLOR,
     DEFAULT_LAYER,
     WsiAnnotationAiFilter,
     WsiAnnotationController,
-    WsiAnnotationTool,
 } from './wsiAnnotationController';
 import { WsiAnnotation } from './wsiViewerTypes';
 import { formatMeasurement } from './wsiAnnotationGeometryUtils';
@@ -71,63 +68,6 @@ function focusAfterRowAction(
     target?.focus();
 }
 
-const tools: Array<{
-    name: Exclude<WsiAnnotationTool, null>;
-    label: string;
-    icon: string;
-    hint: string;
-}> = [
-    {
-        name: 'rectangle',
-        label: 'Rect',
-        icon: '◻',
-        hint: 'Draw a rectangle — click and drag on the slide',
-    },
-    {
-        name: 'ellipse',
-        label: 'Ellipse',
-        icon: '⬭',
-        hint: 'Draw an ellipse — click and drag on the slide',
-    },
-    {
-        name: 'circle',
-        label: 'Circle',
-        icon: '○',
-        hint: 'Draw a circle — click and drag a box to fit it in',
-    },
-    {
-        name: 'line',
-        label: 'Line',
-        icon: '╱',
-        hint: 'Draw a line — click and drag on the slide',
-    },
-    {
-        name: 'polygon',
-        label: 'Poly',
-        icon: '⬡',
-        hint: 'Draw a polygon — click to add points, double-click to close',
-    },
-    {
-        name: 'freehand',
-        label: 'Free',
-        icon: '✎',
-        hint: 'Draw freehand — hold the mouse button and trace an outline',
-    },
-    {
-        name: 'brush',
-        label: 'Brush',
-        icon: '🖌',
-        hint: 'Paint a band — hold the mouse button and brush over the region',
-    },
-    {
-        name: 'point',
-        label: 'Point',
-        icon: '•',
-        hint:
-            'Drop points — click on the slide for each one (drag to pan); Esc to stop',
-    },
-];
-
 let labelListCount = 0;
 
 /** A page-unique id for a label suggestion list. */
@@ -153,6 +93,7 @@ export const AnnotationLabelField = observer(
         autoFocus,
         onKeyDown,
         style,
+        toolbarItem,
     }: {
         controller: WsiAnnotationController;
         value: string;
@@ -165,11 +106,15 @@ export const AnnotationLabelField = observer(
         autoFocus?: boolean;
         onKeyDown?: (event: React.KeyboardEvent) => void;
         style?: React.CSSProperties;
+        /** Marks the field as one of a toolbar's controls. */
+        toolbarItem?: boolean;
     }) => {
         const listId = useLabelListId();
+        const itemProps = toolbarItem ? { 'data-toolbar-item': true } : {};
         if (controller.strictLabels) {
             return (
                 <select
+                    {...itemProps}
                     data-testid={testId}
                     aria-label={ariaLabel}
                     value={value}
@@ -199,6 +144,7 @@ export const AnnotationLabelField = observer(
         return (
             <>
                 <input
+                    {...itemProps}
                     data-testid={testId}
                     aria-label={ariaLabel}
                     list={listId}
@@ -219,370 +165,6 @@ export const AnnotationLabelField = observer(
         );
     }
 );
-
-const toolbarStyle: React.CSSProperties = {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    display: 'flex',
-    alignItems: 'center',
-    gap: 6,
-    flexWrap: 'wrap',
-    padding: '4px 10px 4px 44px',
-    background: 'rgba(250,250,250,0.92)',
-    borderBottom: `1px solid ${colors.border}`,
-    fontSize: 11,
-    backdropFilter: 'blur(2px)',
-    zIndex: 20,
-};
-
-export const WsiAnnotationToolbar = observer(
-    ({ controller }: { controller: WsiAnnotationController }) => {
-        const [showAddColor, setShowAddColor] = React.useState(false);
-        const [newColorName, setNewColorName] = React.useState('');
-        const [newColorHex, setNewColorHex] = React.useState('#ff0000');
-
-        if (!controller || !controller.visible) return null;
-
-        const saveColor = () => {
-            controller.addNamedColor(
-                newColorName.trim() || newColorHex,
-                newColorHex
-            );
-            setNewColorName('');
-            setShowAddColor(false);
-        };
-
-        if (!controller.canEdit) {
-            // Signed out or read-only: no drawing tools, only the notice.
-            return controller.accessMessage ? (
-                <div data-testid="wsi-annotation-toolbar" style={toolbarStyle}>
-                    <span
-                        role="status"
-                        data-testid="wsi-annotation-access-notice"
-                        style={{ color: colors.muted }}
-                    >
-                        {controller.accessMessage}
-                    </span>
-                </div>
-            ) : null;
-        }
-
-        return (
-            <div data-testid="wsi-annotation-toolbar" style={toolbarStyle}>
-                {tools.map(tool => {
-                    const active = controller.activeTool === tool.name;
-                    return (
-                        <button
-                            key={tool.name}
-                            data-testid={`annotation-tool-${tool.name}`}
-                            title={active ? 'Cancel drawing (Esc)' : tool.hint}
-                            aria-label={
-                                active
-                                    ? `Cancel ${tool.label} drawing (Esc)`
-                                    : tool.hint
-                            }
-                            aria-pressed={active}
-                            onClick={() =>
-                                controller.setTool(active ? null : tool.name)
-                            }
-                            style={{
-                                padding: '2px 9px',
-                                fontSize: 11,
-                                cursor: 'pointer',
-                                borderRadius: 3,
-                                lineHeight: '18px',
-                                border: `1px solid ${
-                                    active ? '#c0392b' : colors.border
-                                }`,
-                                background: active ? '#fde8e8' : '#fff',
-                                color: active ? '#c0392b' : colors.muted,
-                                fontWeight: active ? 600 : 400,
-                            }}
-                        >
-                            {active
-                                ? '✕ Cancel draw'
-                                : `${tool.icon} ${tool.label}`}
-                        </button>
-                    );
-                })}
-                <AnnotationLabelField
-                    controller={controller}
-                    value={controller.activeLabel}
-                    onChange={controller.setActiveLabel}
-                    ariaLabel="Label for new annotations"
-                    testId="annotation-active-label"
-                    placeholder={
-                        controller.strictLabels ? undefined : 'Auto label'
-                    }
-                    style={{ width: 110, fontSize: 11, padding: '1px 4px' }}
-                />
-                {controller.activeTool === 'brush' && (
-                    <BrushWidthControl controller={controller} />
-                )}
-                {controller.activeTool === 'point' && (
-                    <span
-                        role="status"
-                        data-testid="annotation-point-count"
-                        aria-live="polite"
-                        style={{
-                            fontSize: 11,
-                            color: colors.text,
-                            fontWeight: 600,
-                            whiteSpace: 'nowrap',
-                        }}
-                    >
-                        {controller.activePointLabel}:{' '}
-                        {controller.activePointCount}
-                    </span>
-                )}
-                <ToolbarDivider />
-                <span
-                    style={{
-                        fontSize: 10,
-                        color: colors.muted,
-                        whiteSpace: 'nowrap',
-                    }}
-                >
-                    Color:
-                </span>
-                {controller.namedColors.map(color => {
-                    const active =
-                        controller.activeColor === color.hex &&
-                        controller.activeColorName === color.name;
-                    return (
-                        <span
-                            key={`${color.name}|${color.hex}`}
-                            style={{
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                gap: 1,
-                            }}
-                        >
-                            <button
-                                data-testid={`annotation-color-${color.name ||
-                                    color.hex}`}
-                                title={`Color: ${color.name || color.hex}`}
-                                aria-pressed={active}
-                                onClick={() =>
-                                    controller.setActiveNamedColor(
-                                        color.name,
-                                        color.hex
-                                    )
-                                }
-                                style={{
-                                    fontSize: 10,
-                                    padding: '1px 7px',
-                                    borderRadius: 10,
-                                    cursor: 'pointer',
-                                    background: active ? color.hex : '#fff',
-                                    color: active
-                                        ? readableTextColor(color.hex)
-                                        : colors.text,
-                                    border: `1.5px solid ${color.hex}`,
-                                    fontWeight: active ? 700 : 400,
-                                    whiteSpace: 'nowrap',
-                                }}
-                            >
-                                {color.name || color.hex}
-                            </button>
-                            {controller.canRemoveNamedColor(
-                                color.name,
-                                color.hex
-                            ) && (
-                                <button
-                                    title={`Remove "${color.name ||
-                                        color.hex}" from palette`}
-                                    aria-label={`Remove color ${color.name ||
-                                        color.hex} from the palette`}
-                                    onClick={() =>
-                                        controller.removeNamedColor(
-                                            color.name,
-                                            color.hex
-                                        )
-                                    }
-                                    style={{
-                                        fontSize: 8,
-                                        padding: '0 2px',
-                                        border: 'none',
-                                        background: 'transparent',
-                                        cursor: 'pointer',
-                                        color: colors.muted,
-                                        lineHeight: 1,
-                                    }}
-                                >
-                                    ×
-                                </button>
-                            )}
-                        </span>
-                    );
-                })}
-                {!showAddColor ? (
-                    <button
-                        data-testid="add-annotation-color"
-                        title="Add new named color to palette"
-                        onClick={() => setShowAddColor(true)}
-                        style={{
-                            fontSize: 12,
-                            padding: '0 5px',
-                            border: `1px dashed ${colors.border}`,
-                            background: '#fff',
-                            color: colors.muted,
-                            borderRadius: 10,
-                            cursor: 'pointer',
-                        }}
-                    >
-                        +
-                    </button>
-                ) : (
-                    <span
-                        style={{
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: 3,
-                            padding: '1px 5px',
-                            border: `1px solid ${colors.border}`,
-                            borderRadius: 10,
-                            background: '#fff',
-                        }}
-                    >
-                        <input
-                            aria-label="Custom annotation color"
-                            type="color"
-                            value={newColorHex}
-                            onChange={event =>
-                                setNewColorHex(event.target.value)
-                            }
-                            style={{
-                                width: 20,
-                                height: 16,
-                                border: 'none',
-                                padding: 0,
-                                cursor: 'pointer',
-                            }}
-                        />
-                        <input
-                            aria-label="Custom annotation color name"
-                            value={newColorName}
-                            placeholder="Name (optional)"
-                            maxLength={20}
-                            autoFocus
-                            onChange={event =>
-                                setNewColorName(event.target.value)
-                            }
-                            onKeyDown={event => {
-                                if (event.key === 'Enter') saveColor();
-                                if (event.key === 'Escape')
-                                    setShowAddColor(false);
-                            }}
-                            style={{
-                                width: 90,
-                                border: 'none',
-                                outline: 'none',
-                                fontSize: 10,
-                            }}
-                        />
-                        <button
-                            data-testid="save-annotation-color"
-                            title="Add color to palette"
-                            onClick={saveColor}
-                            style={{
-                                border: `1px solid ${colors.blue}`,
-                                borderRadius: 8,
-                                background: colors.blue,
-                                color: '#fff',
-                                fontSize: 10,
-                            }}
-                        >
-                            Add
-                        </button>
-                        <button
-                            title="Cancel"
-                            aria-label="Cancel adding a color"
-                            onClick={() => setShowAddColor(false)}
-                            style={{
-                                border: 'none',
-                                background: 'transparent',
-                                color: colors.muted,
-                            }}
-                        >
-                            ✕
-                        </button>
-                    </span>
-                )}
-                <ToolbarDivider />
-                <button
-                    data-testid="annotation-undo"
-                    aria-label={`${controller.undoLabel ||
-                        'Nothing to undo'} (Ctrl+Z)`}
-                    title={`${controller.undoLabel ||
-                        'Nothing to undo'} (Ctrl+Z)`}
-                    disabled={!controller.canUndo}
-                    onClick={() => void controller.undo()}
-                    style={{
-                        padding: '2px 8px',
-                        fontSize: 11,
-                        cursor: controller.canUndo ? 'pointer' : 'default',
-                        borderRadius: 3,
-                        lineHeight: '18px',
-                        border: `1px solid ${colors.border}`,
-                        background: '#fff',
-                        color: colors.muted,
-                        opacity: controller.canUndo ? 1 : 0.5,
-                    }}
-                >
-                    <i aria-hidden="true" className="fa fa-undo" /> Undo
-                </button>
-                <button
-                    data-testid="annotation-default-sharing"
-                    aria-pressed={controller.defaultShared}
-                    aria-label="Share new annotations with the study"
-                    title={
-                        controller.defaultShared
-                            ? 'New annotations: shared with everyone who can see this study'
-                            : 'New annotations: private (only you)'
-                    }
-                    onClick={() =>
-                        controller.setDefaultShared(!controller.defaultShared)
-                    }
-                    style={{
-                        padding: '2px 8px',
-                        fontSize: 11,
-                        cursor: 'pointer',
-                        borderRadius: 3,
-                        lineHeight: '18px',
-                        border: `1px solid ${colors.border}`,
-                        background: '#fff',
-                        color: colors.muted,
-                        whiteSpace: 'nowrap',
-                    }}
-                >
-                    <i
-                        aria-hidden="true"
-                        className={`fa ${
-                            controller.defaultShared ? 'fa-users' : 'fa-lock'
-                        }`}
-                    />{' '}
-                    {controller.defaultShared ? 'Shared' : 'Private'}
-                </button>
-            </div>
-        );
-    }
-);
-
-function ToolbarDivider() {
-    return (
-        <span
-            style={{
-                width: 1,
-                height: 16,
-                background: colors.border,
-                margin: '0 2px',
-            }}
-        />
-    );
-}
 
 const plural = (n: number, noun: string) => `${n} ${noun}${n === 1 ? '' : 's'}`;
 
@@ -669,6 +251,18 @@ export const WsiAnnotationLayersPanel = observer(
                                     }`}
                                 />
                             </button>
+                            <span
+                                aria-hidden="true"
+                                data-testid={`layer-color-${layer}`}
+                                style={{
+                                    width: 8,
+                                    height: 8,
+                                    borderRadius: '50%',
+                                    flexShrink: 0,
+                                    background: controller.layerColor(layer)
+                                        .hex,
+                                }}
+                            />
                             <button
                                 data-testid={`layer-select-${layer}`}
                                 title={`Draw on layer "${layer}"`}
@@ -922,12 +516,9 @@ export const WsiAnnotationPanel = observer(
                     )}
                     <span style={{ color: colors.muted, fontSize: 11 }}>
                         {controller.canEdit
-                            ? 'No annotations yet. Draw on the slide to create one.'
+                            ? 'No annotations yet. Turn on Annotate above the slide to draw one.'
                             : 'No annotations.'}
                     </span>
-                    {controller.canEdit && (
-                        <AnnotationTransfer controller={controller} />
-                    )}
                 </>
             );
         }
@@ -978,7 +569,6 @@ export const WsiAnnotationPanel = observer(
                     </label>
                 )}
                 <MeasurementScaleNote controller={controller} />
-                <AnnotationTransfer controller={controller} />
                 <PointTally controller={controller} />
                 <AnnotationListFilters controller={controller} />
                 <AnnotationCounts controller={controller} />
@@ -1422,17 +1012,25 @@ const AnnotationListFilters = observer(
     }
 );
 
+/** How many label groups "By label" shows before "+N more". */
+export const LABEL_GROUPS_SHOWN = 8;
+
 /**
- * How many listed annotations each layer and label has. A label chip
- * filters the list to that label.
+ * How many listed annotations each layer and label group has. A label chip
+ * filters the list to that group; the most common groups show first, and
+ * the rest behind "+N more".
  */
 const AnnotationCounts = observer(
     ({ controller }: { controller: WsiAnnotationController }) => {
+        const [showAll, setShowAll] = React.useState(false);
         const layers = Array.from(controller.listedLayerCounts.entries());
         const labels = Array.from(controller.listedLabelCounts.entries()).sort(
             (a, b) => b[1] - a[1] || a[0].localeCompare(b[0])
         );
         if (!layers.length) return null;
+        const activeLabel = controller.listFilter.label;
+        const shown = showAll ? labels : labels.slice(0, LABEL_GROUPS_SHOWN);
+        const hidden = labels.length - shown.length;
         const row = (title: string, children: React.ReactNode) => (
             <div
                 style={{
@@ -1449,6 +1047,14 @@ const AnnotationCounts = observer(
                 {children}
             </div>
         );
+        const moreButtonStyle: React.CSSProperties = {
+            border: 'none',
+            background: 'transparent',
+            color: colors.blue,
+            fontSize: 10,
+            cursor: 'pointer',
+            padding: '0 2px',
+        };
         return (
             <div data-testid="annotation-counts">
                 {row(
@@ -1465,34 +1071,56 @@ const AnnotationCounts = observer(
                 )}
                 {row(
                     'By label:',
-                    labels.map(([label, count]) => {
-                        const active = controller.listFilter.label === label;
-                        return (
+                    <>
+                        {shown.map(([label, count]) => {
+                            const active = activeLabel === label;
+                            return (
+                                <button
+                                    key={label}
+                                    data-testid={`annotation-count-label-${label}`}
+                                    aria-label={`Show only the ${count} ${label} annotation${
+                                        count === 1 ? '' : 's'
+                                    }`}
+                                    aria-pressed={active}
+                                    onClick={() =>
+                                        controller.setListFilter({
+                                            label: active ? '' : label,
+                                        })
+                                    }
+                                    style={{
+                                        ...countChipStyle,
+                                        cursor: 'pointer',
+                                        fontWeight: active ? 700 : 400,
+                                        borderColor: active
+                                            ? colors.text
+                                            : colors.border,
+                                    }}
+                                >
+                                    {label} {count}
+                                </button>
+                            );
+                        })}
+                        {hidden > 0 && (
                             <button
-                                key={label}
-                                data-testid={`annotation-count-label-${label}`}
-                                aria-label={`Show only the ${count} ${label} annotation${
-                                    count === 1 ? '' : 's'
-                                }`}
-                                aria-pressed={active}
-                                onClick={() =>
-                                    controller.setListFilter({
-                                        label: active ? '' : label,
-                                    })
-                                }
-                                style={{
-                                    ...countChipStyle,
-                                    cursor: 'pointer',
-                                    fontWeight: active ? 700 : 400,
-                                    borderColor: active
-                                        ? colors.text
-                                        : colors.border,
-                                }}
+                                data-testid="annotation-count-label-more"
+                                aria-expanded={false}
+                                onClick={() => setShowAll(true)}
+                                style={moreButtonStyle}
                             >
-                                {label} {count}
+                                +{hidden} more
                             </button>
-                        );
-                    })
+                        )}
+                        {showAll && labels.length > LABEL_GROUPS_SHOWN && (
+                            <button
+                                data-testid="annotation-count-label-more"
+                                aria-expanded={true}
+                                onClick={() => setShowAll(false)}
+                                style={moreButtonStyle}
+                            >
+                                Show fewer
+                            </button>
+                        )}
+                    </>
                 )}
             </div>
         );
@@ -1510,183 +1138,6 @@ function transferButtonStyle(primary = false): React.CSSProperties {
         cursor: 'pointer',
     };
 }
-
-/**
- * GeoJSON export of the slide's annotations, and import of a GeoJSON file
- * after a preview and confirmation.
- */
-const AnnotationTransfer = observer(
-    ({ controller }: { controller: WsiAnnotationController }) => {
-        const fileInput = React.useRef<HTMLInputElement>(null);
-        const preview = controller.importPreview;
-        const progress = controller.importProgress;
-        const total = controller.annotations.length;
-        const shown = controller.shownAnnotations.length;
-        const kinds = preview
-            ? (['polygon', 'line', 'point'] as const)
-                  .filter(kind => preview.counts[kind])
-                  .map(
-                      kind =>
-                          `${preview.counts[kind]} ${kind}${
-                              preview.counts[kind] === 1 ? '' : 's'
-                          }`
-                  )
-                  .join(', ')
-            : '';
-        return (
-            <div data-testid="annotation-transfer" style={{ marginBottom: 6 }}>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                    {total > 0 && (
-                        <>
-                            <button
-                                data-testid="annotation-export-all"
-                                aria-label={`Export all ${total} annotations of this slide as GeoJSON`}
-                                onClick={() =>
-                                    controller.downloadGeoJson('all')
-                                }
-                                style={transferButtonStyle()}
-                            >
-                                <i
-                                    aria-hidden="true"
-                                    className="fa fa-download"
-                                />{' '}
-                                Export all ({total})
-                            </button>
-                            {shown !== total && (
-                                <button
-                                    data-testid="annotation-export-visible"
-                                    aria-label={`Export the ${shown} annotation${
-                                        shown === 1 ? '' : 's'
-                                    } on visible layers as GeoJSON`}
-                                    onClick={() =>
-                                        controller.downloadGeoJson('visible')
-                                    }
-                                    style={transferButtonStyle()}
-                                >
-                                    Export visible ({shown})
-                                </button>
-                            )}
-                        </>
-                    )}
-                    {controller.canEdit && (
-                        <>
-                            <button
-                                data-testid="annotation-import"
-                                aria-label="Import annotations from a GeoJSON file"
-                                disabled={!!progress}
-                                onClick={() => fileInput.current?.click()}
-                                style={transferButtonStyle()}
-                            >
-                                <i
-                                    aria-hidden="true"
-                                    className="fa fa-upload"
-                                />{' '}
-                                Import…
-                            </button>
-                            <input
-                                ref={fileInput}
-                                type="file"
-                                data-testid="annotation-import-file"
-                                aria-label="GeoJSON file to import"
-                                accept=".geojson,.json,application/geo+json,application/json"
-                                style={{ display: 'none' }}
-                                onChange={event => {
-                                    const file = event.target.files?.[0];
-                                    event.target.value = '';
-                                    if (file)
-                                        void controller.previewImport(file);
-                                }}
-                            />
-                        </>
-                    )}
-                </div>
-                {controller.importError && (
-                    <div
-                        role="alert"
-                        data-testid="annotation-import-error"
-                        style={{ color: '#a00', fontSize: 11, marginTop: 4 }}
-                    >
-                        Import failed: {controller.importError}{' '}
-                        <button
-                            onClick={controller.cancelImport}
-                            style={transferButtonStyle()}
-                        >
-                            Dismiss
-                        </button>
-                    </div>
-                )}
-                {preview && (
-                    <div
-                        role="group"
-                        aria-label="Import preview"
-                        data-testid="annotation-import-preview"
-                        style={{
-                            marginTop: 4,
-                            padding: 6,
-                            border: `1px solid ${colors.border}`,
-                            borderRadius: 3,
-                            background: '#fafafa',
-                            fontSize: 11,
-                        }}
-                    >
-                        <div>
-                            <strong>{preview.fileName}</strong>:{' '}
-                            {preview.drafts.length
-                                ? `${preview.drafts.length} annotation${
-                                      preview.drafts.length === 1 ? '' : 's'
-                                  } (${kinds})`
-                                : 'no annotations to import'}
-                        </div>
-                        {preview.skipped.length > 0 && (
-                            <div
-                                data-testid="annotation-import-skipped"
-                                style={{ color: colors.muted, marginTop: 2 }}
-                            >
-                                {preview.skipped.length} skipped:{' '}
-                                {Array.from(
-                                    new Set(
-                                        preview.skipped.map(item => item.reason)
-                                    )
-                                ).join('; ')}
-                            </div>
-                        )}
-                        <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
-                            <button
-                                data-testid="annotation-import-confirm"
-                                disabled={!preview.drafts.length}
-                                onClick={() => void controller.confirmImport()}
-                                style={transferButtonStyle(true)}
-                            >
-                                Create {preview.drafts.length} annotation
-                                {preview.drafts.length === 1 ? '' : 's'}
-                            </button>
-                            <button
-                                data-testid="annotation-import-cancel"
-                                onClick={controller.cancelImport}
-                                style={transferButtonStyle()}
-                            >
-                                Cancel
-                            </button>
-                        </div>
-                    </div>
-                )}
-                {progress && (
-                    <div
-                        role="status"
-                        data-testid="annotation-import-progress"
-                        style={{
-                            fontSize: 11,
-                            color: colors.muted,
-                            marginTop: 4,
-                        }}
-                    >
-                        Importing {progress.done} of {progress.total}…
-                    </div>
-                )}
-            </div>
-        );
-    }
-);
 
 /** Point counts per layer and label, e.g. mitoses. */
 const PointTally = observer(
@@ -2093,53 +1544,6 @@ export const WsiAnnotationTooltip = observer(
                     </div>
                 )}
             </div>
-        );
-    }
-);
-
-/**
- * The brush width: in µm of tissue on a slide with a scale, else in screen
- * pixels, with a note saying so.
- */
-const BrushWidthControl = observer(
-    ({ controller }: { controller: WsiAnnotationController }) => {
-        const microns = controller.brushInMicrons;
-        const widths = microns ? BRUSH_WIDTHS_UM : BRUSH_WIDTHS_PX;
-        return (
-            <>
-                <select
-                    data-testid="annotation-brush-width"
-                    aria-label={
-                        microns
-                            ? 'Brush width in micrometres'
-                            : 'Brush width in screen pixels'
-                    }
-                    title={
-                        microns
-                            ? 'Brush width, in µm of tissue at every zoom'
-                            : 'Brush width, in screen pixels at the current zoom: this slide has no scale'
-                    }
-                    value={controller.brushWidth}
-                    onChange={event =>
-                        controller.setBrushWidth(Number(event.target.value))
-                    }
-                    style={{ fontSize: 11 }}
-                >
-                    {widths.map(width => (
-                        <option key={width} value={width}>
-                            {width} {microns ? 'µm' : 'px'}
-                        </option>
-                    ))}
-                </select>
-                {!microns && (
-                    <span
-                        data-testid="annotation-brush-unit-note"
-                        style={{ fontSize: 10, color: colors.muted }}
-                    >
-                        No slide scale: screen px
-                    </span>
-                )}
-            </>
         );
     }
 );

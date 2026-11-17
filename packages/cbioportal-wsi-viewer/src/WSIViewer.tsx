@@ -36,14 +36,17 @@ import { loadOpenSeadragon } from './wsiOpenSeadragonLoader';
 import { clearPatientHierarchyCache } from './wsiHierarchyFetchCache';
 import { clearWsiSlideSources } from './wsiAuth';
 import { clearWsiThumbnailFetchCache } from './wsiThumbnailFetchCache';
-import { WsiAnnotationController } from './wsiAnnotationController';
+import {
+    isTypingTarget,
+    WsiAnnotationController,
+} from './wsiAnnotationController';
 import {
     WsiAnnotationDrawPreview,
     WsiAnnotationLayersPanel,
     WsiAnnotationPanel,
     WsiAnnotationTooltip,
-    WsiAnnotationToolbar,
 } from './wsiAnnotationControls';
+import { WsiAnnotationToolbar } from './wsiAnnotationToolbar';
 import {
     checkWsiTileServerOrigin,
     normalizeWsiTileServerBase,
@@ -74,20 +77,6 @@ export { WSI_METADATA_COLLAPSED_KEY, WSI_NAV_COLLAPSED_KEY };
 /** Keys that show or hide the slide list and the details sidebar. */
 const NAV_TOGGLE_KEY = '|';
 const METADATA_TOGGLE_KEY = '.';
-
-function isTypingTarget(target: EventTarget | null): boolean {
-    const element = target as HTMLElement | null;
-    if (!element || !element.tagName) {
-        return false;
-    }
-    const tag = element.tagName.toLowerCase();
-    return (
-        tag === 'input' ||
-        tag === 'textarea' ||
-        tag === 'select' ||
-        element.isContentEditable
-    );
-}
 
 export interface WsiViewerProps {
     /** Tile-server base URL (never a patient-scoped or resource URL). */
@@ -433,7 +422,14 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
         }
         if (event.key === NAV_TOGGLE_KEY) {
             this.setNavCollapsed(!this.navCollapsed);
-        } else if (event.key === METADATA_TOGGLE_KEY) {
+        } else if (
+            event.key === METADATA_TOGGLE_KEY &&
+            // While Annotate is on, the key picks the Point tool.
+            !(
+                this.props.annotationApiUrl &&
+                this.annotationController.toolShortcutsActive
+            )
+        ) {
             this.setMetadataCollapsed(!this.metadataCollapsed);
         }
     };
