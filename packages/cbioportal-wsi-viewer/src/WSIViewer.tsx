@@ -47,6 +47,8 @@ import {
     WsiAnnotationTooltip,
 } from './wsiAnnotationControls';
 import { WsiAnnotationToolbar } from './wsiAnnotationToolbar';
+import { WsiAnnotationOverlay } from './wsiAnnotationOverlay';
+import { WsiAnnotationReviewCard } from './wsiAnnotationReview';
 import {
     checkWsiTileServerOrigin,
     normalizeWsiTileServerBase,
@@ -1189,7 +1191,17 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
                         />
                     )}
                     {this.props.annotationApiUrl && (
+                        <WsiAnnotationOverlay
+                            controller={this.annotationController}
+                        />
+                    )}
+                    {this.props.annotationApiUrl && (
                         <WsiAnnotationDrawPreview
+                            controller={this.annotationController}
+                        />
+                    )}
+                    {this.props.annotationApiUrl && (
+                        <WsiAnnotationReviewCard
                             controller={this.annotationController}
                         />
                     )}

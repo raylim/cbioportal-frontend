@@ -11,6 +11,7 @@ import {
     simplifyPath,
     strokeOutline,
     WsiAnnotationShape,
+    WsiBounds,
     WsiMeasurement,
     WsiMpp,
 } from './wsiAnnotationGeometryUtils';
@@ -44,6 +45,7 @@ import {
     WsiGeoJsonFeatureCollection,
     WsiImportDraft,
 } from './wsiAnnotationGeoJson';
+import { spatialOrder, WsiScreenBox } from './wsiAnnotationSpatial';
 
 export type WsiAnnotationTool =
     | 'rectangle'
@@ -497,6 +499,36 @@ export const WSI_REVIEW_FALLBACK_NOTICE = {
         'Rejected. This annotation service cannot record reviews, so the annotation was deleted.',
 } as const;
 
+/**
+ * The AI review queue: the unreviewed AI annotations of the slide when it
+ * started, in review order (see `spatialOrder`), and the one shown.
+ */
+export interface WsiReviewQueue {
+    ids: string[];
+    /** The annotation under review; null once none is left. */
+    currentId: string | null;
+    /** A decision is being saved. */
+    busy: boolean;
+    /** What the last decision did, or why it was not saved. */
+    message: string | null;
+}
+
+/**
+ * The review queue's keys. While it is open they take priority over the
+ * toolbar's tool shortcuts (R rejects instead of picking the Shape tool).
+ */
+export const WSI_REVIEW_KEYS: Record<
+    string,
+    'accept' | 'reject' | 'next' | 'previous' | 'exit'
+> = {
+    a: 'accept',
+    r: 'reject',
+    s: 'next',
+    arrowright: 'next',
+    arrowleft: 'previous',
+    escape: 'exit',
+};
+
 /** How many changes undo remembers. */
 const MAX_UNDO = 50;
 
@@ -774,6 +806,13 @@ export class WsiAnnotationController {
      * pointer is kept on screen. See `customDrawPreview` for its outline.
      */
     @observable.ref private drawGesture: WsiDrawGesture | null = null;
+    /** The AI review queue while it is open (see `startReview`). */
+    @observable.ref reviewQueue: WsiReviewQueue | null = null;
+    /**
+     * The annotation the slide is pointed at (under review, stepped to, or
+     * opened by a link): highlighted on the slide.
+     */
+    @observable focusedAnnotationId: string | null = null;
     /** Bumped when the slide moves on screen, so previews follow it. */
     @observable private viewportRevision = 0;
 
@@ -1646,6 +1685,8 @@ export class WsiAnnotationController {
     }
 
     private isShown(annotation: WsiAnnotation): boolean {
+        // The annotation under review shows whatever hides the others.
+        if (annotation.id === this.reviewQueue?.currentId) return true;
         return (
             !this.hiddenLayerNames.has(annotation.layerName || DEFAULT_LAYER) &&
             !(this.hideUnreviewedAi && isUnreviewedAi(annotation.provenance))
@@ -1669,6 +1710,7 @@ export class WsiAnnotationController {
         this.restartRequests();
         this.slideKey = slideKey;
         this.annotations = [];
+        this.resetFocus();
         this.listFilter = EMPTY_LIST_FILTER;
         this.clearHistory();
         this.importPreview = null;
@@ -1703,6 +1745,7 @@ export class WsiAnnotationController {
         this.restartRequests();
         this.cancelDrawing();
         this.annotations = [];
+        this.resetFocus();
         this.error = null;
         this.notice = null;
         this.accessIssue = null;
@@ -1903,6 +1946,7 @@ export class WsiAnnotationController {
         this.loadAbortController = null;
         this.slideKey = null;
         this.annotations = [];
+        this.resetFocus();
         this.clearHistory();
         this.error = null;
         this.annotationTooltip = null;
@@ -1933,7 +1977,9 @@ export class WsiAnnotationController {
      * the user may draw.
      */
     @computed get toolShortcutsActive(): boolean {
-        return this.annotating && this.canEdit && this.visible;
+        return (
+            this.annotating && this.canEdit && this.visible && !this.reviewQueue
+        );
     }
 
     /**
@@ -2462,6 +2508,243 @@ export class WsiAnnotationController {
         this.hideUnreviewedAi = !this.hideUnreviewedAi;
         if (this.hideUnreviewedAi) this.annotorious?.cancelSelected?.();
         this.applyLayerFilter();
+    }
+
+    // ---- AI review queue ----
+
+    /** Unreviewed AI annotations the user may review now. */
+    @computed get reviewableAi(): WsiAnnotation[] {
+        return this.annotations.filter(annotation =>
+            this.canReview(annotation)
+        );
+    }
+
+    /** Why the review queue cannot open now, or null when it can. */
+    @computed get reviewUnavailable(): string | null {
+        if (this.loading) return 'Loading annotations…';
+        if (this.accessMessage) return this.accessMessage;
+        if (!this.canEdit) {
+            return this.loadFailed
+                ? 'Annotations could not be loaded.'
+                : 'Reviewing is not available for this slide.';
+        }
+        if (!this.unreviewedAiCount) {
+            return 'No AI annotations are waiting for review.';
+        }
+        if (!this.reviewableAi.length) return WSI_REVIEW_UNSUPPORTED_MESSAGE;
+        return null;
+    }
+
+    /** The queue's annotations the user can still review, in queue order. */
+    @computed get reviewRemaining(): string[] {
+        const queue = this.reviewQueue;
+        if (!queue) return [];
+        const byId = new Map(this.annotations.map(item => [item.id, item]));
+        return queue.ids.filter(id => {
+            const annotation = byId.get(id);
+            return !!annotation && this.canReview(annotation);
+        });
+    }
+
+    /**
+     * How many of the queue's annotations are reviewed, by anyone (or gone),
+     * of how many it started with.
+     */
+    @computed get reviewProgress(): { reviewed: number; total: number } {
+        const ids = this.reviewQueue?.ids || [];
+        const byId = new Map(this.annotations.map(item => [item.id, item]));
+        const reviewed = ids.filter(id => {
+            const annotation = byId.get(id);
+            return !annotation || !isUnreviewedAi(annotation.provenance);
+        }).length;
+        return { reviewed, total: ids.length };
+    }
+
+    /** The annotation under review. */
+    @computed get reviewCurrent(): WsiAnnotation | null {
+        const id = this.reviewQueue?.currentId;
+        return (id && this.annotations.find(item => item.id === id)) || null;
+    }
+
+    /**
+     * Opens the review queue on the slide's unreviewed AI annotations that
+     * the user may review, in `spatialOrder`, and shows the first.
+     */
+    @action.bound
+    startReview(): boolean {
+        if (this.reviewUnavailable) return false;
+        this.cancelDrawing();
+        this.annotationTooltip = null;
+        const placed: Array<{ id: string; bounds: WsiBounds }> = [];
+        const unplaced: string[] = [];
+        this.reviewableAi.forEach(annotation => {
+            const shape = this.shapeOf(annotation);
+            if (shape) {
+                placed.push({ id: annotation.id, bounds: shapeBounds(shape) });
+            } else {
+                unplaced.push(annotation.id);
+            }
+        });
+        const ids = [...spatialOrder(placed), ...unplaced];
+        this.reviewQueue = { ids, currentId: null, busy: false, message: null };
+        this.showReviewItem(ids[0] || null);
+        return true;
+    }
+
+    /** Shows `id` for review: highlighted and fitted in the view. */
+    @action
+    private showReviewItem(id: string | null) {
+        if (!this.reviewQueue) return;
+        this.reviewQueue = { ...this.reviewQueue, currentId: id };
+        this.focusedAnnotationId = id;
+        this.annotorious?.cancelSelected?.();
+        this.applyLayerFilter();
+        if (id) this.zoomToAnnotation(id);
+    }
+
+    /**
+     * The next annotation still to review after the current one in queue
+     * order (or before it, with -1), wrapping around; the current one when
+     * it is the only one left, and null when none is.
+     */
+    private nextReviewId(direction: 1 | -1): string | null {
+        const queue = this.reviewQueue;
+        const remaining = new Set(this.reviewRemaining);
+        if (!queue || !remaining.size) return null;
+        const n = queue.ids.length;
+        const start = queue.currentId ? queue.ids.indexOf(queue.currentId) : -1;
+        for (let step = 1; step <= n; step++) {
+            const id = queue.ids[(((start + direction * step) % n) + n) % n];
+            if (remaining.has(id)) return id;
+        }
+        return null;
+    }
+
+    /** Skips to the next annotation to review, or back to the previous. */
+    @action.bound
+    reviewStep(direction: 1 | -1 = 1) {
+        const queue = this.reviewQueue;
+        if (!queue || queue.busy) return;
+        this.reviewQueue = { ...queue, message: null };
+        this.showReviewItem(this.nextReviewId(direction));
+    }
+
+    /**
+     * Accepts or rejects the annotation under review (see
+     * `reviewAnnotation`), then shows the next one. When the review is not
+     * saved, e.g. after a conflict reloaded the slide, the queue stays on the
+     * annotation while it still needs review, and says why.
+     */
+    @action.bound
+    async reviewDecide(decision: 'accept' | 'reject'): Promise<boolean> {
+        const queue = this.reviewQueue;
+        const current = this.reviewCurrent;
+        if (!queue || queue.busy || !current || !this.canReview(current)) {
+            return false;
+        }
+        const label = current.body?.[0]?.value || '(unlabeled)';
+        this.reviewQueue = { ...queue, busy: true, message: null };
+        this.error = null;
+        const done = await this.reviewAnnotation(current.id, decision);
+        action(() => {
+            const now = this.reviewQueue;
+            // The queue was closed, or another slide opened, meanwhile.
+            if (!now || now.ids !== queue.ids) return;
+            this.reviewQueue = {
+                ...now,
+                busy: false,
+                message: done
+                    ? `${
+                          decision === 'accept' ? 'Accepted' : 'Rejected'
+                      } "${label}".`
+                    : this.error || 'The review was not saved.',
+            };
+            if (done || !this.reviewRemaining.includes(current.id)) {
+                this.showReviewItem(this.nextReviewId(1));
+            }
+        })();
+        return done;
+    }
+
+    /** Closes the review queue. */
+    @action.bound
+    exitReview() {
+        if (!this.reviewQueue) return;
+        this.reviewQueue = null;
+        this.focusedAnnotationId = null;
+        this.applyLayerFilter();
+    }
+
+    /** Forgets the review queue and the focused annotation. */
+    private resetFocus() {
+        this.reviewQueue = null;
+        this.focusedAnnotationId = null;
+    }
+
+    /**
+     * The review queue's keys (`WSI_REVIEW_KEYS`) while it is open, before
+     * any tool shortcut; returns whether the key was one. Not while typing,
+     * and not for a key a control already handled (the toolbar's arrows).
+     */
+    private handleReviewKey(event: KeyboardEvent, typing: boolean): boolean {
+        if (
+            !this.reviewQueue ||
+            typing ||
+            event.altKey ||
+            event.ctrlKey ||
+            event.metaKey ||
+            event.defaultPrevented
+        ) {
+            return false;
+        }
+        const key = WSI_REVIEW_KEYS[event.key.toLowerCase()];
+        if (!key) return false;
+        event.preventDefault();
+        if (key === 'exit') this.exitReview();
+        else if (key === 'next') this.reviewStep(1);
+        else if (key === 'previous') this.reviewStep(-1);
+        else void this.reviewDecide(key);
+        return true;
+    }
+
+    // ---- the overlay over the slide ----
+
+    /** Whether the overlay over the slide has anything to draw. */
+    @computed get overlayActive(): boolean {
+        return !!this.focusedAnnotationId;
+    }
+
+    /** Where `annotation` is on screen now: its box, in pixels. */
+    screenBox(annotation: WsiAnnotation): WsiScreenBox | null {
+        const shape = this.shapeOf(annotation);
+        if (!shape) return null;
+        const bounds = shapeBounds(shape);
+        const corners = [
+            { x: bounds.minX, y: bounds.minY },
+            { x: bounds.maxX, y: bounds.minY },
+            { x: bounds.minX, y: bounds.maxY },
+            { x: bounds.maxX, y: bounds.maxY },
+        ].map(point => this.screenPoint(point));
+        if (corners.some(point => !point)) return null;
+        const xs = corners.map(point => point!.x);
+        const ys = corners.map(point => point!.y);
+        const x = Math.min(...xs);
+        const y = Math.min(...ys);
+        return {
+            x,
+            y,
+            width: Math.max(...xs) - x,
+            height: Math.max(...ys) - y,
+        };
+    }
+
+    /** The focused annotation's box on screen, following the slide. */
+    @computed get focusedBox(): WsiScreenBox | null {
+        // Read so that the box follows the slide as it moves.
+        void this.viewportRevision;
+        const id = this.focusedAnnotationId;
+        const annotation = id && this.annotations.find(item => item.id === id);
+        return annotation ? this.screenBox(annotation) : null;
     }
 
     private request(
@@ -3480,7 +3763,7 @@ export class WsiAnnotationController {
         // Redraws the shape being drawn and the brush outline as the slide
         // moves under them.
         const viewportChanged = action(() => {
-            if (this.drawGesture || this.brushPointer) {
+            if (this.drawGesture || this.brushPointer || this.overlayActive) {
                 this.viewportRevision += 1;
             }
         });
@@ -3544,6 +3827,7 @@ export class WsiAnnotationController {
 
     private readonly handleKeyDown = (event: KeyboardEvent) => {
         const typing = isTypingTarget(event.target);
+        if (this.handleReviewKey(event, typing)) return;
         if (event.key === 'Escape' && this.activeTool) {
             this.cancelDrawing();
             return;
@@ -3582,6 +3866,17 @@ export class WsiAnnotationController {
         preventDefaultAction: boolean;
     }) => {
         const original = event.originalEvent;
+        const plain =
+            !original.ctrlKey && !original.metaKey && !original.altKey;
+        // OpenSeadragon pans with A, S and the arrow keys.
+        if (
+            this.reviewQueue &&
+            plain &&
+            WSI_REVIEW_KEYS[original.key.toLowerCase()]
+        ) {
+            event.preventDefaultAction = true;
+            return;
+        }
         if (
             this.toolShortcutsActive &&
             !original.ctrlKey &&

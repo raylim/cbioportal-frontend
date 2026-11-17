@@ -14,6 +14,7 @@ import {
     isAiProvenance,
     isUnreviewedAi,
 } from './wsiAnnotationBody';
+import { ReviewQueueButton } from './wsiAnnotationReview';
 
 // Text colors keep at least 4.5:1 contrast on the panel's white.
 const colors = {
@@ -548,25 +549,38 @@ export const WsiAnnotationPanel = observer(
                 <UnsavedPointsNotice controller={controller} />
                 {(controller.unreviewedAiCount > 0 ||
                     controller.hideUnreviewedAi) && (
-                    <label
+                    <div
                         style={{
                             display: 'flex',
                             alignItems: 'center',
-                            gap: 4,
-                            fontSize: 11,
-                            color: colors.muted,
+                            flexWrap: 'wrap',
+                            gap: 6,
                             marginBottom: 4,
                         }}
                     >
-                        <input
-                            type="checkbox"
-                            data-testid="annotation-hide-unreviewed-ai"
-                            checked={controller.hideUnreviewedAi}
-                            onChange={controller.toggleHideUnreviewedAi}
-                        />
-                        Hide unreviewed AI annotations (
-                        {controller.unreviewedAiCount})
-                    </label>
+                        <label
+                            style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 4,
+                                fontSize: 11,
+                                color: colors.muted,
+                                margin: 0,
+                            }}
+                        >
+                            <input
+                                type="checkbox"
+                                data-testid="annotation-hide-unreviewed-ai"
+                                checked={controller.hideUnreviewedAi}
+                                onChange={controller.toggleHideUnreviewedAi}
+                            />
+                            Hide unreviewed AI annotations (
+                            {controller.unreviewedAiCount})
+                        </label>
+                        {controller.unreviewedAiCount > 0 && (
+                            <ReviewQueueButton controller={controller} />
+                        )}
+                    </div>
                 )}
                 <MeasurementScaleNote controller={controller} />
                 <PointTally controller={controller} />

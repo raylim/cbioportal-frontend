@@ -501,6 +501,90 @@ if (process.env.PW_SUITE === 'wsi') {
             ).toBe(USER);
         });
 
+        test('reviews AI annotations one by one from the review card', async ({
+            page,
+        }) => {
+            await openAnnotatedSlide(page);
+            const service = await routeAnnotationService(page, [
+                seededAnnotation('model-a', 'Tumor', '40,40 140,40 140,140', {
+                    source: 'precomputed',
+                    model: 'luad-patterns',
+                }),
+                seededAnnotation('model-b', 'Stroma', '300,40 400,40 400,140', {
+                    source: 'model',
+                }),
+                seededAnnotation(
+                    'agent-c',
+                    'Necrosis',
+                    '300,300 400,300 400,400',
+                    { source: 'agent' }
+                ),
+                seededAnnotation(
+                    'human-d',
+                    'Margin',
+                    '200,200 260,200 260,260'
+                ),
+            ]);
+            await gotoSlide(page);
+
+            const start = page.getByTestId('annotation-review-start');
+            await expect(start).toHaveText('Review AI (3)', {
+                timeout: 15_000,
+            });
+            await start.click();
+            const card = page.getByRole('dialog', {
+                name: 'Review AI annotations',
+            });
+            await expect(card).toBeVisible();
+            await expect(
+                page.getByTestId('annotation-review-accept')
+            ).toBeFocused();
+            const progress = page.getByTestId('annotation-review-progress');
+            const label = page.getByTestId('annotation-review-label');
+            await expect(progress).toHaveText('0 of 3 reviewed');
+            // Nearest next from the top left: Tumor, Stroma, Necrosis.
+            await expect(label).toHaveText('Tumor');
+            await expect(
+                page.getByTestId('annotation-review-origin')
+            ).toHaveText('Made by a model (luad-patterns) · Layer Model');
+            await expect(
+                page.getByTestId('annotation-focus-highlight')
+            ).toBeVisible();
+
+            // S skips; A and R decide and move on.
+            await page.keyboard.press('s');
+            await expect(label).toHaveText('Stroma');
+            await page.keyboard.press('a');
+            await expect(progress).toHaveText('1 of 3 reviewed');
+            await expect(label).toHaveText('Necrosis');
+            // R rejects here; it does not pick the Shape tool.
+            await page.keyboard.press('r');
+            await expect(progress).toHaveText('2 of 3 reviewed');
+            await expect(
+                page.getByTestId('annotation-row-agent-c')
+            ).toHaveCount(0);
+            // The skipped one comes back.
+            await expect(label).toHaveText('Tumor');
+            await page.getByTestId('annotation-review-accept').click();
+            await expect(progress).toHaveText('3 of 3 reviewed');
+            await expect(
+                page.getByTestId('annotation-review-done')
+            ).toContainText('All 3 AI annotations reviewed.');
+            await page.keyboard.press('Escape');
+            await expect(card).toHaveCount(0);
+
+            expect(
+                service.writes.map(write => [write.path, write.body.decision])
+            ).toEqual([
+                ['/wsi/annotations/model-b/review', 'accept'],
+                ['/wsi/annotations/agent-c/review', 'reject'],
+                ['/wsi/annotations/model-a/review', 'accept'],
+            ]);
+            await expect(
+                page.getByTestId('annotation-ai-badge-model-a')
+            ).toHaveText('AI · accepted');
+        });
+
         test('paints a brush stroke of the chosen width in µm at any zoom', async ({
             page,
         }) => {

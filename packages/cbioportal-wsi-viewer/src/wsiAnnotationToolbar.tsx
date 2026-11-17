@@ -78,18 +78,43 @@ export const TOOL_INFO: Record<DrawingTool, ToolInfo> = {
     },
 };
 
-/** The keyboard shortcuts the help lists, in order. */
-export const SHORTCUT_HELP: Array<[string[], string]> = [
-    [['V'], 'Select: pan, and select or edit shapes'],
-    [['R'], 'Shape: the last of rectangle, ellipse, circle'],
-    [['L'], 'Line'],
-    [['P'], 'Polygon'],
-    [['F'], 'Freehand'],
-    [['B'], 'Brush'],
-    [['.'], 'Point'],
-    [['Esc'], 'Back to Select'],
-    [['Ctrl+Z'], 'Undo'],
-    [['Ctrl+Shift+Z', 'Ctrl+Y'], 'Redo'],
+/** A group of keyboard shortcuts in the help, and when they work. */
+export interface ShortcutSection {
+    title: string;
+    when: string;
+    keys: Array<[string[], string]>;
+}
+
+/** The keyboard shortcuts the help lists, by section, in order. */
+export const SHORTCUT_HELP: ShortcutSection[] = [
+    {
+        title: 'Tools',
+        when: 'While Annotate is on',
+        keys: [
+            [['V'], 'Select: pan, and select or edit shapes'],
+            [['R'], 'Shape: the last of rectangle, ellipse, circle'],
+            [['L'], 'Line'],
+            [['P'], 'Polygon'],
+            [['F'], 'Freehand'],
+            [['B'], 'Brush'],
+            [['.'], 'Point'],
+            [['Esc'], 'Back to Select'],
+            [['Ctrl+Z'], 'Undo'],
+            [['Ctrl+Shift+Z', 'Ctrl+Y'], 'Redo'],
+        ],
+    },
+    {
+        title: 'Reviewing AI annotations',
+        when:
+            'While the review card is open; these keys come first, so R rejects instead of picking Shape',
+        keys: [
+            [['A'], 'Accept, then the next one'],
+            [['R'], 'Reject, then the next one'],
+            [['S', '→'], 'Skip'],
+            [['←'], 'Previous'],
+            [['Esc'], 'Exit review'],
+        ],
+    },
 ];
 
 const kbdStyle: React.CSSProperties = {
@@ -965,7 +990,8 @@ function ShortcutHelp({ onClose }: { onClose: () => void }) {
                 position: 'absolute',
                 top: 'calc(100% + 4px)',
                 right: 0,
-                width: 300,
+                width: 340,
+                maxWidth: 'calc(100vw - 32px)',
                 padding: 10,
                 background: '#fff',
                 border: `1px solid ${colors.border}`,
@@ -999,32 +1025,64 @@ function ShortcutHelp({ onClose }: { onClose: () => void }) {
                     ×
                 </button>
             </div>
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                <tbody>
-                    {SHORTCUT_HELP.map(([keys, what]) => (
-                        <tr key={what}>
-                            <td
+            <div style={{ maxHeight: 360, overflowY: 'auto' }}>
+                {SHORTCUT_HELP.map(section => (
+                    <table
+                        key={section.title}
+                        style={{
+                            width: '100%',
+                            borderCollapse: 'collapse',
+                            marginBottom: 6,
+                        }}
+                    >
+                        <caption
+                            style={{
+                                textAlign: 'left',
+                                fontWeight: 600,
+                                color: colors.text,
+                                padding: '2px 0 0',
+                            }}
+                        >
+                            {section.title}
+                            <div
                                 style={{
-                                    padding: '2px 8px 2px 0',
-                                    width: '40%',
-                                    verticalAlign: 'top',
+                                    fontWeight: 400,
+                                    fontSize: 11,
+                                    color: colors.muted,
                                 }}
                             >
-                                {keys.map((key, index) => (
-                                    <React.Fragment key={key}>
-                                        {index > 0 && ' or '}
-                                        <kbd style={kbdStyle}>{key}</kbd>
-                                    </React.Fragment>
-                                ))}
-                            </td>
-                            <td style={{ padding: '2px 0' }}>{what}</td>
-                        </tr>
-                    ))}
-                </tbody>
-            </table>
-            <div style={{ marginTop: 6, color: colors.muted, fontSize: 11 }}>
-                Single keys work while Annotate is on, and not while typing in a
-                field. On a Mac, use ⌘ for Ctrl.
+                                {section.when}
+                            </div>
+                        </caption>
+                        <tbody>
+                            {section.keys.map(([keys, what]) => (
+                                <tr key={what}>
+                                    <td
+                                        style={{
+                                            padding: '2px 8px 2px 0',
+                                            width: '40%',
+                                            verticalAlign: 'top',
+                                        }}
+                                    >
+                                        {keys.map((key, index) => (
+                                            <React.Fragment key={key}>
+                                                {index > 0 && ' or '}
+                                                <kbd style={kbdStyle}>
+                                                    {key}
+                                                </kbd>
+                                            </React.Fragment>
+                                        ))}
+                                    </td>
+                                    <td style={{ padding: '2px 0' }}>{what}</td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                ))}
+            </div>
+            <div style={{ color: colors.muted, fontSize: 11 }}>
+                Single keys do nothing while typing in a field. On a Mac, use ⌘
+                for Ctrl.
             </div>
         </div>
     );
@@ -1070,7 +1128,7 @@ const MoreMenu = observer(
                     data-toolbar-item
                     data-testid="annotation-more-menu-button"
                     aria-label="More annotation actions"
-                    title="Sharing, export, import and keyboard shortcuts"
+                    title="AI review, sharing, export, import and keyboard shortcuts"
                     aria-haspopup="menu"
                     aria-expanded={open}
                     onClick={() => {
@@ -1115,6 +1173,22 @@ const MoreMenu = observer(
                                 )}
                             >
                                 Private (only you)
+                            </MenuItem>
+                            <MenuSeparator />
+                        </>
+                    )}
+                    {controller.unreviewedAiCount > 0 && (
+                        <>
+                            <MenuItem
+                                testId="annotation-review-start-menu"
+                                disabled={!!controller.reviewUnavailable}
+                                onSelect={pick(controller.startReview)}
+                            >
+                                Review AI annotations (
+                                {controller.reviewUnavailable
+                                    ? controller.unreviewedAiCount
+                                    : controller.reviewableAi.length}
+                                )…
                             </MenuItem>
                             <MenuSeparator />
                         </>

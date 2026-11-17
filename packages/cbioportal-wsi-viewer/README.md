@@ -126,13 +126,32 @@ The toolbar over the slide starts with only **Annotate** and a **⋯** menu, so 
 | **Drawing as** | The layer, label and color of new annotations (see below) |
 | **Undo**, **Redo** | See Editing and undo |
 
-The brush width shows next to the tools only while the brush is on, and the point count only while the Point tool is on. Esc goes back to Select. Clicking the active tool again goes back to Select too. Single-key shortcuts work only while Annotate is on and the focus is not in a text field or menu; while Annotate is on, "." picks the Point tool instead of toggling the details sidebar, and OpenSeadragon's R (rotate) and F (flip) keys are off. **⋯** holds the sharing of new annotations (Shared or Private), **Export** (all annotations, or those on visible layers), **Import…**, and a list of the keyboard shortcuts.
+The brush width shows next to the tools only while the brush is on, and the point count only while the Point tool is on. Esc goes back to Select. Clicking the active tool again goes back to Select too. Single-key shortcuts work only while Annotate is on and the focus is not in a text field or menu; while Annotate is on, "." picks the Point tool instead of toggling the details sidebar, and OpenSeadragon's R (rotate) and F (flip) keys are off. **⋯** holds **Review AI annotations** (see Reviewing AI annotations), the sharing of new annotations (Shared or Private), **Export** (all annotations, or those on visible layers), **Import…**, and a list of the keyboard shortcuts.
 
 **Drawing as** has a layer choice, the label field (see Labels) and a color swatch. The color belongs to the layer: choosing a layer switches to its color, and the swatch's palette (the named colors, plus a custom color with an optional name) sets the color of that layer's new annotations; annotations already drawn keep theirs. A layer's color is the one the user gave it, else the most common color of its annotations, else the default blue for **Default** and a color of its own for a new layer. Layer colors, Annotate on or off, and the Shape and Outline menus' last tools are remembered in `localStorage`.
 
 While annotations load, after a failed load, signed out, or without access to the study, **Annotate** is disabled and a status next to it says why; only the ⋯ menu's export and shortcut list stay. Annotate off also turns shape editing off, so a click on a shape only shows its tooltip.
 
 The toolbar is a `role="toolbar"`: the arrow keys, Home and End move between its controls (fields keep their own arrow keys). The Shape, Outline and ⋯ buttons are menu buttons (`aria-haspopup`, `aria-expanded`); their menus open with Enter, Space or the down arrow, move with the arrow keys, Home and End, and close with Escape or a pick, returning focus to the button. Every icon button has an `aria-label` that names its shortcut, and a tooltip.
+
+#### Keyboard shortcuts
+
+Keys do nothing while the focus is in a text field. On a Mac, ⌘ works for Ctrl. The ⋯ menu's **Keyboard shortcuts** lists the same.
+
+| Key | Does | When |
+| --- | --- | --- |
+| V | Select | Annotate on |
+| R | Shape (the menu's last: rectangle, ellipse or circle) | Annotate on, review card closed |
+| L | Line | Annotate on |
+| P, F, B | Polygon, freehand, brush | Annotate on |
+| . | Point (otherwise "." shows or hides the details sidebar) | Annotate on |
+| Esc | Back to Select | A drawing tool is on |
+| Ctrl+Z; Ctrl+Shift+Z or Ctrl+Y | Undo; redo | Something to undo or redo |
+| A | Accept the annotation under review, then the next | Review card open |
+| R | Reject it, then the next | Review card open |
+| S or → | Skip it | Review card open |
+| ← | The previous one still unreviewed | Review card open |
+| Esc | Close the review card | Review card open |
 
 #### Annotation body
 
@@ -167,6 +186,18 @@ Any user who can edit in the study may review an unreviewed AI annotation, whoev
 An older service without the review route answers the review with a 405, or a 404 whose JSON `detail` is "Not Found". The viewer then falls back for the rest of the session: an AI annotation's creator accepts it with a versioned `PUT` of the accepted provenance and rejects it by deleting it, neither on the undo history, and a note says how it was recorded; other users get no review buttons. Any other 404 (such as a proxy's page) says the review was not saved and does not decide whether the route exists.
 
 Only an annotation's creator may edit, move or delete it, or change its note or sharing. With the signed-in user known (`annotationUser`: the portal's `AppStore.userName`, the user the study access check forwards as `X-Auth-Request-User` and the service records as `created_by`), the list shows those controls only on the user's own annotations, and only those shapes can be dragged on the slide. Deleting a layer deletes only the user's annotations in it; its confirmation gives that count and says the layer stays while other users have annotations in it. The service answers another user's edit with a 403 whose `detail` says so; the viewer shows that and keeps the study editable. Any other 403 means no access to the study.
+
+#### Reviewing AI annotations
+
+**Review AI (N)**, next to the sidebar's "Hide unreviewed AI annotations", or **Review AI annotations** in the toolbar's ⋯ menu, opens a review card at the bottom left of the slide. N counts the slide's unreviewed AI annotations (from the assistant and from models) that the user may review. The card steps through them one at a time: each is fitted in the view and highlighted with a dashed yellow frame, and the card shows its label, who made it, its layer, size and note.
+
+- **Accept** (A) and **Reject** (R) record the review as above and move to the next annotation; **Skip** (S or →) leaves it unreviewed and moves on; **←** goes back to the previous one still unreviewed; Esc or × closes the card. The order wraps around, so skipped annotations come back after the last one.
+- The card counts "N of M reviewed": of the annotations it started with, those reviewed by anyone (or gone).
+- **Order**: nearest next. The first annotation is the one nearest the slide's top-left corner, and each next one is the nearest not yet visited, so the view usually moves by about one annotation and only the last few steps can jump further. Above 3,000 annotations the order is by horizontal bands, alternately left to right and right to left. A fixed reading order (rows from the top left) was not used: it jumps back across the slide at every row.
+- **Keys**: while the card is open, A, R, S, → and ← belong to the review and come before the tool shortcuts (R rejects; it does not pick the Shape tool), and OpenSeadragon does not pan with them. They do nothing while typing in a field, and the arrows still move between toolbar controls when one has the focus. Closing the card gives the keys back to the tools. The card says so, and the ⋯ menu's shortcut list has them in their own section.
+- A 409 (changed meanwhile) reloads the slide and keeps the card on the same annotation while it still needs review, so Accept or Reject can be pressed again; if someone else reviewed it meanwhile, the card moves on. The annotation under review shows even when its layer is hidden or unreviewed AI annotations are hidden.
+- Without the review route (see above), only an annotation's creator can review it: the queue holds only the user's own AI annotations, and when there are none the entry is disabled and says why. Signed out, read-only, or while annotations load, the entry is disabled with the reason; a refusal mid-review ends the queue with the sign-in or read-only message.
+- The card is a non-modal `role="dialog"` named "Review AI annotations". It takes the focus on Accept when it opens, keeps it inside as it moves on, and gives it back to the button that opened it when it closes. Progress and what each decision did are `role="status"` messages.
 
 #### Labels
 
