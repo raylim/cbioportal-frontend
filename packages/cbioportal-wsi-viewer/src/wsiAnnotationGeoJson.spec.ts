@@ -1,5 +1,6 @@
 import {
     MAX_IMPORT_FEATURES,
+    MAX_IMPORT_VERTICES,
     parseGeoJsonImport,
     toGeoJsonFeatureCollection,
 } from './wsiAnnotationGeoJson';
@@ -215,6 +216,7 @@ describe('parseGeoJsonImport', () => {
         expect(result.drafts).toEqual([
             {
                 kind: 'polygon',
+                featureIndex: 0,
                 svg: '<svg><polygon points="0,0 10,0 10,10" /></svg>',
                 label: 'Tumor',
                 className: 'Tumor',
@@ -276,6 +278,76 @@ describe('parseGeoJsonImport', () => {
         ]);
     });
 
+    it('skips too many vertices, an unsupported geometry, a bad part and a short open ring', () => {
+        const ring = (n: number) =>
+            Array.from({ length: n }, (_, i) => [i % 50, Math.floor(i / 50)]);
+        const result = parseGeoJsonImport(
+            [
+                feature({
+                    type: 'Polygon',
+                    coordinates: [ring(MAX_IMPORT_VERTICES + 1)],
+                }),
+                feature({
+                    type: 'LineString',
+                    coordinates: ring(MAX_IMPORT_VERTICES + 1),
+                }),
+                feature({ type: 'Circle', coordinates: [1, 1] }),
+                // One bad part skips the whole feature.
+                feature({
+                    type: 'MultiPolygon',
+                    coordinates: [
+                        [
+                            [
+                                [0, 0],
+                                [1, 0],
+                                [1, 1],
+                            ],
+                        ],
+                        [
+                            [
+                                [0, 0],
+                                [1, 'x'],
+                                [1, 1],
+                            ],
+                        ],
+                    ],
+                }),
+                // Open (not closed) and only two vertices.
+                feature({
+                    type: 'Polygon',
+                    coordinates: [
+                        [
+                            [0, 0],
+                            [4, 4],
+                        ],
+                    ],
+                }),
+                feature({
+                    type: 'Polygon',
+                    coordinates: [ring(MAX_IMPORT_VERTICES)],
+                }),
+            ],
+            { width: 100, height: 200 }
+        );
+        expect(result.skipped).toEqual([
+            { index: 0, reason: 'too many vertices' },
+            { index: 1, reason: 'too many vertices' },
+            { index: 2, reason: 'unsupported geometry Circle' },
+            { index: 3, reason: 'invalid coordinates' },
+            { index: 4, reason: 'fewer than 3 vertices' },
+        ]);
+        expect(result.drafts.map(draft => draft.featureIndex)).toEqual([5]);
+    });
+
+    it('checks no bounds when the slide size is unknown', () => {
+        const far = feature({ type: 'Point', coordinates: [1e7, 2e7] });
+        expect(parseGeoJsonImport([far], null).drafts).toHaveLength(1);
+        expect(parseGeoJsonImport([far]).drafts).toHaveLength(1);
+        expect(
+            parseGeoJsonImport([far], { width: 10, height: 10 }).skipped
+        ).toEqual([{ index: 0, reason: 'outside the slide' }]);
+    });
+
     it('refuses input that is not GeoJSON features, or too many', () => {
         expect(() => parseGeoJsonImport({ type: 'Polygon' })).toThrow(
             'Not a GeoJSON FeatureCollection or Feature.'
@@ -314,6 +386,7 @@ describe('parseGeoJsonImport', () => {
         ).toEqual([
             {
                 kind: 'polygon',
+                featureIndex: 0,
                 svg: '<svg><polygon points="1,1 9,1 5,7" /></svg>',
                 label: 'Stroma 2',
                 className: 'Stroma',

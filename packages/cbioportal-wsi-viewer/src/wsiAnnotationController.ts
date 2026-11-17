@@ -37,6 +37,7 @@ import {
 import { WsiPointLayer } from './wsiAnnotationPointLayer';
 import { getWsiViewerRuntime } from './wsiViewerConfig';
 import {
+    MAX_IMPORT_BYTES,
     parseGeoJsonImport,
     toGeoJsonFeatureCollection,
     WsiExportItem,
@@ -1082,6 +1083,14 @@ export class WsiAnnotationController {
     async previewImport(file: File) {
         this.importError = null;
         this.importPreview = null;
+        if (file.size > MAX_IMPORT_BYTES) {
+            this.importError = `The file is ${(
+                file.size /
+                (1024 * 1024)
+            ).toFixed(1)} MB; import files of at most ${MAX_IMPORT_BYTES /
+                (1024 * 1024)} MB.`;
+            return;
+        }
         try {
             const raw = await readFileText(file);
             const result = parseGeoJsonImport(
@@ -1090,12 +1099,14 @@ export class WsiAnnotationController {
             );
             const drafts: WsiImportDraft[] = [];
             const skipped = [...result.skipped];
-            result.drafts.forEach((draft, index) => {
+            result.drafts.forEach(draft => {
                 if (this.isAllowedLabel(this.importLabel(draft))) {
                     drafts.push(draft);
-                } else {
+                } else if (
+                    !skipped.some(item => item.index === draft.featureIndex)
+                ) {
                     skipped.push({
-                        index,
+                        index: draft.featureIndex,
                         reason: 'label not in the vocabulary',
                     });
                 }

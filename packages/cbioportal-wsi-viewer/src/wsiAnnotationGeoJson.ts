@@ -200,6 +200,8 @@ export interface WsiImportDraft {
     /** The SVG selector value, in level-0 image pixels. */
     svg: string;
     kind: 'point' | 'line' | 'polygon';
+    /** The position of the feature it came from (several for a multi-part one). */
+    featureIndex: number;
     label?: string;
     className?: string;
     color?: string;
@@ -214,6 +216,8 @@ export interface WsiImportResult {
 }
 
 export const MAX_IMPORT_FEATURES = 2000;
+/** The largest file an import reads. */
+export const MAX_IMPORT_BYTES = 25 * 1024 * 1024;
 export const MAX_IMPORT_VERTICES = 5000;
 
 const HEX_COLOR_RE = /^#[0-9a-fA-F]{3,8}$/;
@@ -289,6 +293,7 @@ export function parseGeoJsonImport(
                 ? properties.color
                 : undefined;
         const base = {
+            featureIndex: index,
             label: text(properties.name, 200) || className,
             className,
             color,

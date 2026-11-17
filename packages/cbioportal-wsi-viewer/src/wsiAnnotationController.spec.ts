@@ -2294,6 +2294,52 @@ describe('WsiAnnotationController', () => {
             expect(global.fetch).toHaveBeenCalledTimes(1);
         });
 
+        it('names the feature, not the part, of an import label outside a strict vocabulary', async () => {
+            configure(['Mitosis'], true);
+            const controller = new WsiAnnotationController(
+                'https://tiles.example',
+                'study1'
+            );
+            (controller as any).slideKey = SLIDE_KEY;
+            const file = new File(
+                [
+                    JSON.stringify({
+                        type: 'FeatureCollection',
+                        features: [
+                            {
+                                type: 'Feature',
+                                properties: { name: 'Mitosis' },
+                                geometry: {
+                                    type: 'MultiPoint',
+                                    coordinates: [
+                                        [1, 1],
+                                        [2, 2],
+                                    ],
+                                },
+                            },
+                            {
+                                type: 'Feature',
+                                properties: { name: 'Free text' },
+                                geometry: {
+                                    type: 'MultiPoint',
+                                    coordinates: [
+                                        [3, 3],
+                                        [4, 4],
+                                    ],
+                                },
+                            },
+                        ],
+                    }),
+                ],
+                'cells.geojson'
+            );
+            await controller.previewImport(file);
+            expect(controller.importPreview!.drafts).toHaveLength(2);
+            expect(controller.importPreview!.skipped).toEqual([
+                { index: 1, reason: 'label not in the vocabulary' },
+            ]);
+        });
+
         it('ignores strict without a vocabulary', () => {
             configure([], true);
             const controller = new WsiAnnotationController(
@@ -2990,6 +3036,24 @@ describe('WsiAnnotationController', () => {
                 0
             );
         });
+    });
+
+    it('refuses a file over the import size limit before reading it', async () => {
+        const controller = new WsiAnnotationController(
+            'https://tiles.example',
+            'study1'
+        );
+        (controller as any).slideKey = SLIDE_KEY;
+        const file = new File(['{}'], 'huge.geojson');
+        Object.defineProperty(file, 'size', { value: 26 * 1024 * 1024 });
+        const read = jest.fn();
+        (file as any).text = read;
+        await controller.previewImport(file);
+        expect(read).not.toHaveBeenCalled();
+        expect(controller.importError).toBe(
+            'The file is 26.0 MB; import files of at most 25 MB.'
+        );
+        expect(controller.importPreview).toBeNull();
     });
 
     it('reports a file that is not JSON', async () => {
