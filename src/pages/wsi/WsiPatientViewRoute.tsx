@@ -4,6 +4,26 @@ import { getBrowserWindow } from 'cbioportal-frontend-commons';
 import { getServerConfig } from 'config/config';
 import { AppWsiViewer } from 'shared/components/wsiViewer/wsiAppConfig';
 import { capWsiViewerHeight } from 'cbioportal-wsi-viewer';
+import { buildCBioPortalPageUrl } from 'shared/api/urls';
+
+/**
+ * A slide permalink that opens at one annotation:
+ * `/wsi/patient/{patient}?studyId=..&slideKey=..&annotationId=..`.
+ */
+export function wsiRouteAnnotationLink(
+    studyId: string,
+    patientId: string,
+    target: { slideKey: string; annotationId: string }
+): string {
+    return buildCBioPortalPageUrl(
+        `wsi/patient/${encodeURIComponent(patientId)}`,
+        {
+            studyId,
+            slideKey: target.slideKey,
+            annotationId: target.annotationId,
+        }
+    );
+}
 
 /**
  * The signed-in portal user (`AppStore.userName`, the principal the study
@@ -33,6 +53,16 @@ export default function WsiPatientViewRoute({ match, location }: Props) {
         typeof query.slideKey === 'string' && query.slideKey
             ? query.slideKey
             : undefined;
+    const requestedAnnotationId =
+        typeof query.annotationId === 'string' && query.annotationId
+            ? query.annotationId
+            : undefined;
+    const patientId = match.params.patientId;
+    const annotationLink = React.useCallback(
+        (target: { slideKey: string; annotationId: string }) =>
+            wsiRouteAnnotationLink(studyId, patientId, target),
+        [studyId, patientId]
+    );
     const tileServerUrl = getServerConfig().wsi_tile_server_url;
 
     if (!studyId || !tileServerUrl) {
@@ -58,6 +88,8 @@ export default function WsiPatientViewRoute({ match, location }: Props) {
             tileServerUrl={tileServerUrl}
             height={height}
             requestedSlideKey={requestedSlideKey}
+            requestedAnnotationId={requestedAnnotationId}
+            annotationLink={annotationLink}
             userName={portalUserName()}
         />
     );

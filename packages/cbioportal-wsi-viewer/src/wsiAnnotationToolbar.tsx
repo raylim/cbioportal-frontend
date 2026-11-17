@@ -107,7 +107,12 @@ export const SHORTCUT_HELP: ShortcutSection[] = [
     {
         title: 'Viewing',
         when: 'Annotate on or off',
-        keys: [[['H'], 'Hide or show all annotations on the slide']],
+        keys: [
+            [['H'], 'Hide or show all annotations on the slide'],
+            [[']'], 'Next annotation in the list, fitted in the view'],
+            [['['], 'Previous annotation in the list'],
+            [['Esc'], 'Stop highlighting the annotation'],
+        ],
     },
     {
         title: 'Reviewing AI annotations',

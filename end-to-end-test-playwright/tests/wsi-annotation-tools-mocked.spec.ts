@@ -629,6 +629,78 @@ if (process.env.PW_SUITE === 'wsi') {
             await expect(label).toBeVisible();
         });
 
+        test('steps with ] and copies a link that opens the slide at an annotation', async ({
+            page,
+            context,
+        }) => {
+            await context.grantPermissions([
+                'clipboard-read',
+                'clipboard-write',
+            ]);
+            await openAnnotatedSlide(page, 2048);
+            await routeAnnotationService(page, [
+                seededAnnotation(
+                    'human-1',
+                    'Necrosis',
+                    '100,100 300,100 300,300'
+                ),
+                seededAnnotation(
+                    'human-2',
+                    'Margin',
+                    '1500,1500 1600,1500 1600,1600'
+                ),
+            ]);
+            await gotoSlide(page);
+            await expect(
+                page.getByTestId('annotation-row-human-2')
+            ).toBeVisible({ timeout: 15_000 });
+            const status = page.getByTestId('annotation-focus-status');
+            await page.keyboard.press(']');
+            await expect(status).toHaveText('1 of 2: Necrosis');
+            await page.keyboard.press(']');
+            await expect(status).toHaveText('2 of 2: Margin');
+            await expect(
+                page.getByTestId('annotation-focus-highlight')
+            ).toBeVisible();
+            await page.getByTestId('annotation-focus-copy-link').click();
+            await expect(
+                page.getByTestId('annotation-link-message')
+            ).toHaveText('Link to the annotation copied.');
+            const link = await page.evaluate(() =>
+                navigator.clipboard.readText()
+            );
+            const url = new URL(link);
+            expect(url.pathname).toBe(`/wsi/patient/${PATIENT_ID}`);
+            expect(url.searchParams.get('slideKey')).toBe(SLIDE_KEY);
+            expect(url.searchParams.get('annotationId')).toBe('human-2');
+            expect(link).not.toMatch(/image_?id|sealed/i);
+
+            // The link opens the slide fitted to the annotation.
+            await page.goto(link);
+            await expect(status).toHaveText('2 of 2: Margin', {
+                timeout: 30_000,
+            });
+            const highlight = page
+                .getByTestId('annotation-focus-highlight')
+                .locator('rect')
+                .first();
+            await expect(highlight).toBeVisible();
+            // Fitted: the 100-pixel square fills a good part of the view.
+            await expect
+                .poll(async () => Number(await highlight.getAttribute('width')))
+                .toBeGreaterThan(150);
+
+            // A link to an annotation that is gone says so.
+            const gone = new URL(link);
+            gone.searchParams.set('annotationId', 'rejected-or-deleted');
+            await page.goto(gone.toString());
+            await expect(
+                page.getByTestId('annotation-link-message')
+            ).toContainText('The linked annotation is not on this slide', {
+                timeout: 30_000,
+            });
+        });
+
         test('paints a brush stroke of the chosen width in µm at any zoom', async ({
             page,
         }) => {

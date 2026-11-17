@@ -97,6 +97,20 @@ export const WSI_TOOL_SHORTCUTS: Record<
     '.': 'point',
 };
 
+/** Steps to the next / previous annotation listed, Annotate on or off. */
+export const WSI_NEXT_ANNOTATION_KEY = ']';
+export const WSI_PREVIOUS_ANNOTATION_KEY = '[';
+
+/** Where a link to one annotation points: the slide, by its opaque key. */
+export interface WsiAnnotationLinkTarget {
+    slideKey: string;
+    annotationId: string;
+}
+
+/** Shown when a linked annotation is not on the slide that opened. */
+export const WSI_LINKED_ANNOTATION_MISSING =
+    'The linked annotation is not on this slide: it may have been deleted, rejected in review, or be private to its creator.';
+
 /** Hides or shows all annotations on the slide, Annotate on or off. */
 export const WSI_HIDE_ALL_KEY = 'h';
 
@@ -600,6 +614,26 @@ export interface WsiAnnotationImportPreview {
     skipped: Array<{ index: number; reason: string }>;
 }
 
+/** Copies `text` with a hidden text area, where the Clipboard API is not allowed. */
+function copyWithTextarea(text: string): boolean {
+    if (typeof document === 'undefined') return false;
+    const area = document.createElement('textarea');
+    area.value = text;
+    area.setAttribute('readonly', '');
+    area.style.position = 'fixed';
+    area.style.opacity = '0';
+    document.body.appendChild(area);
+    area.select();
+    let copied = false;
+    try {
+        copied = document.execCommand('copy');
+    } catch (_) {
+        copied = false;
+    }
+    area.remove();
+    return copied;
+}
+
 function readFileText(file: Blob): Promise<string> {
     if (typeof file.text === 'function') return file.text();
     return new Promise((resolve, reject) => {
@@ -952,6 +986,14 @@ export class WsiAnnotationController {
      * bar's cursor position).
      */
     private cursorReporter: ((x: number, y: number) => void) | null = null;
+    /** Makes a shareable link to an annotation; set by the host. */
+    @observable.ref private linkBuilder:
+        | ((target: WsiAnnotationLinkTarget) => string)
+        | null = null;
+    /** An annotation a link asked for, shown once the slide has loaded. */
+    private requestedAnnotationId: string | null = null;
+    /** The link messages, e.g. "Link copied." */
+    @observable linkMessage: string | null = null;
 
     constructor(
         private apiUrl: string | null | undefined,
@@ -970,6 +1012,163 @@ export class WsiAnnotationController {
     @action
     setMppProvider(provider: () => WsiMpp | null | undefined) {
         this.mppProvider = provider;
+    }
+
+    /** Sets how links to one annotation are made; null hides Copy link. */
+    @action.bound
+    setLinkBuilder(
+        builder:
+            | ((target: WsiAnnotationLinkTarget) => string)
+            | null
+            | undefined
+    ) {
+        this.linkBuilder = builder || null;
+    }
+
+    /** Whether annotations can be linked to (the host makes the links). */
+    @computed get canLinkAnnotations(): boolean {
+        return !!this.linkBuilder;
+    }
+
+    /** A shareable link that opens the slide at `id`, or null. */
+    annotationLink(id: string): string | null {
+        if (!this.linkBuilder || !this.slideKey) return null;
+        if (!this.annotations.some(item => item.id === id && !item.unsaved)) {
+            return null;
+        }
+        return this.linkBuilder({ slideKey: this.slideKey, annotationId: id });
+    }
+
+    /** Copies `annotationLink(id)` to the clipboard, saying how it went. */
+    @action.bound
+    async copyAnnotationLink(id: string): Promise<boolean> {
+        const link = this.annotationLink(id);
+        if (!link) return false;
+        let copied = false;
+        try {
+            await navigator.clipboard.writeText(link);
+            copied = true;
+        } catch (_) {
+            copied = copyWithTextarea(link);
+        }
+        action(() => {
+            this.linkMessage = copied
+                ? 'Link to the annotation copied.'
+                : `Copy this link: ${link}`;
+        })();
+        return copied;
+    }
+
+    @action.bound
+    dismissLinkMessage() {
+        this.linkMessage = null;
+    }
+
+    /**
+     * Opens annotation `id` once the slide's annotations have loaded, as a
+     * link asks: it is shown (its layer too), fitted in the view and
+     * highlighted. Asked once; a missing one is reported.
+     */
+    @action.bound
+    requestAnnotation(id: string | null | undefined) {
+        this.requestedAnnotationId = id || null;
+        this.openRequestedAnnotation();
+    }
+
+    /** Opens the requested annotation when its slide is loaded and shown. */
+    @action
+    private openRequestedAnnotation() {
+        const id = this.requestedAnnotationId;
+        if (
+            !id ||
+            !this.slideKey ||
+            this.loading ||
+            !this.osdViewer?.viewport
+        ) {
+            return;
+        }
+        this.requestedAnnotationId = null;
+        if (this.loadFailed || this.accessIssue) return;
+        const annotation = this.annotations.find(item => item.id === id);
+        if (!annotation) {
+            this.linkMessage = WSI_LINKED_ANNOTATION_MISSING;
+            return;
+        }
+        // Show it whatever hid it.
+        const layer = annotation.layerName || DEFAULT_LAYER;
+        if (this.hiddenLayerNames.has(layer)) {
+            const hidden = new Set(this.hiddenLayerNames);
+            hidden.delete(layer);
+            this.hiddenLayerNames = hidden;
+            this.soloLayer = null;
+            this.hiddenBeforeSolo = null;
+        }
+        if (this.hideUnreviewedAi && isUnreviewedAi(annotation.provenance)) {
+            this.hideUnreviewedAi = false;
+        }
+        if (this.hideAll) this.toggleHideAll();
+        this.applyLayerFilter();
+        this.focusAnnotation(id);
+    }
+
+    /** Fits annotation `id` in the view and highlights it. */
+    @action.bound
+    focusAnnotation(id: string): boolean {
+        if (!this.annotations.some(item => item.id === id)) return false;
+        this.focusedAnnotationId = id;
+        return this.zoomToAnnotation(id);
+    }
+
+    /** Forgets the focused annotation (Esc), unless one is under review. */
+    @action.bound
+    clearFocus() {
+        if (!this.reviewQueue) this.focusedAnnotationId = null;
+    }
+
+    /**
+     * The listed annotations (visible, under the list's filters) in the
+     * order `]` and `[` step through them: nearest next from the top left.
+     */
+    @computed get navigationOrder(): string[] {
+        const placed: Array<{ id: string; bounds: WsiBounds }> = [];
+        this.listedAnnotations.forEach(annotation => {
+            const shape = this.shapeOf(annotation);
+            if (shape) {
+                placed.push({ id: annotation.id, bounds: shapeBounds(shape) });
+            }
+        });
+        return spatialOrder(placed);
+    }
+
+    /** Where the focused annotation is in `navigationOrder`, for the bar. */
+    @computed get navigationPosition(): {
+        index: number;
+        total: number;
+    } | null {
+        const id = this.focusedAnnotationId;
+        if (!id || this.reviewQueue) return null;
+        const order = this.navigationOrder;
+        return { index: order.indexOf(id), total: order.length };
+    }
+
+    /**
+     * Fits the next listed annotation in the view (or the previous, with
+     * -1), wrapping around; from none, the first (or the last).
+     */
+    @action.bound
+    stepAnnotation(direction: 1 | -1 = 1): string | null {
+        if (this.reviewQueue) return null;
+        const order = this.navigationOrder;
+        if (!order.length) return null;
+        const at = this.focusedAnnotationId
+            ? order.indexOf(this.focusedAnnotationId)
+            : -1;
+        const next =
+            at < 0
+                ? order[direction > 0 ? 0 : order.length - 1]
+                : order[(at + direction + order.length) % order.length];
+        this.focusAnnotation(next);
+        return next;
     }
 
     /** Reports the pointer's image position while drawing (see `cursorReporter`). */
@@ -1981,6 +2180,7 @@ export class WsiAnnotationController {
         this.applyLayerFilter();
         this.refreshStyle();
         this.installCustomDrawingHandlers();
+        this.openRequestedAnnotation();
         if (typeof document !== 'undefined') {
             document.addEventListener('keydown', this.handleKeyDown);
             this.keydownCleanup = () =>
@@ -2784,6 +2984,7 @@ export class WsiAnnotationController {
     private resetFocus() {
         this.reviewQueue = null;
         this.focusedAnnotationId = null;
+        this.linkMessage = null;
     }
 
     /**
@@ -3095,6 +3296,7 @@ export class WsiAnnotationController {
                 this.error = null;
                 this.applySelectAction();
                 this.applyLayerFilter();
+                this.openRequestedAnnotation();
             })();
         } catch (error) {
             if (
@@ -4097,6 +4299,24 @@ export class WsiAnnotationController {
                 event.preventDefault();
                 void this.undo();
             }
+            return;
+        }
+        if (
+            (event.key === WSI_NEXT_ANNOTATION_KEY ||
+                event.key === WSI_PREVIOUS_ANNOTATION_KEY) &&
+            this.visible &&
+            !this.reviewQueue
+        ) {
+            event.preventDefault();
+            this.stepAnnotation(event.key === WSI_NEXT_ANNOTATION_KEY ? 1 : -1);
+            return;
+        }
+        if (
+            event.key === 'Escape' &&
+            this.focusedAnnotationId &&
+            !this.reviewQueue
+        ) {
+            this.clearFocus();
             return;
         }
         if (key === WSI_HIDE_ALL_KEY && !event.shiftKey && this.visible) {

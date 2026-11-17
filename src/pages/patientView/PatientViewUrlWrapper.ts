@@ -15,12 +15,15 @@ export type PathologySlideSettings = {
     stainFilter?: string;
     matchLevel?: string;
     specimenKey?: string;
+    /** An annotation to open on the slide the `#wsi:slide=` hash names. */
+    annotationId?: string;
 };
 
 const PATHOLOGY_SLIDE_SETTINGS_KEYS: (keyof PathologySlideSettings)[] = [
     'stainFilter',
     'matchLevel',
     'specimenKey',
+    'annotationId',
 ];
 
 export type PatientViewUrlQuery = {
@@ -66,6 +69,7 @@ export default class PatientViewUrlWrapper extends URLWrapper<
                     stainFilter: '',
                     matchLevel: '',
                     specimenKey: '',
+                    annotationId: '',
                 },
             },
             openResources: { isSessionProp: false },

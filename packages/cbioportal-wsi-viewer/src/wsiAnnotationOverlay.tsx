@@ -98,3 +98,142 @@ export const WsiAnnotationOverlay = observer(
         );
     }
 );
+
+const barButtonStyle: React.CSSProperties = {
+    border: '1px solid #cfcfcf',
+    borderRadius: 3,
+    background: '#fff',
+    color: '#222',
+    fontSize: 12,
+    lineHeight: '18px',
+    padding: '0 6px',
+    cursor: 'pointer',
+};
+
+/**
+ * The annotation the slide is pointed at by `]` / `[`, a list row or a
+ * link: where it is among those listed, the previous and next ones, and
+ * Copy link. Hidden while the review card is open.
+ */
+export const WsiAnnotationFocusBar = observer(
+    ({ controller }: { controller: WsiAnnotationController }) => {
+        const position = controller.navigationPosition;
+        const id = controller.focusedAnnotationId;
+        const annotation =
+            id && controller.annotations.find(item => item.id === id);
+        const message = controller.linkMessage;
+        if (controller.reviewQueue || (!annotation && !message)) return null;
+        const label = annotation
+            ? annotation.body?.[0]?.value || '(unlabeled)'
+            : '';
+        return (
+            <div
+                role="group"
+                aria-label="Annotation shown"
+                data-testid="annotation-focus-bar"
+                style={{
+                    position: 'absolute',
+                    left: '50%',
+                    bottom: 40,
+                    transform: 'translateX(-50%)',
+                    maxWidth: 'calc(100% - 16px)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    flexWrap: 'wrap',
+                    gap: 6,
+                    padding: '4px 8px',
+                    background: '#fff',
+                    border: '1px solid #cfcfcf',
+                    borderRadius: 4,
+                    boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
+                    color: '#222',
+                    fontSize: 12,
+                    zIndex: 21,
+                }}
+            >
+                {annotation && (
+                    <>
+                        <button
+                            type="button"
+                            data-testid="annotation-focus-previous"
+                            aria-label="Previous annotation ([)"
+                            title="Previous annotation ([)"
+                            onClick={() => controller.stepAnnotation(-1)}
+                            style={barButtonStyle}
+                        >
+                            ‹
+                        </button>
+                        <span
+                            role="status"
+                            data-testid="annotation-focus-status"
+                            style={{
+                                maxWidth: 260,
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                whiteSpace: 'nowrap',
+                            }}
+                        >
+                            {position && position.index >= 0
+                                ? `${position.index + 1} of ${position.total}: `
+                                : ''}
+                            {label}
+                        </span>
+                        <button
+                            type="button"
+                            data-testid="annotation-focus-next"
+                            aria-label="Next annotation (])"
+                            title="Next annotation (])"
+                            onClick={() => controller.stepAnnotation(1)}
+                            style={barButtonStyle}
+                        >
+                            ›
+                        </button>
+                        {controller.canLinkAnnotations && (
+                            <button
+                                type="button"
+                                data-testid="annotation-focus-copy-link"
+                                title="Copy a link that opens the slide at this annotation"
+                                onClick={() =>
+                                    void controller.copyAnnotationLink(
+                                        annotation.id
+                                    )
+                                }
+                                style={barButtonStyle}
+                            >
+                                <i aria-hidden="true" className="fa fa-link" />{' '}
+                                Copy link
+                            </button>
+                        )}
+                    </>
+                )}
+                {message && (
+                    <span
+                        role="status"
+                        data-testid="annotation-link-message"
+                        style={{ overflowWrap: 'anywhere' }}
+                    >
+                        {message}
+                    </span>
+                )}
+                <button
+                    type="button"
+                    data-testid="annotation-focus-close"
+                    aria-label="Close (Esc)"
+                    title="Close (Esc)"
+                    onClick={() => {
+                        controller.dismissLinkMessage();
+                        controller.clearFocus();
+                    }}
+                    style={{
+                        ...barButtonStyle,
+                        border: 'none',
+                        color: '#595959',
+                        fontSize: 14,
+                    }}
+                >
+                    ×
+                </button>
+            </div>
+        );
+    }
+);

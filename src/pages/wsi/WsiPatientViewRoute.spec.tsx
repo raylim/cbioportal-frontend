@@ -10,6 +10,7 @@ const mockEntryPoint = jest.fn((_props: Record<string, unknown>) => null);
 
 jest.mock('config/config', () => ({
     getServerConfig: () => mockServerConfig,
+    getLoadConfig: () => ({ baseUrl: 'portal.example' }),
 }));
 
 jest.mock('shared/components/wsiViewer/wsiAppConfig', () => ({
@@ -61,6 +62,26 @@ describe('WsiPatientViewRoute', () => {
                 tileServerUrl: '/wsi',
             })
         );
+    });
+
+    it('opens at a linked annotation, and links annotations by slide key and id', () => {
+        renderRoute('?studyId=study-1&slideKey=0123456789ab&annotationId=a-7');
+        const props = mockEntryPoint.mock.calls[0][0] as any;
+        expect(props.requestedAnnotationId).toBe('a-7');
+        const link = new URL(
+            props.annotationLink({
+                slideKey: '0123456789ab',
+                annotationId: 'a 8',
+            })
+        );
+        expect(link.host).toBe('portal.example');
+        expect(link.pathname).toBe('/wsi/patient/P-1');
+        expect(Array.from(link.searchParams.entries())).toEqual([
+            ['studyId', 'study-1'],
+            ['slideKey', '0123456789ab'],
+            ['annotationId', 'a 8'],
+        ]);
+        expect(link.hash).toBe('');
     });
 
     it('decodes an encoded slideKey', () => {

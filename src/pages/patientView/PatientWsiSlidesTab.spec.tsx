@@ -10,6 +10,11 @@ import PatientWsiSlidesTab, {
 
 const mockEntryPoint = jest.fn((_props: Record<string, unknown>) => null);
 
+jest.mock('config/config', () => ({
+    ...jest.requireActual('config/config'),
+    getLoadConfig: () => ({ baseUrl: 'portal.example' }),
+}));
+
 jest.mock('shared/components/wsiViewer/wsiAppConfig', () => ({
     AppWsiViewer: (props: Record<string, unknown>) => mockEntryPoint(props),
 }));
@@ -95,6 +100,33 @@ describe('PatientWsiSlidesTab', () => {
         height: 600,
         userName: 'user-a',
     };
+
+    it('opens at a linked annotation, and links annotations in the pathologySlideSettings node', () => {
+        window.history.replaceState(null, '', '/#wsi:slide=0123456789ab');
+        render(
+            <PatientWsiSlidesTab
+                {...baseProps}
+                query={{ annotationId: 'a-7' }}
+            />
+        );
+        const props = mockEntryPoint.mock.calls[0][0] as any;
+        expect(props.requestedAnnotationId).toBe('a-7');
+        const link = new URL(
+            props.annotationLink({
+                slideKey: '0123456789ab',
+                annotationId: 'a-8',
+            })
+        );
+        expect(link.host).toBe('portal.example');
+        expect(link.pathname).toBe('/patient/wsiHESlides');
+        expect(link.searchParams.get('studyId')).toBe('study');
+        expect(link.searchParams.get('caseId')).toBe('P-1');
+        expect(
+            JSON.parse(link.searchParams.get('pathologySlideSettings')!)
+        ).toEqual({ annotationId: 'a-8' });
+        expect(link.hash).toBe('#wsi:slide=0123456789ab');
+        expect(link.href).not.toMatch(/image_?id/i);
+    });
 
     it("passes the portal's signed-in user name to the viewer", () => {
         render(<PatientWsiSlidesTab {...baseProps} query={{}} />);

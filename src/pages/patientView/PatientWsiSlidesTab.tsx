@@ -9,7 +9,10 @@ import {
     AppWsiViewer,
     AppWsiViewerProps,
 } from 'shared/components/wsiViewer/wsiAppConfig';
+import { buildCBioPortalPageUrl } from 'shared/api/urls';
+import { PagePath } from 'shared/enums/PagePaths';
 import { PathologySlideSettings } from './PatientViewUrlWrapper';
+import { PatientViewPageTabs } from './PatientViewPageTabIds';
 
 /** Patient view query params that scope the Pathology Slides tab. */
 export type WsiSlidesTabQuery = PathologySlideSettings & { sampleId?: string };
@@ -57,9 +60,36 @@ export function wsiSlidesTabScopeFromQuery(
     };
 }
 
+/**
+ * A link that opens the patient's Pathology Slides tab at one annotation:
+ * the slide in the `#wsi:slide=` deep-link hash (its opaque key) and the
+ * annotation id in the `pathologySlideSettings` node.
+ */
+export function wsiSlidesTabAnnotationLink(
+    studyId: string,
+    patientId: string,
+    target: { slideKey: string; annotationId: string }
+): string {
+    return buildCBioPortalPageUrl(
+        `${PagePath.Patient}/${PatientViewPageTabs.WSIHESlides}`,
+        {
+            studyId,
+            caseId: patientId,
+            pathologySlideSettings: JSON.stringify({
+                annotationId: target.annotationId,
+            }),
+        },
+        `wsi:slide=${encodeURIComponent(target.slideKey)}`
+    );
+}
+
 type Props = Omit<
     AppWsiViewerProps,
-    keyof WsiSlidesTabScope | 'hostOwnsSampleScope' | 'userName'
+    | keyof WsiSlidesTabScope
+    | 'hostOwnsSampleScope'
+    | 'userName'
+    | 'requestedAnnotationId'
+    | 'annotationLink'
 > & {
     query: WsiSlidesTabQuery;
     /**
@@ -89,8 +119,13 @@ export function resetLastWsiSlidesLink() {
 
 /** Pathology Slides tab: the viewer scoped by the patient view URL. */
 export default function PatientWsiSlidesTab({ query, ...viewerProps }: Props) {
-    const { patientId } = viewerProps;
+    const { patientId, studyId } = viewerProps;
     const { sampleId, stainFilter, matchLevel, specimenKey } = query;
+    const annotationLink = React.useCallback(
+        (target: { slideKey: string; annotationId: string }) =>
+            wsiSlidesTabAnnotationLink(studyId, patientId, target),
+        [studyId, patientId]
+    );
     const linkKey = JSON.stringify([
         sampleId,
         stainFilter,
@@ -131,5 +166,13 @@ export default function PatientWsiSlidesTab({ query, ...viewerProps }: Props) {
     }, [linkKey, staleHash]);
     // The page's sample filter shows and widens the sample scope, so the
     // slide list neither repeats it as a chip nor widens past it.
-    return <AppWsiViewer {...viewerProps} {...scope} hostOwnsSampleScope />;
+    return (
+        <AppWsiViewer
+            {...viewerProps}
+            {...scope}
+            hostOwnsSampleScope
+            requestedAnnotationId={query.annotationId || undefined}
+            annotationLink={annotationLink}
+        />
+    );
 }

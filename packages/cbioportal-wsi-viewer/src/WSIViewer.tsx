@@ -39,6 +39,7 @@ import { clearWsiThumbnailFetchCache } from './wsiThumbnailFetchCache';
 import {
     isTypingTarget,
     WsiAnnotationController,
+    WsiAnnotationLinkTarget,
 } from './wsiAnnotationController';
 import {
     WsiAnnotationDrawPreview,
@@ -47,7 +48,10 @@ import {
     WsiAnnotationTooltip,
 } from './wsiAnnotationControls';
 import { WsiAnnotationToolbar } from './wsiAnnotationToolbar';
-import { WsiAnnotationOverlay } from './wsiAnnotationOverlay';
+import {
+    WsiAnnotationFocusBar,
+    WsiAnnotationOverlay,
+} from './wsiAnnotationOverlay';
 import { WsiAnnotationReviewCard } from './wsiAnnotationReview';
 import {
     checkWsiTileServerOrigin,
@@ -123,6 +127,18 @@ export interface WsiViewerProps {
      * annotations; unset, they show on all and the service refuses others'.
      */
     annotationUser?: string;
+    /**
+     * An annotation to open, as from a link made by `annotationLink`: once
+     * the slide's annotations load it is shown, fitted in the view and
+     * highlighted; a missing one is reported.
+     */
+    requestedAnnotationId?: string;
+    /**
+     * Makes a shareable link that opens this viewer at a slide and one
+     * annotation (by id; never an image id). Unset, annotations offer no
+     * Copy link.
+     */
+    annotationLink?: (target: WsiAnnotationLinkTarget) => string;
     /**
      * Hides the slide list. Unset, the viewer keeps the user's choice in
      * browser storage.
@@ -301,6 +317,10 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
         this.annotationController.setCurrentUser(props.annotationUser);
         this.annotationController.setMppProvider(
             () => this.viewerState.selectedMpp
+        );
+        this.annotationController.setLinkBuilder(props.annotationLink);
+        this.annotationController.requestAnnotation(
+            props.requestedAnnotationId
         );
         this.annotationController.setCursorReporter((x, y) =>
             this.viewerState.setCursorPos(x, y)
@@ -501,6 +521,14 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
 
         if (prev.annotationUser !== this.props.annotationUser) {
             this.annotationController.setCurrentUser(this.props.annotationUser);
+        }
+        if (prev.annotationLink !== this.props.annotationLink) {
+            this.annotationController.setLinkBuilder(this.props.annotationLink);
+        }
+        if (prev.requestedAnnotationId !== this.props.requestedAnnotationId) {
+            this.annotationController.requestAnnotation(
+                this.props.requestedAnnotationId
+            );
         }
 
         if (prev.hidden !== this.props.hidden) {
@@ -1205,6 +1233,11 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
                     )}
                     {this.props.annotationApiUrl && (
                         <WsiAnnotationReviewCard
+                            controller={this.annotationController}
+                        />
+                    )}
+                    {this.props.annotationApiUrl && (
+                        <WsiAnnotationFocusBar
                             controller={this.annotationController}
                         />
                     )}

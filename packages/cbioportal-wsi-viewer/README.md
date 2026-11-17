@@ -59,6 +59,7 @@ The cBioPortal app does both in `src/shared/components/wsiViewer/wsiAppConfig.ts
 | `clinicalRows` | Rows for the sidebar's Clinical section, in display order. A row with a `sampleId` shows only for that sample's slides. Unset hides the section |
 | `navCollapsed` / `metadataCollapsed` (+ change callbacks) | Control the hideable slide list and details sidebar. Unset, the viewer remembers the user's choice in `localStorage` |
 | `showDownload`, `renderLoading` | Show the download-view control; a custom loading indicator |
+| `requestedAnnotationId`, `annotationLink` | An annotation to open once its slide loads, and how to make a link to one (see Stepping through annotations, and links to one) |
 | `hidden` | The host hides the viewer without unmounting it, e.g. in an inactive tab. The panel shortcuts are off and OpenSeadragon ignores the collapsed container's size meanwhile |
 
 ## Portal contract
@@ -160,6 +161,8 @@ Keys do nothing while the focus is in a text field. On a Mac, ⌘ works for Ctrl
 | . | Point (otherwise "." shows or hides the details sidebar) | Annotate on |
 | Esc | Back to Select | A drawing tool is on |
 | H | Hide or show all annotations on the slide | Always |
+| ] and [ | Next and previous listed annotation, fitted and highlighted | Review card closed |
+| Esc | Stop highlighting the annotation | No drawing tool on |
 | Ctrl+Z; Ctrl+Shift+Z or Ctrl+Y | Undo; redo | Something to undo or redo |
 | A | Accept the annotation under review, then the next | Review card open |
 | R | Reject it, then the next | Review card open |
@@ -251,9 +254,20 @@ While Annotate is on, clicking a rectangle, ellipse, line or polygon (including 
 
 #### Annotation list
 
-The sidebar's Annotations section lists the slide's annotations on visible layers. It filters by label or note text, layer, author (when there is more than one) and AI origin (when any annotation is from the assistant or a model), and shows how many listed annotations each layer and each label group has. A label groups under its base term: a trailing count such as " (13 tiles)" is dropped, so "Solid region (13 tiles)" and "Solid region (9 tiles)" group as Solid region, and an auto-label (a palette color's name or hex and a number) counts under its base, so "Tumor 1" and "Tumor 2" count as Tumor. Vocabulary terms and other labels count as written, so "Grade 1" and "Grade 2" or "Gleason pattern 4" stay apart. The eight largest groups show, the rest behind **+N more**. Clicking a label count filters the list to that group, and clicking it again clears it. Clicking an annotation's label (or Enter on it) pans and zooms the slide to it. The filters reset when another slide opens.
+The sidebar's Annotations section lists the slide's annotations on visible layers. It filters by label or note text, layer, author (when there is more than one) and AI origin (when any annotation is from the assistant or a model), and shows how many listed annotations each layer and each label group has. A label groups under its base term: a trailing count such as " (13 tiles)" is dropped, so "Solid region (13 tiles)" and "Solid region (9 tiles)" group as Solid region, and an auto-label (a palette color's name or hex and a number) counts under its base, so "Tumor 1" and "Tumor 2" count as Tumor. Vocabulary terms and other labels count as written, so "Grade 1" and "Grade 2" or "Gleason pattern 4" stay apart. The eight largest groups show, the rest behind **+N more**. Clicking a label count filters the list to that group, and clicking it again clears it. Clicking an annotation's label (or Enter on it) pans and zooms the slide to it and highlights it (see Stepping through annotations). The filters reset when another slide opens.
 
 Drawing and editing stay off until the slide's annotations have loaded; a failed load shows an alert with **Retry**. Icon buttons are labelled by their target (for example "Delete annotation Tumor 1"), and after an accept, reject, delete or label save the focus moves to the row, else the next row, else the list. Text on an annotation's color is black or white by luminance.
+
+#### Stepping through annotations, and links to one
+
+**]** and **[** step to the next and previous annotation the list shows (visible layers and the list's filters), Annotate on or off, in the review queue's nearest-next order, wrapping around. Each is fitted in the view and highlighted with the dashed yellow frame. A bar at the bottom of the slide says which it is ("3 of 17: Tumor 1", a `role="status"`), with ‹ and › buttons, **Copy link** and ×; Esc or × stops highlighting. `]` and `[` were chosen because N/P would clash with P (polygon), and the arrow keys belong to the review card and to OpenSeadragon's panning. They do nothing while the review card is open.
+
+**Copy link** (in the bar, and the link icon on each list row) copies a URL that opens the slide at that annotation, fitted and highlighted. The host makes the link (`annotationLink`), naming the slide by its opaque key and the annotation by its id, never by an image id:
+
+- the patient page's Pathology Slides tab: `/patient/wsiHESlides?studyId=…&caseId=…&pathologySlideSettings={"annotationId":"…"}#wsi:slide=<slide key>`, the deep-link hash selecting the slide as for slide links and the annotation in the tab's `pathologySlideSettings` URL node;
+- the `/wsi/patient/{patient}` permalink: `?studyId=…&slideKey=…&annotationId=…`.
+
+The host passes the link's annotation as `requestedAnnotationId`. Once the slide's annotations have loaded it is opened once: its layer is shown if hidden (ending a solo), "Hide unreviewed AI annotations" and hide all are turned off for it, and it is fitted and highlighted. A link to an annotation that is not there (deleted, rejected in review, or private to another user, which the service does not list) shows "The linked annotation is not on this slide…" in the bar instead. Without the Clipboard API the bar shows the link to copy by hand. Without `annotationLink`, there is no Copy link.
 
 #### Export and import (GeoJSON)
 

@@ -784,7 +784,7 @@ const AnnotationRow = observer(
                                 title={`${rawLabel ||
                                     '(unlabeled)'}: show on the slide`}
                                 onClick={() =>
-                                    controller.zoomToAnnotation(annotation.id)
+                                    controller.focusAnnotation(annotation.id)
                                 }
                                 style={{
                                     display: 'block',
@@ -919,6 +919,29 @@ const AnnotationRow = observer(
                         </>
                     )}
                 </div>
+                {!editing &&
+                    controller.canLinkAnnotations &&
+                    !annotation.unsaved &&
+                    !annotation.id.startsWith('client-') && (
+                        <button
+                            data-testid={`copy-link-${annotation.id}`}
+                            title="Copy a link that opens the slide at this annotation"
+                            aria-label={`Copy link to annotation ${name}`}
+                            onClick={() =>
+                                void controller.copyAnnotationLink(
+                                    annotation.id
+                                )
+                            }
+                            style={{
+                                border: 'none',
+                                background: 'transparent',
+                                color: colors.muted,
+                                padding: '0 2px',
+                            }}
+                        >
+                            <i aria-hidden="true" className="fa fa-link" />
+                        </button>
+                    )}
                 {!editing && canModify && (
                     <button
                         data-testid={`edit-label-${annotation.id}`}
