@@ -91,3 +91,90 @@ export interface WsiScreenBox {
     width: number;
     height: number;
 }
+
+/** A label to place on the slide, at the top-left of its shape's box. */
+export interface WsiLabelCandidate {
+    id: string;
+    text: string;
+    box: WsiScreenBox;
+}
+
+export interface WsiPlacedLabel {
+    id: string;
+    text: string;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+}
+
+/** Label text size on the slide, in pixels. */
+export const SLIDE_LABEL_FONT_SIZE = 11;
+/** Shapes smaller than this on screen (both sides) get no label. */
+export const SLIDE_LABEL_MIN_SHAPE = 24;
+/** The most labels shown at once. */
+export const SLIDE_LABEL_LIMIT = 150;
+const LABEL_MAX_CHARS = 40;
+const LABEL_HEIGHT = SLIDE_LABEL_FONT_SIZE + 4;
+/** An estimate of the width of one character of label text. */
+const LABEL_CHAR_WIDTH = SLIDE_LABEL_FONT_SIZE * 0.6;
+
+function overlaps(a: WsiScreenBox, b: WsiScreenBox) {
+    return (
+        a.x < b.x + b.width &&
+        b.x < a.x + a.width &&
+        a.y < b.y + b.height &&
+        b.y < a.y + a.height
+    );
+}
+
+/**
+ * Places labels on the slide: one at the top-left of each shape's box on
+ * screen, for shapes at least `SLIDE_LABEL_MIN_SHAPE` pixels on a side and
+ * inside `view`. Larger shapes go first; a label that would overlap one
+ * already placed is left out, and at most `SLIDE_LABEL_LIMIT` show.
+ */
+export function placeSlideLabels(
+    candidates: WsiLabelCandidate[],
+    view: { width: number; height: number } | null
+): WsiPlacedLabel[] {
+    const placed: WsiPlacedLabel[] = [];
+    const sorted = candidates
+        .filter(
+            candidate =>
+                candidate.text.trim() &&
+                (candidate.box.width >= SLIDE_LABEL_MIN_SHAPE ||
+                    candidate.box.height >= SLIDE_LABEL_MIN_SHAPE) &&
+                (!view ||
+                    overlaps(candidate.box, {
+                        x: 0,
+                        y: 0,
+                        width: view.width,
+                        height: view.height,
+                    }))
+        )
+        .sort(
+            (a, b) =>
+                b.box.width * b.box.height - a.box.width * a.box.height ||
+                a.id.localeCompare(b.id)
+        );
+    for (const candidate of sorted) {
+        if (placed.length >= SLIDE_LABEL_LIMIT) break;
+        const raw = candidate.text.trim();
+        const text =
+            raw.length > LABEL_MAX_CHARS
+                ? `${raw.slice(0, LABEL_MAX_CHARS - 1)}…`
+                : raw;
+        const label: WsiPlacedLabel = {
+            id: candidate.id,
+            text,
+            // Inside the shape's top-left corner, but on screen.
+            x: Math.max(candidate.box.x + 2, 2),
+            y: Math.max(candidate.box.y + 2, 2),
+            width: text.length * LABEL_CHAR_WIDTH + 6,
+            height: LABEL_HEIGHT,
+        };
+        if (!placed.some(other => overlaps(label, other))) placed.push(label);
+    }
+    return placed;
+}

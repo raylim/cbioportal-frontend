@@ -437,13 +437,12 @@ describe('AI review queue', () => {
     it('highlights the annotation under review on the slide', () => {
         const { controller } = setup();
         track(controller);
-        jest.spyOn(
-            controller as any,
-            'screenPoint'
-        ).mockImplementation((point: any) => ({
-            x: point.x / 2,
-            y: point.y / 2,
-        }));
+        jest.spyOn(controller as any, 'screenPoint').mockImplementation(
+            (point: any) => ({
+                x: point.x / 2,
+                y: point.y / 2,
+            })
+        );
         render(<WsiAnnotationOverlay controller={controller} />);
         expect(screen.queryByTestId('annotation-overlay')).toBeNull();
         act(() => {

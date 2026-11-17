@@ -45,7 +45,12 @@ import {
     WsiGeoJsonFeatureCollection,
     WsiImportDraft,
 } from './wsiAnnotationGeoJson';
-import { spatialOrder, WsiScreenBox } from './wsiAnnotationSpatial';
+import {
+    placeSlideLabels,
+    spatialOrder,
+    WsiPlacedLabel,
+    WsiScreenBox,
+} from './wsiAnnotationSpatial';
 
 export type WsiAnnotationTool =
     | 'rectangle'
@@ -92,6 +97,9 @@ export const WSI_TOOL_SHORTCUTS: Record<
     '.': 'point',
 };
 
+/** Hides or shows all annotations on the slide, Annotate on or off. */
+export const WSI_HIDE_ALL_KEY = 'h';
+
 /** Whether `target` is a field the user types in. */
 export function isTypingTarget(target: EventTarget | null): boolean {
     const element = target as HTMLElement | null;
@@ -124,6 +132,7 @@ const LOCALSTORAGE_LAYERS_KEY = 'wsi_annotation_layers_v1';
 const LOCALSTORAGE_DEFAULT_SHARED_KEY = 'wsi_annotation_default_shared_v1';
 const LOCALSTORAGE_TOOLBAR_KEY = 'wsi_annotation_toolbar_v1';
 const LOCALSTORAGE_LAYER_COLORS_KEY = 'wsi_annotation_layer_colors_v1';
+const LOCALSTORAGE_DISPLAY_KEY = 'wsi_annotation_display_v1';
 const HEX_COLOR_RE = /^#[0-9a-fA-F]{3,8}$/;
 
 function loadNamedColors(): NamedColor[] {
@@ -258,6 +267,57 @@ function loadToolbarPrefs(): WsiToolbarPrefs {
 function saveToolbarPrefs(prefs: WsiToolbarPrefs) {
     try {
         localStorage.setItem(LOCALSTORAGE_TOOLBAR_KEY, JSON.stringify(prefs));
+    } catch (_) {
+        // Ignore unavailable local storage.
+    }
+}
+
+/** How annotations are drawn on the slide; remembered between visits. */
+export interface WsiDisplayPrefs {
+    /** Fill opacity of shapes, 0 to 1. */
+    fillOpacity: number;
+    /** Draw shapes' outlines only, without fill. */
+    outlineOnly: boolean;
+    /** Show labels on the slide, at the shapes. */
+    showLabels: boolean;
+}
+
+export const DEFAULT_FILL_OPACITY = 0.2;
+
+function loadDisplayPrefs(): WsiDisplayPrefs {
+    const prefs: WsiDisplayPrefs = {
+        fillOpacity: DEFAULT_FILL_OPACITY,
+        outlineOnly: false,
+        showLabels: false,
+    };
+    try {
+        const parsed = JSON.parse(
+            localStorage.getItem(LOCALSTORAGE_DISPLAY_KEY) || 'null'
+        );
+        if (parsed && typeof parsed === 'object') {
+            if (
+                typeof parsed.fillOpacity === 'number' &&
+                parsed.fillOpacity >= 0 &&
+                parsed.fillOpacity <= 1
+            ) {
+                prefs.fillOpacity = parsed.fillOpacity;
+            }
+            if (typeof parsed.outlineOnly === 'boolean') {
+                prefs.outlineOnly = parsed.outlineOnly;
+            }
+            if (typeof parsed.showLabels === 'boolean') {
+                prefs.showLabels = parsed.showLabels;
+            }
+        }
+    } catch (_) {
+        // Ignore malformed or unavailable local storage.
+    }
+    return prefs;
+}
+
+function saveDisplayPrefs(prefs: WsiDisplayPrefs) {
+    try {
+        localStorage.setItem(LOCALSTORAGE_DISPLAY_KEY, JSON.stringify(prefs));
     } catch (_) {
         // Ignore unavailable local storage.
     }
@@ -737,6 +797,23 @@ export class WsiAnnotationController {
         NamedColor
     > = loadLayerColors();
     @observable hiddenLayerNames = new Set<string>();
+    /** Fill opacity of shapes on the slide, 0 to 1 (see `outlineOnly`). */
+    @observable fillOpacity = loadDisplayPrefs().fillOpacity;
+    /** Shapes are drawn as outlines, without fill. */
+    @observable outlineOnly = loadDisplayPrefs().outlineOnly;
+    /** Labels show on the slide, at their shapes (see `slideLabels`). */
+    @observable showSlideLabels = loadDisplayPrefs().showLabels;
+    /**
+     * Hides every annotation on the slide (H); the list and the tools stay.
+     * Not remembered: a slide must not look empty on the next visit.
+     */
+    @observable hideAll = false;
+    /**
+     * The layer shown alone, with the other layers hidden; null when no
+     * layer is. Showing all again restores the layers hidden before.
+     */
+    @observable soloLayer: string | null = null;
+    private hiddenBeforeSolo: Set<string> | null = null;
     /** Hides AI annotations no one has reviewed, on the slide and list. */
     @observable hideUnreviewedAi = false;
     @observable.ref listFilter: WsiAnnotationListFilter = EMPTY_LIST_FILTER;
@@ -1870,9 +1947,8 @@ export class WsiAnnotationController {
                 this.showAnnotationTooltip(annotation, event);
             }
         );
-        this.annotorious.setVisible(this.visible);
         this.pointLayer = new WsiPointLayer(viewer, openSeadragon);
-        this.pointLayer.setVisible(this.visible);
+        this.applyVisibility();
         if (viewer.addHandler) {
             viewer.addHandler('canvas-click', this.handleCanvasClick);
             viewer.addHandler('canvas-key', this.handleCanvasKey);
@@ -2101,8 +2177,7 @@ export class WsiAnnotationController {
     @action.bound
     toggleVisible() {
         this.visible = !this.visible;
-        this.annotorious?.setVisible?.(this.visible);
-        this.pointLayer?.setVisible(this.visible);
+        this.applyVisibility();
         if (!this.visible) this.annotationTooltip = null;
     }
 
@@ -2245,6 +2320,9 @@ export class WsiAnnotationController {
 
     @action.bound
     toggleLayerVisibility(layer: string) {
+        // Showing or hiding a layer by hand ends showing one layer alone.
+        this.soloLayer = null;
+        this.hiddenBeforeSolo = null;
         const hidden = new Set(this.hiddenLayerNames);
         if (hidden.has(layer)) {
             hidden.delete(layer);
@@ -2289,6 +2367,9 @@ export class WsiAnnotationController {
         if (deleted.length) this.pushUndo({ kind: 'delete', before: deleted });
         this.customLayers = this.customLayers.filter(item => item !== layer);
         saveLayerNames(this.customLayers);
+        if (this.soloLayer === layer && !this.layerNames.includes(layer)) {
+            this.toggleSoloLayer(layer);
+        }
         const hidden = new Set(this.hiddenLayerNames);
         hidden.delete(layer);
         this.hiddenLayerNames = hidden;
@@ -2711,23 +2792,48 @@ export class WsiAnnotationController {
 
     /** Whether the overlay over the slide has anything to draw. */
     @computed get overlayActive(): boolean {
-        return !!this.focusedAnnotationId;
+        return (
+            !!this.focusedAnnotationId ||
+            (this.showSlideLabels && !this.hideAll)
+        );
+    }
+
+    /**
+     * Image pixels to screen pixels as the slide is shown now. The mapping
+     * is affine, so three mapped points give it for any number of shapes.
+     */
+    private screenTransform(): ((point: WsiXY) => WsiXY) | null {
+        const unit = 1000;
+        const origin = this.screenPoint({ x: 0, y: 0 });
+        const xAxis = this.screenPoint({ x: unit, y: 0 });
+        const yAxis = this.screenPoint({ x: 0, y: unit });
+        if (!origin || !xAxis || !yAxis) return null;
+        const ax = (xAxis.x - origin.x) / unit;
+        const ay = (xAxis.y - origin.y) / unit;
+        const bx = (yAxis.x - origin.x) / unit;
+        const by = (yAxis.y - origin.y) / unit;
+        return point => ({
+            x: origin.x + ax * point.x + bx * point.y,
+            y: origin.y + ay * point.x + by * point.y,
+        });
     }
 
     /** Where `annotation` is on screen now: its box, in pixels. */
-    screenBox(annotation: WsiAnnotation): WsiScreenBox | null {
+    screenBox(
+        annotation: WsiAnnotation,
+        transform = this.screenTransform()
+    ): WsiScreenBox | null {
         const shape = this.shapeOf(annotation);
-        if (!shape) return null;
+        if (!shape || !transform) return null;
         const bounds = shapeBounds(shape);
         const corners = [
             { x: bounds.minX, y: bounds.minY },
             { x: bounds.maxX, y: bounds.minY },
             { x: bounds.minX, y: bounds.maxY },
             { x: bounds.maxX, y: bounds.maxY },
-        ].map(point => this.screenPoint(point));
-        if (corners.some(point => !point)) return null;
-        const xs = corners.map(point => point!.x);
-        const ys = corners.map(point => point!.y);
+        ].map(transform);
+        const xs = corners.map(point => point.x);
+        const ys = corners.map(point => point.y);
         const x = Math.min(...xs);
         const y = Math.min(...ys);
         return {
@@ -2745,6 +2851,124 @@ export class WsiAnnotationController {
         const id = this.focusedAnnotationId;
         const annotation = id && this.annotations.find(item => item.id === id);
         return annotation ? this.screenBox(annotation) : null;
+    }
+
+    /**
+     * The labels drawn on the slide while `showSlideLabels` is on: at the
+     * top-left of each shown shape that is large enough on screen, without
+     * overlapping (see `placeSlideLabels`). They follow the slide as it
+     * moves, and are part of no export.
+     */
+    @computed get slideLabels(): WsiPlacedLabel[] {
+        if (!this.showSlideLabels || this.hideAll || !this.visible) return [];
+        void this.viewportRevision;
+        const transform = this.screenTransform();
+        if (!transform) return [];
+        const element = this.osdViewer?.element as HTMLElement | undefined;
+        const view =
+            element && element.clientWidth > 0 && element.clientHeight > 0
+                ? { width: element.clientWidth, height: element.clientHeight }
+                : null;
+        const candidates = this.shownAnnotations
+            .filter(annotation => !this.isPoint(annotation))
+            .map(annotation => ({
+                id: annotation.id,
+                text: annotation.body?.[0]?.value || '',
+                box: this.screenBox(annotation, transform),
+            }))
+            .filter(
+                (
+                    candidate
+                ): candidate is {
+                    id: string;
+                    text: string;
+                    box: WsiScreenBox;
+                } => !!candidate.box
+            );
+        return placeSlideLabels(candidates, view);
+    }
+
+    // ---- display ----
+
+    private saveDisplayPrefs() {
+        saveDisplayPrefs({
+            fillOpacity: this.fillOpacity,
+            outlineOnly: this.outlineOnly,
+            showLabels: this.showSlideLabels,
+        });
+    }
+
+    /** Sets the fill opacity of shapes, 0 to 1. */
+    @action.bound
+    setFillOpacity(opacity: number) {
+        if (!(opacity >= 0)) return;
+        this.fillOpacity = Math.min(1, Math.round(opacity * 100) / 100);
+        this.saveDisplayPrefs();
+        this.refreshStyle();
+    }
+
+    @action.bound
+    setOutlineOnly(outlineOnly: boolean) {
+        this.outlineOnly = outlineOnly;
+        this.saveDisplayPrefs();
+        this.refreshStyle();
+    }
+
+    @action.bound
+    setShowSlideLabels(show: boolean) {
+        this.showSlideLabels = show;
+        this.saveDisplayPrefs();
+        // Place the labels for the view as it is now.
+        this.viewportRevision += 1;
+    }
+
+    /** Hides or shows every annotation on the slide (H). */
+    @action.bound
+    toggleHideAll() {
+        this.hideAll = !this.hideAll;
+        this.applyVisibility();
+        if (this.hideAll) {
+            this.annotationTooltip = null;
+            this.annotorious?.cancelSelected?.();
+        } else {
+            this.viewportRevision += 1;
+        }
+    }
+
+    /** Puts `visible` and `hideAll` on the slide's drawings. */
+    private applyVisibility() {
+        const shown = this.visible && !this.hideAll;
+        this.annotorious?.setVisible?.(shown);
+        this.pointLayer?.setVisible(shown);
+    }
+
+    /**
+     * Shows only `layer`, hiding the others; for the layer shown alone,
+     * shows the layers hidden before again.
+     */
+    @action.bound
+    toggleSoloLayer(layer: string) {
+        if (this.soloLayer === layer) {
+            this.hiddenLayerNames = new Set(this.hiddenBeforeSolo || []);
+            this.soloLayer = null;
+            this.hiddenBeforeSolo = null;
+        } else {
+            if (this.soloLayer === null) {
+                this.hiddenBeforeSolo = new Set(this.hiddenLayerNames);
+            }
+            this.soloLayer = layer;
+            this.hiddenLayerNames = new Set(
+                this.layerNames.filter(name => name !== layer)
+            );
+            this.annotorious?.cancelSelected?.();
+            if (
+                this.annotationTooltip?.layerName &&
+                this.annotationTooltip.layerName !== layer
+            ) {
+                this.annotationTooltip = null;
+            }
+        }
+        this.applyLayerFilter();
     }
 
     private request(
@@ -3848,6 +4072,11 @@ export class WsiAnnotationController {
             }
             return;
         }
+        if (key === WSI_HIDE_ALL_KEY && !event.shiftKey && this.visible) {
+            event.preventDefault();
+            this.toggleHideAll();
+            return;
+        }
         const shortcut = this.toolShortcutsActive
             ? WSI_TOOL_SHORTCUTS[key]
             : undefined;
@@ -4335,12 +4564,13 @@ export class WsiAnnotationController {
 
     private refreshStyle() {
         if (!this.annotorious) return;
+        const fillOpacity = this.outlineOnly ? 0 : this.fillOpacity;
         this.annotorious.setStyle?.((annotation: WsiAnnotation) => {
             const color = annotation.color || this.activeColor;
             return {
                 stroke: color,
                 fill: color,
-                fillOpacity: 0.2,
+                fillOpacity,
                 strokeWidth: 2,
             };
         });

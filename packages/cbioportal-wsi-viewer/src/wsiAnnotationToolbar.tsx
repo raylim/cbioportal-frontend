@@ -11,6 +11,7 @@ import {
 import {
     AnnotationLabelField,
     readableTextColor,
+    SoloIcon,
 } from './wsiAnnotationControls';
 
 type DrawingTool = Exclude<WsiAnnotationTool, null>;
@@ -104,6 +105,11 @@ export const SHORTCUT_HELP: ShortcutSection[] = [
         ],
     },
     {
+        title: 'Viewing',
+        when: 'Annotate on or off',
+        keys: [[['H'], 'Hide or show all annotations on the slide']],
+    },
+    {
         title: 'Reviewing AI annotations',
         when:
             'While the review card is open; these keys come first, so R rejects instead of picking Shape',
@@ -174,6 +180,18 @@ const iconPaths: Record<string, React.ReactNode> = {
         </>
     ),
     caret: <path d="M4.5 6.5L8 10l3.5-3.5" />,
+    display: (
+        <>
+            <path d="M1.5 8s2.4-4.5 6.5-4.5S14.5 8 14.5 8 12.1 12.5 8 12.5 1.5 8 1.5 8z" />
+            <circle cx="8" cy="8" r="2" />
+        </>
+    ),
+    hidden: (
+        <>
+            <path d="M1.5 8s2.4-4.5 6.5-4.5S14.5 8 14.5 8 12.1 12.5 8 12.5 1.5 8 1.5 8z" />
+            <path d="M2.5 13.5l11-11" />
+        </>
+    ),
 };
 
 export function ToolIcon({ name, size = 16 }: { name: string; size?: number }) {
@@ -967,6 +985,223 @@ const DrawingAs = observer(
     )
 );
 
+const fieldRowStyle: React.CSSProperties = {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 6,
+    margin: '0 0 6px',
+    fontWeight: 400,
+    fontSize: 12,
+    color: colors.text,
+};
+
+/**
+ * How annotations show on the slide: fill opacity, outlines only, labels
+ * on the slide and hiding them all (H), in a popover; showing one layer
+ * alone is on the layer rows and can be ended here.
+ */
+const DisplayMenu = observer(
+    ({ controller }: { controller: WsiAnnotationController }) => {
+        const [open, setOpen] = React.useState(false);
+        const button = React.useRef<HTMLButtonElement>(null);
+        const anchor = React.useRef<HTMLSpanElement>(null);
+        const popup = React.useRef<HTMLDivElement>(null);
+        const close = React.useCallback((returnFocus: boolean) => {
+            setOpen(false);
+            if (returnFocus) button.current?.focus();
+        }, []);
+        usePopupDismiss(open, close, popup, anchor);
+        React.useEffect(() => {
+            if (open)
+                popup.current?.querySelector<HTMLElement>('input')?.focus();
+        }, [open]);
+        const percent = Math.round(controller.fillOpacity * 100);
+        const changed =
+            controller.hideAll ||
+            controller.outlineOnly ||
+            controller.showSlideLabels ||
+            controller.soloLayer !== null;
+        const title = controller.hideAll
+            ? 'Display: all annotations are hidden (H shows them)'
+            : 'Display: fill, outlines, labels on the slide, hide all (H)';
+        return (
+            <span ref={anchor} style={{ position: 'relative', ...groupStyle }}>
+                <button
+                    type="button"
+                    ref={button}
+                    data-toolbar-item
+                    data-testid="annotation-display-button"
+                    aria-label={
+                        controller.hideAll
+                            ? 'Display (annotations hidden)'
+                            : 'Display'
+                    }
+                    title={title}
+                    aria-haspopup="dialog"
+                    aria-expanded={open}
+                    onClick={() => setOpen(!open)}
+                    style={{
+                        ...iconButtonStyle(open),
+                        // A dot while something differs from the default.
+                        position: 'relative',
+                    }}
+                >
+                    <ToolIcon
+                        name={controller.hideAll ? 'hidden' : 'display'}
+                    />
+                    {changed && !open && (
+                        <span
+                            aria-hidden="true"
+                            style={{
+                                position: 'absolute',
+                                top: 3,
+                                right: 3,
+                                width: 6,
+                                height: 6,
+                                borderRadius: '50%',
+                                background: colors.active,
+                            }}
+                        />
+                    )}
+                </button>
+                {open && (
+                    <div
+                        ref={popup}
+                        role="dialog"
+                        aria-label="Display"
+                        data-testid="annotation-display-popover"
+                        onKeyDown={event => {
+                            if (event.key === 'Escape') {
+                                event.preventDefault();
+                                event.stopPropagation();
+                                close(true);
+                            }
+                        }}
+                        style={{
+                            position: 'absolute',
+                            top: 'calc(100% + 4px)',
+                            left: 0,
+                            width: 250,
+                            padding: 10,
+                            background: '#fff',
+                            border: `1px solid ${colors.border}`,
+                            borderRadius: 4,
+                            boxShadow: '0 4px 12px rgba(0,0,0,0.18)',
+                            zIndex: 30,
+                            fontSize: 12,
+                        }}
+                    >
+                        <label style={fieldRowStyle}>
+                            <span style={{ width: 28 }}>Fill</span>
+                            <input
+                                type="range"
+                                data-testid="annotation-fill-opacity"
+                                aria-label="Fill opacity"
+                                aria-valuetext={`${percent}%`}
+                                min={0}
+                                max={100}
+                                step={5}
+                                value={percent}
+                                disabled={controller.outlineOnly}
+                                onChange={event =>
+                                    controller.setFillOpacity(
+                                        Number(event.target.value) / 100
+                                    )
+                                }
+                                style={{ flex: 1, minWidth: 0 }}
+                            />
+                            <output
+                                style={{
+                                    width: 34,
+                                    textAlign: 'right',
+                                    color: controller.outlineOnly
+                                        ? colors.muted
+                                        : colors.text,
+                                }}
+                            >
+                                {percent}%
+                            </output>
+                        </label>
+                        <label style={fieldRowStyle}>
+                            <input
+                                type="checkbox"
+                                data-testid="annotation-outline-only"
+                                checked={controller.outlineOnly}
+                                onChange={event =>
+                                    controller.setOutlineOnly(
+                                        event.target.checked
+                                    )
+                                }
+                            />
+                            Outlines only
+                        </label>
+                        <label style={fieldRowStyle}>
+                            <input
+                                type="checkbox"
+                                data-testid="annotation-slide-labels"
+                                checked={controller.showSlideLabels}
+                                onChange={event =>
+                                    controller.setShowSlideLabels(
+                                        event.target.checked
+                                    )
+                                }
+                            />
+                            Labels on the slide
+                        </label>
+                        <label style={fieldRowStyle}>
+                            <input
+                                type="checkbox"
+                                data-testid="annotation-hide-all"
+                                aria-keyshortcuts="H"
+                                checked={controller.hideAll}
+                                onChange={controller.toggleHideAll}
+                            />
+                            Hide all annotations
+                            <kbd style={{ ...kbdStyle, marginLeft: 'auto' }}>
+                                H
+                            </kbd>
+                        </label>
+                        {controller.soloLayer !== null ? (
+                            <div
+                                data-testid="annotation-solo-status"
+                                style={{ color: colors.text }}
+                            >
+                                Showing only layer{' '}
+                                <strong>{controller.soloLayer}</strong>.{' '}
+                                <button
+                                    type="button"
+                                    data-testid="annotation-solo-end"
+                                    onClick={() =>
+                                        controller.toggleSoloLayer(
+                                            controller.soloLayer!
+                                        )
+                                    }
+                                    style={{
+                                        border: 'none',
+                                        background: 'transparent',
+                                        color: colors.active,
+                                        padding: 0,
+                                        textDecoration: 'underline',
+                                        cursor: 'pointer',
+                                        fontSize: 12,
+                                    }}
+                                >
+                                    Show all layers
+                                </button>
+                            </div>
+                        ) : (
+                            <div style={{ color: colors.muted, fontSize: 11 }}>
+                                To show one layer alone, use <SoloIcon /> on its
+                                row under Layers.
+                            </div>
+                        )}
+                    </div>
+                )}
+            </span>
+        );
+    }
+);
+
 /** The keyboard shortcuts, in a dialog opened from the ⋯ menu. */
 function ShortcutHelp({ onClose }: { onClose: () => void }) {
     const ref = React.useRef<HTMLDivElement>(null);
@@ -1577,6 +1812,7 @@ export const WsiAnnotationToolbar = observer(
                         </span>
                     </>
                 )}
+                <DisplayMenu controller={controller} />
                 <MoreMenu
                     controller={controller}
                     onImport={() => fileInput.current?.click()}

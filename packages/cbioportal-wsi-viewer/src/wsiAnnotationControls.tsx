@@ -167,6 +167,28 @@ export const AnnotationLabelField = observer(
     }
 );
 
+/** The solo button's icon: a ring, with a dot while the layer is solo. */
+export function SoloIcon({ on = false }: { on?: boolean }) {
+    return (
+        <svg
+            aria-hidden="true"
+            focusable="false"
+            width={12}
+            height={12}
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={1.6}
+            style={{ display: 'inline-block', verticalAlign: '-1px' }}
+        >
+            <circle cx={8} cy={8} r={6} />
+            {on && (
+                <circle cx={8} cy={8} r={3} fill="currentColor" stroke="none" />
+            )}
+        </svg>
+    );
+}
+
 const plural = (n: number, noun: string) => `${n} ${noun}${n === 1 ? '' : 's'}`;
 
 /**
@@ -251,6 +273,36 @@ export const WsiAnnotationLayersPanel = observer(
                                         hidden ? 'fa-eye-slash' : 'fa-eye'
                                     }`}
                                 />
+                            </button>
+                            <button
+                                data-testid={`layer-solo-${layer}`}
+                                aria-pressed={controller.soloLayer === layer}
+                                aria-label={
+                                    controller.soloLayer === layer
+                                        ? 'Show all layers again'
+                                        : `Show only layer ${layer}`
+                                }
+                                title={
+                                    controller.soloLayer === layer
+                                        ? 'Show all layers again'
+                                        : `Show only layer "${layer}"`
+                                }
+                                onClick={() =>
+                                    controller.toggleSoloLayer(layer)
+                                }
+                                style={{
+                                    border: 'none',
+                                    background: 'transparent',
+                                    color:
+                                        controller.soloLayer === layer
+                                            ? colors.blue
+                                            : colors.muted,
+                                    cursor: 'pointer',
+                                    padding: '0 2px',
+                                    width: 18,
+                                }}
+                            >
+                                <SoloIcon on={controller.soloLayer === layer} />
                             </button>
                             <span
                                 aria-hidden="true"

@@ -585,6 +585,50 @@ if (process.env.PW_SUITE === 'wsi') {
             ).toHaveText('AI · accepted');
         });
 
+        test('labels annotations on the slide and hides them all with H', async ({
+            page,
+        }) => {
+            await openAnnotatedSlide(page);
+            await routeAnnotationService(page, [
+                seededAnnotation(
+                    'human-1',
+                    'Necrosis',
+                    '100,100 400,100 400,400'
+                ),
+                seededAnnotation('human-2', 'Margin', '40,430 160,430 160,500'),
+            ]);
+            await gotoSlide(page);
+            await expect(
+                page.getByTestId('annotation-row-human-1')
+            ).toBeVisible({ timeout: 15_000 });
+            const display = page.getByTestId('annotation-display-button');
+            await display.click();
+            await page.getByTestId('annotation-slide-labels').check();
+            const label = page.getByTestId('annotation-slide-label-human-1');
+            await expect(label).toHaveText('Necrosis');
+            await page.keyboard.press('Escape');
+            await expect(
+                page.getByTestId('annotation-display-popover')
+            ).toHaveCount(0);
+            await expect(display).toBeFocused();
+
+            // H hides every annotation on the slide, with Annotate off.
+            await expect(page.getByTestId('annotation-tools')).toHaveCount(0);
+            await page.keyboard.press('h');
+            await expect(display).toHaveAttribute(
+                'aria-label',
+                'Display (annotations hidden)'
+            );
+            await expect(label).toHaveCount(0);
+            // The list still lists them.
+            await expect(
+                page.getByTestId('annotation-row-human-1')
+            ).toBeVisible();
+            await page.keyboard.press('h');
+            await expect(display).toHaveAttribute('aria-label', 'Display');
+            await expect(label).toBeVisible();
+        });
+
         test('paints a brush stroke of the chosen width in µm at any zoom', async ({
             page,
         }) => {

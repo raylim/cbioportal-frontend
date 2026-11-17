@@ -114,7 +114,7 @@ A 401 means the user is signed out: the **Annotate** button is disabled and says
 
 #### Toolbar
 
-The toolbar over the slide starts with only **Annotate** and a **⋯** menu, so viewing stays uncluttered. **Annotate** shows the drawing tools in one compact row, which wraps between groups on a narrow viewer:
+The toolbar over the slide starts with only **Annotate**, **Display** (an eye) and a **⋯** menu, so viewing stays uncluttered. **Annotate** shows the drawing tools in one compact row, which wraps between groups on a narrow viewer:
 
 | Control | Contents |
 | --- | --- |
@@ -134,6 +134,19 @@ While annotations load, after a failed load, signed out, or without access to th
 
 The toolbar is a `role="toolbar"`: the arrow keys, Home and End move between its controls (fields keep their own arrow keys). The Shape, Outline and ⋯ buttons are menu buttons (`aria-haspopup`, `aria-expanded`); their menus open with Enter, Space or the down arrow, move with the arrow keys, Home and End, and close with Escape or a pick, returning focus to the button. Every icon button has an `aria-label` that names its shortcut, and a tooltip.
 
+#### Display
+
+**Display**, the eye next to ⋯, opens a small popover that sets how annotations show on the slide, Annotate on or off:
+
+- **Fill**: the fill opacity of shapes, 0–100% (20% by default).
+- **Outlines only**: shapes without fill.
+- **Labels on the slide**: each shape's label at the top-left corner of its box, in white on a dark band (at least 7:1 on any tissue). Larger shapes are labelled first; a label that would overlap one already shown is left out, shapes under 24 screen pixels on both sides get none (so zooming out drops them), points get none, and at most 150 show. The labels move with the slide.
+- **Hide all annotations** (H): hides every annotation on the slide, also while Annotate is off; the list, counts and tools stay. A dot on the eye marks any setting that differs from the default, and the eye is crossed out while all are hidden.
+
+Fill, outlines only and labels are remembered in `localStorage` (and the viewer works without it); hiding all is not, so a slide never opens looking empty. Labels and highlights are drawn over the slide in their own layer that ignores the pointer: GeoJSON exports hold annotation data only, and the downloaded view is the slide's canvas without them.
+
+Each row under **Layers** has a solo button (a circle, filled when on) that shows only that layer; pressing it again, or **Show all layers** in the Display popover, shows the layers hidden before again. Showing or hiding a layer with its eye ends the solo.
+
 #### Keyboard shortcuts
 
 Keys do nothing while the focus is in a text field. On a Mac, ⌘ works for Ctrl. The ⋯ menu's **Keyboard shortcuts** lists the same.
@@ -146,6 +159,7 @@ Keys do nothing while the focus is in a text field. On a Mac, ⌘ works for Ctrl
 | P, F, B | Polygon, freehand, brush | Annotate on |
 | . | Point (otherwise "." shows or hides the details sidebar) | Annotate on |
 | Esc | Back to Select | A drawing tool is on |
+| H | Hide or show all annotations on the slide | Always |
 | Ctrl+Z; Ctrl+Shift+Z or Ctrl+Y | Undo; redo | Something to undo or redo |
 | A | Accept the annotation under review, then the next | Review card open |
 | R | Reject it, then the next | Review card open |
