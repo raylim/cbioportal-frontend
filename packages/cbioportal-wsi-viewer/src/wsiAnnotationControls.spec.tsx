@@ -4,7 +4,10 @@
 import * as React from 'react';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { WsiAnnotationController } from './wsiAnnotationController';
+import { runInAction } from 'mobx';
 import {
+    readableTextColor,
+    WsiAnnotationLayersPanel,
     WsiAnnotationPanel,
     WsiAnnotationToolbar,
 } from './wsiAnnotationControls';
@@ -396,12 +399,98 @@ describe('WsiAnnotationPanel', () => {
             // The stored label is not a term: saving waits for a choice.
             expect(
                 (screen.getByLabelText(
-                    'Save annotation label'
+                    'Save label of Old'
                 ) as HTMLButtonElement).disabled
             ).toBe(true);
             fireEvent.change(rowField, { target: { value: 'Necrosis' } });
-            fireEvent.click(screen.getByLabelText('Save annotation label'));
+            fireEvent.click(screen.getByLabelText('Save label of Old'));
             expect(rename).toHaveBeenCalledWith('Old', 'Necrosis');
+        });
+    });
+
+    describe('accessibility', () => {
+        it('names icon buttons by their target and hides the color dot', () => {
+            const controller = controllerWith([
+                apiItem('a1', { layer_name: 'Tumor' }),
+            ]);
+            render(
+                <>
+                    <WsiAnnotationLayersPanel controller={controller} />
+                    <WsiAnnotationPanel controller={controller} />
+                </>
+            );
+            expect(screen.getByLabelText('Edit label of a1')).toBeTruthy();
+            expect(screen.getByLabelText('Delete annotation a1')).toBeTruthy();
+            expect(screen.getByLabelText('Delete layer Tumor')).toBeTruthy();
+            const dot = screen
+                .getByTestId('annotation-row-a1')
+                .querySelector('[data-annotation-color]')!;
+            expect(dot.getAttribute('aria-hidden')).toBe('true');
+            expect(dot.getAttribute('aria-label')).toBeNull();
+        });
+
+        it('picks black or white text for a color by its luminance', () => {
+            expect(readableTextColor('#ffff00')).toBe('#000');
+            expect(readableTextColor('#22c55e')).toBe('#000');
+            expect(readableTextColor('#1f1f1f')).toBe('#fff');
+            expect(readableTextColor('#7c3aed')).toBe('#fff');
+            expect(readableTextColor('#fff')).toBe('#000');
+            expect(readableTextColor('not a color')).toBe('#000');
+            const controller = controllerWith([
+                apiItem('y', { type: 'Yellow|#ffff00' }),
+            ]);
+            render(<WsiAnnotationPanel controller={controller} />);
+            const badge = screen.getByText('Yellow');
+            expect(badge.style.color).toBe('rgb(0, 0, 0)');
+        });
+
+        it('keeps the sharing toggle label fixed and reports its state with aria-pressed', () => {
+            const controller = controllerWith([]);
+            render(<WsiAnnotationToolbar controller={controller} />);
+            const toggle = screen.getByTestId('annotation-default-sharing');
+            expect(toggle.getAttribute('aria-label')).toBe(
+                'Share new annotations with the study'
+            );
+            const pressed = toggle.getAttribute('aria-pressed');
+            fireEvent.click(toggle);
+            expect(toggle.getAttribute('aria-label')).toBe(
+                'Share new annotations with the study'
+            );
+            expect(toggle.getAttribute('aria-pressed')).not.toBe(pressed);
+        });
+
+        it('moves focus to the next row after a delete, and back to the row after accept', async () => {
+            const controller = controllerWith([
+                apiItem('a1', {}),
+                apiItem('a2', { provenance: { source: 'agent' } }),
+                apiItem('a3', {}),
+            ]);
+            jest.spyOn(controller, 'removeAnnotation').mockImplementation(
+                async (id: string) =>
+                    runInAction(() => {
+                        controller.annotations = controller.annotations.filter(
+                            item => item.id !== id
+                        );
+                    })
+            );
+            jest.spyOn(controller, 'acceptAnnotation').mockResolvedValue(
+                undefined
+            );
+            render(<WsiAnnotationPanel controller={controller} />);
+
+            await act(async () => {
+                fireEvent.click(screen.getByLabelText('Delete annotation a1'));
+            });
+            expect(document.activeElement).toBe(
+                screen.getByTestId('annotation-goto-a2')
+            );
+
+            await act(async () => {
+                fireEvent.click(screen.getByTestId('accept-annotation-a2'));
+            });
+            expect(document.activeElement).toBe(
+                screen.getByTestId('annotation-goto-a2')
+            );
         });
     });
 

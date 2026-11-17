@@ -18,13 +18,58 @@ import {
     isUnreviewedAi,
 } from './wsiAnnotationBody';
 
+// Text colors keep at least 4.5:1 contrast on the panel's white.
 const colors = {
     ai: '#7c3aed',
-    blue: '#2986e2',
+    blue: '#1f6fbf',
     border: '#ddd',
     muted: '#737373',
     text: '#333',
 } as const;
+
+function relativeLuminance(hex: string): number | null {
+    const match = /^#([0-9a-f]{3}|[0-9a-f]{6})([0-9a-f]{2})?$/i.exec(hex);
+    if (!match) return null;
+    const digits =
+        match[1].length === 3
+            ? match[1].replace(/./g, digit => digit + digit)
+            : match[1];
+    const [r, g, b] = [0, 2, 4].map(i => {
+        const c = parseInt(digits.slice(i, i + 2), 16) / 255;
+        return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+    });
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+/** Black or white, whichever reads better on `background`. */
+export function readableTextColor(background: string): '#000' | '#fff' {
+    const luminance = relativeLuminance(background);
+    if (luminance === null) return '#000';
+    // Contrast with black (L + 0.05) / 0.05 against white 1.05 / (L + 0.05).
+    return (luminance + 0.05) / 0.05 >= 1.05 / (luminance + 0.05)
+        ? '#000'
+        : '#fff';
+}
+
+/**
+ * Moves focus after a row's action: to `target`'s focus button when it is
+ * still on the page, else to the next or previous row, else to the list.
+ */
+function focusAfterRowAction(
+    row: HTMLElement | null,
+    list: HTMLElement | null,
+    neighbours: Array<Element | null>
+) {
+    const focusable = (element: Element | null) =>
+        element && element.isConnected
+            ? element.querySelector<HTMLElement>('[data-row-focus]')
+            : null;
+    const target =
+        focusable(row) ||
+        neighbours.map(focusable).find(Boolean) ||
+        (list && list.isConnected ? list : null);
+    target?.focus();
+}
 
 const tools: Array<{
     name: Exclude<WsiAnnotationTool, null>;
@@ -332,7 +377,9 @@ export const WsiAnnotationToolbar = observer(
                                     borderRadius: 10,
                                     cursor: 'pointer',
                                     background: active ? color.hex : '#fff',
-                                    color: active ? '#fff' : color.hex,
+                                    color: active
+                                        ? readableTextColor(color.hex)
+                                        : colors.text,
                                     border: `1.5px solid ${color.hex}`,
                                     fontWeight: active ? 700 : 400,
                                     whiteSpace: 'nowrap',
@@ -347,6 +394,8 @@ export const WsiAnnotationToolbar = observer(
                                 <button
                                     title={`Remove "${color.name ||
                                         color.hex}" from palette`}
+                                    aria-label={`Remove color ${color.name ||
+                                        color.hex} from the palette`}
                                     onClick={() =>
                                         controller.removeNamedColor(
                                             color.name,
@@ -359,7 +408,7 @@ export const WsiAnnotationToolbar = observer(
                                         border: 'none',
                                         background: 'transparent',
                                         cursor: 'pointer',
-                                        color: '#bbb',
+                                        color: colors.muted,
                                         lineHeight: 1,
                                     }}
                                 >
@@ -450,6 +499,7 @@ export const WsiAnnotationToolbar = observer(
                         </button>
                         <button
                             title="Cancel"
+                            aria-label="Cancel adding a color"
                             onClick={() => setShowAddColor(false)}
                             style={{
                                 border: 'none',
@@ -487,11 +537,7 @@ export const WsiAnnotationToolbar = observer(
                 <button
                     data-testid="annotation-default-sharing"
                     aria-pressed={controller.defaultShared}
-                    aria-label={
-                        controller.defaultShared
-                            ? 'New annotations are shared with the study; click to make new annotations private'
-                            : 'New annotations are private; click to share new annotations with the study'
-                    }
+                    aria-label="Share new annotations with the study"
                     title={
                         controller.defaultShared
                             ? 'New annotations: shared with everyone who can see this study'
@@ -593,6 +639,7 @@ export const WsiAnnotationLayersPanel = observer(
                                 }}
                             >
                                 <i
+                                    aria-hidden="true"
                                     className={`fa ${
                                         hidden ? 'fa-eye-slash' : 'fa-eye'
                                     }`}
@@ -644,6 +691,7 @@ export const WsiAnnotationLayersPanel = observer(
                                 <button
                                     data-testid={`delete-layer-${layer}`}
                                     title={`Delete layer "${layer}"`}
+                                    aria-label={`Delete layer ${layer}`}
                                     onClick={() => {
                                         if (
                                             count > 0 &&
@@ -731,6 +779,7 @@ export const WsiAnnotationLayersPanel = observer(
                         </button>
                         <button
                             title="Cancel"
+                            aria-label="Cancel adding a layer"
                             onClick={reset}
                             style={{
                                 border: 'none',
@@ -789,7 +838,9 @@ export const WsiAnnotationPanel = observer(
         if (!controller || !controller.visible) return null;
         if (controller.loading) {
             return (
-                <span style={{ color: '#999', fontSize: 11 }}>Loading…</span>
+                <span style={{ color: colors.muted, fontSize: 11 }}>
+                    Loading…
+                </span>
             );
         }
         if (controller.error && !controller.annotations.length) {
@@ -803,7 +854,7 @@ export const WsiAnnotationPanel = observer(
             return (
                 <>
                     <UnsavedPointsNotice controller={controller} />
-                    <span style={{ color: '#999', fontSize: 11 }}>
+                    <span style={{ color: colors.muted, fontSize: 11 }}>
                         {controller.canEdit
                             ? 'No annotations yet. Draw on the slide to create one.'
                             : 'No annotations.'}
@@ -888,6 +939,7 @@ export const WsiAnnotationPanel = observer(
                     role="list"
                     aria-label="Annotations"
                     data-testid="annotation-list"
+                    tabIndex={-1}
                     style={{ maxHeight: 260, overflowY: 'auto' }}
                 >
                     {listed.map(annotation => (
@@ -900,7 +952,11 @@ export const WsiAnnotationPanel = observer(
                     {!listed.length && (
                         <div
                             role="status"
-                            style={{ color: '#999', fontSize: 11, padding: 4 }}
+                            style={{
+                                color: colors.muted,
+                                fontSize: 11,
+                                padding: 4,
+                            }}
                         >
                             No annotations match the filters.
                         </div>
@@ -933,14 +989,33 @@ const AnnotationRow = observer(
         const created = annotation.created
             ? new Date(annotation.created).toLocaleDateString()
             : '';
+        const rowRef = React.useRef<HTMLDivElement>(null);
+        const name = rawLabel || '(unlabeled)';
+
+        /**
+         * Runs a row action, then moves focus: to this row when it is still
+         * listed, else to the next (or previous) row, else to the list.
+         */
+        const thenFocus = (run: () => Promise<unknown>) => {
+            const row = rowRef.current;
+            const list = row?.closest<HTMLElement>('[role="list"]') || null;
+            const neighbours = [
+                row?.nextElementSibling || null,
+                row?.previousElementSibling || null,
+            ];
+            void run().then(() => focusAfterRowAction(row, list, neighbours));
+        };
 
         const save = () => {
-            void controller.renameAnnotation(annotation.id, label.trim());
             setEditing(false);
+            thenFocus(() =>
+                controller.renameAnnotation(annotation.id, label.trim())
+            );
         };
 
         return (
             <div
+                ref={rowRef}
                 role="listitem"
                 data-testid={`annotation-row-${annotation.id}`}
                 style={{
@@ -952,7 +1027,7 @@ const AnnotationRow = observer(
                 }}
             >
                 <span
-                    aria-label="Annotation color"
+                    aria-hidden="true"
                     data-annotation-color={dotColor}
                     data-annotation-layer={layer}
                     style={{
@@ -984,7 +1059,7 @@ const AnnotationRow = observer(
                             />
                             <button
                                 title="Save annotation label"
-                                aria-label="Save annotation label"
+                                aria-label={`Save label of ${name}`}
                                 disabled={!controller.isAllowedLabel(label)}
                                 onClick={save}
                                 style={{
@@ -1000,6 +1075,7 @@ const AnnotationRow = observer(
                         <>
                             <button
                                 data-testid={`annotation-goto-${annotation.id}`}
+                                data-row-focus
                                 aria-label={`Go to annotation ${rawLabel ||
                                     '(unlabeled)'}`}
                                 title={`${rawLabel ||
@@ -1058,7 +1134,7 @@ const AnnotationRow = observer(
                                     <AnnotationBadge
                                         label={annotation.colorName}
                                         background={dotColor}
-                                        color="#fff"
+                                        color={readableTextColor(dotColor)}
                                     />
                                 )}
                             </div>
@@ -1090,8 +1166,10 @@ const AnnotationRow = observer(
                                         data-testid={`accept-annotation-${annotation.id}`}
                                         aria-label={`Accept AI annotation ${rawLabel}`}
                                         onClick={() =>
-                                            void controller.acceptAnnotation(
-                                                annotation.id
+                                            thenFocus(() =>
+                                                controller.acceptAnnotation(
+                                                    annotation.id
+                                                )
                                             )
                                         }
                                         style={reviewButtonStyle('#2a7a2a')}
@@ -1107,8 +1185,10 @@ const AnnotationRow = observer(
                                                 : 'Reject: hides the annotation for everyone; the service keeps it as a review record'
                                         }
                                         onClick={() =>
-                                            void controller.rejectAnnotation(
-                                                annotation.id
+                                            thenFocus(() =>
+                                                controller.rejectAnnotation(
+                                                    annotation.id
+                                                )
                                             )
                                         }
                                         style={reviewButtonStyle('#c0392b')}
@@ -1136,6 +1216,7 @@ const AnnotationRow = observer(
                     <button
                         data-testid={`edit-label-${annotation.id}`}
                         title="Edit label"
+                        aria-label={`Edit label of ${name}`}
                         onClick={() => {
                             setLabel(rawLabel);
                             setEditing(true);
@@ -1154,8 +1235,11 @@ const AnnotationRow = observer(
                     <button
                         data-testid={`delete-annotation-${annotation.id}`}
                         title="Delete annotation"
+                        aria-label={`Delete annotation ${name}`}
                         onClick={() =>
-                            void controller.removeAnnotation(annotation.id)
+                            thenFocus(() =>
+                                controller.removeAnnotation(annotation.id)
+                            )
                         }
                         style={{
                             border: 'none',
