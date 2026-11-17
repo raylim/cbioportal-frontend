@@ -541,6 +541,15 @@ export class WsiAnnotationController {
     private pointTimer: ReturnType<typeof setTimeout> | null = null;
     /** The point save in flight, which undo waits for. */
     private pointSave: Promise<void> | null = null;
+    /**
+     * Points sent and not yet answered, by their draft id: each resolves to
+     * the saved point, or null when it was not saved. An edit or delete of
+     * one waits for it and then applies to the saved id.
+     */
+    private readonly pointsInFlight = new Map<
+        string,
+        Promise<WsiAnnotation | null>
+    >();
     private pageHideCleanup: (() => void) | null = null;
     /** The freehand or brush stroke being drawn, in image pixels. */
     private strokePoints: Array<{ x: number; y: number }> = [];
@@ -2043,6 +2052,23 @@ export class WsiAnnotationController {
             this.replaceAnnotation(annotation.id, annotation);
             return annotation;
         }
+        const inFlight = this.pointsInFlight.get(annotation.id);
+        if (inFlight) {
+            // Being saved: show the edit now, then save it on the saved id.
+            this.replaceAnnotation(annotation.id, annotation);
+            const saved = await inFlight;
+            if (!saved) return null;
+            return this.updateAnnotation(
+                {
+                    ...annotation,
+                    id: saved.id,
+                    version: saved.version,
+                    creator: saved.creator,
+                    created: saved.created,
+                },
+                record
+            );
+        }
         const context = {
             generation: this.generation,
             slideKey: this.slideKey,
@@ -2141,6 +2167,16 @@ export class WsiAnnotationController {
             this.pointQueue.splice(queued, 1);
             this.removeAnnotationLocally(id);
             return true;
+        }
+        const inFlight = this.pointsInFlight.get(id);
+        if (inFlight) {
+            // Being saved: delete it once it has its saved id.
+            const saved = await inFlight;
+            if (!saved) {
+                this.removeAnnotationLocally(id);
+                return true;
+            }
+            return this.deleteAnnotation(saved.id, record);
         }
         const context = {
             generation: this.generation,
@@ -3044,25 +3080,47 @@ export class WsiAnnotationController {
         if (!drafts.length) return previous || Promise.resolve();
         const generation = this.generation;
         const slideKey = this.slideKey;
+        const settle = new Map<string, (saved: WsiAnnotation | null) => void>();
+        drafts.forEach(draft =>
+            this.pointsInFlight.set(
+                draft.id,
+                new Promise(resolve => settle.set(draft.id, resolve))
+            )
+        );
+        const settleAll = (results: WsiSaveResult[]) =>
+            drafts.forEach((draft, index) => {
+                this.pointsInFlight.delete(draft.id);
+                settle.get(draft.id)!(results[index]?.annotation || null);
+            });
         const save = (async () => {
-            const results = await this.saveAnnotations(drafts, options);
-            if (generation !== this.generation || slideKey !== this.slideKey) {
+            let results: WsiSaveResult[] = [];
+            try {
+                results = await this.saveAnnotations(drafts, options);
+                if (
+                    generation !== this.generation ||
+                    slideKey !== this.slideKey
+                ) {
+                    return;
+                }
+                const saved = this.addSaved(results, drafts);
+                settleAll(results);
+                saved.forEach(item =>
+                    this.pushUndo({ kind: 'create', ids: [item.id] })
+                );
+                const failed = results.filter(result => result.reason);
+                if (failed.length && this.accessIssue === null) {
+                    action(() => {
+                        this.error = `${failed.length} point${
+                            failed.length === 1 ? '' : 's'
+                        } could not be saved (${failed[0].reason}).`;
+                    })();
+                }
+            } finally {
+                // Edits and deletes waiting on these points go to the saved
+                // ids, even after the slide changed.
+                settleAll(results);
                 await previous;
-                return;
             }
-            const saved = this.addSaved(results, drafts);
-            saved.forEach(item =>
-                this.pushUndo({ kind: 'create', ids: [item.id] })
-            );
-            const failed = results.filter(result => result.reason);
-            if (failed.length && this.accessIssue === null) {
-                action(() => {
-                    this.error = `${failed.length} point${
-                        failed.length === 1 ? '' : 's'
-                    } could not be saved (${failed[0].reason}).`;
-                })();
-            }
-            await previous;
         })();
         const tracked = save.finally(() => {
             if (this.pointSave === tracked) this.pointSave = null;

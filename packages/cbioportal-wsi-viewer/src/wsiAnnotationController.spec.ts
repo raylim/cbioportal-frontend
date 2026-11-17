@@ -2590,6 +2590,88 @@ describe('WsiAnnotationController', () => {
             );
         });
 
+        it('applies an edit or delete made during a point save to the saved point', async () => {
+            jest.useFakeTimers();
+            try {
+                let answerBatch!: () => void;
+                jest.spyOn(global, 'fetch').mockImplementation((url, init) => {
+                    const path = new URL(String(url)).pathname;
+                    if (path.endsWith('/batch')) {
+                        const rows = savedRows(init!);
+                        return new Promise<Response>(resolve => {
+                            answerBatch = () =>
+                                resolve({
+                                    ok: true,
+                                    status: 201,
+                                    json: async () => rows,
+                                } as Response);
+                        });
+                    }
+                    if (init?.method === 'DELETE') {
+                        return Promise.resolve({
+                            ok: true,
+                            status: 204,
+                        } as Response);
+                    }
+                    const sent = JSON.parse(init!.body as string);
+                    return Promise.resolve({
+                        ok: true,
+                        json: async () => ({
+                            id: decodeURIComponent(path.split('/')[2]),
+                            body: sent.body,
+                            target: sent.target,
+                            version: sent.version + 1,
+                            created_by: 'user',
+                        }),
+                    } as Response);
+                });
+                const controller = newController();
+                (controller as any).createPoint({ x: 1, y: 1 });
+                (controller as any).createPoint({ x: 2, y: 2 });
+                jest.advanceTimersByTime(POINT_SAVE_DELAY_MS);
+                expect(global.fetch).toHaveBeenCalledTimes(1);
+
+                const [first, second] = controller.annotations;
+                const deleting = controller.removeAnnotation(first.id);
+                const renaming = controller.renameAnnotation(
+                    second.id,
+                    'Renamed'
+                );
+                await Promise.resolve();
+                // Nothing goes out with a draft id while the save is open.
+                expect(global.fetch).toHaveBeenCalledTimes(1);
+                expect(controller.annotations[1].body[0].value).toBe('Renamed');
+
+                answerBatch();
+                await deleting;
+                await renaming;
+
+                const calls = (global.fetch as jest.Mock).mock.calls.map(
+                    ([url, init]) =>
+                        `${init.method || 'GET'} ${new URL(url).pathname}`
+                );
+                expect(calls).toEqual([
+                    'POST /annotations/batch',
+                    'DELETE /annotations/saved-0',
+                    'PUT /annotations/saved-1',
+                ]);
+                const put = JSON.parse(
+                    (global.fetch as jest.Mock).mock.calls[2][1].body
+                );
+                expect(put.body.label).toBe('Renamed');
+                expect(put.version).toBe(1);
+                expect(
+                    controller.annotations.map(item => [
+                        item.id,
+                        item.body[0].value,
+                    ])
+                ).toEqual([['saved-1', 'Renamed']]);
+                expect(controller.error).toBeNull();
+            } finally {
+                jest.useRealTimers();
+            }
+        });
+
         it('edits and deletes an unsent point without a request', async () => {
             jest.spyOn(global, 'fetch').mockImplementation(
                 async (_url, init) =>
