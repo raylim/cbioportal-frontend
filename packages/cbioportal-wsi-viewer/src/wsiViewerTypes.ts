@@ -140,6 +140,12 @@ export interface WsiAnnotation {
     /** The user's free-text note (`body.comment`). */
     note?: string;
     /**
+     * A legacy row's stored `body.comment`, read as its layer (see
+     * `readLayerAndNote`): written back as the comment until the note is
+     * edited.
+     */
+    legacyComment?: string;
+    /**
      * The service's `visible_to`: null for private to the creator, [] for
      * shared with the study; undefined when the service did not say.
      */

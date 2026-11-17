@@ -47,10 +47,39 @@ describe('wsiAnnotationBody', () => {
         expect(isLegacyLayerComment(null)).toBe(false);
     });
 
+    it('reads a note from another writer as a note, not a legacy layer', () => {
+        // The service fills a missing layer_name and color with its
+        // defaults, so only provenance tells these rows from legacy ones.
+        const scripted = {
+            comment: 'Check the margin',
+            layer_name: 'Default',
+            color: '#2f80ed',
+            provenance: { source: 'script' },
+        };
+        expect(isLegacyLayerComment(scripted)).toBe(false);
+        expect(readLayerAndNote(scripted)).toEqual({
+            layerName: 'Default',
+            note: 'Check the margin',
+        });
+        expect(
+            isLegacyLayerComment({
+                comment: 'Tumor',
+                provenance: { source: 'agent' },
+            })
+        ).toBe(false);
+        expect(
+            isLegacyLayerComment({ comment: 'Tumor', provenance: null })
+        ).toBe(true);
+    });
+
     it('splits the layer and the note', () => {
         expect(
             readLayerAndNote({ comment: ' Stroma ', color: '#2f80ed' })
-        ).toEqual({ layerName: 'Stroma', note: '' });
+        ).toEqual({
+            layerName: 'Stroma',
+            note: '',
+            legacyComment: ' Stroma ',
+        });
         expect(
             readLayerAndNote({
                 comment: 'Mitoses here',

@@ -946,6 +946,118 @@ describe('WsiAnnotationController', () => {
         });
     });
 
+    it('round-trips a note on a row with provenance but no layer or color', async () => {
+        // Another writer sent no layer_name or color: the service stored its
+        // defaults. The one-line comment stays a note through an edit.
+        const stored = {
+            label: 'Mitosis',
+            comment: 'Check the margin',
+            type: '',
+            layer_name: 'Default',
+            color: '#2f80ed',
+            provenance: { source: 'script', run: 'r1' },
+        };
+        jest.spyOn(global, 'fetch').mockImplementation(
+            async (_url, init) =>
+                ({
+                    ok: true,
+                    json: async () => ({
+                        ...apiAnnotation('a1', 2),
+                        body: JSON.parse(init!.body as string).body,
+                    }),
+                } as Response)
+        );
+        const controller = new WsiAnnotationController(
+            'https://tiles.example',
+            'study1'
+        );
+        (controller as any).slideKey = 'slide1';
+        (controller as any).annotations = [
+            (controller as any).fromApi(
+                { ...apiAnnotation('a1'), body: stored },
+                'slide1'
+            ),
+        ];
+        expect(controller.annotations[0]).toMatchObject({
+            layerName: 'Default',
+            note: 'Check the margin',
+        });
+
+        await controller.renameAnnotation('a1', 'Mitotic figure');
+
+        const sent = JSON.parse(
+            (global.fetch as jest.Mock).mock.calls[0][1].body
+        );
+        expect(sent.body).toMatchObject({
+            label: 'Mitotic figure',
+            comment: 'Check the margin',
+            layer_name: 'Default',
+            provenance: { source: 'script', run: 'r1' },
+        });
+        expect(controller.annotations[0]).toMatchObject({
+            note: 'Check the margin',
+            version: 2,
+        });
+    });
+
+    it("keeps a legacy row's comment on an edit until its note is edited", async () => {
+        jest.spyOn(global, 'fetch').mockImplementation(
+            async (_url, init) =>
+                ({
+                    ok: true,
+                    json: async () => ({
+                        ...apiAnnotation('a1', 2),
+                        body: JSON.parse(init!.body as string).body,
+                    }),
+                } as Response)
+        );
+        const controller = new WsiAnnotationController(
+            'https://tiles.example',
+            'study1'
+        );
+        (controller as any).slideKey = 'slide1';
+        (controller as any).annotations = [
+            (controller as any).fromApi(
+                {
+                    ...apiAnnotation('a1'),
+                    body: {
+                        label: 'x',
+                        comment: 'Stroma',
+                        type: 'Stroma|#22c55e',
+                        layer_name: 'Default',
+                        color: '#2f80ed',
+                        provenance: null,
+                    },
+                },
+                'slide1'
+            ),
+        ];
+        expect(controller.annotations[0]).toMatchObject({
+            layerName: 'Stroma',
+            note: '',
+        });
+
+        await controller.renameAnnotation('a1', 'Renamed');
+        const sentFirst = JSON.parse(
+            (global.fetch as jest.Mock).mock.calls[0][1].body
+        );
+        // The stored comment goes back as it was: never an empty note.
+        expect(sentFirst.body).toMatchObject({
+            label: 'Renamed',
+            comment: 'Stroma',
+            layer_name: 'Stroma',
+        });
+
+        await controller.setAnnotationNote('a1', 'Now a real note');
+        const sentSecond = JSON.parse(
+            (global.fetch as jest.Mock).mock.calls[1][1].body
+        );
+        expect(sentSecond.body).toMatchObject({
+            comment: 'Now a real note',
+            layer_name: 'Stroma',
+        });
+    });
+
     it('keeps the note and provenance when an edit is saved', async () => {
         const provenance = { source: 'agent', proposal_id: 'p1' };
         jest.spyOn(global, 'fetch').mockImplementation(

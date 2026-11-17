@@ -22,9 +22,11 @@ const MAX_LEGACY_LAYER_LENGTH = 100;
 /**
  * Whether `body` is a row written before the viewer stored layers in
  * `layer_name`. Those rows kept the layer name in `comment` and sent no
- * `layer_name` or `color`, so the service stored its defaults for both. A row
- * is read as legacy when all of these hold:
+ * `layer_name`, `color` or `provenance`, so the service stored its defaults.
+ * A row is read as legacy when all of these hold:
  *
+ * - `provenance` is missing or null: other writers (the research assistant,
+ *   loaders) set it, and their one-line comment is a note;
  * - `layer_name` is missing or "Default";
  * - `color` is missing or exactly the service default `#2f80ed`;
  * - `comment` is one line of at most 100 characters.
@@ -41,6 +43,7 @@ export function isLegacyLayerComment(
     const color = body.color;
     const comment = typeof body.comment === 'string' ? body.comment.trim() : '';
     return (
+        (body.provenance === undefined || body.provenance === null) &&
         (layer === undefined ||
             layer === null ||
             layer === SERVICE_DEFAULT_LAYER) &&
@@ -55,13 +58,20 @@ export function isLegacyLayerComment(
 
 /**
  * The layer and the user's note of a stored body. A comment that only
- * repeats `layer_name` is not a note.
+ * repeats `layer_name` is not a note. For a legacy row (see
+ * `isLegacyLayerComment`), `legacyComment` is the stored comment read as the
+ * layer; the viewer sends it back unchanged until the user edits the note,
+ * so a misread note is never lost.
  */
 export function readLayerAndNote(
     body: WsiAnnotationApiBody | null | undefined
-): { layerName: string; note: string } {
+): { layerName: string; note: string; legacyComment?: string } {
     if (isLegacyLayerComment(body)) {
-        return { layerName: body!.comment!.trim(), note: '' };
+        return {
+            layerName: body!.comment!.trim(),
+            note: '',
+            legacyComment: body!.comment!,
+        };
     }
     const layer =
         typeof body?.layer_name === 'string' ? body.layer_name.trim() : '';

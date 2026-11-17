@@ -1662,7 +1662,11 @@ export class WsiAnnotationController {
     async setAnnotationNote(id: string, note: string) {
         const annotation = this.annotations.find(item => item.id === id);
         if (!annotation || (annotation.note || '') === note) return;
-        await this.updateAnnotation({ ...annotation, note });
+        await this.updateAnnotation({
+            ...annotation,
+            note,
+            legacyComment: undefined,
+        });
     }
 
     @action.bound
@@ -2510,14 +2514,15 @@ export class WsiAnnotationController {
 
     /**
      * The service body for `annotation`: the layer in `layer_name`, the
-     * user's note in `comment`, and the stored provenance unchanged.
+     * user's note in `comment` (a legacy row's stored comment until the note
+     * is edited), and the stored provenance unchanged.
      */
     private toApiBody(annotation: WsiAnnotation): WsiAnnotationApiBody {
         const colorName = annotation.colorName ?? this.activeColorName;
         const color = annotation.color || this.activeColor;
         return {
             label: annotation.body?.[0]?.value || '',
-            comment: annotation.note || '',
+            comment: annotation.note || annotation.legacyComment || '',
             type: serializeColorLabel(colorName, color),
             layer_name: annotation.layerName || this.activeLayer,
             color: serviceColor(
@@ -2535,7 +2540,7 @@ export class WsiAnnotationController {
             HEX_COLOR_RE.test(item.body.color)
                 ? { name: '', color: item.body.color.toLowerCase() }
                 : parseColor(item.body?.type);
-        const { layerName, note } = readLayerAndNote(item.body);
+        const { layerName, note, legacyComment } = readLayerAndNote(item.body);
         return {
             '@context': 'http://www.w3.org/ns/anno.jsonld',
             type: 'Annotation',
@@ -2572,6 +2577,7 @@ export class WsiAnnotationController {
             colorName: parsedColor.name,
             layerName,
             note,
+            ...(legacyComment !== undefined ? { legacyComment } : {}),
             visibleTo: Array.isArray(item.visible_to)
                 ? item.visible_to
                 : item.visible_to === null
