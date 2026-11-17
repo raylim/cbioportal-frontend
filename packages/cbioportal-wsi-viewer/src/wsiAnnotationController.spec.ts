@@ -1067,7 +1067,41 @@ describe('WsiAnnotationController', () => {
         ]);
     });
 
-    it('hides unreviewed assistant annotations on request', () => {
+    it('does not show AI annotations that were rejected in review', async () => {
+        const body = (provenance: Record<string, unknown>) => ({
+            label: 'Tumor',
+            layer_name: 'Model',
+            color: '#ef4444',
+            provenance,
+        });
+        jest.spyOn(global, 'fetch').mockResolvedValue({
+            ok: true,
+            json: async () => [
+                {
+                    ...apiAnnotation('kept'),
+                    body: body({ source: 'precomputed' }),
+                },
+                {
+                    ...apiAnnotation('gone'),
+                    body: body({
+                        source: 'precomputed',
+                        review_status: 'rejected',
+                    }),
+                },
+            ],
+        } as Response);
+        const controller = new WsiAnnotationController(
+            'https://tiles.example',
+            'study1'
+        );
+        controller.beginSlide(SLIDE_KEY);
+        await new Promise(resolve => setTimeout(resolve, 0));
+
+        expect(controller.annotations.map(item => item.id)).toEqual(['kept']);
+        expect(controller.unreviewedAiCount).toBe(1);
+    });
+
+    it('hides unreviewed AI annotations on request', () => {
         const annotator = {
             on: jest.fn(),
             setVisible: jest.fn(),

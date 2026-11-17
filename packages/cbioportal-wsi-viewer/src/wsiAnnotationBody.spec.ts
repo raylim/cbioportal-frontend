@@ -1,7 +1,10 @@
 import {
     acceptedProvenance,
-    isAssistantProvenance,
-    isUnreviewedAssistant,
+    aiOrigin,
+    aiOriginDescription,
+    isAiProvenance,
+    isRejectedAi,
+    isUnreviewedAi,
     isLegacyLayerComment,
     readLayerAndNote,
     serviceColor,
@@ -79,12 +82,12 @@ describe('wsiAnnotationBody', () => {
         expect(serviceColor('#ef4444')).toBe('#ef4444');
     });
 
-    it('recognizes assistant provenance and its review', () => {
+    it('recognizes assistant provenance and its acceptance', () => {
         const agent = { source: 'agent', proposal_id: 'p1' };
-        expect(isAssistantProvenance(agent)).toBe(true);
-        expect(isAssistantProvenance({ source: 'user' })).toBe(false);
-        expect(isAssistantProvenance(null)).toBe(false);
-        expect(isUnreviewedAssistant(agent)).toBe(true);
+        expect(isAiProvenance(agent)).toBe(true);
+        expect(isAiProvenance({ source: 'user' })).toBe(false);
+        expect(isAiProvenance(null)).toBe(false);
+        expect(isUnreviewedAi(agent)).toBe(true);
 
         const accepted = acceptedProvenance(
             agent,
@@ -96,7 +99,40 @@ describe('wsiAnnotationBody', () => {
             review_status: 'accepted',
             reviewed_at: '2026-11-16T12:00:00.000Z',
         });
-        expect(isUnreviewedAssistant(accepted)).toBe(false);
-        expect(isAssistantProvenance(accepted)).toBe(true);
+        expect(isUnreviewedAi(accepted)).toBe(false);
+        expect(isAiProvenance(accepted)).toBe(true);
+    });
+
+    it('treats model output as AI and says which kind made it', () => {
+        expect(aiOrigin({ source: 'agent' })).toBe('assistant');
+        expect(aiOrigin({ source: 'Assistant' })).toBe('assistant');
+        expect(aiOrigin({ source: 'precomputed' })).toBe('model');
+        expect(aiOrigin({ source: 'model' })).toBe('model');
+        expect(aiOrigin({ source: ' AI ' })).toBe('model');
+        expect(aiOrigin({ source: 'user' })).toBeNull();
+        expect(aiOrigin({ source: 3 })).toBeNull();
+        expect(aiOrigin(undefined)).toBeNull();
+
+        const model = { source: 'precomputed', model: 'luad-patterns' };
+        expect(isAiProvenance(model)).toBe(true);
+        expect(isUnreviewedAi(model)).toBe(true);
+        expect(aiOriginDescription(model)).toBe(
+            'Made by a model (luad-patterns)'
+        );
+        expect(aiOriginDescription({ source: 'model' })).toBe(
+            'Made by a model'
+        );
+        expect(aiOriginDescription({ source: 'agent' })).toBe(
+            'Made by the research assistant'
+        );
+        expect(aiOriginDescription({ source: 'user' })).toBeNull();
+    });
+
+    it('counts a rejected AI annotation as reviewed, and as rejected', () => {
+        const rejected = { source: 'precomputed', review_status: 'rejected' };
+        expect(isUnreviewedAi(rejected)).toBe(false);
+        expect(isRejectedAi(rejected)).toBe(true);
+        expect(isRejectedAi({ source: 'precomputed' })).toBe(false);
+        expect(isRejectedAi({ review_status: 'rejected' })).toBe(false);
     });
 });

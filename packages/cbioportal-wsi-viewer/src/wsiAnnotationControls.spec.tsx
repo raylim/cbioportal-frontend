@@ -75,6 +75,30 @@ describe('WsiAnnotationPanel', () => {
         expect(screen.getByTestId('annotation-row-ai-2')).toBeTruthy();
     });
 
+    it('marks model-made annotations as AI and names the model in the badge tooltip', () => {
+        const controller = controllerWith([
+            apiItem('m-1', {
+                provenance: { source: 'precomputed', model: 'luad-patterns' },
+            }),
+            apiItem('a-1', { provenance: { source: 'agent' } }),
+        ]);
+        render(<WsiAnnotationPanel controller={controller} />);
+
+        const model = screen.getByTestId('annotation-ai-badge-m-1');
+        expect(model.textContent).toBe('AI · unreviewed');
+        expect(model.getAttribute('title')).toBe(
+            'Made by a model (luad-patterns); not reviewed yet'
+        );
+        expect(
+            screen.getByTestId('annotation-ai-badge-a-1').getAttribute('title')
+        ).toBe('Made by the research assistant; not reviewed yet');
+        expect(screen.getByTestId('accept-annotation-m-1')).toBeTruthy();
+        expect(controller.unreviewedAiCount).toBe(2);
+
+        fireEvent.click(screen.getByTestId('annotation-hide-unreviewed-ai'));
+        expect(screen.queryByTestId('annotation-row-m-1')).toBeNull();
+    });
+
     it('shows whether each annotation is private or shared and switches it', () => {
         const controller = controllerWith([
             { ...apiItem('mine', {}), visible_to: null },

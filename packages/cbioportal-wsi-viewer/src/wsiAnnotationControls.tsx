@@ -12,8 +12,9 @@ import {
 import { WsiAnnotation } from './wsiViewerTypes';
 import { formatMeasurement } from './wsiAnnotationGeometryUtils';
 import {
-    isAssistantProvenance,
-    isUnreviewedAssistant,
+    aiOriginDescription,
+    isAiProvenance,
+    isUnreviewedAi,
 } from './wsiAnnotationBody';
 
 const colors = {
@@ -882,7 +883,7 @@ const AnnotationRow = observer(
         const layer = annotation.layerName || DEFAULT_LAYER;
         const dotColor = annotation.color || DEFAULT_COLOR;
         const creator = annotation.creator || '';
-        const unreviewedAi = isUnreviewedAssistant(annotation.provenance);
+        const unreviewedAi = isUnreviewedAi(annotation.provenance);
         const measurement = controller.measurementOf(annotation);
         const created = annotation.created
             ? new Date(annotation.created).toLocaleDateString()
@@ -1122,7 +1123,7 @@ const AnnotationListFilters = observer(
     ({ controller }: { controller: WsiAnnotationController }) => {
         const filter = controller.listFilter;
         const anyAi = controller.annotations.some(annotation =>
-            isAssistantProvenance(annotation.provenance)
+            isAiProvenance(annotation.provenance)
         );
         const filtered =
             filter.text || filter.layer || filter.author || filter.ai !== 'all';
@@ -1681,13 +1682,17 @@ function reviewButtonStyle(color: string): React.CSSProperties {
     };
 }
 
-/** "AI" on an annotation the research assistant created. */
+/**
+ * "AI" on an annotation the research assistant or a model made; the tooltip
+ * says which.
+ */
 function AiBadge({ annotation }: { annotation: WsiAnnotation }) {
-    if (!isAssistantProvenance(annotation.provenance)) return null;
-    const unreviewed = isUnreviewedAssistant(annotation.provenance);
-    const description = unreviewed
-        ? 'Created by the research assistant; not reviewed yet'
-        : 'Created by the research assistant; accepted';
+    const origin = aiOriginDescription(annotation.provenance);
+    if (!origin) return null;
+    const unreviewed = isUnreviewedAi(annotation.provenance);
+    const description = `${origin}; ${
+        unreviewed ? 'not reviewed yet' : 'accepted'
+    }`;
     return (
         <span
             data-testid={`annotation-ai-badge-${annotation.id}`}
@@ -1863,6 +1868,11 @@ export const WsiAnnotationTooltip = observer(
                         {tooltip.ai === 'unreviewed'
                             ? 'AI · not reviewed yet'
                             : 'AI · accepted'}
+                        {tooltip.aiOrigin && (
+                            <div data-testid="annotation-tooltip-ai-origin">
+                                {tooltip.aiOrigin}
+                            </div>
+                        )}
                     </div>
                 )}
                 {tooltip.layerName && (

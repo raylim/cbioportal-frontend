@@ -84,37 +84,84 @@ export function serviceColor(hex: string): string {
         : hex;
 }
 
-/** `provenance.source` values that mark an assistant-created annotation. */
-const ASSISTANT_SOURCES = ['agent', 'assistant', 'ai'];
+/** `provenance.source` values of the research assistant's annotations. */
+const ASSISTANT_SOURCES = ['agent', 'assistant'];
+/**
+ * `provenance.source` values of a model's annotations; "precomputed" marks
+ * model output loaded in bulk.
+ */
+const MODEL_SOURCES = ['ai', 'model', 'precomputed'];
 /** `provenance.review_status` once a user has accepted an AI annotation. */
 export const AI_REVIEW_ACCEPTED = 'accepted';
+/** `provenance.review_status` once a user has rejected an AI annotation. */
+export const AI_REVIEW_REJECTED = 'rejected';
+
+/** What made an AI annotation: the research assistant or a model. */
+export type WsiAiOrigin = 'assistant' | 'model';
 
 /**
- * Whether the research assistant created the annotation. The service writes
- * `provenance.source: "agent"` when it saves an assistant proposal.
+ * Whether a machine made the annotation, and which kind: the research
+ * assistant (`provenance.source` "agent" or "assistant") or a model ("ai",
+ * "model" or "precomputed"). Null for a person's annotation. The annotation
+ * service treats the same sources as machine-made.
  */
-export function isAssistantProvenance(
+export function aiOrigin(
+    provenance: Record<string, unknown> | null | undefined
+): WsiAiOrigin | null {
+    const source = provenance?.source;
+    if (typeof source !== 'string') return null;
+    const normalized = source.trim().toLowerCase();
+    if (ASSISTANT_SOURCES.includes(normalized)) return 'assistant';
+    if (MODEL_SOURCES.includes(normalized)) return 'model';
+    return null;
+}
+
+/** Whether a machine (the assistant or a model) made the annotation. */
+export function isAiProvenance(
     provenance: Record<string, unknown> | null | undefined
 ): boolean {
-    const source = provenance?.source;
+    return aiOrigin(provenance) !== null;
+}
+
+/** An AI annotation that no user has accepted or rejected yet. */
+export function isUnreviewedAi(
+    provenance: Record<string, unknown> | null | undefined
+): boolean {
     return (
-        typeof source === 'string' &&
-        ASSISTANT_SOURCES.includes(source.toLowerCase())
+        isAiProvenance(provenance) &&
+        provenance!.review_status !== AI_REVIEW_ACCEPTED &&
+        provenance!.review_status !== AI_REVIEW_REJECTED
     );
 }
 
-/** An assistant annotation that no user has accepted yet. */
-export function isUnreviewedAssistant(
+/** An AI annotation a user rejected; the viewer does not show these. */
+export function isRejectedAi(
     provenance: Record<string, unknown> | null | undefined
 ): boolean {
     return (
-        isAssistantProvenance(provenance) &&
-        provenance!.review_status !== AI_REVIEW_ACCEPTED
+        isAiProvenance(provenance) &&
+        provenance!.review_status === AI_REVIEW_REJECTED
     );
 }
 
 /**
- * The provenance of an accepted assistant annotation: the stored one, marked
+ * Who made an AI annotation, for its badge's tooltip, e.g. "Made by a model
+ * (luad-patterns)" or "Made by the research assistant". Null otherwise.
+ */
+export function aiOriginDescription(
+    provenance: Record<string, unknown> | null | undefined
+): string | null {
+    const origin = aiOrigin(provenance);
+    if (!origin) return null;
+    if (origin === 'assistant') return 'Made by the research assistant';
+    const model = provenance!.model;
+    return typeof model === 'string' && model.trim()
+        ? `Made by a model (${model.trim()})`
+        : 'Made by a model';
+}
+
+/**
+ * The provenance of an accepted AI annotation: the stored one, marked
  * `review_status: "accepted"` with the time of review.
  */
 export function acceptedProvenance(

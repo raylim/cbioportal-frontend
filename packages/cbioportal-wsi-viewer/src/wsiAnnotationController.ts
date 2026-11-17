@@ -15,8 +15,10 @@ import {
 } from './wsiAnnotationGeometryUtils';
 import {
     acceptedProvenance,
-    isAssistantProvenance,
-    isUnreviewedAssistant,
+    aiOriginDescription,
+    isAiProvenance,
+    isRejectedAi,
+    isUnreviewedAi,
     readLayerAndNote,
     serviceColor,
     WsiAnnotationApiBody,
@@ -222,7 +224,10 @@ export const WSI_ANNOTATION_ACCESS_MESSAGES: Record<
         'Annotations are read-only: you do not have access to this study.',
 };
 
-/** Which annotations the list shows by their assistant provenance. */
+/**
+ * Which annotations the list shows by origin: AI (the research assistant or
+ * a model) or manual.
+ */
 export type WsiAnnotationAiFilter = 'all' | 'ai' | 'unreviewed' | 'human';
 
 /** The annotation list's filters; empty strings match everything. */
@@ -336,7 +341,7 @@ export class WsiAnnotationController {
     @observable private customLayers: string[] = loadLayerNames();
     @observable private customColors: NamedColor[] = loadNamedColors();
     @observable hiddenLayerNames = new Set<string>();
-    /** Hides assistant annotations no one has accepted, on the slide and list. */
+    /** Hides AI annotations no one has reviewed, on the slide and list. */
     @observable hideUnreviewedAi = false;
     @observable.ref listFilter: WsiAnnotationListFilter = EMPTY_LIST_FILTER;
     /**
@@ -364,6 +369,8 @@ export class WsiAnnotationController {
         text: string;
         layerName?: string;
         ai?: 'unreviewed' | 'accepted';
+        /** Who made an AI annotation (see `aiOriginDescription`). */
+        aiOrigin?: string;
         measurement?: string;
         note?: string;
     } | null = null;
@@ -657,13 +664,10 @@ export class WsiAnnotationController {
             ) {
                 return false;
             }
-            const isAi = isAssistantProvenance(annotation.provenance);
+            const isAi = isAiProvenance(annotation.provenance);
             if (ai === 'ai' && !isAi) return false;
             if (ai === 'human' && isAi) return false;
-            if (
-                ai === 'unreviewed' &&
-                !isUnreviewedAssistant(annotation.provenance)
-            ) {
+            if (ai === 'unreviewed' && !isUnreviewedAi(annotation.provenance)) {
                 return false;
             }
             return true;
@@ -753,8 +757,8 @@ export class WsiAnnotationController {
                 layer,
                 note: annotation.note,
                 measurement: measureShape(shape, this.mpp),
-                aiReviewStatus: isAssistantProvenance(annotation.provenance)
-                    ? isUnreviewedAssistant(annotation.provenance)
+                aiReviewStatus: isAiProvenance(annotation.provenance)
+                    ? isUnreviewedAi(annotation.provenance)
                         ? 'unreviewed'
                         : 'accepted'
                     : undefined,
@@ -994,20 +998,17 @@ export class WsiAnnotationController {
         }
     }
 
-    /** Assistant annotations that no one has accepted yet. */
+    /** AI annotations that no one has reviewed yet. */
     @computed get unreviewedAiCount(): number {
         return this.annotations.filter(annotation =>
-            isUnreviewedAssistant(annotation.provenance)
+            isUnreviewedAi(annotation.provenance)
         ).length;
     }
 
     private isShown(annotation: WsiAnnotation): boolean {
         return (
             !this.hiddenLayerNames.has(annotation.layerName || DEFAULT_LAYER) &&
-            !(
-                this.hideUnreviewedAi &&
-                isUnreviewedAssistant(annotation.provenance)
-            )
+            !(this.hideUnreviewedAi && isUnreviewedAi(annotation.provenance))
         );
     }
 
@@ -1415,7 +1416,7 @@ export class WsiAnnotationController {
     @action.bound
     async acceptAnnotation(id: string) {
         const annotation = this.annotations.find(item => item.id === id);
-        if (!annotation || !isUnreviewedAssistant(annotation.provenance)) {
+        if (!annotation || !isUnreviewedAi(annotation.provenance)) {
             return;
         }
         await this.updateAnnotation({
@@ -1533,7 +1534,11 @@ export class WsiAnnotationController {
                 this.slideKey !== slideKey
             )
                 return;
-            const annotations = raw.map(item => this.fromApi(item, slideKey));
+            // A rejected AI annotation is kept by the service for its audit
+            // trail; the viewer does not show it.
+            const annotations = raw
+                .map(item => this.fromApi(item, slideKey))
+                .filter(annotation => !isRejectedAi(annotation.provenance));
             action(() => {
                 this.annotations = annotations;
                 this.loading = false;
@@ -2354,11 +2359,12 @@ export class WsiAnnotationController {
             y: event.clientY,
             text,
             layerName: annotation.layerName || DEFAULT_LAYER,
-            ai: isAssistantProvenance(annotation.provenance)
-                ? isUnreviewedAssistant(annotation.provenance)
+            ai: isAiProvenance(annotation.provenance)
+                ? isUnreviewedAi(annotation.provenance)
                     ? 'unreviewed'
                     : 'accepted'
                 : undefined,
+            aiOrigin: aiOriginDescription(annotation.provenance) || undefined,
             measurement: measurement
                 ? formatMeasurement(measurement)
                 : undefined,

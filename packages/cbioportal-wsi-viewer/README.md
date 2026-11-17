@@ -129,9 +129,14 @@ Rows written before the viewer used `layer_name` kept the layer in `comment` and
 
 `visible_to` decides who sees an annotation: `null` keeps it private to its creator, and `[]` shares it with everyone who can read the study. The toolbar's **Shared**/**Private** button sets the default for new annotations (shared unless the user chose private; remembered in `localStorage`), and each list row shows a **Private** or **Shared** badge that switches the annotation with a versioned `PUT`. The service also accepts group names, but the proxy sends no groups, so the viewer offers no group choice; a row shared with groups shows **Groups**.
 
-#### Assistant annotations
+#### AI annotations
 
-An annotation whose `provenance.source` is `agent` (as the service writes when it saves a research-assistant proposal) shows an **AI** badge, "unreviewed" until a user accepts it. **Accept** saves `provenance.review_status: "accepted"` and `reviewed_at` with a `PUT` carrying the annotation's `version`; **Reject** deletes it. The list can hide unreviewed AI annotations, on the slide too.
+An annotation a machine made shows an **AI** badge: **AI · unreviewed** until a user reviews it, then **AI · accepted**. Its `provenance.source` says what made it, and the badge's tooltip says which:
+
+- `agent` or `assistant`: the research assistant (the service writes `agent` when it saves an assistant proposal);
+- `model`, `ai` or `precomputed`: a model (`precomputed` marks model output loaded in bulk); the tooltip names `provenance.model` when it is set.
+
+The service treats the same sources as machine-made. A rejected AI annotation (`provenance.review_status: "rejected"`) is not shown. **Accept** saves `provenance.review_status: "accepted"` and `reviewed_at` with a `PUT` carrying the annotation's `version`; **Reject** deletes it. The list can hide unreviewed AI annotations, on the slide too.
 
 Only an annotation's creator may change it. The service answers another user's edit with a 403 whose `detail` says so; the viewer shows that and keeps the study editable. Any other 403 means no access to the study.
 
@@ -167,14 +172,14 @@ Clicking a rectangle, ellipse, line or polygon (including freehand and brush sha
 
 #### Annotation list
 
-The sidebar's Annotations section lists the slide's annotations on visible layers. It filters by label or note text, layer, author (when there is more than one) and AI origin (when any annotation is from the assistant), and shows how many listed annotations each layer and each label has. Labels count by their text without a trailing number, so "Tumor 1" and "Tumor 2" count as Tumor; clicking a label count filters the list to it. Clicking an annotation's label (or Enter on it) pans and zooms the slide to it. The filters reset when another slide opens.
+The sidebar's Annotations section lists the slide's annotations on visible layers. It filters by label or note text, layer, author (when there is more than one) and AI origin (when any annotation is from the assistant or a model), and shows how many listed annotations each layer and each label has. Labels count by their text without a trailing number, so "Tumor 1" and "Tumor 2" count as Tumor; clicking a label count filters the list to it. Clicking an annotation's label (or Enter on it) pans and zooms the slide to it. The filters reset when another slide opens.
 
 #### Export and import (GeoJSON)
 
 The Annotations section exports the slide's annotations, all of them or only those on visible layers, as a GeoJSON `FeatureCollection` that QuPath imports. Each annotation is a `Feature`:
 
 - `geometry`: a `Point`, `LineString` or `Polygon` in level-0 image pixels (x right, y down). Rectangles become 4-corner polygons and ellipses 72-vertex polygons.
-- `properties`: `objectType: "annotation"`, `name` (the label), `classification: { name, color: [r, g, b] }` (the label without a trailing number, and the annotation's color), `layer`, `note`, and `measurements` in QuPath's naming (`Area µm^2`, `Perimeter µm`, `Length µm`, or `px` without an mpp). Assistant annotations add `ai_generated` and `ai_review_status`.
+- `properties`: `objectType: "annotation"`, `name` (the label), `classification: { name, color: [r, g, b] }` (the label without a trailing number, and the annotation's color), `layer`, `note`, and `measurements` in QuPath's naming (`Area µm^2`, `Perimeter µm`, `Length µm`, or `px` without an mpp). AI annotations add `ai_generated` and `ai_review_status`.
 
 The collection's `wsi` member names the slide by its opaque slide key and gives the mpp. Exports never contain image ids, sealed sources or object keys, nor creators or provenance details.
 
