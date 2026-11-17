@@ -492,6 +492,11 @@ export class WsiAnnotationController {
      * unknown until the first batch save.
      */
     @observable batchRoute: boolean | null = null;
+    /**
+     * Dropped points not saved on the slide or study last closed, because
+     * the service refused them; reported once the next one opens.
+     */
+    @observable pointsLeftUnsaved = 0;
     /** Whether new annotations are shared with the study (else private). */
     @observable defaultShared = loadDefaultShared();
     @observable annotationTooltip: {
@@ -780,7 +785,58 @@ export class WsiAnnotationController {
 
     /** Whether the user may draw, edit or delete annotations. */
     @computed get canEdit(): boolean {
+        return this.canWrite;
+    }
+
+    /** Whether writes may be sent: a service, and no refusal of the study. */
+    private get canWrite(): boolean {
         return Boolean(this.apiUrl) && this.accessIssue === null;
+    }
+
+    /** Dropped points the service refused to save (see `unsaved`). */
+    @computed get unsavedPointCount(): number {
+        return this.annotations.filter(annotation => annotation.unsaved).length;
+    }
+
+    /**
+     * "3 points were not saved.", while this slide has unsaved points, or
+     * the count left unsaved on the slide or study last closed.
+     */
+    @computed get unsavedPointMessage(): string | null {
+        const describe = (n: number) =>
+            `${n} point${n === 1 ? ' was' : 's were'} not saved`;
+        const here = this.unsavedPointCount;
+        if (here) return `${describe(here)}.`;
+        return this.pointsLeftUnsaved
+            ? `${describe(this.pointsLeftUnsaved)} on the previous slide.`
+            : null;
+    }
+
+    @action.bound
+    dismissPointsLeftUnsaved() {
+        this.pointsLeftUnsaved = 0;
+    }
+
+    /**
+     * Sends the unsaved points again, e.g. after signing in again in
+     * another tab; a new refusal keeps them unsaved.
+     */
+    @action.bound
+    retryUnsavedPoints(): Promise<void> {
+        const unsaved = this.annotations.filter(
+            annotation => annotation.unsaved
+        );
+        if (!unsaved.length || !this.apiUrl) return Promise.resolve();
+        this.accessIssue = null;
+        this.error = null;
+        const drafts = unsaved.map(({ unsaved: _unsaved, ...draft }) => draft);
+        const byId = new Map(drafts.map(draft => [draft.id, draft]));
+        this.annotations = this.annotations.map(
+            annotation => byId.get(annotation.id) || annotation
+        );
+        this.pointQueue.push(...drafts);
+        this.applySelectAction();
+        return this.flushPoints();
     }
 
     /** The sign-in or read-only notice, when the service refused the study. */
@@ -1214,7 +1270,7 @@ export class WsiAnnotationController {
 
     @action.bound
     beginSlide(slideKey: string) {
-        this.flushPointsDetached();
+        const leftUnsaved = this.flushPointsDetached();
         this.restartRequests();
         this.slideKey = slideKey;
         this.annotations = [];
@@ -1224,6 +1280,7 @@ export class WsiAnnotationController {
         this.importError = null;
         this.error = null;
         this.accessIssue = null;
+        this.pointsLeftUnsaved = leftUnsaved;
         this.loading = Boolean(this.apiUrl);
         this.destroyAnnotorious();
         if (this.apiUrl) {
@@ -1238,7 +1295,7 @@ export class WsiAnnotationController {
      */
     @action.bound
     setContext(apiUrl: string | null | undefined, studyId: string | undefined) {
-        this.flushPointsDetached();
+        const leftUnsaved = this.flushPointsDetached();
         if (apiUrl !== this.apiUrl) {
             this.reviewRoute = null;
             this.batchRoute = null;
@@ -1251,6 +1308,7 @@ export class WsiAnnotationController {
         this.annotations = [];
         this.error = null;
         this.accessIssue = null;
+        this.pointsLeftUnsaved = leftUnsaved;
         this.annotationTooltip = null;
         this.applyLayerFilter();
         const slideKey = this.slideKey;
@@ -2273,7 +2331,7 @@ export class WsiAnnotationController {
             reason: 'not saved',
         }));
         const slideKey = this.slideKey;
-        if (!slideKey || !this.canEdit) return results;
+        if (!slideKey || !this.canWrite) return results;
         const context = {
             generation: this.generation,
             slideKey,
@@ -3111,7 +3169,28 @@ export class WsiAnnotationController {
                 ) {
                     return;
                 }
-                const saved = this.addSaved(results, drafts);
+                // Refused for access: keep the points, marked unsaved.
+                const refused =
+                    this.accessIssue !== null
+                        ? new Set(
+                              drafts
+                                  .filter((_, i) => !results[i]?.annotation)
+                                  .map(draft => draft.id)
+                          )
+                        : new Set<string>();
+                const saved = this.addSaved(
+                    results,
+                    drafts.filter(draft => !refused.has(draft.id))
+                );
+                if (refused.size) {
+                    action(() => {
+                        this.annotations = this.annotations.map(item =>
+                            refused.has(item.id)
+                                ? { ...item, unsaved: true }
+                                : item
+                        );
+                    })();
+                }
                 settleAll(results);
                 saved.forEach(item =>
                     this.pushUndo({ kind: 'create', ids: [item.id] })
@@ -3145,11 +3224,13 @@ export class WsiAnnotationController {
      * is known to exist; otherwise every point gets its own POST, all sent
      * at once, since no answer is read to fall back on.
      */
-    private flushPointsDetached() {
+    private flushPointsDetached(): number {
         if (this.pointTimer) clearTimeout(this.pointTimer);
         this.pointTimer = null;
         const drafts = this.pointQueue.splice(0);
-        if (!drafts.length || !this.slideKey || !this.canEdit) return;
+        const unsaved = this.unsavedPointCount;
+        if (!drafts.length || !this.slideKey) return unsaved;
+        if (!this.canWrite) return unsaved + drafts.length;
         const slideKey = this.slideKey;
         const payloads = drafts.map(draft =>
             this.createPayload(draft, slideKey)
@@ -3188,6 +3269,7 @@ export class WsiAnnotationController {
                 send.forEach(request => request.catch(() => undefined));
             }
         );
+        return unsaved;
     }
 
     private readonly handleVisibilityChange = () => {

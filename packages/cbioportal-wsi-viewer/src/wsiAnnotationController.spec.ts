@@ -2731,6 +2731,63 @@ describe('WsiAnnotationController', () => {
             }
         });
 
+        it('keeps points refused for access on the slide, marked unsaved, and retries them', async () => {
+            let signedIn = false;
+            jest.spyOn(global, 'fetch').mockImplementation(
+                async (_url, init) =>
+                    (signedIn
+                        ? {
+                              ok: true,
+                              status: 201,
+                              json: async () => savedRows(init!),
+                          }
+                        : { ok: false, status: 401 }) as Response
+            );
+            const controller = newController();
+            (controller as any).createPoint({ x: 1, y: 1 });
+            (controller as any).createPoint({ x: 2, y: 2 });
+            await controller.flushPoints();
+
+            expect(controller.accessIssue).toBe('signedOut');
+            expect(controller.annotations).toHaveLength(2);
+            expect(controller.annotations.every(item => item.unsaved)).toBe(
+                true
+            );
+            expect(controller.unsavedPointMessage).toBe(
+                '2 points were not saved.'
+            );
+
+            signedIn = true;
+            await controller.retryUnsavedPoints();
+            expect(controller.accessIssue).toBeNull();
+            expect(controller.annotations.map(item => item.id)).toEqual([
+                'saved-0',
+                'saved-1',
+            ]);
+            expect(controller.unsavedPointMessage).toBeNull();
+        });
+
+        it('reports points it could not send before another slide opens', () => {
+            jest.spyOn(global, 'fetch').mockImplementation(
+                async () => ({ ok: true, json: async () => [] } as Response)
+            );
+            const controller = newController();
+            (controller as any).createPoint({ x: 1, y: 1 });
+            // Another request was refused meanwhile: writes are off.
+            controller.accessIssue = 'forbidden';
+            controller.beginSlide('ba9876543210');
+
+            const posts = (global.fetch as jest.Mock).mock.calls.filter(
+                ([, init]) => init?.method === 'POST'
+            );
+            expect(posts).toHaveLength(0);
+            expect(controller.unsavedPointMessage).toBe(
+                '1 point was not saved on the previous slide.'
+            );
+            controller.dismissPointsLeftUnsaved();
+            expect(controller.unsavedPointMessage).toBeNull();
+        });
+
         it('edits and deletes an unsent point without a request', async () => {
             jest.spyOn(global, 'fetch').mockImplementation(
                 async (_url, init) =>

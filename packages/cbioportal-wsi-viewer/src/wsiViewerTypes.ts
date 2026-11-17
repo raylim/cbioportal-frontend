@@ -150,6 +150,12 @@ export interface WsiAnnotation {
      * shared with the study; undefined when the service did not say.
      */
     visibleTo?: string[] | null;
+    /**
+     * A dropped point the service refused to save (signed out, or no
+     * access): kept on the slide, marked, until it is saved or the slide
+     * reloads.
+     */
+    unsaved?: boolean;
     /** `body.provenance` as stored, kept on every update. */
     provenance?: Record<string, unknown> | null;
 }

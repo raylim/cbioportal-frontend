@@ -747,6 +747,43 @@ export const WsiAnnotationLayersPanel = observer(
     }
 );
 
+/**
+ * Dropped points the service refused to save: how many, with Retry (e.g.
+ * after signing in again) while they are still on the slide.
+ */
+const UnsavedPointsNotice = observer(
+    ({ controller }: { controller: WsiAnnotationController }) => {
+        const message = controller.unsavedPointMessage;
+        if (!message) return null;
+        const here = controller.unsavedPointCount > 0;
+        return (
+            <div
+                role="alert"
+                data-testid="annotation-unsaved-points"
+                style={{ color: '#a00', fontSize: 11, marginBottom: 4 }}
+            >
+                {message}{' '}
+                {here ? (
+                    <button
+                        data-testid="annotation-unsaved-points-retry"
+                        onClick={() => void controller.retryUnsavedPoints()}
+                        style={transferButtonStyle()}
+                    >
+                        Retry
+                    </button>
+                ) : (
+                    <button
+                        onClick={controller.dismissPointsLeftUnsaved}
+                        style={transferButtonStyle()}
+                    >
+                        Dismiss
+                    </button>
+                )}
+            </div>
+        );
+    }
+);
+
 export const WsiAnnotationPanel = observer(
     ({ controller }: { controller: WsiAnnotationController }) => {
         if (!controller || !controller.visible) return null;
@@ -765,6 +802,7 @@ export const WsiAnnotationPanel = observer(
         if (!controller.annotations.length) {
             return (
                 <>
+                    <UnsavedPointsNotice controller={controller} />
                     <span style={{ color: '#999', fontSize: 11 }}>
                         {controller.canEdit
                             ? 'No annotations yet. Draw on the slide to create one.'
@@ -787,6 +825,7 @@ export const WsiAnnotationPanel = observer(
                         {controller.error}
                     </div>
                 )}
+                <UnsavedPointsNotice controller={controller} />
                 {(controller.unreviewedAiCount > 0 ||
                     controller.hideUnreviewedAi) && (
                     <label
@@ -975,6 +1014,21 @@ const AnnotationRow = observer(
                                     flexWrap: 'wrap',
                                 }}
                             >
+                                {annotation.unsaved && (
+                                    <span
+                                        data-testid={`annotation-unsaved-${annotation.id}`}
+                                        style={{
+                                            padding: '0 4px',
+                                            borderRadius: 2,
+                                            border: '1px solid #a00',
+                                            color: '#a00',
+                                            fontSize: 9,
+                                            lineHeight: '12px',
+                                        }}
+                                    >
+                                        Not saved
+                                    </span>
+                                )}
                                 <AiBadge annotation={annotation} />
                                 <VisibilityBadge
                                     controller={controller}
