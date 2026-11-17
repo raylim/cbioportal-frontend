@@ -127,6 +127,12 @@ export interface WsiViewerProps {
     /** Annotation service base URL; annotation authoring is off when unset. */
     annotationApiUrl?: string | null;
     /**
+     * The signed-in user as the annotation service names creators (the
+     * portal user name). Edit and delete then show only on the user's own
+     * annotations; unset, they show on all and the service refuses others'.
+     */
+    annotationUser?: string;
+    /**
      * Hides the slide list. Unset, the viewer keeps the user's choice in
      * browser storage.
      */
@@ -301,6 +307,7 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
             props.annotationApiUrl,
             props.studyId
         );
+        this.annotationController.setCurrentUser(props.annotationUser);
         this.annotationController.setMppProvider(
             () => this.viewerState.selectedMpp
         );
@@ -490,6 +497,10 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
             (pathologyFilterChanged && !this.viewerState.hierarchy);
         const stainFilterChanged =
             prev.initialStainFilter !== this.props.initialStainFilter;
+
+        if (prev.annotationUser !== this.props.annotationUser) {
+            this.annotationController.setCurrentUser(this.props.annotationUser);
+        }
 
         if (prev.hidden !== this.props.hidden) {
             this.updateControllerVisibility();

@@ -60,6 +60,17 @@ export function wsiAuthScope(userName?: string): string {
     return userName || getServerConfig().user_display_name || 'anonymousUser';
 }
 
+/**
+ * The signed-in user as the annotation service names creators: the portal
+ * user name (`Authentication.getName()`, which the study access check
+ * forwards as `X-Auth-Request-User`), else the configured display name;
+ * undefined when anonymous.
+ */
+export function wsiAnnotationUser(userName?: string): string | undefined {
+    const user = userName || getServerConfig().user_display_name;
+    return user && user !== 'anonymousUser' ? user : undefined;
+}
+
 // The viewer is its own async chunk, and OpenSeadragon another one loaded on
 // first slide open: most patient pages have no slides.
 export const LazyWsiViewer = React.lazy(() => {
@@ -71,7 +82,11 @@ export const LazyWsiViewer = React.lazy(() => {
 
 export type AppWsiViewerProps = Omit<
     WsiViewerProps,
-    'authScope' | 'showDownload' | 'renderLoading' | 'clinicalRows'
+    | 'authScope'
+    | 'showDownload'
+    | 'renderLoading'
+    | 'clinicalRows'
+    | 'annotationUser'
 > & {
     /** Signed-in user name, when the page knows it. */
     userName?: string;
@@ -104,6 +119,7 @@ export function AppWsiViewer({
             <LazyWsiViewer
                 {...viewerProps}
                 authScope={wsiAuthScope(userName)}
+                annotationUser={wsiAnnotationUser(userName)}
                 showDownload={
                     getServerConfig().skin_hide_download_controls ===
                     DownloadControlOption.SHOW_ALL

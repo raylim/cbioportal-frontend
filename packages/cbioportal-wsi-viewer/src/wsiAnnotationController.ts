@@ -287,6 +287,13 @@ export type WsiUndoEntry =
     | { kind: 'update'; before: WsiAnnotation }
     | { kind: 'delete'; before: WsiAnnotation[] };
 
+/**
+ * Shown when the annotation service has no review route: reviews then fall
+ * back to the creator-only update and delete.
+ */
+export const WSI_REVIEW_UNSUPPORTED_MESSAGE =
+    "This annotation service cannot record reviews: only an AI annotation's creator can accept it or reject it, and Reject deletes it.";
+
 /** How many changes undo remembers. */
 const MAX_UNDO = 50;
 
@@ -361,6 +368,17 @@ export class WsiAnnotationController {
     @observable importError: string | null = null;
     /** Brush width in screen pixels. */
     @observable brushWidth = BRUSH_WIDTHS[1];
+    /**
+     * The signed-in user as the annotation service names creators, when the
+     * host knows it. Unknown: every annotation offers edit and delete, and
+     * the service refuses another user's.
+     */
+    @observable currentUser: string | null = null;
+    /**
+     * Whether the service has the review route (`POST
+     * /annotations/{id}/review`): unknown until the first review.
+     */
+    @observable reviewRoute: boolean | null = null;
     /** Whether new annotations are shared with the study (else private). */
     @observable defaultShared = loadDefaultShared();
     @observable annotationTooltip: {
@@ -596,6 +614,38 @@ export class WsiAnnotationController {
         return preview.tool === 'line'
             ? formatMeasurement(measurement)
             : formatMeasurement({ ...measurement, perimeter: undefined });
+    }
+
+    @action.bound
+    setCurrentUser(user: string | null | undefined) {
+        this.currentUser = user && user.trim() ? user.trim() : null;
+        this.applySelectAction();
+    }
+
+    /**
+     * Whether the user may edit or delete `annotation`: only its creator may.
+     * With the user or the creator unknown, the service decides.
+     */
+    canModify(annotation: WsiAnnotation): boolean {
+        return (
+            this.canEdit &&
+            (!this.currentUser ||
+                !annotation.creator ||
+                annotation.creator === this.currentUser)
+        );
+    }
+
+    /**
+     * Whether the user may accept or reject `annotation`: anyone who can
+     * edit in the study may review an unreviewed AI annotation, unless the
+     * service has no review route, when only its creator may.
+     */
+    canReview(annotation: WsiAnnotation): boolean {
+        return (
+            this.canEdit &&
+            isUnreviewedAi(annotation.provenance) &&
+            (this.reviewRoute !== false || this.canModify(annotation))
+        );
     }
 
     /** Whether the user may draw, edit or delete annotations. */
@@ -1048,6 +1098,7 @@ export class WsiAnnotationController {
      */
     @action.bound
     setContext(apiUrl: string | null | undefined, studyId: string | undefined) {
+        if (apiUrl !== this.apiUrl) this.reviewRoute = null;
         this.apiUrl = apiUrl;
         this.studyId = studyId;
         this.undoStack = [];
@@ -1183,7 +1234,7 @@ export class WsiAnnotationController {
             this.canvasClickCleanup = () =>
                 viewer.removeHandler?.('canvas-click', this.handleCanvasClick);
         }
-        if (!this.canEdit) this.annotorious.setUserSelectAction?.('SELECT');
+        this.applySelectAction();
         this.applyLayerFilter();
         this.refreshStyle();
         this.installCustomDrawingHandlers();
@@ -1191,6 +1242,30 @@ export class WsiAnnotationController {
             document.addEventListener('keydown', this.handleKeyDown);
             this.keydownCleanup = () =>
                 document.removeEventListener('keydown', this.handleKeyDown);
+        }
+    }
+
+    /**
+     * Lets Annotorious edit only the shapes the user may change; others can
+     * be selected, for their tooltip, but not moved.
+     */
+    private applySelectAction() {
+        if (!this.annotorious) return;
+        if (!this.canEdit) {
+            this.annotorious.setUserSelectAction?.('SELECT');
+        } else if (this.currentUser) {
+            this.annotorious.setUserSelectAction?.(
+                (annotation: WsiAnnotation) => {
+                    const stored = this.annotations.find(
+                        item => item.id === annotation.id
+                    );
+                    return this.canModify(stored || annotation)
+                        ? 'EDIT'
+                        : 'SELECT';
+                }
+            );
+        } else {
+            this.annotorious.setUserSelectAction?.('EDIT');
         }
     }
 
@@ -1362,7 +1437,9 @@ export class WsiAnnotationController {
     async deleteLayer(layer: string) {
         if (layer === DEFAULT_LAYER) return;
         const annotations = this.annotations.filter(
-            annotation => (annotation.layerName || DEFAULT_LAYER) === layer
+            annotation =>
+                (annotation.layerName || DEFAULT_LAYER) === layer &&
+                this.canModify(annotation)
         );
         const deleted: WsiAnnotation[] = [];
         for (const annotation of annotations) {
@@ -1412,23 +1489,142 @@ export class WsiAnnotationController {
         await this.deleteAnnotation(id);
     }
 
-    /** Marks an assistant annotation reviewed and accepted. */
+    /** Accepts an AI annotation (see `reviewAnnotation`). */
     @action.bound
     async acceptAnnotation(id: string) {
-        const annotation = this.annotations.find(item => item.id === id);
-        if (!annotation || !isUnreviewedAi(annotation.provenance)) {
-            return;
-        }
-        await this.updateAnnotation({
-            ...annotation,
-            provenance: acceptedProvenance(annotation.provenance),
-        });
+        await this.reviewAnnotation(id, 'accept');
     }
 
-    /** Rejecting an assistant annotation deletes it. */
+    /** Rejects an AI annotation (see `reviewAnnotation`). */
     @action.bound
     async rejectAnnotation(id: string) {
-        await this.deleteAnnotation(id);
+        await this.reviewAnnotation(id, 'reject');
+    }
+
+    /**
+     * Records a review of an unreviewed AI annotation with the service's
+     * review route, which any user of the study may use: accepted, it stays
+     * and shows as accepted; rejected, the service keeps it for its audit
+     * trail and the viewer stops showing it. Reviews are not undone by Undo.
+     *
+     * A service without the route (404 or 405 not about the annotation)
+     * falls back to the creator-only update (accept) and delete (reject).
+     */
+    @action.bound
+    async reviewAnnotation(
+        id: string,
+        decision: 'accept' | 'reject'
+    ): Promise<boolean> {
+        const annotation = this.annotations.find(item => item.id === id);
+        if (!annotation || !this.canReview(annotation)) return false;
+        if (this.reviewRoute === false) {
+            return this.reviewWithoutRoute(annotation, decision);
+        }
+        const context = {
+            generation: this.generation,
+            slideKey: this.slideKey,
+            signal: this.abortController?.signal,
+        };
+        try {
+            const response = await this.request(
+                `/annotations/${encodeURIComponent(id)}/review`,
+                {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        decision,
+                        version: annotation.version || 1,
+                    }),
+                },
+                context.signal
+            );
+            if (!this.isCurrent(context)) return false;
+            if (
+                (response.status === 404 || response.status === 405) &&
+                !(await this.isMissingAnnotation(response))
+            ) {
+                action(() => {
+                    this.reviewRoute = false;
+                })();
+                return this.reviewWithoutRoute(annotation, decision);
+            }
+            if (await this.refuseNonCreator(response)) return false;
+            if (this.refuseAccess(response)) return false;
+            if (response.status === 404) {
+                await this.reloadCurrentSlide(
+                    'The annotation was deleted elsewhere; reloaded latest data.'
+                );
+                return false;
+            }
+            if (response.status === 409) {
+                await this.reloadCurrentSlide(
+                    'Annotation changed elsewhere; reloaded latest data.'
+                );
+                return false;
+            }
+            if (!response.ok) {
+                throw new Error(
+                    `Annotation review failed (${response.status})`
+                );
+            }
+            const saved = this.fromApi(
+                await response.json(),
+                this.slideKey || ''
+            );
+            if (!this.isCurrent(context)) return false;
+            action(() => {
+                this.reviewRoute = true;
+                if (isRejectedAi(saved.provenance)) {
+                    this.removeAnnotationLocally(id);
+                } else {
+                    this.replaceAnnotation(id, saved);
+                }
+            })();
+            return true;
+        } catch (_) {
+            if (!this.isCurrent(context)) return false;
+            await this.reloadCurrentSlide('Unable to save the review.');
+            return false;
+        }
+    }
+
+    /** Whether a 404 says the annotation is missing, not the route. */
+    private async isMissingAnnotation(response: Response): Promise<boolean> {
+        if (response.status !== 404 || typeof response.clone !== 'function') {
+            return false;
+        }
+        try {
+            const detail = (await response.clone().json())?.detail;
+            return typeof detail === 'string' && /annotation/i.test(detail);
+        } catch (_) {
+            return false;
+        }
+    }
+
+    /**
+     * A review against a service without the review route: its creator
+     * accepts with a versioned update and rejects by deleting.
+     */
+    private async reviewWithoutRoute(
+        annotation: WsiAnnotation,
+        decision: 'accept' | 'reject'
+    ): Promise<boolean> {
+        if (!this.canModify(annotation)) {
+            action(() => {
+                this.error = WSI_REVIEW_UNSUPPORTED_MESSAGE;
+            })();
+            return false;
+        }
+        const done =
+            decision === 'accept'
+                ? !!(await this.updateAnnotation({
+                      ...annotation,
+                      provenance: acceptedProvenance(annotation.provenance),
+                  }))
+                : await this.deleteAnnotation(annotation.id);
+        action(() => {
+            this.error = WSI_REVIEW_UNSUPPORTED_MESSAGE;
+        })();
+        return done;
     }
 
     @action.bound
@@ -1483,9 +1679,9 @@ export class WsiAnnotationController {
     }
 
     /**
-     * Records the service's refusal to change another user's annotation;
-     * returns whether `response` was one. Only the creator may update or
-     * delete an annotation, so the study stays editable.
+     * Records the service's refusal to change another user's annotation, or
+     * to review one that is not AI-made; returns whether `response` was one.
+     * The study stays editable.
      */
     private async refuseNonCreator(response: Response): Promise<boolean> {
         if (response.status !== 403 || typeof response.clone !== 'function') {
@@ -1499,6 +1695,15 @@ export class WsiAnnotationController {
             ) {
                 action(() => {
                     this.error = 'Only its creator can change this annotation.';
+                })();
+                return true;
+            }
+            if (
+                typeof detail === 'string' &&
+                /only machine-made/i.test(detail)
+            ) {
+                action(() => {
+                    this.error = 'Only AI annotations can be reviewed.';
                 })();
                 return true;
             }

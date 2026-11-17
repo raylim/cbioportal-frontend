@@ -5,6 +5,7 @@
 import {
     labelTerm,
     pointSelectorSvg,
+    WSI_REVIEW_UNSUPPORTED_MESSAGE,
     WsiAnnotationController,
 } from './wsiAnnotationController';
 import { createOSDAnnotator } from '@annotorious/openseadragon';
@@ -1003,14 +1004,131 @@ describe('WsiAnnotationController', () => {
         });
     });
 
-    it('accepts an assistant annotation with its version and rejects by deleting', async () => {
-        const agentBody = {
-            label: 'AI tumor',
-            comment: '',
-            layer_name: 'AI review',
-            color: '#ef4444',
-            type: 'AI review|#ef4444',
-            provenance: { source: 'agent', proposal_id: 'p1' },
+    const agentBody = {
+        label: 'AI tumor',
+        comment: '',
+        layer_name: 'AI review',
+        color: '#ef4444',
+        type: 'AI review|#ef4444',
+        provenance: { source: 'precomputed', model: 'm1' },
+    };
+
+    function reviewController(user = 'reviewer') {
+        const controller = new WsiAnnotationController(
+            'https://tiles.example',
+            'study1'
+        );
+        controller.setCurrentUser(user);
+        (controller as any).slideKey = 'slide1';
+        (controller as any).annotations = [
+            (controller as any).fromApi(
+                {
+                    ...apiAnnotation('ai-1', 3),
+                    body: agentBody,
+                    created_by: 'loader',
+                },
+                'slide1'
+            ),
+            (controller as any).fromApi(
+                {
+                    ...apiAnnotation('ai-2', 1),
+                    body: agentBody,
+                    created_by: 'loader',
+                },
+                'slide1'
+            ),
+            (controller as any).fromApi(
+                { ...apiAnnotation('theirs'), created_by: 'loader' },
+                'slide1'
+            ),
+            (controller as any).fromApi(
+                { ...apiAnnotation('mine'), created_by: user },
+                'slide1'
+            ),
+        ];
+        return controller;
+    }
+
+    it("lets any user review another user's AI annotation with the review route", async () => {
+        jest.spyOn(global, 'fetch').mockImplementation(async (url, init) => {
+            const sent = JSON.parse(init!.body as string);
+            const id = new URL(url as string).pathname.split('/')[2];
+            return {
+                ok: true,
+                status: 200,
+                json: async () => ({
+                    ...apiAnnotation(id, sent.version + 1),
+                    created_by: 'loader',
+                    body: {
+                        ...agentBody,
+                        provenance: {
+                            ...agentBody.provenance,
+                            review_status:
+                                sent.decision === 'accept'
+                                    ? 'accepted'
+                                    : 'rejected',
+                            reviewed_by: 'reviewer',
+                        },
+                    },
+                }),
+            } as Response;
+        });
+        const controller = reviewController();
+        const byId = (id: string) =>
+            controller.annotations.find(item => item.id === id)!;
+        expect(controller.canReview(byId('ai-1'))).toBe(true);
+        expect(controller.canModify(byId('ai-1'))).toBe(false);
+        expect(controller.canModify(byId('theirs'))).toBe(false);
+        expect(controller.canReview(byId('theirs'))).toBe(false);
+        expect(controller.canModify(byId('mine'))).toBe(true);
+        expect(controller.unreviewedAiCount).toBe(2);
+
+        await controller.acceptAnnotation('ai-1');
+        const [acceptUrl, acceptInit] = (global.fetch as jest.Mock).mock
+            .calls[0] as [string, RequestInit];
+        expect(acceptInit.method).toBe('POST');
+        expect(new URL(acceptUrl).pathname).toBe('/annotations/ai-1/review');
+        expect(new URL(acceptUrl).searchParams.get('studyId')).toBe('study1');
+        expect((acceptInit.headers as Headers).get('X-Requested-With')).toBe(
+            'XMLHttpRequest'
+        );
+        expect(JSON.parse(acceptInit.body as string)).toEqual({
+            decision: 'accept',
+            version: 3,
+        });
+        expect(byId('ai-1').version).toBe(4);
+        expect(byId('ai-1').provenance).toMatchObject({
+            review_status: 'accepted',
+        });
+        expect(controller.reviewRoute).toBe(true);
+        expect(controller.unreviewedAiCount).toBe(1);
+
+        await controller.rejectAnnotation('ai-2');
+        const [rejectUrl, rejectInit] = (global.fetch as jest.Mock).mock
+            .calls[1] as [string, RequestInit];
+        expect(new URL(rejectUrl).pathname).toBe('/annotations/ai-2/review');
+        expect(JSON.parse(rejectInit.body as string)).toEqual({
+            decision: 'reject',
+            version: 1,
+        });
+        expect(controller.annotations.map(item => item.id)).toEqual([
+            'ai-1',
+            'theirs',
+            'mine',
+        ]);
+        expect(controller.error).toBeNull();
+        // Reviews are not on the undo history.
+        expect(controller.canUndo).toBe(false);
+    });
+
+    it('falls back to the creator-only update and delete without a review route', async () => {
+        const noRoute = {
+            ok: false,
+            status: 404,
+            clone() {
+                return this;
+            },
+            json: async () => ({ detail: 'Not Found' }),
         };
         jest.spyOn(global, 'fetch').mockImplementation(async (_url, init) => {
             if (init?.method === 'PUT') {
@@ -1019,52 +1137,99 @@ describe('WsiAnnotationController', () => {
                     ok: true,
                     json: async () => ({
                         ...apiAnnotation('ai-1', 4),
+                        created_by: 'loader',
                         body: sent.body,
                     }),
                 } as Response;
             }
-            return { ok: true, status: 204 } as Response;
+            if (init?.method === 'DELETE') {
+                return { ok: true, status: 204 } as Response;
+            }
+            return (noRoute as unknown) as Response;
         });
-        const controller = new WsiAnnotationController(
-            'https://tiles.example',
-            'study1'
-        );
-        (controller as any).slideKey = 'slide1';
-        (controller as any).annotations = [
-            (controller as any).fromApi(
-                { ...apiAnnotation('ai-1', 3), body: agentBody },
-                'slide1'
-            ),
-            (controller as any).fromApi(
-                { ...apiAnnotation('ai-2', 1), body: agentBody },
-                'slide1'
-            ),
-            (controller as any).fromApi(apiAnnotation('mine'), 'slide1'),
-        ];
-        expect(controller.unreviewedAiCount).toBe(2);
 
-        await controller.acceptAnnotation('ai-1');
-        const put = (global.fetch as jest.Mock).mock.calls[0];
-        expect(put[1].method).toBe('PUT');
-        const sent = JSON.parse(put[1].body);
+        // Another user's AI annotation cannot be reviewed without the route.
+        const other = reviewController('reviewer');
+        await other.acceptAnnotation('ai-1');
+        expect(other.reviewRoute).toBe(false);
+        expect(other.error).toBe(WSI_REVIEW_UNSUPPORTED_MESSAGE);
+        expect(
+            (global.fetch as jest.Mock).mock.calls.map(
+                ([, init]) => init.method
+            )
+        ).toEqual(['POST']);
+        expect(other.canReview(other.annotations[1])).toBe(false);
+
+        // Its creator still accepts with a versioned PUT and rejects by deleting.
+        (global.fetch as jest.Mock).mockClear();
+        const creator = reviewController('loader');
+        await creator.acceptAnnotation('ai-1');
+        const calls = (global.fetch as jest.Mock).mock.calls as Array<
+            [string, RequestInit]
+        >;
+        expect(calls.map(([, init]) => init.method)).toEqual(['POST', 'PUT']);
+        const sent = JSON.parse(calls[1][1].body as string);
         expect(sent.version).toBe(3);
         expect(sent.body.provenance).toMatchObject({
-            source: 'agent',
-            proposal_id: 'p1',
+            source: 'precomputed',
             review_status: 'accepted',
         });
-        expect(typeof sent.body.provenance.reviewed_at).toBe('string');
-        expect(controller.unreviewedAiCount).toBe(1);
-        expect(controller.annotations[0].version).toBe(4);
+        expect(creator.error).toBe(WSI_REVIEW_UNSUPPORTED_MESSAGE);
 
-        await controller.rejectAnnotation('ai-2');
-        const del = (global.fetch as jest.Mock).mock.calls[1];
-        expect(del[1].method).toBe('DELETE');
-        expect(new URL(del[0]).pathname).toBe('/annotations/ai-2');
-        expect(controller.annotations.map(item => item.id)).toEqual([
-            'ai-1',
-            'mine',
+        await creator.rejectAnnotation('ai-2');
+        expect(calls.map(([, init]) => init.method)).toEqual([
+            'POST',
+            'PUT',
+            'DELETE',
         ]);
+        expect(new URL(calls[2][0]).pathname).toBe('/annotations/ai-2');
+        expect(creator.annotations.map(item => item.id)).not.toContain('ai-2');
+    });
+
+    it('reloads when the reviewed annotation is gone or changed', async () => {
+        const responses: any[] = [
+            {
+                ok: false,
+                status: 404,
+                clone() {
+                    return this;
+                },
+                json: async () => ({ detail: 'Annotation not found' }),
+            },
+            { ok: true, json: async () => [] },
+            {
+                ok: false,
+                status: 409,
+                clone() {
+                    return this;
+                },
+                json: async () => ({ detail: 'Version conflict' }),
+            },
+            { ok: true, json: async () => [] },
+        ];
+        jest.spyOn(global, 'fetch').mockImplementation(
+            async () => responses.shift() as Response
+        );
+        const controller = reviewController();
+        await controller.acceptAnnotation('ai-1');
+        expect(controller.reviewRoute).toBeNull();
+        expect(controller.error).toBe(
+            'The annotation was deleted elsewhere; reloaded latest data.'
+        );
+
+        (controller as any).annotations = reviewController().annotations;
+        await controller.rejectAnnotation('ai-2');
+        expect(controller.error).toBe(
+            'Annotation changed elsewhere; reloaded latest data.'
+        );
+    });
+
+    it('offers edit and delete on every annotation when the user is unknown', () => {
+        const controller = reviewController();
+        controller.setCurrentUser(undefined);
+        expect(
+            controller.annotations.every(item => controller.canModify(item))
+        ).toBe(true);
     });
 
     it('does not show AI annotations that were rejected in review', async () => {

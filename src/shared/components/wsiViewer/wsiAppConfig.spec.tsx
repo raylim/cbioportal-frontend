@@ -6,6 +6,7 @@ import { act, render, screen } from '@testing-library/react';
 import {
     AppWsiViewer,
     buildWsiViewerConfig,
+    wsiAnnotationUser,
     wsiAuthScope,
 } from './wsiAppConfig';
 
@@ -54,6 +55,18 @@ describe('buildWsiViewerConfig', () => {
 
         delete mockServerConfig.user_display_name;
         expect(wsiAuthScope()).toBe('anonymousUser');
+    });
+
+    it('names the annotation user by the user or the display name, never anonymous', () => {
+        mockServerConfig.user_display_name = 'display-user';
+        expect(wsiAnnotationUser('user-a')).toBe('user-a');
+        expect(wsiAnnotationUser()).toBe('display-user');
+
+        mockServerConfig.user_display_name = 'anonymousUser';
+        expect(wsiAnnotationUser()).toBeUndefined();
+        expect(wsiAnnotationUser('anonymousUser')).toBeUndefined();
+        delete mockServerConfig.user_display_name;
+        expect(wsiAnnotationUser()).toBeUndefined();
     });
 
     it('enables annotations only when an annotation service is configured', () => {
@@ -134,6 +147,7 @@ describe('AppWsiViewer', () => {
                 tileServerUrl: '/wsi',
                 height: 600,
                 authScope: 'user-a',
+                annotationUser: 'user-a',
                 showDownload: true,
                 renderLoading: expect.any(Function),
                 clinicalRows: [{ label: 'Sex', value: 'Female' }],

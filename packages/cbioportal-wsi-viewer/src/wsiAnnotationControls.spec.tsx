@@ -99,6 +99,40 @@ describe('WsiAnnotationPanel', () => {
         expect(screen.queryByTestId('annotation-row-m-1')).toBeNull();
     });
 
+    it("offers review of another user's AI annotation but not its edit or delete", () => {
+        const controller = controllerWith([
+            {
+                ...apiItem('ai', { provenance: { source: 'precomputed' } }),
+                created_by: 'loader',
+            },
+            { ...apiItem('theirs', {}), created_by: 'loader', visible_to: [] },
+            { ...apiItem('mine', {}), created_by: 'me', visible_to: [] },
+        ]);
+        controller.setCurrentUser('me');
+        render(<WsiAnnotationPanel controller={controller} />);
+
+        expect(screen.getByTestId('accept-annotation-ai')).toBeTruthy();
+        expect(screen.getByTestId('reject-annotation-ai')).toBeTruthy();
+        ['ai', 'theirs'].forEach(id => {
+            expect(screen.queryByTestId(`edit-label-${id}`)).toBeNull();
+            expect(screen.queryByTestId(`delete-annotation-${id}`)).toBeNull();
+            expect(
+                screen.queryByTestId(`annotation-note-edit-${id}`)
+            ).toBeNull();
+        });
+        expect(screen.getByTestId('annotation-visibility-theirs').tagName).toBe(
+            'SPAN'
+        );
+        expect(screen.getByTestId('edit-label-mine')).toBeTruthy();
+        expect(screen.getByTestId('delete-annotation-mine')).toBeTruthy();
+        expect(screen.getByTestId('annotation-visibility-mine').tagName).toBe(
+            'BUTTON'
+        );
+        expect(
+            screen.getByTestId('reject-annotation-ai').getAttribute('title')
+        ).toContain('keeps it as a review record');
+    });
+
     it('shows whether each annotation is private or shared and switches it', () => {
         const controller = controllerWith([
             { ...apiItem('mine', {}), visible_to: null },

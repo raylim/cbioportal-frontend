@@ -99,8 +99,9 @@ annotations: {
 | --- | --- |
 | `GET {apiUrl}/annotations?slide_id=…&studyId=…` | The slide's annotations in the authorized study |
 | `POST {apiUrl}/annotations?studyId=…` | Create one; the body names `slide_id` and `study_id` |
-| `PUT {apiUrl}/annotations/{id}?studyId=…` | Update one, with its `version` |
-| `DELETE {apiUrl}/annotations/{id}?studyId=…` | Delete one |
+| `PUT {apiUrl}/annotations/{id}?studyId=…` | Update one, with its `version` (creator only) |
+| `POST {apiUrl}/annotations/{id}/review?studyId=…` | Accept or reject an AI annotation, with its `version` (any user of the study) |
+| `DELETE {apiUrl}/annotations/{id}?studyId=…` | Delete one (creator only) |
 
 The service sits behind a proxy that authorizes each request with the portal session cookie for the study in `studyId`, and forwards the user and study to the service. So every request:
 
@@ -136,9 +137,13 @@ An annotation a machine made shows an **AI** badge: **AI · unreviewed** until a
 - `agent` or `assistant`: the research assistant (the service writes `agent` when it saves an assistant proposal);
 - `model`, `ai` or `precomputed`: a model (`precomputed` marks model output loaded in bulk); the tooltip names `provenance.model` when it is set.
 
-The service treats the same sources as machine-made. A rejected AI annotation (`provenance.review_status: "rejected"`) is not shown. **Accept** saves `provenance.review_status: "accepted"` and `reviewed_at` with a `PUT` carrying the annotation's `version`; **Reject** deletes it. The list can hide unreviewed AI annotations, on the slide too.
+The service treats the same sources as machine-made. The list can hide unreviewed AI annotations, on the slide too.
 
-Only an annotation's creator may change it. The service answers another user's edit with a 403 whose `detail` says so; the viewer shows that and keeps the study editable. Any other 403 means no access to the study.
+Any user who can edit in the study may review an unreviewed AI annotation, whoever created it. **Accept** and **Reject** send `POST /annotations/{id}/review` with `{decision: "accept" | "reject", version}`. The service records `provenance.review_status`, `reviewed_by` and `reviewed_at` and bumps the version. An accepted annotation shows **AI · accepted**. A rejected one is kept by the service as a review record but no longer listed, so the viewer drops it. A 409 (changed meanwhile) or a 404 for the annotation reloads the slide. Reviews are not on the undo history.
+
+An older service without the review route answers the review with a 404 (or 405) that is not about the annotation. The viewer then falls back for the rest of the session: an AI annotation's creator accepts it with a versioned `PUT` of the accepted provenance and rejects it by deleting it, other users get no review buttons, and the list says the service cannot record reviews.
+
+Only an annotation's creator may edit, move or delete it, or change its note or sharing. With the signed-in user known (`annotationUser`, the portal user name, which is what the service records as `created_by`), the list shows those controls only on the user's own annotations, and only those shapes can be dragged on the slide. Deleting a layer deletes only the user's annotations in it. The service answers another user's edit with a 403 whose `detail` says so; the viewer shows that and keeps the study editable. Any other 403 means no access to the study.
 
 #### Labels
 

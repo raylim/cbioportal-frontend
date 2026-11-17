@@ -13,45 +13,99 @@ import {
 /** Microns per pixel of the mocked slide. */
 const MPP = 0.25;
 
+/** The signed-in user; the portal's config names them. */
+const USER = 'e2e-user';
+/** Provenance sources the service treats as machine-made. */
+const MACHINE_SOURCES = ['agent', 'assistant', 'ai', 'model', 'precomputed'];
+
 /**
- * The annotation service, kept in memory: creates get an id and version 1,
- * updates check and bump the version. Returns the rows and the request
- * bodies it received.
+ * The annotation service, kept in memory: creates get an id and version 1;
+ * updates and deletes are creator-only and check the version; any user may
+ * review a machine-made annotation, and a rejected one is kept but not
+ * listed. Returns the rows and the writes it received.
  */
-async function routeAnnotationService(page: Page) {
-    const rows = new Map<string, any>();
-    const writes: Array<{ method: string; body: any }> = [];
+async function routeAnnotationService(page: Page, seed: any[] = []) {
+    const rows = new Map<string, any>(seed.map(row => [row.id, row]));
+    const writes: Array<{ method: string; path: string; body: any }> = [];
     let next = 0;
+    const create = (item: any) => {
+        const row = {
+            ...item,
+            id: `annotation-${++next}`,
+            created_by: USER,
+            version: 1,
+            created_at: new Date().toISOString(),
+        };
+        rows.set(row.id, row);
+        return row;
+    };
     await page.route('**/wsi/annotations**', async (route: Route) => {
         const request = route.request();
         const method = request.method();
         const url = new URL(request.url());
         expect(url.searchParams.getAll('studyId')).toEqual([STUDY_ID]);
-        const id = decodeURIComponent(url.pathname.split('/')[3] || '');
+        if (method !== 'GET') {
+            expect(request.headers()['x-requested-with']).toBe(
+                'XMLHttpRequest'
+            );
+        }
+        const parts = url.pathname.split('/');
+        const id = decodeURIComponent(parts[3] || '');
         const body = request.postData()
             ? JSON.parse(request.postData()!)
             : null;
-        if (method !== 'GET') writes.push({ method, body });
+        if (method !== 'GET') writes.push({ method, path: url.pathname, body });
         const json = (status: number, value: unknown) =>
             route.fulfill({
                 status,
                 contentType: 'application/json',
                 body: JSON.stringify(value),
             });
-        if (method === 'GET') return json(200, Array.from(rows.values()));
-        if (method === 'POST') {
-            const row = {
-                ...body,
-                id: `annotation-${++next}`,
-                created_by: 'e2e-user',
-                version: 1,
-                created_at: new Date().toISOString(),
-            };
-            rows.set(row.id, row);
-            return json(201, row);
+        if (method === 'GET') {
+            return json(
+                200,
+                Array.from(rows.values()).filter(
+                    row => row.body?.provenance?.review_status !== 'rejected'
+                )
+            );
         }
+        if (method === 'POST' && !id) return json(201, create(body));
         const row = rows.get(id);
         if (!row) return json(404, { detail: 'Annotation not found' });
+        if (method === 'POST' && parts[4] === 'review') {
+            const source = String(row.body?.provenance?.source || '');
+            if (!MACHINE_SOURCES.includes(source.toLowerCase())) {
+                return json(403, {
+                    detail: 'Only machine-made annotations can be reviewed',
+                });
+            }
+            if (body.version !== row.version) {
+                return json(409, { detail: 'Version conflict' });
+            }
+            const reviewed = {
+                ...row,
+                body: {
+                    ...row.body,
+                    provenance: {
+                        ...row.body.provenance,
+                        review_status:
+                            body.decision === 'accept'
+                                ? 'accepted'
+                                : 'rejected',
+                        reviewed_by: USER,
+                        reviewed_at: new Date().toISOString(),
+                    },
+                },
+                version: row.version + 1,
+            };
+            rows.set(id, reviewed);
+            return json(200, reviewed);
+        }
+        if (row.created_by !== USER) {
+            return json(403, {
+                detail: 'Only the creator may change this annotation',
+            });
+        }
         if (method === 'PUT') {
             if (body.version !== row.version) {
                 return json(409, { detail: 'Version conflict' });
@@ -73,60 +127,104 @@ async function routeAnnotationService(page: Page) {
     return { rows, writes };
 }
 
+/** Another user's annotation, as the service stores it. */
+function seededAnnotation(
+    id: string,
+    label: string,
+    points: string,
+    provenance?: Record<string, unknown>
+) {
+    return {
+        id,
+        slide_id: SLIDE_KEY,
+        study_id: STUDY_ID,
+        body: {
+            label,
+            comment: '',
+            type: `Model|#ef4444`,
+            layer_name: 'Model',
+            color: '#ef4444',
+            provenance: provenance || null,
+        },
+        target: {
+            selector: {
+                type: 'SvgSelector',
+                value: `<svg><polygon points="${points}" /></svg>`,
+            },
+        },
+        created_by: 'model-loader',
+        visible_to: [],
+        version: 1,
+        created_at: '2026-11-01T00:00:00Z',
+        updated_at: '2026-11-01T00:00:00Z',
+    };
+}
+
+/**
+ * Opens the mocked slide (512 × 512 pixels at `MPP` µm per pixel) with
+ * annotations on, signed in as `USER`.
+ */
+async function openAnnotatedSlide(page: Page) {
+    await installFoundationMocks(page);
+    await page.route('**/config_service', route =>
+        route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify({
+                app_name: 'wsi-annotation-tools',
+                authenticationMethod: 'none',
+                user_display_name: USER,
+                wsi_tile_server_url: '/wsi',
+                wsi_annotation_api_url: '/wsi',
+            }),
+        })
+    );
+    const row = makeSlideRow(SLIDE_KEY, 'H&E initial', 'H&E (Initial)');
+    row.metadata.serving.tile_metadata_json = {
+        ...tileMetadata,
+        mpp: { x: MPP, y: MPP },
+    } as typeof tileMetadata;
+    await page.route('**/api/resource-table/query/fetch', route => {
+        const query = route.request().postDataJSON();
+        return route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify(
+                query?.resourceId === 'WSI_SAMPLE' ? [row] : []
+            ),
+        });
+    });
+}
+
+async function gotoSlide(page: Page) {
+    await page.goto(
+        `/wsi/patient/${PATIENT_ID}?studyId=${STUDY_ID}#wsi:slide=${SLIDE_KEY}&x=256&y=256&z=1`
+    );
+    await expect(
+        page.getByRole('button', { name: 'Fit to view' })
+    ).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId('wsi-annotation-toolbar')).toBeVisible({
+        timeout: 30_000,
+    });
+    const stage = page.locator('.openseadragon-container').first();
+    const box = (await stage.boundingBox())!;
+    return (fx: number, fy: number) => ({
+        x: box.x + box.width * fx,
+        y: box.y + box.height * fy,
+    });
+}
+
 // Mocked like wsi-foundation-mocked.spec.ts: runs in the WSI suite only.
 if (process.env.PW_SUITE === 'wsi') {
     test.describe('WSI annotation tools', () => {
         test('measures a line, saves a note, counts points and exports GeoJSON', async ({
             page,
         }) => {
-            await installFoundationMocks(page);
-            // Annotations on, and a slide with a microns-per-pixel scale.
-            await page.route('**/config_service', route =>
-                route.fulfill({
-                    status: 200,
-                    contentType: 'application/json',
-                    body: JSON.stringify({
-                        app_name: 'wsi-annotation-tools',
-                        authenticationMethod: 'none',
-                        wsi_tile_server_url: '/wsi',
-                        wsi_annotation_api_url: '/wsi',
-                    }),
-                })
-            );
-            const row = makeSlideRow(SLIDE_KEY, 'H&E initial', 'H&E (Initial)');
-            row.metadata.serving.tile_metadata_json = {
-                ...tileMetadata,
-                mpp: { x: MPP, y: MPP },
-            } as typeof tileMetadata;
-            await page.route('**/api/resource-table/query/fetch', route => {
-                const query = route.request().postDataJSON();
-                return route.fulfill({
-                    status: 200,
-                    contentType: 'application/json',
-                    body: JSON.stringify(
-                        query?.resourceId === 'WSI_SAMPLE' ? [row] : []
-                    ),
-                });
-            });
+            await openAnnotatedSlide(page);
             const service = await routeAnnotationService(page);
             const pageErrors: string[] = [];
             page.on('pageerror', error => pageErrors.push(error.message));
-
-            await page.goto(
-                `/wsi/patient/${PATIENT_ID}?studyId=${STUDY_ID}#wsi:slide=${SLIDE_KEY}&x=256&y=256&z=1`
-            );
-            await expect(
-                page.getByRole('button', { name: 'Fit to view' })
-            ).toBeVisible({ timeout: 30_000 });
-            await expect(
-                page.getByTestId('wsi-annotation-toolbar')
-            ).toBeVisible({ timeout: 30_000 });
-            const stage = page.locator('.openseadragon-container').first();
-            const box = (await stage.boundingBox())!;
-            const at = (fx: number, fy: number) => ({
-                x: box.x + box.width * fx,
-                y: box.y + box.height * fy,
-            });
+            const at = await gotoSlide(page);
 
             // A line shows its length while it is drawn, then in the list.
             await page.getByTestId('annotation-tool-line').click();
@@ -225,6 +323,104 @@ if (process.env.PW_SUITE === 'wsi') {
                 /sealed|image_?id|serving/i
             );
             expect(pageErrors).toEqual([]);
+        });
+
+        test("reviews another user's AI annotations without editing them", async ({
+            page,
+        }) => {
+            await openAnnotatedSlide(page);
+            const service = await routeAnnotationService(page, [
+                seededAnnotation('model-1', 'Tumor', '40,40 140,40 140,140', {
+                    source: 'precomputed',
+                    model: 'luad-patterns',
+                }),
+                seededAnnotation(
+                    'agent-1',
+                    'Stroma',
+                    '300,300 400,300 400,400',
+                    {
+                        source: 'agent',
+                    }
+                ),
+                seededAnnotation(
+                    'human-1',
+                    'Necrosis',
+                    '200,40 260,40 260,100'
+                ),
+            ]);
+            await gotoSlide(page);
+
+            const modelBadge = page.getByTestId('annotation-ai-badge-model-1');
+            await expect(modelBadge).toHaveText('AI · unreviewed', {
+                timeout: 15_000,
+            });
+            await expect(modelBadge).toHaveAttribute(
+                'title',
+                'Made by a model (luad-patterns); not reviewed yet'
+            );
+            await expect(
+                page.getByTestId('annotation-ai-badge-agent-1')
+            ).toHaveAttribute(
+                'title',
+                'Made by the research assistant; not reviewed yet'
+            );
+            await expect(
+                page.getByTestId('annotation-ai-badge-human-1')
+            ).toHaveCount(0);
+            await expect(
+                page.getByTestId('annotation-hide-unreviewed-ai')
+            ).toBeVisible();
+
+            // Another user's annotations offer no edit or delete; the AI
+            // ones offer review.
+            for (const id of ['model-1', 'agent-1', 'human-1']) {
+                await expect(page.getByTestId(`edit-label-${id}`)).toHaveCount(
+                    0
+                );
+                await expect(
+                    page.getByTestId(`delete-annotation-${id}`)
+                ).toHaveCount(0);
+            }
+            await expect(
+                page.getByTestId('accept-annotation-human-1')
+            ).toHaveCount(0);
+
+            await page.getByTestId('accept-annotation-model-1').click();
+            await expect(modelBadge).toHaveText('AI · accepted');
+            await expect(
+                page.getByTestId('accept-annotation-model-1')
+            ).toHaveCount(0);
+
+            await page.getByTestId('reject-annotation-agent-1').click();
+            await expect(
+                page.getByTestId('annotation-row-agent-1')
+            ).toHaveCount(0);
+
+            expect(
+                service.writes.map(write => [
+                    write.method,
+                    write.path,
+                    write.body,
+                ])
+            ).toEqual([
+                [
+                    'POST',
+                    '/wsi/annotations/model-1/review',
+                    { decision: 'accept', version: 1 },
+                ],
+                [
+                    'POST',
+                    '/wsi/annotations/agent-1/review',
+                    { decision: 'reject', version: 1 },
+                ],
+            ]);
+            // The rejected annotation is kept by the service.
+            expect(
+                service.rows.get('agent-1').body.provenance.review_status
+            ).toBe('rejected');
+            expect(
+                service.rows.get('model-1').body.provenance.reviewed_by
+            ).toBe(USER);
         });
     });
 }

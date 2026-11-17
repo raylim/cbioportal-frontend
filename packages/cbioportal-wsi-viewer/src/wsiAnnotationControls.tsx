@@ -883,7 +883,8 @@ const AnnotationRow = observer(
         const layer = annotation.layerName || DEFAULT_LAYER;
         const dotColor = annotation.color || DEFAULT_COLOR;
         const creator = annotation.creator || '';
-        const unreviewedAi = isUnreviewedAi(annotation.provenance);
+        const canReview = controller.canReview(annotation);
+        const canModify = controller.canModify(annotation);
         const measurement = controller.measurementOf(annotation);
         const created = annotation.created
             ? new Date(annotation.created).toLocaleDateString()
@@ -1018,7 +1019,7 @@ const AnnotationRow = observer(
                                 controller={controller}
                                 annotation={annotation}
                             />
-                            {unreviewedAi && controller.canEdit && (
+                            {canReview && (
                                 <div
                                     style={{
                                         display: 'flex',
@@ -1041,7 +1042,11 @@ const AnnotationRow = observer(
                                     <button
                                         data-testid={`reject-annotation-${annotation.id}`}
                                         aria-label={`Reject AI annotation ${rawLabel}`}
-                                        title="Reject: deletes the annotation"
+                                        title={
+                                            controller.reviewRoute === false
+                                                ? 'Reject: deletes the annotation'
+                                                : 'Reject: hides the annotation for everyone; the service keeps it as a review record'
+                                        }
                                         onClick={() =>
                                             void controller.rejectAnnotation(
                                                 annotation.id
@@ -1068,7 +1073,7 @@ const AnnotationRow = observer(
                         </>
                     )}
                 </div>
-                {!editing && controller.canEdit && (
+                {!editing && canModify && (
                     <button
                         data-testid={`edit-label-${annotation.id}`}
                         title="Edit label"
@@ -1086,7 +1091,7 @@ const AnnotationRow = observer(
                         ✎
                     </button>
                 )}
-                {controller.canEdit && (
+                {canModify && (
                     <button
                         data-testid={`delete-annotation-${annotation.id}`}
                         title="Delete annotation"
@@ -1642,7 +1647,7 @@ const AnnotationNote = observer(
                         {note}
                     </div>
                 )}
-                {controller.canEdit && (
+                {controller.canModify(annotation) && (
                     <button
                         data-testid={`annotation-note-edit-${annotation.id}`}
                         aria-label={`${
@@ -1761,7 +1766,7 @@ const VisibilityBadge = observer(
                 {text}
             </>
         );
-        if (!controller.canEdit) {
+        if (!controller.canModify(annotation)) {
             return (
                 <span
                     data-testid={`annotation-visibility-${annotation.id}`}
