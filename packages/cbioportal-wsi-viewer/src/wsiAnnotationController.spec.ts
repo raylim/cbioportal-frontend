@@ -3799,6 +3799,26 @@ describe('WsiAnnotationController', () => {
             return { controller, fake, pointer, saved };
         }
 
+        it('reports the cursor position while a gesture keeps it from the viewer', () => {
+            const { controller, pointer } = drawingSetup(2);
+            const reported: Array<[number, number]> = [];
+            controller.setCursorReporter((x, y) => reported.push([x, y]));
+            controller.setTool('rectangle');
+            pointer('pointerdown', 10, 10);
+            pointer('pointermove', 61, 81);
+            pointer('pointermove', 100, 120);
+            expect(reported).toEqual([
+                [5, 5],
+                [31, 41],
+                [50, 60],
+            ]);
+            pointer('pointerup', 100, 120);
+            controller.setTool('brush');
+            pointer('pointerdown', 20, 20);
+            pointer('pointermove', 40, 30);
+            expect(reported[reported.length - 1]).toEqual([20, 15]);
+        });
+
         it.each([
             [
                 'rectangle',
@@ -4156,6 +4176,30 @@ describe('WsiAnnotationController', () => {
             );
             expect(blocked.annotating).toBe(false);
             expect(blocked.shapeTool).toBe('rectangle');
+        });
+
+        it('names a color taken from another layer after the layer it is used on', () => {
+            const { controller } = attached([
+                {
+                    ...apiAnnotation('m1'),
+                    body: {
+                        label: 'Solid region',
+                        layer_name: 'AI pattern map: Solid',
+                        type: 'AI pattern map: Solid|#dc2626',
+                        color: '#dc2626',
+                    },
+                },
+            ]);
+            expect(controller.activeLayer).toBe('Default');
+            controller.setActiveNamedColor('AI pattern map: Solid', '#dc2626');
+            expect(controller.activeColor).toBe('#dc2626');
+            expect(controller.activeColorName).toBe('Default');
+            // A color of the user's own naming keeps its name.
+            controller.setActiveNamedColor('Mitosis', '#f97316');
+            expect(controller.activeColorName).toBe('Mitosis');
+            controller.setActiveLayer('AI pattern map: Solid');
+            controller.setActiveNamedColor('AI pattern map: Solid', '#dc2626');
+            expect(controller.activeColorName).toBe('AI pattern map: Solid');
         });
 
         it("gives each layer a color: chosen, else its annotations', else its own", () => {

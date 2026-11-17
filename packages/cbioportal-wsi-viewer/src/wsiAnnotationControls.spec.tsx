@@ -44,6 +44,23 @@ function apiItem(id: string, body: Record<string, unknown>) {
 describe('WsiAnnotationPanel', () => {
     beforeEach(() => window.localStorage.clear());
 
+    it("shows a color's name only when it is not a layer's", () => {
+        const controller = controllerWith([
+            apiItem('named', { type: 'Mitosis|#f97316', color: '#f97316' }),
+            apiItem('own-layer', { type: 'Default|#3b82f6' }),
+            apiItem('other-layer', {
+                type: 'Tumor|#ef4444',
+            }),
+            apiItem('tumor', { layer_name: 'Tumor', type: 'Tumor|#ef4444' }),
+        ]);
+        render(<WsiAnnotationPanel controller={controller} />);
+        const badges = (id: string) =>
+            screen.getByTestId(`annotation-row-${id}`).textContent;
+        expect(badges('named')).toContain('Mitosis');
+        expect(badges('own-layer')).not.toMatch(/DefaultDefault/);
+        expect(badges('other-layer')).not.toContain('Tumor');
+    });
+
     it('marks assistant annotations and offers accept and reject until reviewed', () => {
         const controller = controllerWith([
             apiItem('ai-1', { provenance: { source: 'agent' } }),

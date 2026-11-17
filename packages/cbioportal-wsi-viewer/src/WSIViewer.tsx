@@ -302,6 +302,9 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
         this.annotationController.setMppProvider(
             () => this.viewerState.selectedMpp
         );
+        this.annotationController.setCursorReporter((x, y) =>
+            this.viewerState.setCursorPos(x, y)
+        );
         this.controller = new WsiViewerController(
             this.createControllerHost(),
             this.viewerState,

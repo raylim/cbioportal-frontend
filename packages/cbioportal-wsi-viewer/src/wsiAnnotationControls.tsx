@@ -833,13 +833,17 @@ const AnnotationRow = observer(
                                     annotation={annotation}
                                 />
                                 <AnnotationBadge label={layer} />
-                                {annotation.colorName && (
-                                    <AnnotationBadge
-                                        label={annotation.colorName}
-                                        background={dotColor}
-                                        color={readableTextColor(dotColor)}
-                                    />
-                                )}
+                                {annotation.colorName &&
+                                    // A layer's name is just its color.
+                                    !controller.layerNames.includes(
+                                        annotation.colorName
+                                    ) && (
+                                        <AnnotationBadge
+                                            label={annotation.colorName}
+                                            background={dotColor}
+                                            color={readableTextColor(dotColor)}
+                                        />
+                                    )}
                             </div>
                             {measurement && (
                                 <div

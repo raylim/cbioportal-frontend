@@ -946,6 +946,12 @@ export class WsiAnnotationController {
     >();
     @observable.ref private mppProvider: () => WsiMpp | null | undefined = () =>
         undefined;
+    /**
+     * Told where the pointer is, in level-0 image pixels, while a drawing
+     * gesture keeps pointer events from reaching the viewer (the status
+     * bar's cursor position).
+     */
+    private cursorReporter: ((x: number, y: number) => void) | null = null;
 
     constructor(
         private apiUrl: string | null | undefined,
@@ -964,6 +970,20 @@ export class WsiAnnotationController {
     @action
     setMppProvider(provider: () => WsiMpp | null | undefined) {
         this.mppProvider = provider;
+    }
+
+    /** Reports the pointer's image position while drawing (see `cursorReporter`). */
+    setCursorReporter(reporter: ((x: number, y: number) => void) | null) {
+        this.cursorReporter = reporter;
+    }
+
+    private reportCursor(
+        screen: WsiXY,
+        image = this.imagePoint(screen.x, screen.y)
+    ) {
+        if (image) {
+            this.cursorReporter?.(Math.round(image.x), Math.round(image.y));
+        }
     }
 
     /** The open slide's microns-per-pixel, when it has a valid one. */
@@ -2234,7 +2254,11 @@ export class WsiAnnotationController {
      */
     @action.bound
     setActiveNamedColor(name: string, hex: string) {
-        this.useColor(name, hex);
+        // A layer's color picked for another layer is named after the layer
+        // it is used on, not the one it came from.
+        const layerColorName =
+            name !== this.activeLayer && this.layerNames.includes(name);
+        this.useColor(layerColorName ? this.activeLayer : name, hex);
         this.layerColors = {
             ...this.layerColors,
             [this.activeLayer]: {
@@ -3841,6 +3865,7 @@ export class WsiAnnotationController {
             } else {
                 this.drawGesture = { tool, imageStart: image, pointer: screen };
             }
+            this.reportCursor(screen, image);
             stop(event);
         });
         const move = action((event: PointerEvent) => {
@@ -3877,6 +3902,8 @@ export class WsiAnnotationController {
             } else {
                 this.drawGesture = { ...gesture, pointer: screen };
             }
+            // The viewer's own cursor tracking does not see this move.
+            this.reportCursor(screen);
             stop(event);
         });
         const up = action((event: PointerEvent) => {
