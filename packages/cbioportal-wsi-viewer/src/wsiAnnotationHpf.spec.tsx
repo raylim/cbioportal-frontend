@@ -128,6 +128,33 @@ describe('High-power fields and points inside regions', () => {
         ).toBeCloseTo(0.196, 3);
     });
 
+    it('numbers fields placed before the previous one is saved', async () => {
+        const { controller, service, pointer } = await setup();
+        controller.setTool('hpf');
+        service.hold = true;
+        for (const x of [100, 3000]) {
+            pointer('pointerdown', x, 100);
+            pointer('pointerup', x, 100);
+        }
+        await flush();
+        service.release();
+        await flush();
+        expect(
+            service.calls
+                .filter(call => call.method === 'POST')
+                .map(call => call.body.body.label)
+        ).toEqual(['HPF 1', 'HPF 2']);
+        // Once saved, the next continues from the highest.
+        pointer('pointerdown', 5000, 100);
+        pointer('pointerup', 5000, 100);
+        await flush();
+        expect(
+            service.calls.filter(call => call.method === 'POST')[2].body.body
+                .label
+        ).toBe('HPF 3');
+        expect(controller.hpfSummary?.fields).toBe(3);
+    });
+
     it('needs the slide scale', async () => {
         const { controller } = await setup([], null);
         controller.setTool('hpf');

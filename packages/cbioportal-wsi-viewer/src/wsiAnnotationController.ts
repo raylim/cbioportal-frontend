@@ -1810,8 +1810,15 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
         };
     }
 
-    /** The label of the next high-power field: "HPF" and the next number. */
-    private nextHpfLabel(): string {
+    /** Numbers of high-power fields placed and not saved yet. */
+    private readonly hpfNumbersInFlight = new Set<number>();
+
+    /**
+     * The next high-power field's number: one more than the highest on the
+     * slide or being saved, so fields placed quickly one after another get
+     * different numbers.
+     */
+    private nextHpfNumber(): number {
         let last = 0;
         this.annotations.forEach(annotation => {
             const match = HPF_LABEL_RE.exec(
@@ -1819,7 +1826,8 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
             );
             if (match) last = Math.max(last, Number(match[1]));
         });
-        return `HPF ${last + 1}`;
+        this.hpfNumbersInFlight.forEach(n => (last = Math.max(last, n)));
+        return last + 1;
     }
 
     /** Places a high-power field centred on `center`, in image pixels. */
@@ -1827,13 +1835,19 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
         const radii = this.hpfRadii();
         if (!radii) return;
         const round = (value: number) => Math.round(value * 100) / 100;
-        const annotation = this.draftAnnotation(
-            `<svg><ellipse cx="${round(center.x)}" cy="${round(
-                center.y
-            )}" rx="${round(radii.rx)}" ry="${round(radii.ry)}" /></svg>`,
-            this.nextHpfLabel()
-        );
-        await this.createAnnotation(annotation);
+        const number = this.nextHpfNumber();
+        this.hpfNumbersInFlight.add(number);
+        try {
+            const annotation = this.draftAnnotation(
+                `<svg><ellipse cx="${round(center.x)}" cy="${round(
+                    center.y
+                )}" rx="${round(radii.rx)}" ry="${round(radii.ry)}" /></svg>`,
+                `HPF ${number}`
+            );
+            await this.createAnnotation(annotation);
+        } finally {
+            this.hpfNumbersInFlight.delete(number);
+        }
     }
 
     /** The size of the shape being drawn, for a live readout. */
@@ -4449,20 +4463,26 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
             typeof detail === 'object' &&
             typeof (detail as any).index === 'number'
         ) {
-            const index = (detail as any).index;
-            const message = String((detail as any).msg || 'refused');
+            const named = detail as {
+                index: number;
+                id?: unknown;
+                msg?: unknown;
+            };
+            const message = String(named.msg || 'refused');
+            const index =
+                batch[named.index]?.annotation.id === named.id ||
+                named.id === undefined
+                    ? named.index
+                    : batch.findIndex(
+                          entry => entry.annotation.id === named.id
+                      );
+            // A refusal that names no item of this request saves none.
+            if (index < 0 || index >= batch.length) {
+                return { kind: 'failed', reason: message };
+            }
             return {
                 kind: 'refused',
-                index:
-                    index >= 0 && index < batch.length
-                        ? index
-                        : Math.max(
-                              0,
-                              batch.findIndex(
-                                  entry =>
-                                      entry.annotation.id === (detail as any).id
-                              )
-                          ),
+                index,
                 reason: message,
                 status: response.status,
             };
