@@ -178,6 +178,17 @@ export function formatDensity(perMm2: number): string {
     return `${value} per mm²`;
 }
 
+/**
+ * Whether the user's changes are saved: `saving` counts the annotations
+ * (and comments or notes) being sent or waiting to be sent, `unsaved` the
+ * dropped points the service refused, which Retry sends again.
+ */
+export type WsiSaveStatus =
+    | { state: 'idle' }
+    | { state: 'saved' }
+    | { state: 'saving'; count: number; unsaved: number }
+    | { state: 'unsaved'; count: number };
+
 /** Steps to the next / previous annotation listed, Annotate on or off. */
 export const WSI_NEXT_ANNOTATION_KEY = ']';
 export const WSI_PREVIOUS_ANNOTATION_KEY = '[';
@@ -1085,6 +1096,15 @@ export class WsiAnnotationController {
     private polygonPoints: Array<{ x: number; y: number }> = [];
     /** Dropped points not yet sent, shown already; saved together. */
     private pointQueue: WsiAnnotation[] = [];
+    /** `pointQueue.length`, observed by the save status. */
+    @observable private queuedPointCount = 0;
+    /**
+     * The annotations (or comments or notes) in write requests sent and not
+     * yet answered: a batch counts its items.
+     */
+    @observable private writesInFlight = 0;
+    /** A write on the open slide was saved (see `saveStatus`). */
+    @observable private savedOnSlide = false;
     private pointTimer: ReturnType<typeof setTimeout> | null = null;
     /** The point save in flight, which undo waits for. */
     private pointSave: Promise<void> | null = null;
@@ -1818,6 +1838,59 @@ export class WsiAnnotationController {
         return Boolean(this.apiUrl) && this.accessIssue === null;
     }
 
+    /** Records the point queue's length for the save status. */
+    @action
+    private syncPointQueue() {
+        this.queuedPointCount = this.pointQueue.length;
+    }
+
+    /**
+     * Whether the user's changes are saved, for the toolbar: saving (with
+     * how many annotations, comments or notes are being sent or waiting),
+     * dropped points not saved, saved (after a save on this slide), or
+     * nothing to say yet.
+     */
+    @computed get saveStatus(): WsiSaveStatus {
+        const saving = this.queuedPointCount + this.writesInFlight;
+        const unsaved = this.unsavedPointCount;
+        if (saving) return { state: 'saving', count: saving, unsaved };
+        if (unsaved) return { state: 'unsaved', count: unsaved };
+        return this.savedOnSlide ? { state: 'saved' } : { state: 'idle' };
+    }
+
+    /**
+     * Counts a write request in `writesInFlight` until it is answered: its
+     * items for a batch (`annotations` or `items`), else one. An answer
+     * for the open slide marks it saved.
+     */
+    trackWrite(response: Promise<Response>, body: unknown) {
+        let weight = 1;
+        if (typeof body === 'string') {
+            try {
+                const parsed = JSON.parse(body);
+                const items = parsed?.annotations || parsed?.items;
+                if (Array.isArray(items) && items.length) weight = items.length;
+            } catch (_) {
+                weight = 1;
+            }
+        }
+        const generation = this.generation;
+        action(() => {
+            this.writesInFlight += weight;
+        })();
+        response.then(
+            action((answer: Response) => {
+                this.writesInFlight -= weight;
+                if (answer?.ok && generation === this.generation) {
+                    this.savedOnSlide = true;
+                }
+            }),
+            action(() => {
+                this.writesInFlight -= weight;
+            })
+        );
+    }
+
     /** Dropped points the service refused to save (see `unsaved`). */
     @computed get unsavedPointCount(): number {
         return this.annotations.filter(annotation => annotation.unsaved).length;
@@ -1860,6 +1933,7 @@ export class WsiAnnotationController {
             annotation => byId.get(annotation.id) || annotation
         );
         this.pointQueue.push(...drafts);
+        this.syncPointQueue();
         this.applySelectAction();
         return this.flushPoints();
     }
@@ -3427,6 +3501,7 @@ export class WsiAnnotationController {
 
     /** Forgets the review queue and the focused annotation. */
     private resetFocus() {
+        this.savedOnSlide = false;
         this.ruler = null;
         this.reviewQueue = null;
         this.focusedAnnotationId = null;
@@ -4066,10 +4141,19 @@ export class WsiAnnotationController {
         init: RequestInit = {},
         signal: AbortSignal | undefined = this.abortController?.signal
     ) {
-        return wsiServiceFetch(this.apiUrl || '', path, this.studyId, {
-            ...init,
-            signal,
-        });
+        const response = wsiServiceFetch(
+            this.apiUrl || '',
+            path,
+            this.studyId,
+            {
+                ...init,
+                signal,
+            }
+        );
+        if ((init.method || 'GET').toUpperCase() !== 'GET') {
+            this.trackWrite(response, init.body);
+        }
+        return response;
     }
 
     /**
@@ -4387,6 +4471,7 @@ export class WsiAnnotationController {
         if (queued >= 0) {
             // Not sent yet: drop it from the save.
             this.pointQueue.splice(queued, 1);
+            this.syncPointQueue();
             this.removeAnnotationLocally(id);
             return true;
         }
@@ -5502,6 +5587,7 @@ export class WsiAnnotationController {
         this.annotations = [...this.annotations, annotation];
         this.applyLayerFilter(false);
         this.pointQueue.push(annotation);
+        this.syncPointQueue();
         if (this.pointTimer) clearTimeout(this.pointTimer);
         this.pointTimer = null;
         if (this.pointQueue.length >= BATCH_MAX_ITEMS) {
@@ -5523,6 +5609,7 @@ export class WsiAnnotationController {
         if (this.pointTimer) clearTimeout(this.pointTimer);
         this.pointTimer = null;
         const drafts = this.pointQueue.splice(0);
+        this.syncPointQueue();
         const previous = this.pointSave;
         if (!drafts.length) return previous || Promise.resolve();
         const generation = this.generation;
@@ -5608,6 +5695,7 @@ export class WsiAnnotationController {
         if (this.pointTimer) clearTimeout(this.pointTimer);
         this.pointTimer = null;
         const drafts = this.pointQueue.splice(0);
+        this.syncPointQueue();
         const unsaved = this.unsavedPointCount;
         if (!drafts.length || !this.slideKey) return unsaved;
         if (!this.canWrite) return unsaved + drafts.length;

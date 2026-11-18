@@ -219,6 +219,19 @@ const iconPaths: Record<string, React.ReactNode> = {
         </>
     ),
     undo: <path d="M5.5 3.5l-3 3 3 3M2.5 6.5h7a3.5 3.5 0 010 7H6" />,
+    saved: <path d="M3 8.5l3 3 7-7" />,
+    saving: (
+        <>
+            <path d="M8 2.5a5.5 5.5 0 105.5 5.5" />
+            <path d="M13.5 3v5h-5" />
+        </>
+    ),
+    unsaved: (
+        <>
+            <path d="M8 2l6.5 11.5h-13z" />
+            <path d="M8 6.5v3.2M8 11.6v.1" />
+        </>
+    ),
     redo: <path d="M10.5 3.5l3 3-3 3M13.5 6.5h-7a3.5 3.5 0 000 7H10" />,
     more: (
         <>
@@ -1736,6 +1749,99 @@ const ImportStatus = observer(
     }
 );
 
+/**
+ * Whether the user's changes are saved: "Saved", "Saving… N" while
+ * annotations, comments or notes are being sent, or "N not saved" with
+ * Retry for dropped points the service refused. Shown while Annotate is
+ * on, and whenever something is saving or not saved. The `role="status"`
+ * region stays on the page so that changes are announced.
+ */
+export const SaveStatus = observer(
+    ({ controller }: { controller: WsiAnnotationController }) => {
+        const status = controller.saveStatus;
+        const show =
+            status.state === 'saving' ||
+            status.state === 'unsaved' ||
+            (status.state === 'saved' && controller.annotating);
+        const unsaved =
+            status.state === 'unsaved'
+                ? status.count
+                : status.state === 'saving'
+                ? status.unsaved
+                : 0;
+        const text = !show
+            ? ''
+            : status.state === 'saving'
+            ? `Saving… ${status.count}`
+            : status.state === 'unsaved'
+            ? `${status.count} not saved`
+            : 'Saved';
+        const title =
+            status.state === 'saving'
+                ? `${status.count} change${
+                      status.count === 1 ? ' is' : 's are'
+                  } being saved`
+                : status.state === 'unsaved'
+                ? `${status.count} point${
+                      status.count === 1 ? ' was' : 's were'
+                  } not saved: the service refused them. Retry sends them again.`
+                : 'All changes are saved';
+        return (
+            <span
+                style={{ ...groupStyle, gap: 4 }}
+                data-testid="annotation-save-status-group"
+            >
+                <span
+                    role="status"
+                    aria-live="polite"
+                    data-testid="annotation-save-status"
+                    data-state={show ? status.state : 'idle'}
+                    title={show ? title : undefined}
+                    style={{
+                        display: show ? 'inline-flex' : 'none',
+                        alignItems: 'center',
+                        gap: 3,
+                        padding: '0 3px',
+                        whiteSpace: 'nowrap',
+                        color:
+                            status.state === 'unsaved'
+                                ? colors.error
+                                : colors.muted,
+                    }}
+                >
+                    {show && (
+                        <ToolIcon
+                            name={
+                                status.state === 'saving'
+                                    ? 'saving'
+                                    : status.state === 'unsaved'
+                                    ? 'unsaved'
+                                    : 'saved'
+                            }
+                            size={12}
+                        />
+                    )}
+                    {text}
+                </span>
+                {unsaved > 0 && status.state === 'unsaved' && (
+                    <button
+                        type="button"
+                        data-toolbar-item
+                        data-testid="annotation-save-status-retry"
+                        aria-label={`Retry saving ${unsaved} point${
+                            unsaved === 1 ? '' : 's'
+                        }`}
+                        onClick={() => void controller.retryUnsavedPoints()}
+                        style={smallButtonStyle()}
+                    >
+                        Retry
+                    </button>
+                )}
+            </span>
+        );
+    }
+);
+
 /** Why Annotate is off limits now, or null when the user may annotate. */
 function annotateUnavailable(controller: WsiAnnotationController) {
     if (controller.canEdit) return null;
@@ -1969,6 +2075,7 @@ export const WsiAnnotationToolbar = observer(
                         </span>
                     </>
                 )}
+                <SaveStatus controller={controller} />
                 <DisplayMenu controller={controller} />
                 <MoreMenu
                     controller={controller}
