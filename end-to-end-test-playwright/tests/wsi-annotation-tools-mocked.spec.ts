@@ -131,7 +131,7 @@ async function routeAnnotationService(page: Page, seed: any[] = []) {
         if (method === 'POST' && id === 'batch') {
             const refused = body.annotations
                 .map((item: any, index: number) =>
-                    item.body.label === 'refuse' ? index : -1
+                    item.body.label === 'refuse' || isMachine(item) ? index : -1
                 )
                 .filter((index: number) => index >= 0);
             if (refused.length) {
@@ -204,7 +204,16 @@ async function routeAnnotationService(page: Page, seed: any[] = []) {
                 })
             );
         }
-        if (method === 'POST' && !id) return json(route, 201, create(body));
+        if (method === 'POST' && !id) {
+            // Only trusted writers may create machine-made annotations.
+            if (isMachine(body)) {
+                return json(route, 422, {
+                    detail:
+                        'Only a trusted writer may create a machine-made annotation',
+                });
+            }
+            return json(route, 201, create(body));
+        }
         const row = rows.get(id);
         if (!row) return json(route, 404, { detail: 'Annotation not found' });
         if (sub === 'comments') {
@@ -460,6 +469,92 @@ function polygonPoints(selector: string): Array<{ x: number; y: number }> {
         const [x, y] = pair.split(',').map(Number);
         return { x, y };
     });
+}
+
+/** A square region of the user's, `size` image pixels from (x, y). */
+function ownSquare(
+    id: string,
+    label: string,
+    x: number,
+    y: number,
+    size: number
+) {
+    return {
+        ...seededAnnotation(
+            id,
+            label,
+            `${x},${y} ${x + size},${y} ${x + size},${y + size} ${x},${y +
+                size}`
+        ),
+        created_by: USER,
+    };
+}
+
+/**
+ * Image pixels to the page, from the selection frame of a selected region
+ * whose bounds are `bounds` (the frame is 3 pixels outside them).
+ */
+async function imageToPage(
+    page: Page,
+    id: string,
+    bounds: { minX: number; minY: number; maxX: number; maxY: number }
+) {
+    const frame = (await page
+        .getByTestId(`annotation-selection-frame-${id}`)
+        .locator('rect')
+        .first()
+        .boundingBox())!;
+    const x0 = frame.x + 3;
+    const y0 = frame.y + 3;
+    const sx = (frame.width - 6) / (bounds.maxX - bounds.minX);
+    const sy = (frame.height - 6) / (bounds.maxY - bounds.minY);
+    return (x: number, y: number) => ({
+        x: x0 + (x - bounds.minX) * sx,
+        y: y0 + (y - bounds.minY) * sy,
+    });
+}
+
+/** Drags from `from` to `to` on the page. */
+async function dragOnSlide(
+    page: Page,
+    from: { x: number; y: number },
+    to: { x: number; y: number }
+) {
+    await page.mouse.move(from.x, from.y);
+    await page.mouse.down();
+    await page.mouse.move(to.x, to.y, { steps: 6 });
+    await page.mouse.up();
+}
+
+/** The rings of a saved region selector: `<polygon>` or evenodd paths. */
+function selectorRings(selector: string): number[][][] {
+    const polygon = /<polygon points="([^"]+)"/.exec(selector);
+    const toPairs = (text: string) =>
+        text
+            .trim()
+            .split(/\s+/)
+            .map(pair => pair.split(',').map(Number));
+    if (polygon) return [toPairs(polygon[1])];
+    const rings: number[][][] = [];
+    const re = /d="([^"]+)"/g;
+    let match: RegExpExecArray | null;
+    while ((match = re.exec(selector))) {
+        match[1]
+            .split('Z')
+            .map(part => part.replace(/[ML]/g, ' ').trim())
+            .filter(Boolean)
+            .forEach(part => rings.push(toPairs(part)));
+    }
+    return rings;
+}
+
+function ringArea(ring: number[][]): number {
+    let twice = 0;
+    ring.forEach(([x, y], i) => {
+        const [nx, ny] = ring[(i + 1) % ring.length];
+        twice += x * ny - nx * y;
+    });
+    return Math.abs(twice) / 2;
 }
 
 // Mocked like wsi-foundation-mocked.spec.ts: runs in the WSI suite only.
@@ -1757,6 +1852,313 @@ if (process.env.PW_SUITE === 'wsi') {
                 'title',
                 /Undo create of 3 annotations/
             );
+        });
+
+        test('cuts a hole in a region: the area drops and a click in the hole picks nothing', async ({
+            page,
+        }) => {
+            await openAnnotatedSlide(page);
+            const service = await routeAnnotationService(page, [
+                ownSquare('region', 'Tumor', 156, 156, 200),
+            ]);
+            await gotoSlide(page);
+            await startAnnotating(page);
+            await page.getByTestId('annotation-select-region').check();
+            const at = await imageToPage(page, 'region', {
+                minX: 156,
+                minY: 156,
+                maxX: 356,
+                maxY: 356,
+            });
+            await expect(
+                page.getByTestId('annotation-measurement-region')
+            ).toHaveText('Area 2,500 µm² · Perimeter 200 µm');
+            await page.getByTestId('annotation-bulk-shape').selectOption('cut');
+            await expect(
+                page.getByTestId('annotation-shape-edit-hint')
+            ).toContainText('Cut a hole: draw a shape inside "Tumor"');
+            await pickFromMenu(page, 'shape', 'rectangle');
+            await dragOnSlide(page, at(216, 216), at(296, 296));
+            await expect(
+                page.getByTestId('annotation-bulk-message')
+            ).toHaveText('Cut the shape out of "Tumor".');
+            // One versioned PUT of the region with its hole; nothing created.
+            expect(
+                service.writes.map(write => [write.method, write.path])
+            ).toEqual([['PUT', '/wsi/annotations/region']]);
+            const selector = service.rows.get('region').target.selector.value;
+            expect(selector).toMatch(
+                /^<svg><g><path fill-rule="evenodd" d="M /
+            );
+            const [outer, hole] = selectorRings(selector);
+            const holeArea = ringArea(hole);
+            expect(holeArea).toBeGreaterThan(70 * 70);
+            expect(holeArea).toBeLessThan(90 * 90);
+            const area = (ringArea(outer) - holeArea) * MPP * MPP;
+            await expect(
+                page.getByTestId('annotation-measurement-region')
+            ).toHaveText(
+                new RegExp(
+                    `^Area ${Math.round(area).toLocaleString(
+                        'en-US'
+                    )} µm² · Perimeter`
+                )
+            );
+            if (process.env.WSI_SHOT_DIR) {
+                await page.screenshot({
+                    path: `${process.env.WSI_SHOT_DIR}/cut-hole.png`,
+                });
+            }
+            // Back to Select: Shift+click in the hole selects nothing, on
+            // the region it toggles it.
+            await page.getByTestId('annotation-shape-edit-done').click();
+            const [hx, hy] = [
+                (hole[0][0] + hole[2][0]) / 2,
+                (hole[0][1] + hole[2][1]) / 2,
+            ];
+            await page.keyboard.down('Shift');
+            await page.mouse.click(at(hx, hy).x, at(hx, hy).y);
+            await expect(page.getByTestId('annotation-bulk-count')).toHaveText(
+                '1 selected'
+            );
+            await page.mouse.click(at(180, 180).x, at(180, 180).y);
+            await page.keyboard.up('Shift');
+            await expect(page.getByTestId('annotation-bulk-count')).toHaveCount(
+                0
+            );
+            // Undo puts the square back.
+            await page.getByTestId('annotation-undo').click();
+            await expect
+                .poll(() => service.rows.get('region').target.selector.value)
+                .toMatch(/^<svg><polygon /);
+        });
+
+        test("merges two of the user's regions into one, and undoes it", async ({
+            page,
+        }) => {
+            await openAnnotatedSlide(page);
+            const service = await routeAnnotationService(page, [
+                ownSquare('a', 'A', 156, 156, 120),
+                ownSquare('b', 'B', 236, 156, 120),
+            ]);
+            await gotoSlide(page);
+            await startAnnotating(page);
+            await page.getByTestId('annotation-select-a').check();
+            await page.getByTestId('annotation-select-b').check();
+            await page
+                .getByTestId('annotation-bulk-shape')
+                .selectOption('merge');
+            await expect(
+                page.getByTestId('annotation-bulk-message')
+            ).toHaveText('Merged 2 regions into "A".');
+            await expect.poll(() => service.rows.size).toBe(1);
+            const merged = Array.from(service.rows.values())[0];
+            expect(merged.body).toMatchObject({
+                label: 'A',
+                provenance: {
+                    source: 'manual',
+                    operation: 'merge',
+                    derived_from: ['a', 'b'],
+                },
+            });
+            // The union of two overlapping squares is one 200×120 polygon.
+            const rings = selectorRings(merged.target.selector.value);
+            expect(rings).toHaveLength(1);
+            expect(ringArea(rings[0])).toBe(200 * 120);
+            expect(
+                service.writes.map(write => [write.method, write.path])
+            ).toEqual([
+                ['POST', '/wsi/annotations/batch'],
+                ['DELETE', '/wsi/annotations/a'],
+                ['DELETE', '/wsi/annotations/b'],
+            ]);
+            await expect(page.getByTestId('annotation-bulk-count')).toHaveText(
+                '1 selected'
+            );
+            if (process.env.WSI_SHOT_DIR) {
+                await page.screenshot({
+                    path: `${process.env.WSI_SHOT_DIR}/merge.png`,
+                });
+            }
+
+            const undo = page.getByTestId('annotation-undo');
+            await expect(undo).toHaveAttribute('title', /Undo merge/);
+            await undo.click();
+            await expect.poll(() => service.rows.size).toBe(2);
+            expect(
+                Array.from(service.rows.values())
+                    .map(row => row.body.label)
+                    .sort()
+            ).toEqual(['A', 'B']);
+            await expect(page.getByTestId('annotation-redo')).toHaveAttribute(
+                'title',
+                /Redo merge/
+            );
+        });
+
+        test("keeps another user's shared region in a merge and says so", async ({
+            page,
+        }) => {
+            await openAnnotatedSlide(page);
+            const service = await routeAnnotationService(page, [
+                ownSquare('mine', 'Mine', 156, 156, 120),
+                seededAnnotation(
+                    'theirs',
+                    'Theirs',
+                    '236,156 356,156 356,276 236,276'
+                ),
+            ]);
+            await gotoSlide(page);
+            await startAnnotating(page);
+            await page.getByTestId('annotation-select-mine').check();
+            await page.getByTestId('annotation-select-theirs').check();
+            await page
+                .getByTestId('annotation-bulk-shape')
+                .selectOption('merge');
+            await expect(
+                page.getByTestId('annotation-bulk-message')
+            ).toHaveText(
+                'Merged 2 regions into "Mine". Kept "Theirs": it is not yours, so it stays as it is.'
+            );
+            await expect.poll(() => service.rows.size).toBe(2);
+            expect(service.rows.has('theirs')).toBe(true);
+            expect(service.rows.get('theirs').version).toBe(1);
+            expect(service.rows.has('mine')).toBe(false);
+            const merged = Array.from(service.rows.values()).find(
+                row => row.id !== 'theirs'
+            );
+            expect(merged.created_by).toBe(USER);
+            expect(merged.body.provenance.derived_from).toEqual([
+                'mine',
+                'theirs',
+            ]);
+            await expect(
+                page.getByTestId('annotation-row-theirs')
+            ).toBeVisible();
+        });
+
+        test('splits a region along a line drawn across it', async ({
+            page,
+        }) => {
+            await openAnnotatedSlide(page);
+            const service = await routeAnnotationService(page, [
+                ownSquare('region', 'Tumor', 156, 156, 200),
+            ]);
+            await gotoSlide(page);
+            await startAnnotating(page);
+            await page.getByTestId('annotation-select-region').check();
+            const at = await imageToPage(page, 'region', {
+                minX: 156,
+                minY: 156,
+                maxX: 356,
+                maxY: 356,
+            });
+            await page
+                .getByTestId('annotation-bulk-shape')
+                .selectOption('split');
+            await expect(
+                page.getByTestId('annotation-tool-line')
+            ).toHaveAttribute('aria-pressed', 'true');
+            // Across the lower part, away from the toolbar over the slide.
+            await dragOnSlide(page, at(130, 300), at(380, 300));
+            await expect(
+                page.getByTestId('annotation-bulk-message')
+            ).toHaveText('Split "Tumor" into 2 pieces.');
+            await expect.poll(() => service.rows.size).toBe(2);
+            // The region keeps the larger piece; the other is new, same label.
+            const areas = Array.from(service.rows.values())
+                .map(row =>
+                    ringArea(selectorRings(row.target.selector.value)[0])
+                )
+                .sort((x, y) => y - x);
+            expect(areas[0] + areas[1]).toBeGreaterThan(200 * 200 - 200);
+            expect(areas[1]).toBeGreaterThan(45 * 200);
+            expect(areas[1]).toBeLessThan(65 * 200);
+            expect(
+                Array.from(service.rows.values()).map(row => row.body.label)
+            ).toEqual(['Tumor', 'Tumor']);
+            await expect(page.getByTestId('annotation-bulk-count')).toHaveText(
+                '2 selected'
+            );
+            if (process.env.WSI_SHOT_DIR) {
+                await page.screenshot({
+                    path: `${process.env.WSI_SHOT_DIR}/split.png`,
+                });
+            }
+            await page.getByTestId('annotation-undo').click();
+            await expect.poll(() => service.rows.size).toBe(1);
+            await expect
+                .poll(() => service.rows.get('region').target.selector.value)
+                .toBe(
+                    '<svg><polygon points="156,156 356,156 356,356 156,356" /></svg>'
+                );
+        });
+
+        test('exports a region with a hole as a GeoJSON Polygon with an inner ring', async ({
+            page,
+        }) => {
+            await openAnnotatedSlide(page);
+            const holed = {
+                ...ownSquare('holed', 'Tumor', 0, 0, 1),
+                target: {
+                    selector: {
+                        type: 'SvgSelector',
+                        value:
+                            '<svg><g><path fill-rule="evenodd" d="M 100,100 L 400,100 L 400,400 L 100,400 Z M 200,200 L 300,200 L 300,300 L 200,300 Z" /></g></svg>',
+                    },
+                },
+            };
+            const parts = {
+                ...ownSquare('parts', 'Parts', 0, 0, 1),
+                target: {
+                    selector: {
+                        type: 'SvgSelector',
+                        value:
+                            '<svg><g><path fill-rule="evenodd" d="M 10,10 L 50,10 L 50,50 Z" /><path fill-rule="evenodd" d="M 450,450 L 500,450 L 500,500 Z" /></g></svg>',
+                    },
+                },
+            };
+            await routeAnnotationService(page, [holed, parts]);
+            await gotoSlide(page);
+            // Area: (300² - 100²) px at 0.25 µm per pixel = 5,000 µm².
+            await expect(
+                page.getByTestId('annotation-measurement-holed')
+            ).toHaveText('Area 5,000 µm² · Perimeter 400 µm', {
+                timeout: 15_000,
+            });
+            const [download] = await Promise.all([
+                page.waitForEvent('download'),
+                moreMenu(page, 'annotation-export-all'),
+            ]);
+            const exported = JSON.parse(
+                fs.readFileSync((await download.path())!, 'utf8')
+            );
+            const byId = (id: string) =>
+                exported.features.find((f: any) => f.id === id);
+            expect(byId('holed').geometry).toEqual({
+                type: 'Polygon',
+                coordinates: [
+                    [
+                        [100, 100],
+                        [400, 100],
+                        [400, 400],
+                        [100, 400],
+                        [100, 100],
+                    ],
+                    [
+                        [200, 200],
+                        [300, 200],
+                        [300, 300],
+                        [200, 300],
+                        [200, 200],
+                    ],
+                ],
+            });
+            expect(byId('holed').properties.measurements['Area µm^2']).toBe(
+                5000
+            );
+            expect(byId('parts').geometry.type).toBe('MultiPolygon');
+            expect(byId('parts').geometry.coordinates).toHaveLength(2);
         });
     });
 }
