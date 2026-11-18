@@ -855,12 +855,61 @@ if (process.env.PW_SUITE === 'wsi') {
             const zoomIn = page.getByTitle('Zoom in');
             await zoomIn.click();
             await zoomIn.click();
-            // The Outline button reuses the brush.
-            await page.getByTestId('annotation-tool-outline').click();
+            // The brush stayed on after the first stroke.
+            await expect(
+                page.getByTestId('annotation-tool-outline')
+            ).toHaveAttribute('aria-pressed', 'true');
             await expect
                 .poll(cursorDiameter, { timeout: 10_000 })
                 .toBeGreaterThan(before * 1.5);
             expect(await stroke()).toBeCloseTo(100, -1);
+        });
+
+        test('keeps the drawing tool on for shape after shape until Esc', async ({
+            page,
+        }) => {
+            await openAnnotatedSlide(page);
+            const service = await routeAnnotationService(page);
+            const at = await gotoSlide(page);
+            await startAnnotating(page);
+            const shape = page.getByTestId('annotation-tool-shape');
+            await pickFromMenu(page, 'shape', 'rectangle');
+            await expect(shape).toHaveAttribute('aria-pressed', 'true');
+
+            // Two rectangles back to back, without picking the tool again.
+            for (const [fx, fy] of [
+                [0.3, 0.3],
+                [0.55, 0.55],
+            ]) {
+                const from = at(fx, fy);
+                const to = at(fx + 0.12, fy + 0.1);
+                const saves = service.writes.length;
+                await page.mouse.move(from.x, from.y);
+                await page.mouse.down();
+                await page.mouse.move(to.x, to.y, { steps: 5 });
+                await page.mouse.up();
+                await expect.poll(() => service.writes.length).toBe(saves + 1);
+                await expect(shape).toHaveAttribute('aria-pressed', 'true');
+            }
+            expect(
+                service.writes.map(write => write.body.target.selector.value)
+            ).toEqual([
+                expect.stringMatching(/^<svg><rect /),
+                expect.stringMatching(/^<svg><rect /),
+            ]);
+            // Each takes the next auto label.
+            expect(service.writes.map(write => write.body.body.label)).toEqual([
+                'Default 1',
+                'Default 2',
+            ]);
+            await expect(page.getByTestId('annotation-tooltip')).toHaveCount(0);
+
+            // Esc with nothing being drawn goes back to Select.
+            await page.keyboard.press('Escape');
+            await expect(
+                page.getByTestId('annotation-tool-select')
+            ).toHaveAttribute('aria-pressed', 'true');
+            await expect(shape).toHaveAttribute('aria-pressed', 'false');
         });
 
         test('keeps shapes on their tissue when the slide is zoomed mid-gesture', async ({
@@ -889,8 +938,7 @@ if (process.env.PW_SUITE === 'wsi') {
 
             // The same drag, zoomed in with the wheel at its end: the
             // outline grows with the tissue, and the same tissue is saved.
-            // R picks the Shape menu's last tool again.
-            await page.keyboard.press('r');
+            // The rectangle tool is still on.
             await expect(
                 page.getByTestId('annotation-tool-shape')
             ).toHaveAttribute('aria-pressed', 'true');

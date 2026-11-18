@@ -530,7 +530,8 @@ describe('WsiAnnotationController', () => {
             color: '#ef4444',
             provenance: null,
         });
-        expect(controller.activeTool).toBeNull();
+        // Esc dropped the ellipse being drawn; the tool stays on.
+        expect(controller.activeTool).toBe('ellipse');
     });
 
     it('creates rectangles by drag and polygons by clicking points', async () => {
@@ -582,9 +583,10 @@ describe('WsiAnnotationController', () => {
             pointer('pointermove', 60, 80);
             pointer('pointerup', 60, 80);
             await new Promise(resolve => setTimeout(resolve, 0));
-            expect(controller.activeTool).toBeNull();
-            expect(viewerElement.style.cursor).toBe('');
-            expect(annotationCanvas.style.pointerEvents).toBe('auto');
+            // The tool stays on for the next shape.
+            expect(controller.activeTool).toBe(tool);
+            expect(viewerElement.style.cursor).toBe('crosshair');
+            expect(annotationCanvas.style.pointerEvents).toBe('none');
         }
 
         controller.setTool('polygon');
@@ -610,6 +612,11 @@ describe('WsiAnnotationController', () => {
         });
         expect(requests[2].target.selector.value).toContain('rx="25" ry="25"');
         expect(requests[4].target.selector.value).toContain('<polygon');
+        expect(controller.activeTool).toBe('polygon');
+        expect(controller.customDrawPreview).toBeNull();
+
+        // Esc with nothing being drawn goes back to Select.
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
         expect(controller.activeTool).toBeNull();
         expect(viewerElement.style.cursor).toBe('');
         expect(annotationCanvas.style.pointerEvents).toBe('auto');
@@ -858,7 +865,7 @@ describe('WsiAnnotationController', () => {
         expect(controller.loading).toBe(false);
     });
 
-    it('releases the drawing tool before the save completes', () => {
+    it('starts the next shape before the previous save completes', () => {
         jest.spyOn(global, 'fetch').mockReturnValue(
             new Promise<Response>(() => undefined)
         );
@@ -868,7 +875,116 @@ describe('WsiAnnotationController', () => {
         pointer('pointerdown', 10, 20);
         pointer('pointerup', 60, 80);
 
+        expect(controller.activeTool).toBe('rectangle');
+        pointer('pointerdown', 100, 100);
+        pointer('pointermove', 140, 150);
+        expect(controller.customDrawPreview).toMatchObject({
+            tool: 'rectangle',
+            start: { x: 100, y: 100 },
+            current: { x: 140, y: 150 },
+        });
+    });
+
+    it('draws shapes one after another without picking the tool again', async () => {
+        let saved = 0;
+        jest.spyOn(global, 'fetch').mockImplementation(
+            async (_url: RequestInfo | URL, init?: RequestInit) => {
+                const body = JSON.parse(String(init?.body));
+                saved += 1;
+                return {
+                    ok: true,
+                    json: async () =>
+                        apiAnnotation(
+                            `saved-${saved}`,
+                            1,
+                            body.body.label,
+                            body.body.layer_name,
+                            body.body.type
+                        ),
+                } as Response;
+            }
+        );
+        const { controller, pointer } = attachDrawingController();
+        const labels = () =>
+            (global.fetch as jest.Mock).mock.calls.map(
+                call => JSON.parse(call[1].body).body.label
+            );
+
+        controller.setTool('rectangle');
+        for (const [x, y] of [
+            [10, 20],
+            [100, 120],
+        ]) {
+            pointer('pointerdown', x, y);
+            pointer('pointermove', x + 40, y + 50);
+            pointer('pointerup', x + 40, y + 50);
+            await new Promise(resolve => setTimeout(resolve, 0));
+            expect(controller.activeTool).toBe('rectangle');
+        }
+        // Each shape takes the next auto label.
+        expect(labels()).toEqual(['Default 1', 'Default 2']);
+
+        // A finished polygon leaves the tool on with no vertices; the next
+        // click starts a new polygon.
+        controller.setTool('polygon');
+        for (const start of [200, 400]) {
+            for (const [x, y] of [
+                [start, start],
+                [start + 60, start],
+                [start + 60, start + 60],
+                [start, start],
+            ]) {
+                pointer('pointerdown', x, y);
+                pointer('pointerup', x, y);
+            }
+            await new Promise(resolve => setTimeout(resolve, 0));
+            expect(controller.activeTool).toBe('polygon');
+            expect(controller.customDrawPreview).toBeNull();
+        }
+        const polygons = (global.fetch as jest.Mock).mock.calls
+            .map(call => JSON.parse(call[1].body).target.selector.value)
+            .filter((value: string) => value.includes('<polygon'));
+        expect(polygons).toEqual([
+            '<svg><polygon points="200,200 260,200 260,260" /></svg>',
+            '<svg><polygon points="400,400 460,400 460,460" /></svg>',
+        ]);
+    });
+
+    it('on Esc drops the shape being drawn, then goes back to Select, then clears the selection', async () => {
+        jest.spyOn(global, 'fetch').mockResolvedValue({
+            ok: true,
+            json: async () => apiAnnotation('saved'),
+        } as Response);
+        const { controller, pointer } = attachDrawingController();
+        const esc = () =>
+            document.dispatchEvent(
+                new KeyboardEvent('keydown', { key: 'Escape' })
+            );
+        (controller as any).annotations = [apiAnnotation('a1')].map(item =>
+            (controller as any).fromApi(item, 'slide1')
+        );
+        controller.toggleSelected(controller.annotations[0].id);
+        expect(controller.selectedIds.size).toBe(1);
+
+        controller.setTool('polygon');
+        pointer('pointerdown', 10, 10);
+        pointer('pointerup', 10, 10);
+        pointer('pointerdown', 50, 10);
+        pointer('pointerup', 50, 10);
+        expect(controller.customDrawPreview).not.toBeNull();
+
+        esc();
+        expect(controller.customDrawPreview).toBeNull();
+        expect(controller.activeTool).toBe('polygon');
+        expect(controller.selectedIds.size).toBe(1);
+
+        esc();
         expect(controller.activeTool).toBeNull();
+        expect(controller.selectedIds.size).toBe(1);
+
+        esc();
+        expect(controller.selectedIds.size).toBe(0);
+        expect(global.fetch).not.toHaveBeenCalled();
     });
 
     it('closes a polygon by double-click without duplicating the last vertex', async () => {
@@ -2155,7 +2271,7 @@ describe('WsiAnnotationController', () => {
         expect(sent.target.selector.value).toBe(
             '<svg><polygon points="0,0 200,0 200,200 0,200" /></svg>'
         );
-        expect(controller.activeTool).toBeNull();
+        expect(controller.activeTool).toBe('freehand');
 
         controller.setTool('brush');
         controller.setBrushWidth(10);
@@ -2237,6 +2353,10 @@ describe('WsiAnnotationController', () => {
         }
         expect(bandHeights[0]).toBeCloseTo(100, 1);
         expect(bandHeights[1]).toBeCloseTo(100, 1);
+        // The brush stays on, its outline still under the pointer.
+        expect(controller.activeTool).toBe('brush');
+        expect(controller.brushCursor).not.toBeNull();
+        controller.setTool(null);
         expect(controller.brushCursor).toBeNull();
     });
 
@@ -4018,6 +4138,10 @@ describe('WsiAnnotationController', () => {
                 new KeyboardEvent('keydown', { key: 'Escape' })
             );
             expect(controller.customDrawPreview).toBeNull();
+            expect(controller.activeTool).toBe('line');
+            document.dispatchEvent(
+                new KeyboardEvent('keydown', { key: 'Escape' })
+            );
             expect(controller.activeTool).toBeNull();
             expect(fake.handlerCount('animation')).toBe(1);
 

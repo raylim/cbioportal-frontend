@@ -91,7 +91,8 @@ export interface ShortcutSection {
 export const SHORTCUT_HELP: ShortcutSection[] = [
     {
         title: 'Tools',
-        when: 'While Annotate is on',
+        when:
+            'While Annotate is on; a drawing tool stays on, shape after shape, until Esc, V or another tool',
         keys: [
             [['V'], 'Select: pan, and select or edit shapes'],
             [['R'], 'Shape: the last of rectangle, ellipse, circle'],
@@ -100,7 +101,7 @@ export const SHORTCUT_HELP: ShortcutSection[] = [
             [['F'], 'Freehand'],
             [['B'], 'Brush'],
             [['.'], 'Point'],
-            [['Esc'], 'Back to Select'],
+            [['Esc'], 'Drop the shape being drawn, else back to Select'],
             [['Ctrl+Z'], 'Undo'],
             [['Ctrl+Shift+Z', 'Ctrl+Y'], 'Redo'],
         ],

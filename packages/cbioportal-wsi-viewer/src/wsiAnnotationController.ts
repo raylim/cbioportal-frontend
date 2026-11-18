@@ -2175,8 +2175,6 @@ export class WsiAnnotationController {
                     },
                 ];
             }
-            this.activeTool = null;
-            this.annotorious?.setDrawingEnabled?.(false);
             void this.createAnnotation(annotation);
         });
         // A shape or its vertices were dragged: keep everything but the
@@ -2334,7 +2332,11 @@ export class WsiAnnotationController {
             this.annotating = true;
             this.applySelectAction();
         }
-        if (tool !== null) this.saveToolbarPrefs();
+        if (tool !== null) {
+            this.saveToolbarPrefs();
+            // A tooltip left from Select would sit over the slide.
+            this.annotationTooltip = null;
+        }
         this.activeTool = tool;
         this.brushPointer = null;
         this.resetGesture();
@@ -2424,6 +2426,23 @@ export class WsiAnnotationController {
         return preview;
     }
 
+    /** Whether a shape is being drawn: a press, a stroke or polygon vertices. */
+    get drawingInProgress(): boolean {
+        return (
+            !!this.drawGesture ||
+            !!this.pointerDown ||
+            this.polygonPoints.length > 0
+        );
+    }
+
+    /** Drops the shape being drawn; the tool stays on for the next one. */
+    @action.bound
+    cancelShape() {
+        this.resetGesture();
+        this.annotorious?.cancelDrawing?.();
+    }
+
+    /** Goes back to Select, dropping any shape being drawn. */
     @action.bound
     cancelDrawing() {
         void this.flushPoints();
@@ -4444,6 +4463,7 @@ export class WsiAnnotationController {
                 image,
                 client: { x: event.clientX, y: event.clientY },
             };
+            this.annotationTooltip = null;
             // A point drops on click; a drag still pans the slide.
             if (tool === 'point') return;
             // Keep the press when the pointer leaves the slide.
@@ -4719,8 +4739,11 @@ export class WsiAnnotationController {
     private readonly handleKeyDown = (event: KeyboardEvent) => {
         const typing = isTypingTarget(event.target);
         if (this.handleReviewKey(event, typing)) return;
+        // Esc drops the shape being drawn, else goes back to Select; with
+        // Select it clears the selection (below).
         if (event.key === 'Escape' && this.activeTool) {
-            this.cancelDrawing();
+            if (this.drawingInProgress) this.cancelShape();
+            else this.cancelDrawing();
             return;
         }
         if (typing || event.altKey) return;
@@ -4886,9 +4909,8 @@ export class WsiAnnotationController {
                       tool === 'circle' ? radius : rx
                   }" ry="${tool === 'circle' ? radius : ry}" /></svg>`;
         const annotation = this.draftAnnotation(selector, this.newShapeLabel());
-        // Release the tool before saving so a slow save cannot cut short
-        // the next shape.
-        this.cancelDrawing();
+        // The tool stays on; the next shape may start before this one is saved.
+        this.resetGesture();
         await this.createAnnotation(annotation);
     }
 
@@ -4916,7 +4938,7 @@ export class WsiAnnotationController {
             points,
             STROKE_SIMPLIFY_TOLERANCE * imagePerScreen
         );
-        this.cancelDrawing();
+        this.resetGesture();
         if (tool === 'freehand') {
             // The polygon closes itself; drop an end that returns to the start.
             const first = path[0];
@@ -4949,7 +4971,7 @@ export class WsiAnnotationController {
             .map(point => `${round(point.x)},${round(point.y)}`)
             .join(' ')}" /></svg>`;
         const annotation = this.draftAnnotation(selector, this.newShapeLabel());
-        this.cancelDrawing();
+        this.resetGesture();
         await this.createAnnotation(annotation);
     }
 

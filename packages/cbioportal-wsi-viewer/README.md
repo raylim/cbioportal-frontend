@@ -127,7 +127,7 @@ The toolbar over the slide starts with only **Annotate**, **Display** (an eye) a
 | **Drawing as** | The layer, label and color of new annotations (see below) |
 | **Undo**, **Redo** | See Editing and undo |
 
-The brush width shows next to the tools only while the brush is on, and the point count only while the Point tool is on. Esc goes back to Select. Clicking the active tool again goes back to Select too. Single-key shortcuts work only while Annotate is on and the focus is not in a text field or menu; while Annotate is on, "." picks the Point tool instead of toggling the details sidebar, and OpenSeadragon's R (rotate) and F (flip) keys are off. **⋯** holds **Review AI annotations** (see Reviewing AI annotations), the sharing of new annotations (Shared or Private), **Export** (all annotations, or those on visible layers), **Import…**, and a list of the keyboard shortcuts.
+The brush width shows next to the tools only while the brush is on, and the point count only while the Point tool is on. A drawing tool stays on after each shape, so shapes can be drawn one after another without picking the tool again; the toolbar keeps it highlighted. It stays on until Esc, Select (V), clicking the active tool again, or picking another tool. Esc first drops a shape being drawn (a drag, a stroke, or a polygon's vertices so far) and keeps the tool; with nothing being drawn it goes back to Select; with Select it clears the selection. A polygon ends with a double-click or a click on its first vertex, and the next click starts a new one. Each new shape gets the next auto label. Shift+click and Shift+drag select only with Select. Single-key shortcuts work only while Annotate is on and the focus is not in a text field or menu; while Annotate is on, "." picks the Point tool instead of toggling the details sidebar, and OpenSeadragon's R (rotate) and F (flip) keys are off. **⋯** holds **Review AI annotations** (see Reviewing AI annotations), the sharing of new annotations (Shared or Private), **Export** (all annotations, or those on visible layers), **Import…**, and a list of the keyboard shortcuts.
 
 **Drawing as** has a layer choice, the label field (see Labels) and a color swatch. The color belongs to the layer: choosing a layer switches to its color, and the swatch's palette (the named colors, plus a custom color with an optional name) sets the color of that layer's new annotations; annotations already drawn keep theirs. A layer's color is the one the user gave it, else the most common color of its annotations, else the default blue for **Default** and a color of its own for a new layer. Layer colors, Annotate on or off, and the Shape and Outline menus' last tools are remembered in `localStorage`.
 
@@ -159,7 +159,7 @@ Keys do nothing while the focus is in a text field. On a Mac, ⌘ works for Ctrl
 | L | Line | Annotate on |
 | P, F, B | Polygon, freehand, brush | Annotate on |
 | . | Point (otherwise "." shows or hides the details sidebar) | Annotate on |
-| Esc | Back to Select | A drawing tool is on |
+| Esc | Drop the shape being drawn, else back to Select | A drawing tool is on |
 | H | Hide or show all annotations on the slide | Always |
 | ] and [ | Next and previous listed annotation, fitted and highlighted | Review card closed |
 | Shift+click; Shift+drag | Add or remove an annotation; add those inside the box | No drawing tool on |
