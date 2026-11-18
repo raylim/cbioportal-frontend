@@ -11,8 +11,9 @@ import { WsiRgbaRaster } from './wsiTissueCore';
  *   nearest 10× (about 1 µm per pixel, finer than the view), fetched as
  *   blobs with the viewer's own tile URLs (`/wsi/tiles/zxy/…?studyId&key&enc`)
  *   and stitched into an offscreen raster. It starts as about 512×512
- *   pixels around the click and grows `GROW_TILES` tiles at a time on each
- *   side the selection reaches, up to `TISSUE_RASTER_CAP` pixels a side.
+ *   pixels around the click and grows on each side the selection reaches
+ *   (by half its span, at least `GROW_TILES` tiles), up to
+ *   `TISSUE_RASTER_CAP` pixels a side.
  *
  * Both give rasters with their place on the slide (`originX`, `originY` in
  * level-0 image pixels and `scale` image pixels per raster pixel), so the
@@ -31,7 +32,11 @@ export const TISSUE_RASTER_CAP = 4096;
  * request; larger selections grow it.
  */
 export const INITIAL_WINDOW = 512;
-/** Tiles added on a side the selection reaches. */
+/**
+ * Tiles added on a side the selection reaches: at least this many, and
+ * half the window's span, so the window about doubles each time and a
+ * large selection reaches the cap in a few steps.
+ */
 export const GROW_TILES = 2;
 
 /**
@@ -293,7 +298,8 @@ export class WsiTileMosaic {
     }
 
     /**
-     * Adds `GROW_TILES` tiles on each side in `sides` that can grow.
+     * Adds tiles on each side in `sides` that can grow: `GROW_TILES`, or
+     * half the window's span when that is more.
      * Returns whether the window grew.
      */
     async grow(sides: {
@@ -304,27 +310,29 @@ export class WsiTileMosaic {
     }): Promise<boolean> {
         const { columns, rows } = this.level;
         let { c0, c1, r0, r1 } = this;
-        const take = (room: number, spare: number) =>
-            Math.max(0, Math.min(GROW_TILES, room, spare));
+        const stepC = Math.max(GROW_TILES, Math.ceil((c1 - c0 + 1) / 2));
+        const stepR = Math.max(GROW_TILES, Math.ceil((r1 - r0 + 1) / 2));
+        const take = (room: number, spare: number, step: number) =>
+            Math.max(0, Math.min(step, room, spare));
         let spareC = this.maxColumns - (c1 - c0 + 1);
         let spareR = this.maxRows - (r1 - r0 + 1);
         if (sides.left) {
-            const n = take(c0, spareC);
+            const n = take(c0, spareC, stepC);
             c0 -= n;
             spareC -= n;
         }
         if (sides.right) {
-            const n = take(columns - 1 - c1, spareC);
+            const n = take(columns - 1 - c1, spareC, stepC);
             c1 += n;
             spareC -= n;
         }
         if (sides.top) {
-            const n = take(r0, spareR);
+            const n = take(r0, spareR, stepR);
             r0 -= n;
             spareR -= n;
         }
         if (sides.bottom) {
-            const n = take(rows - 1 - r1, spareR);
+            const n = take(rows - 1 - r1, spareR, stepR);
             r1 += n;
             spareR -= n;
         }

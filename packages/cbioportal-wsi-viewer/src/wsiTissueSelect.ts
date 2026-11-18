@@ -443,7 +443,7 @@ export class WsiTissueSession {
                 this.emit({ busy: true });
                 await this.runStep(target, value);
                 if (!this.steps.includes(target)) continue;
-                if (this.ms === null) this.ms = now() - this.startedAt;
+                this.markOutlined(target);
                 this.emit({
                     busy: !!this.wanted,
                     region: combineSteps(this.steps),
@@ -492,20 +492,24 @@ export class WsiTissueSession {
                 (growable.left ||
                     growable.top ||
                     growable.right ||
-                    growable.bottom) &&
-                (await context.mosaic.grow(growable))
+                    growable.bottom)
             ) {
-                if (!this.steps.includes(step)) return;
-                const grown = await this.loadMosaic(context.mosaic);
-                engine.drop(context.rasterId);
-                step.context = grown;
-                if (this.lastContext === context) this.lastContext = grown;
-                // An outline at once while the window grows.
+                // An outline at once while the window grows; the time to the
+                // outline is the time to this first one.
                 step.region = toImageRegion(result.polygons, raster);
-                this.emit({ region: combineSteps(this.steps) });
-                continue;
+                this.markOutlined(step);
+                this.emit({ region: combineSteps(this.steps), ms: this.ms });
+                // A newer tolerance or click: stop growing for this one.
+                if (this.wanted || !this.steps.includes(step)) return;
+                if (await context.mosaic.grow(growable)) {
+                    if (!this.steps.includes(step)) return;
+                    const grown = await this.loadMosaic(context.mosaic);
+                    engine.drop(context.rasterId);
+                    step.context = grown;
+                    if (this.lastContext === context) this.lastContext = grown;
+                    continue;
+                }
             }
-            step.tolerance = tolerance;
             step.region = toImageRegion(result.polygons, raster);
             const cutAt = (['left', 'top', 'right', 'bottom'] as const).filter(
                 side =>
@@ -523,6 +527,13 @@ export class WsiTissueSession {
                       mpp
                   )} across): add the rest with Shift+click.`;
             return;
+        }
+    }
+
+    /** Records the time from the click to its first outline. */
+    private markOutlined(step: WandStep) {
+        if (this.ms === null && step === this.steps[this.steps.length - 1]) {
+            this.ms = now() - this.startedAt;
         }
     }
 
