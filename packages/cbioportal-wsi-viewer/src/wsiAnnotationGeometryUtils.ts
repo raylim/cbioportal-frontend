@@ -324,6 +324,37 @@ export function formatMeasurement(measurement: WsiMeasurement): string {
     return parts.join(' · ');
 }
 
+/**
+ * A quick ruler's reading between two image points: its length (µm with an
+ * mpp, else pixels), scaled per axis, and its angle from the horizontal in
+ * degrees, 0 to 180, counter-clockwise as seen on the slide (y points down
+ * in image pixels).
+ */
+export function measureRuler(
+    start: WsiPoint,
+    end: WsiPoint,
+    mpp?: WsiMpp | null
+): { unit: 'um' | 'px'; length: number; angle: number } {
+    const dx = (end.x - start.x) * (mpp ? mpp.x : 1);
+    const dy = (end.y - start.y) * (mpp ? mpp.y : 1);
+    const length = Math.hypot(dx, dy);
+    let angle = length ? (Math.atan2(-dy, dx) * 180) / Math.PI : 0;
+    if (angle < 0) angle += 180;
+    if (angle >= 180) angle -= 180;
+    return { unit: mpp ? 'um' : 'px', length, angle };
+}
+
+/** A ruler's reading, e.g. "1.25 mm · 34°". */
+export function formatRuler(reading: {
+    unit: 'um' | 'px';
+    length: number;
+    angle: number;
+}): string {
+    return `${formatLength(reading.length, reading.unit)} · ${Math.round(
+        reading.angle
+    ) % 180}°`;
+}
+
 export interface WsiBounds {
     minX: number;
     minY: number;

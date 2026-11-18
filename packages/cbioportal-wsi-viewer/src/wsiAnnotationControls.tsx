@@ -15,6 +15,7 @@ import {
     isUnreviewedAi,
 } from './wsiAnnotationBody';
 import { ReviewQueueButton } from './wsiAnnotationReview';
+import { WsiRulerLine } from './wsiAnnotationOverlay';
 
 // Text colors keep at least 4.5:1 contrast on the panel's white.
 const colors = {
@@ -1761,6 +1762,15 @@ export const WsiAnnotationDrawPreview = observer(
                         strokeWidth={2}
                         fill={controller.activeColor}
                         fillOpacity={0.2}
+                    />
+                ) : preview.tool === 'measure' ? (
+                    <WsiRulerLine
+                        x1={x1}
+                        y1={y1}
+                        x2={x2}
+                        y2={y2}
+                        text={null}
+                        testId="annotation-ruler-preview"
                     />
                 ) : preview.tool === 'line' ? (
                     <line

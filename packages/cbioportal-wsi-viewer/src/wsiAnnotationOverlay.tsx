@@ -2,6 +2,68 @@ import * as React from 'react';
 import { observer } from 'mobx-react';
 import { WsiAnnotationController } from './wsiAnnotationController';
 import { SLIDE_LABEL_FONT_SIZE, WsiScreenBox } from './wsiAnnotationSpatial';
+import { RULER_COLOR, RULER_HALO, rulerTicks } from './wsiAnnotationSnapshot';
+
+/**
+ * The quick ruler from (`x1`, `y1`) to (`x2`, `y2`) in screen pixels: a
+ * yellow line on a dark halo with ticks across its ends, and its reading
+ * next to the end, white on a dark outline (readable on any tissue).
+ */
+export function WsiRulerLine({
+    x1,
+    y1,
+    x2,
+    y2,
+    text,
+    testId,
+}: {
+    x1: number;
+    y1: number;
+    x2: number;
+    y2: number;
+    text: string | null;
+    testId: string;
+}) {
+    const a = { x: x1, y: y1 };
+    const b = { x: x2, y: y2 };
+    const segments = [[a, b], ...rulerTicks(a, b)];
+    const path = segments
+        .map(([from, to]) => `M${from.x},${from.y}L${to.x},${to.y}`)
+        .join('');
+    return (
+        <g data-testid={testId}>
+            <path
+                d={path}
+                stroke={RULER_HALO}
+                strokeWidth={4}
+                strokeLinecap="round"
+                fill="none"
+            />
+            <path
+                d={path}
+                stroke={RULER_COLOR}
+                strokeWidth={2}
+                strokeLinecap="round"
+                fill="none"
+            />
+            {text && (
+                <text
+                    data-testid={`${testId}-text`}
+                    x={x2 + 12}
+                    y={y2 - 10}
+                    fontSize={12}
+                    fontWeight={600}
+                    fill="#fff"
+                    stroke={RULER_HALO}
+                    strokeWidth={3}
+                    paintOrder="stroke"
+                >
+                    {text}
+                </text>
+            )}
+        </g>
+    );
+}
 
 /** Space between a shape and its highlight, in screen pixels. */
 const HIGHLIGHT_PADDING = 6;
@@ -21,7 +83,7 @@ function padded(box: WsiScreenBox, padding: number, min: number) {
 
 /**
  * Drawn over the slide, in screen pixels, following it as it moves: labels
- * on the slide, and the highlight of the focused annotation (under review,
+ * on the slide, the quick ruler, and the highlight of the focused annotation (under review,
  * stepped to, or opened by a link). It ignores the pointer. The downloaded
  * view draws the labels again (see `wsiAnnotationSnapshot`), not the
  * highlight or selection.
@@ -32,7 +94,8 @@ export const WsiAnnotationOverlay = observer(
         const labels = controller.slideLabels;
         const selected = controller.selectedBoxes;
         const drag = controller.selectionDragBox;
-        if (!focused && !labels.length && !selected.length && !drag) {
+        const ruler = controller.rulerOnScreen;
+        if (!focused && !labels.length && !selected.length && !drag && !ruler) {
             return null;
         }
         const box =
@@ -117,6 +180,7 @@ export const WsiAnnotationOverlay = observer(
                         strokeDasharray="4 3"
                     />
                 )}
+                {ruler && <WsiRulerLine {...ruler} testId="annotation-ruler" />}
                 {box && (
                     <g data-testid="annotation-focus-highlight">
                         <rect

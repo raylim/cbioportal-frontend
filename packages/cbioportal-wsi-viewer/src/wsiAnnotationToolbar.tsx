@@ -78,6 +78,12 @@ export const TOOL_INFO: Record<DrawingTool, ToolInfo> = {
         shortcut: '.',
         hint: 'click for each point (drag to pan)',
     },
+    measure: {
+        label: 'Measure',
+        shortcut: 'M',
+        hint:
+            'drag to measure a length and angle; not saved, shown until the next one or Esc',
+    },
 };
 
 /** A group of keyboard shortcuts in the help, and when they work. */
@@ -97,11 +103,15 @@ export const SHORTCUT_HELP: ShortcutSection[] = [
             [['V'], 'Select: pan, and select or edit shapes'],
             [['R'], 'Shape: the last of rectangle, ellipse, circle'],
             [['L'], 'Line'],
+            [['M'], 'Measure: a quick ruler, not saved'],
             [['P'], 'Polygon'],
             [['F'], 'Freehand'],
             [['B'], 'Brush'],
             [['.'], 'Point'],
-            [['Esc'], 'Drop the shape being drawn, else back to Select'],
+            [
+                ['Esc'],
+                'Drop the shape being drawn, else clear the ruler, else back to Select',
+            ],
             [['Ctrl+Z'], 'Undo'],
             [['Ctrl+Shift+Z', 'Ctrl+Y'], 'Redo'],
         ],
@@ -187,6 +197,12 @@ const iconPaths: Record<string, React.ReactNode> = {
         />
     ),
     point: <circle cx="8" cy="8" r="2.6" fill="currentColor" />,
+    measure: (
+        <>
+            <path d="M1.8 10.6l8.8-8.8 3.6 3.6-8.8 8.8z" />
+            <path d="M4.4 9.8l1.2 1.2M6.2 8l1.8 1.8M8 6.2l1.2 1.2M9.8 4.4l1.8 1.8" />
+        </>
+    ),
     undo: <path d="M5.5 3.5l-3 3 3 3M2.5 6.5h7a3.5 3.5 0 010 7H6" />,
     redo: <path d="M10.5 3.5l3 3-3 3M13.5 6.5h-7a3.5 3.5 0 000 7H10" />,
     more: (
@@ -1758,6 +1774,11 @@ export const WsiAnnotationToolbar = observer(
                                 controller={controller}
                                 tool="line"
                                 testId="annotation-tool-line"
+                            />
+                            <ToolButton
+                                controller={controller}
+                                tool="measure"
+                                testId="annotation-tool-measure"
                             />
                             <ToolMenuButton
                                 controller={controller}

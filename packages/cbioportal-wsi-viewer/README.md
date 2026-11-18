@@ -122,6 +122,7 @@ The toolbar over the slide starts with only **Annotate**, **Display** (an eye) a
 | **Select** (V) | Pan, and click a shape to select it; the user's own shapes can then be moved or reshaped |
 | **Shape** (R) | Rectangle, ellipse or circle. The button draws with the last one picked; the arrow next to it opens the menu |
 | **Line** (L) | A line, with its length shown while drawing |
+| **Measure** (M) | A quick ruler that is never saved (see Quick ruler) |
 | **Outline** | Polygon (P), freehand (F) or brush (B); like Shape, the button reuses the last one |
 | **Point** (.) | Points, one per click |
 | **Drawing as** | The layer, label and color of new annotations (see below) |
@@ -146,7 +147,7 @@ The toolbar is a `role="toolbar"`: the arrow keys, Home and End move between its
 
 Fill, outlines only and labels are remembered in `localStorage` (and the viewer works without it); hiding all is not, so a slide never opens looking empty. Labels, highlights and selection frames are drawn over the slide in their own layer that ignores the pointer. GeoJSON exports hold annotation data only.
 
-The status bar's download button saves the view as shown: the slide's canvas with the annotations drawn over it (`wsiAnnotationSnapshot.ts`). Only what shows on the slide is drawn: shown layers (solo and hidden layers count, and the unreviewed-AI filter), nothing while all are hidden (H) or annotations are off, with the Display fill opacity or outlines only, and the labels on the slide when they are on. Shapes are traced in level-0 image pixels through the same image-to-screen mapping as the overlay and drawn at the snapshot's own resolution (the measured canvas-to-screen pixel ratio), so they land on the same tissue at any device pixel ratio; outlines are 2 screen pixels and points are the same markers as on screen. The shape being drawn, the selection, the selection box and the review highlight are left out. The file name is unchanged (`wsi-{patient}-{slide key}-x{x}-y{y}.jpg`).
+The status bar's download button saves the view as shown: the slide's canvas with the annotations drawn over it (`wsiAnnotationSnapshot.ts`). Only what shows on the slide is drawn: shown layers (solo and hidden layers count, and the unreviewed-AI filter), nothing while all are hidden (H) or annotations are off, with the Display fill opacity or outlines only, and the labels on the slide when they are on. Shapes are traced in level-0 image pixels through the same image-to-screen mapping as the overlay and drawn at the snapshot's own resolution (the measured canvas-to-screen pixel ratio), so they land on the same tissue at any device pixel ratio; outlines are 2 screen pixels and points are the same markers as on screen. The quick ruler is drawn too while it shows, even with H. The shape being drawn, the selection, the selection box and the review highlight are left out. The file name is unchanged (`wsi-{patient}-{slide key}-x{x}-y{y}.jpg`).
 
 Each row under **Layers** has a solo button (a circle, filled when on) that shows only that layer; pressing it again, or **Show all layers** in the Display popover, shows the layers hidden before again. Showing or hiding a layer with its eye ends the solo.
 
@@ -161,7 +162,8 @@ Keys do nothing while the focus is in a text field. On a Mac, ⌘ works for Ctrl
 | L | Line | Annotate on |
 | P, F, B | Polygon, freehand, brush | Annotate on |
 | . | Point (otherwise "." shows or hides the details sidebar) | Annotate on |
-| Esc | Drop the shape being drawn, else back to Select | A drawing tool is on |
+| M | Measure: a quick ruler, not saved | Annotate on |
+| Esc | Drop the shape being drawn, else clear the ruler, else back to Select | A drawing tool is on, or a ruler shows |
 | H | Hide or show all annotations on the slide | Always |
 | ] and [ | Next and previous listed annotation, fitted and highlighted | Review card closed |
 | Shift+click; Shift+drag | Add or remove an annotation; add those inside the box | No drawing tool on |
@@ -233,6 +235,10 @@ Each annotation can carry a free-text note, kept in `body.comment` and separate 
 #### Measurements
 
 The list and the click tooltip show each annotation's size: the length of a line, and the area and perimeter of a rectangle, ellipse, circle or polygon (including freehand and brush shapes). Coordinates are level-0 image pixels, scaled by the slide's microns-per-pixel (`tile_metadata.mpp`, the scale the status bar uses) on each axis, so slides with unequal x and y scales measure correctly. Lengths are shown in µm, or mm from 1 mm; areas in µm², or mm² from 0.01 mm². An ellipse's perimeter uses Ramanujan's approximation. Without a valid mpp the sizes are in pixels and the panel says so, also before any annotation exists. Drawing a line, rectangle, ellipse or circle shows its length or area next to the cursor. `wsiAnnotationGeometryUtils.ts` holds the math.
+
+#### Quick ruler
+
+**Measure** (M), next to Line, measures without saving anything: drag on the slide and the length (µm, or mm from 1 mm, scaled per axis by the slide's mpp; pixels without one) and the angle from the horizontal (0–179°, counter-clockwise as seen) show next to the pointer. On release the ruler stays on the slide, a yellow line with end ticks and its reading, and follows the slide as it pans and zooms. It stays until the next measurement or Esc (a click without a drag keeps it); like the drawing tools, Measure stays on until Esc, V or another tool. Esc first drops a measurement being dragged, then clears the ruler, then goes back to Select. The ruler is not an annotation: it is never sent to the service, is not on the undo history, is not in GeoJSON exports, and goes when another slide opens. The downloaded view includes it while it shows, also while the annotations are hidden (H).
 
 #### Points
 

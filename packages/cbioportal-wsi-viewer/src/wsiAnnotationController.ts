@@ -3,6 +3,8 @@ import { WsiAnnotation } from './wsiViewerTypes';
 import {
     brushWidthInImagePixels,
     formatMeasurement,
+    formatRuler,
+    measureRuler,
     measureShape,
     normalizeSvgSelector,
     parseAnnotationShape,
@@ -69,6 +71,8 @@ export type WsiAnnotationTool =
     | 'point'
     | 'freehand'
     | 'brush'
+    /** A quick ruler: measures a length on the slide, never saved. */
+    | 'measure'
     | null;
 
 type WsiPointerAnnotationTool = Exclude<WsiAnnotationTool, null>;
@@ -99,6 +103,7 @@ export const WSI_TOOL_SHORTCUTS: Record<
     v: 'select',
     r: 'shape',
     l: 'line',
+    m: 'measure',
     p: 'polygon',
     f: 'freehand',
     b: 'brush',
@@ -791,6 +796,21 @@ export interface WsiDrawPreview {
     imageCurrent?: WsiXY;
 }
 
+/** The quick ruler's ends, in image pixels (see `ruler`). */
+export interface WsiRuler {
+    start: WsiXY;
+    end: WsiXY;
+}
+
+/** The quick ruler on screen: its ends now, and its reading. */
+export interface WsiRulerOnScreen {
+    x1: number;
+    y1: number;
+    x2: number;
+    y2: number;
+    text: string;
+}
+
 /** OpenSeadragon events after which the slide sits elsewhere on screen. */
 const VIEWPORT_EVENTS = [
     'animation',
@@ -943,6 +963,12 @@ export class WsiAnnotationController {
     @observable focusedAnnotationId: string | null = null;
     /** Bumped when the slide moves on screen, so previews follow it. */
     @observable private viewportRevision = 0;
+    /**
+     * The last quick measurement (Measure, M): shown until the next one or
+     * Esc, never saved or exported; drawn in the downloaded view while it
+     * shows.
+     */
+    @observable.ref ruler: WsiRuler | null = null;
 
     private generation = 0;
     private loadGeneration = 0;
@@ -1376,6 +1402,9 @@ export class WsiAnnotationController {
         if (!preview?.imageStart || !preview.imageCurrent) return null;
         const a = preview.imageStart;
         const b = preview.imageCurrent;
+        if (preview.tool === 'measure') {
+            return formatRuler(measureRuler(a, b, this.mpp));
+        }
         let shape: WsiAnnotationShape | null = null;
         if (preview.tool === 'line') {
             shape = { kind: 'line', points: [a, b] };
@@ -2431,6 +2460,29 @@ export class WsiAnnotationController {
         return preview;
     }
 
+    /** Clears the quick ruler (Esc, or another slide). */
+    @action.bound
+    clearRuler() {
+        this.ruler = null;
+    }
+
+    /** The quick ruler on screen, following the slide as it moves. */
+    @computed get rulerOnScreen(): WsiRulerOnScreen | null {
+        const ruler = this.ruler;
+        if (!ruler || !this.visible) return null;
+        void this.viewportRevision;
+        const a = this.screenPoint(ruler.start);
+        const b = this.screenPoint(ruler.end);
+        if (!a || !b) return null;
+        return {
+            x1: a.x,
+            y1: a.y,
+            x2: b.x,
+            y2: b.y,
+            text: formatRuler(measureRuler(ruler.start, ruler.end, this.mpp)),
+        };
+    }
+
     /** Whether a shape is being drawn: a press, a stroke or polygon vertices. */
     get drawingInProgress(): boolean {
         return (
@@ -3048,6 +3100,7 @@ export class WsiAnnotationController {
 
     /** Forgets the review queue and the focused annotation. */
     private resetFocus() {
+        this.ruler = null;
         this.reviewQueue = null;
         this.focusedAnnotationId = null;
         this.linkMessage = null;
@@ -3090,6 +3143,7 @@ export class WsiAnnotationController {
             !!this.focusedAnnotationId ||
             this.selectedIds.size > 0 ||
             !!this.selectionDrag ||
+            !!this.ruler ||
             (this.showSlideLabels && !this.hideAll)
         );
     }
@@ -3129,22 +3183,23 @@ export class WsiAnnotationController {
      * The annotations as the slide shows them now, for the downloaded view:
      * the shown layers (solo and hidden layers, the unreviewed-AI filter),
      * in their colors with the Display fill, and the labels on the slide
-     * when they are on. Null while nothing shows (hidden, or H). Transient
-     * drawing (the shape being drawn, the selection, the highlight) is left
-     * out.
+     * when they are on, and the quick ruler while it shows. Null while
+     * nothing shows (hidden, or H without a ruler). Transient drawing (the
+     * shape being drawn, the selection, the highlight) is left out.
      */
     snapshotScene(): WsiAnnotationScene | null {
-        if (!this.visible || this.hideAll) return null;
+        if (!this.visible) return null;
         const affine = this.screenAffine();
         if (!affine) return null;
         const scene: WsiAnnotationScene = {
             affine,
             shapes: [],
             points: [],
-            labels: this.slideLabels,
+            labels: this.hideAll ? [] : this.slideLabels,
             fillOpacity: this.outlineOnly ? 0 : this.fillOpacity,
         };
-        for (const annotation of this.shownAnnotations) {
+        const shown = this.hideAll ? [] : this.shownAnnotations;
+        for (const annotation of shown) {
             const shape = this.shapeOf(annotation);
             if (!shape) continue;
             if (shape.kind === 'point') {
@@ -3160,7 +3215,18 @@ export class WsiAnnotationController {
                 });
             }
         }
-        if (!scene.shapes.length && !scene.points.length) return null;
+        // The quick ruler shows whatever hides the annotations.
+        if (this.ruler) {
+            scene.ruler = {
+                ...this.ruler,
+                text: formatRuler(
+                    measureRuler(this.ruler.start, this.ruler.end, this.mpp)
+                ),
+            };
+        }
+        if (!scene.shapes.length && !scene.points.length && !scene.ruler) {
+            return null;
+        }
         const element = this.osdViewer?.element as HTMLElement | undefined;
         if (element && typeof getComputedStyle === 'function') {
             scene.fontFamily =
@@ -4714,6 +4780,18 @@ export class WsiAnnotationController {
             }
 
             this.drawGesture = null;
+            if (start.tool === 'measure') {
+                // A click without a drag keeps the last measurement.
+                const moved = Math.hypot(
+                    event.clientX - start.client.x,
+                    event.clientY - start.client.y
+                );
+                if (moved > CLICK_TOLERANCE) {
+                    this.ruler = { start: start.image, end: endPoint };
+                }
+                stop(event);
+                return;
+            }
             void this.createCustomShape(start.image, endPoint, start.tool);
             stop(event);
         });
@@ -4808,11 +4886,22 @@ export class WsiAnnotationController {
     private readonly handleKeyDown = (event: KeyboardEvent) => {
         const typing = isTypingTarget(event.target);
         if (this.handleReviewKey(event, typing)) return;
-        // Esc drops the shape being drawn, else goes back to Select; with
-        // Select it clears the selection (below).
+        // Esc drops the shape being drawn, then the quick ruler, then goes
+        // back to Select; with Select it clears the selection (below).
+        if (
+            event.key === 'Escape' &&
+            this.activeTool &&
+            this.drawingInProgress
+        ) {
+            this.cancelShape();
+            return;
+        }
+        if (event.key === 'Escape' && this.ruler && !typing) {
+            this.clearRuler();
+            return;
+        }
         if (event.key === 'Escape' && this.activeTool) {
-            if (this.drawingInProgress) this.cancelShape();
-            else this.cancelDrawing();
+            this.cancelDrawing();
             return;
         }
         if (typing || event.altKey) return;

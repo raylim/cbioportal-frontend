@@ -28,6 +28,34 @@ export interface WsiAnnotationScene {
     fillOpacity: number;
     /** The font family of the labels on the slide. */
     fontFamily?: string;
+    /** The quick ruler, in image pixels, with its reading. */
+    ruler?: { start: WsiPoint; end: WsiPoint; text: string };
+}
+
+/** The quick ruler's line and halo colors, as on screen. */
+export const RULER_COLOR = '#ffd400';
+export const RULER_HALO = 'rgba(0,0,0,0.75)';
+/** Half the length of the ticks across the ruler's ends, in screen pixels. */
+export const RULER_TICK = 6;
+
+/**
+ * The ruler's ticks: across each end, perpendicular to the ruler, in
+ * screen pixels.
+ */
+export function rulerTicks(
+    a: WsiPoint,
+    b: WsiPoint
+): Array<[WsiPoint, WsiPoint]> {
+    const length = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+    const nx = (-(b.y - a.y) / length) * RULER_TICK;
+    const ny = ((b.x - a.x) / length) * RULER_TICK;
+    return [a, b].map(
+        end =>
+            [
+                { x: end.x - nx, y: end.y - ny },
+                { x: end.x + nx, y: end.y + ny },
+            ] as [WsiPoint, WsiPoint]
+    );
 }
 
 /** The outline width of shapes on the slide, in screen pixels. */
@@ -139,6 +167,35 @@ export function drawAnnotationScene(
         context.fillStyle = point.color;
         context.fill();
         context.stroke();
+    }
+    if (scene.ruler) {
+        const a = screen(scene.ruler.start);
+        const b = screen(scene.ruler.end);
+        const segments: Array<[WsiPoint, WsiPoint]> = [
+            [a, b],
+            ...rulerTicks(a, b),
+        ];
+        context.lineCap = 'round';
+        for (const [width, color] of [
+            [4, RULER_HALO],
+            [2, RULER_COLOR],
+        ] as Array<[number, string]>) {
+            context.beginPath();
+            segments.forEach(([from, to]) => {
+                context.moveTo(from.x, from.y);
+                context.lineTo(to.x, to.y);
+            });
+            context.lineWidth = width;
+            context.strokeStyle = color;
+            context.stroke();
+        }
+        context.font = `600 12px ${scene.fontFamily || 'sans-serif'}`;
+        context.textBaseline = 'alphabetic';
+        context.lineWidth = 3;
+        context.strokeStyle = RULER_HALO;
+        context.fillStyle = '#fff';
+        context.strokeText(scene.ruler.text, b.x + 12, b.y - 10);
+        context.fillText(scene.ruler.text, b.x + 12, b.y - 10);
     }
     if (scene.labels.length) {
         context.font = `${SLIDE_LABEL_FONT_SIZE}px ${scene.fontFamily ||
