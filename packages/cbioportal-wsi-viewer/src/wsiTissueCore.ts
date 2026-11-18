@@ -15,8 +15,9 @@
  * mostly in hue and chroma (a*, b*), which count fully. Within one tissue
  * class the staining intensity (lightness) varies with section thickness
  * and focus more than the hue does, so lightness counts half. The raster is
- * first smoothed with a 3×3 box blur, so single nuclei and noise do not
- * break a region up. A stain-separation measure (color deconvolution) was
+ * first smoothed with a box blur about 1 µm each way (3×3 at 1 µm per
+ * pixel), so single nuclei and noise do not break a region up; the blur
+ * and the seed window are in µm, so a click outlines alike at any zoom. A stain-separation measure (color deconvolution) was
  * not used: it needs per-stain vectors (H&E, H-DAB, other chromogens) that
  * vary by lab and scanner, while Lab needs none.
  */
@@ -114,66 +115,95 @@ export function labDistance(
 }
 
 /**
- * Smooths the raster (3×3 box blur, edges clamped) and quantizes it into
- * Lab bins. Pixels with alpha under 128, and their blurred neighbours'
- * contribution, are left out; a transparent pixel is `VOID`.
+ * Smooths the raster with a box blur of `blurRadius` pixels each way (3×3
+ * at 1; edges clamped; separable running sums, so the cost does not grow
+ * with the radius) and quantizes it into Lab bins. Pixels with alpha under
+ * 128, and their neighbours' contribution, are left out; a transparent
+ * pixel is `VOID`.
  */
-export function prepareRaster(raster: WsiRgbaRaster): WsiPreparedRaster {
+export function prepareRaster(
+    raster: WsiRgbaRaster,
+    blurRadius = 1
+): WsiPreparedRaster {
     const { width, height, data } = raster;
-    const n = width * height;
-    // Horizontal pass: sums of up to 3 opaque neighbours per channel.
-    const sum = new Uint16Array(n * 3);
-    const count = new Uint8Array(n);
+    const r = Math.max(0, Math.floor(blurRadius));
+    const span = 2 * r + 1;
+    // Each row's horizontal window sums, kept for the rows in the vertical
+    // window (a ring of `span` rows), and the running column sums.
+    const ringSum = new Uint32Array(span * width * 3);
+    const ringCount = new Uint32Array(span * width);
+    const colSum = new Uint32Array(width * 3);
+    const colCount = new Uint32Array(width);
+    const horizontal = (y: number) => {
+        const slot = (y % span) * width;
+        const row = y * width;
+        let sr = 0;
+        let sg = 0;
+        let sb = 0;
+        let sc = 0;
+        const add = (x: number, sign: number) => {
+            if (x < 0 || x >= width) return;
+            const p = (row + x) * 4;
+            if (data[p + 3] < 128) return;
+            sr += sign * data[p];
+            sg += sign * data[p + 1];
+            sb += sign * data[p + 2];
+            sc += sign;
+        };
+        for (let x = 0; x < r; x++) add(x, 1);
+        for (let x = 0; x < width; x++) {
+            add(x + r, 1);
+            add(x - r - 1, -1);
+            const o = (slot + x) * 3;
+            ringSum[o] = sr;
+            ringSum[o + 1] = sg;
+            ringSum[o + 2] = sb;
+            ringCount[slot + x] = sc;
+        }
+    };
+    const column = (y: number, sign: number) => {
+        const slot = (y % span) * width;
+        for (let x = 0; x < width; x++) {
+            const o = (slot + x) * 3;
+            colSum[x * 3] += sign * ringSum[o];
+            colSum[x * 3 + 1] += sign * ringSum[o + 1];
+            colSum[x * 3 + 2] += sign * ringSum[o + 2];
+            colCount[x] += sign * ringCount[slot + x];
+        }
+    };
+    const bins = new Uint16Array(width * height);
+    for (let y = 0; y < Math.min(r, height); y++) {
+        horizontal(y);
+        column(y, 1);
+    }
     for (let y = 0; y < height; y++) {
+        if (y + r < height) {
+            horizontal(y + r);
+            column(y + r, 1);
+        }
         const row = y * width;
         for (let x = 0; x < width; x++) {
-            let r = 0;
-            let g = 0;
-            let b = 0;
-            let c = 0;
-            for (let dx = -1; dx <= 1; dx++) {
-                const xx = x + dx;
-                if (xx < 0 || xx >= width) continue;
-                const p = (row + xx) * 4;
-                if (data[p + 3] < 128) continue;
-                r += data[p];
-                g += data[p + 1];
-                b += data[p + 2];
-                c++;
-            }
-            const o = (row + x) * 3;
-            sum[o] = r;
-            sum[o + 1] = g;
-            sum[o + 2] = b;
-            count[row + x] = c;
-        }
-    }
-    const bins = new Uint16Array(n);
-    for (let y = 0; y < height; y++) {
-        for (let x = 0; x < width; x++) {
-            const i = y * width + x;
-            if (data[i * 4 + 3] < 128) {
+            const i = row + x;
+            const c = colCount[x];
+            if (data[i * 4 + 3] < 128 || !c) {
                 bins[i] = VOID;
                 continue;
             }
-            let r = 0;
-            let g = 0;
-            let b = 0;
-            let c = 0;
-            for (let dy = -1; dy <= 1; dy++) {
-                const yy = y + dy;
-                if (yy < 0 || yy >= height) continue;
-                const j = yy * width + x;
-                r += sum[j * 3];
-                g += sum[j * 3 + 1];
-                b += sum[j * 3 + 2];
-                c += count[j];
-            }
-            const qr = Math.min(LEVELS - 1, Math.round(r / c) >> SHIFT);
-            const qg = Math.min(LEVELS - 1, Math.round(g / c) >> SHIFT);
-            const qb = Math.min(LEVELS - 1, Math.round(b / c) >> SHIFT);
+            const qr = Math.min(
+                LEVELS - 1,
+                Math.round(colSum[x * 3] / c) >> SHIFT
+            );
+            const qg = Math.min(
+                LEVELS - 1,
+                Math.round(colSum[x * 3 + 1] / c) >> SHIFT
+            );
+            const qb = Math.min(
+                LEVELS - 1,
+                Math.round(colSum[x * 3 + 2] / c) >> SHIFT
+            );
             bins[i] = (qr << (2 * BITS)) | (qg << BITS) | qb;
         }
+        if (y - r >= 0) column(y - r, -1);
     }
     return { width, height, bins };
 }
@@ -742,6 +772,8 @@ export interface WsiOutlineOptions {
     simplify: number;
     /** Parts smaller than this many square raster pixels are dropped. */
     minPartArea?: number;
+    /** The seed color is the mean within this many pixels of the click. */
+    seedRadius?: number;
 }
 
 function outline(
@@ -774,7 +806,7 @@ export function wandSelect(
     mask?: Uint8Array,
     color?: [number, number, number] | null
 ): WsiTissueResult {
-    const seed = color || seedColor(raster, x, y);
+    const seed = color || seedColor(raster, x, y, options.seedRadius);
     if (!seed) {
         return {
             polygons: [],
@@ -801,7 +833,10 @@ export function smartBrushSelect(
     color?: [number, number, number] | null
 ): WsiTissueResult {
     const seed =
-        color || (path.length ? seedColor(raster, path[0].x, path[0].y) : null);
+        color ||
+        (path.length
+            ? seedColor(raster, path[0].x, path[0].y, options.seedRadius)
+            : null);
     if (!seed || !path.length) {
         return {
             polygons: [],

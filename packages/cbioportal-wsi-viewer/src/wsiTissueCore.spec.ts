@@ -313,6 +313,26 @@ describe('tissue selection core', () => {
         expect(polygonArea(parts.polygons[0])).toBeGreaterThan(50);
     });
 
+    it('smooths with a box blur of the given radius, transparent pixels left out', () => {
+        // One black pixel in white (245), next to a transparent column.
+        const r = raster(9, 9, (x, y) =>
+            x === 0 ? null : x === 4 && y === 4 ? [0, 0, 0] : WHITE
+        );
+        // The red channel's 5-bit level at (x, 4).
+        const red = (radius: number, x: number) =>
+            (prepareRaster(r, radius).bins[4 * 9 + x] >> 10) & 31;
+        expect(red(0, 4)).toBe(0);
+        // Radius 1: a ninth black next to it (245·8/9 = 218), none 2 away.
+        expect(red(1, 5)).toBe(218 >> 3);
+        expect(red(1, 6)).toBe(245 >> 3);
+        // Radius 2: a 25th black 2 away (245·24/25 = 235).
+        expect(red(2, 6)).toBe(235 >> 3);
+        // The transparent column is void; its neighbour averages only the
+        // opaque pixels, so it stays white.
+        expect(prepareRaster(r, 2).bins[4 * 9]).toBe(0x8000);
+        expect(red(2, 1)).toBe(245 >> 3);
+    });
+
     it('selects nothing where the seed is off the slide', () => {
         const r = prepareRaster(raster(10, 10, () => null));
         const result = wandSelect(r, 5, 5, 20, OPTIONS);

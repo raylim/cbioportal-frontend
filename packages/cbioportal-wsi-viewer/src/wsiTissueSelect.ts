@@ -37,6 +37,10 @@ export const MIN_PART_UM2 = 50;
 export const SIMPLIFY_UM = 1;
 /** …and never under this many raster pixels (the staircase of the mask). */
 const SIMPLIFY_MIN_RASTER_PX = 0.75;
+/** The smoothing blur's radius, in µm of tissue. */
+export const BLUR_RADIUS_UM = 1;
+/** The seed color is the mean within this radius of the click, in µm. */
+export const SEED_RADIUS_UM = 2.5;
 /** Without a scale: holes under this many raster pixels are filled. */
 const HOLE_FILL_RASTER_PX = 64;
 
@@ -158,7 +162,24 @@ export function outlineOptions(
             micron > 0 ? SIMPLIFY_UM / micron : 0
         ),
         minPartArea: pixelArea > 0 ? MIN_PART_UM2 / pixelArea : 4,
+        seedRadius: Math.max(
+            2,
+            micron > 0 ? Math.round(SEED_RADIUS_UM / micron) : 2
+        ),
     };
+}
+
+/**
+ * The smoothing blur's radius for a raster of `scale` image pixels per
+ * pixel: about `BLUR_RADIUS_UM` (1 at 1 µm per pixel, 4 at 0.25), so the
+ * same tissue is smoothed alike at any zoom; 1 without a scale.
+ */
+export function blurRadius(
+    scale: number,
+    mpp: { x: number; y: number } | null | undefined
+): number {
+    const micron = mpp ? ((mpp.x + mpp.y) / 2) * scale : 0;
+    return micron > 0 ? Math.max(1, Math.round(BLUR_RADIUS_UM / micron)) : 1;
 }
 
 /** "about 4.1 mm" for a raster side, or pixels without a scale. */
@@ -312,7 +333,10 @@ export class WsiTissueSession {
             const raster = await this.host.readScreen();
             if (raster) {
                 const { data, ...meta } = raster;
-                const rasterId = await engine.setRaster(raster);
+                const rasterId = await engine.setRaster(
+                    raster,
+                    blurRadius(raster.scale, this.host.mpp())
+                );
                 return (this.lastContext = {
                     raster: meta,
                     rasterId,
@@ -346,7 +370,10 @@ export class WsiTissueSession {
         const engine = await this.getEngine();
         const raster = mosaic.raster();
         const { data, ...meta } = raster;
-        const rasterId = await engine.setRaster(raster);
+        const rasterId = await engine.setRaster(
+            raster,
+            blurRadius(raster.scale, this.host.mpp())
+        );
         return { raster: meta, rasterId, mosaic, viewKey: null };
     }
 
@@ -610,7 +637,10 @@ export class WsiTissueSession {
             if (raster) {
                 const engine = await this.getEngine();
                 const { data, ...meta } = raster;
-                const rasterId = await engine.setRaster(raster);
+                const rasterId = await engine.setRaster(
+                    raster,
+                    blurRadius(raster.scale, this.host.mpp())
+                );
                 return { raster: meta, rasterId, mosaic: null, viewKey: null };
             }
         }

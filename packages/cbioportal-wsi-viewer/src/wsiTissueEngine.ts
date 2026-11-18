@@ -18,12 +18,18 @@ import {
 export interface WsiTissueEngine {
     /** 'worker' or 'main' (no Worker, or it did not answer). */
     readonly kind: 'worker' | 'main';
-    /** Sends a raster (its pixels are transferred to the worker). */
-    setRaster(raster: {
-        width: number;
-        height: number;
-        data: Uint8ClampedArray;
-    }): Promise<number>;
+    /**
+     * Sends a raster (its pixels are transferred to the worker), to be
+     * smoothed with a box blur of `blurRadius` pixels.
+     */
+    setRaster(
+        raster: {
+            width: number;
+            height: number;
+            data: Uint8ClampedArray;
+        },
+        blurRadius?: number
+    ): Promise<number>;
     run(
         request: Extract<WsiTissueRequest, { type: 'wand' | 'paint' }>
     ): Promise<WsiTissueComputed>;
@@ -48,13 +54,16 @@ export function createMainThreadEngine(): WsiTissueEngine {
         );
     return {
         kind: 'main',
-        setRaster(raster) {
+        setRaster(raster, blurRadius) {
             const rasterId = nextRasterId++;
             return later(() => {
                 handleTissueMessage(state, {
                     type: 'raster',
                     rasterId,
-                    ...raster,
+                    width: raster.width,
+                    height: raster.height,
+                    data: raster.data,
+                    blurRadius,
                 });
                 return rasterId;
             });
@@ -104,11 +113,19 @@ function createWorkerEngine(worker: Worker): WsiTissueEngine {
         });
     return {
         kind: 'worker',
-        async setRaster(raster) {
+        async setRaster(raster, blurRadius) {
             const rasterId = nextRasterId++;
-            await send({ type: 'raster', rasterId, ...raster }, [
-                raster.data.buffer,
-            ]);
+            await send(
+                {
+                    type: 'raster',
+                    rasterId,
+                    width: raster.width,
+                    height: raster.height,
+                    data: raster.data,
+                    blurRadius,
+                },
+                [raster.data.buffer]
+            );
             return rasterId;
         },
         run(request) {

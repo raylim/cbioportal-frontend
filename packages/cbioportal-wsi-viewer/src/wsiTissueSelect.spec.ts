@@ -13,6 +13,7 @@ import {
     WsiTileMosaic,
 } from './wsiTissuePixels';
 import {
+    blurRadius,
     combineSteps,
     outlineOptions,
     WsiTissueSession,
@@ -337,7 +338,13 @@ describe('tissue sessions', () => {
             maxHoleArea: 500,
             simplify: 1,
             minPartArea: 50,
+            seedRadius: 3,
         });
+        // The seed window and the blur are in µm too: 2.5 µm and 1 µm.
+        expect(outlineOptions(1, { x: 0.25, y: 0.25 }).seedRadius).toBe(10);
+        expect(blurRadius(4, { x: 0.25, y: 0.25 })).toBe(1);
+        expect(blurRadius(1, { x: 0.25, y: 0.25 })).toBe(4);
+        expect(blurRadius(1, null)).toBe(1);
         // 0.125 µm per pixel (on screen at 80×): the 0.75-pixel floor is
         // under 1 µm, so 8 pixels.
         expect(outlineOptions(0.5, { x: 0.25, y: 0.25 }).simplify).toBe(8);
@@ -345,6 +352,7 @@ describe('tissue sessions', () => {
             maxHoleArea: 64,
             simplify: 0.75,
             minPartArea: 4,
+            seedRadius: 2,
         });
     });
 

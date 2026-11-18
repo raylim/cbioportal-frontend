@@ -20,6 +20,8 @@ export type WsiTissueRequest =
           width: number;
           height: number;
           data: Uint8ClampedArray;
+          /** The smoothing box blur's radius, in pixels. */
+          blurRadius?: number;
       }
     | { type: 'drop'; rasterId: number }
     | {
@@ -65,7 +67,7 @@ export function handleTissueMessage(
 ): WsiTissueComputed | { rasterId: number } | null {
     switch (message.type) {
         case 'raster': {
-            const prepared = prepareRaster(message);
+            const prepared = prepareRaster(message, message.blurRadius);
             state.rasters.set(message.rasterId, {
                 prepared,
                 mask: new Uint8Array(message.width * message.height),
