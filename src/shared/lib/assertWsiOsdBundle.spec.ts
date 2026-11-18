@@ -5,6 +5,7 @@ import path from 'path';
 const {
     assertWsiOsdBundle,
     OPENSEADRAGON_MARKER,
+    TISSUE_MARKER,
 } = require('../../../scripts/assert_wsi_osd_bundle');
 
 const OSD_LIBRARY = `console.error(${JSON.stringify(
@@ -63,6 +64,22 @@ describe('assertWsiOsdBundle', () => {
                     'wsi-openseadragon.123.js'
                 );
             }
+        );
+    });
+
+    it('fails when the tissue tools are in an initial bundle', () => {
+        withDist(
+            {
+                'reactapp/common.bundle.js': `x=${JSON.stringify(
+                    TISSUE_MARKER
+                )};`,
+                'reactapp/main.app.js': RUNTIME_CHUNK_NAMES,
+                'reactapp/wsi-openseadragon.123.js': OSD_LIBRARY,
+            },
+            distDir =>
+                expect(() => assertWsiOsdBundle({ distDir })).toThrow(
+                    /tissue tools in an asynchronous chunk, but they are in common\.bundle\.js/
+                )
         );
     });
 

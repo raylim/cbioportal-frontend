@@ -163,7 +163,13 @@ describe('WsiAnnotationToolbar', () => {
             Array.from(outline.querySelectorAll('[role="menuitemradio"]')).map(
                 item => item.textContent
             )
-        ).toEqual(['PolygonP', 'FreehandF', 'BrushB']);
+        ).toEqual([
+            'PolygonP',
+            'FreehandF',
+            'BrushB',
+            'Smart brushShift+B',
+            'Magic wandW',
+        ]);
         fireEvent.keyDown(outline, { key: 'Escape' });
         expect(screen.queryByRole('menu')).toBeNull();
         expect(document.activeElement).toBe(

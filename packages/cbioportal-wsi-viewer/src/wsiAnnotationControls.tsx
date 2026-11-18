@@ -2240,7 +2240,10 @@ const StrokePolyline = observer(
 const BrushCursor = observer(
     ({ controller }: { controller: WsiAnnotationController }) => {
         const cursor = controller.brushCursor;
-        if (!cursor || controller.activeTool !== 'brush') return null;
+        const tool = controller.activeTool;
+        if (!cursor || (tool !== 'brush' && tool !== 'smartBrush')) {
+            return null;
+        }
         return (
             <circle
                 data-testid="annotation-brush-cursor"
@@ -2318,7 +2321,10 @@ export const WsiAnnotationDrawPreview = observer(
         const radius = Math.min(rawRx, rawRy);
         const rx = preview.tool === 'circle' ? radius : rawRx;
         const ry = preview.tool === 'circle' ? radius : rawRy;
-        const stroke = preview.tool === 'freehand' || preview.tool === 'brush';
+        const stroke =
+            preview.tool === 'freehand' ||
+            preview.tool === 'brush' ||
+            preview.tool === 'smartBrush';
         // A stroke's points are placed by StrokePolyline as they come.
         const polygonPoints = stroke
             ? undefined
@@ -2341,14 +2347,21 @@ export const WsiAnnotationDrawPreview = observer(
                     zIndex: 19,
                 }}
             >
-                {preview.tool === 'freehand' || preview.tool === 'brush' ? (
+                {stroke ? (
+                    // The smart brush shows its path thinly: what it paints
+                    // is its live outline (WsiTissueOverlay).
                     <StrokePolyline
                         controller={controller}
                         stroke={controller.activeColor}
                         strokeOpacity={preview.tool === 'brush' ? 0.45 : 1}
+                        strokeDasharray={
+                            preview.tool === 'smartBrush' ? '4 3' : undefined
+                        }
                         strokeWidth={
                             preview.tool === 'brush'
                                 ? preview.strokeWidth || 1
+                                : preview.tool === 'smartBrush'
+                                ? 1.5
                                 : 2
                         }
                         strokeLinecap="round"

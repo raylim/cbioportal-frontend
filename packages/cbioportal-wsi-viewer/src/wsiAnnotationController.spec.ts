@@ -4274,7 +4274,9 @@ describe('WsiAnnotationController', () => {
             controller.setAnnotating(true);
             expect(canvasKey('r')).toBe(true);
             expect(canvasKey('f')).toBe(true);
-            expect(canvasKey('w')).toBe(false);
+            // W picks the magic wand; S still pans down.
+            expect(canvasKey('w')).toBe(true);
+            expect(canvasKey('s')).toBe(false);
         });
 
         it('edits shapes only while Annotate is on, and stops drawing when it goes off', () => {

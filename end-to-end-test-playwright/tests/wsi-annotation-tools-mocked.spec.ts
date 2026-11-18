@@ -1,4 +1,5 @@
 import * as fs from 'fs';
+import * as zlib from 'zlib';
 import { Page, Route } from '@playwright/test';
 import { expect, test } from '../fixtures';
 import {
@@ -380,7 +381,8 @@ function seededAnnotation(
 async function openAnnotatedSlide(
     page: Page,
     size = 512,
-    config: Record<string, unknown> = {}
+    config: Record<string, unknown> = {},
+    meta: Record<string, unknown> = {}
 ) {
     await installFoundationMocks(page);
     await page.route('**/config_service', route =>
@@ -403,6 +405,7 @@ async function openAnnotatedSlide(
         dimensions: { width: size, height: size },
         level_dimensions: [{ width: size, height: size }],
         mpp: { x: MPP, y: MPP },
+        ...meta,
     } as typeof tileMetadata;
     await page.route('**/api/resource-table/query/fetch', route => {
         const query = route.request().postDataJSON();
@@ -432,6 +435,172 @@ async function gotoSlide(page: Page) {
         x: box.x + box.width * fx,
         y: box.y + box.height * fy,
     });
+}
+
+/** CRC-32 of `data`, for PNG chunks. */
+function crc32(data: Buffer): number {
+    let crc = 0xffffffff;
+    for (let i = 0; i < data.length; i++) {
+        crc ^= data[i];
+        for (let k = 0; k < 8; k++) {
+            crc = crc & 1 ? (crc >>> 1) ^ 0xedb88320 : crc >>> 1;
+        }
+    }
+    return (crc ^ 0xffffffff) >>> 0;
+}
+
+/** An RGB PNG of `width`×`height` pixels colored by `color(x, y)`. */
+function encodePng(
+    width: number,
+    height: number,
+    color: (x: number, y: number) => [number, number, number]
+): Buffer {
+    const raw = Buffer.alloc((width * 3 + 1) * height);
+    for (let y = 0; y < height; y++) {
+        const row = y * (width * 3 + 1);
+        for (let x = 0; x < width; x++) {
+            const [r, g, b] = color(x, y);
+            raw[row + 1 + x * 3] = r;
+            raw[row + 2 + x * 3] = g;
+            raw[row + 3 + x * 3] = b;
+        }
+    }
+    const chunk = (type: string, data: Buffer) => {
+        const length = Buffer.alloc(4);
+        length.writeUInt32BE(data.length);
+        const body = Buffer.concat([Buffer.from(type, 'ascii'), data]);
+        const crc = Buffer.alloc(4);
+        crc.writeUInt32BE(crc32(body));
+        return Buffer.concat([length, body, crc]);
+    };
+    const header = Buffer.alloc(13);
+    header.writeUInt32BE(width, 0);
+    header.writeUInt32BE(height, 4);
+    header[8] = 8; // bit depth
+    header[9] = 2; // RGB
+    return Buffer.concat([
+        Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+        chunk('IHDR', header),
+        chunk('IDAT', zlib.deflateSync(raw)),
+        chunk('IEND', Buffer.alloc(0)),
+    ]);
+}
+
+/** The synthetic slide for the tissue tools: 4096 pixels, 5 levels. */
+const TISSUE_SLIDE = 4096;
+const TISSUE_META = {
+    max_zoom: 4,
+    levels: 5,
+    level_dimensions: [4096, 2048, 1024, 512, 256].map(side => ({
+        width: side,
+        height: side,
+    })),
+    level_downsamples: [1, 2, 4, 8, 16],
+    objective_power: 40,
+};
+type Disk = {
+    x: number;
+    y: number;
+    r: number;
+    color: [number, number, number];
+};
+/**
+ * Pink tissue (radius 1300) holding a purple disk (radius 300), a white
+ * lumen (radius 150), a brown disk (radius 150) and a lighter pink disk
+ * (radius 160) close to the tissue's color; later disks lie over earlier.
+ */
+const TISSUE_DISKS: Disk[] = [
+    { x: 2048, y: 2048, r: 1300, color: [232, 160, 205] },
+    { x: 1500, y: 2000, r: 300, color: [120, 70, 165] },
+    { x: 2600, y: 2100, r: 150, color: [243, 243, 243] },
+    { x: 2200, y: 2900, r: 150, color: [150, 95, 50] },
+    { x: 2500, y: 1500, r: 160, color: [248, 205, 230] },
+];
+
+function tissueColor(x: number, y: number): [number, number, number] {
+    let color: [number, number, number] = [243, 243, 243];
+    TISSUE_DISKS.forEach(disk => {
+        if ((x - disk.x) ** 2 + (y - disk.y) ** 2 <= disk.r * disk.r) {
+            color = disk.color;
+        }
+    });
+    return color;
+}
+
+/**
+ * Serves the synthetic slide's tiles (`/wsi/tiles/zxy/{z}/{x}/{y}`, level
+ * `max_zoom` at full resolution); collects the tile URLs requested.
+ */
+async function routeTissueTiles(page: Page, requested: string[] = []) {
+    const cache = new Map<string, Buffer>();
+    await page.route('**/wsi/tiles/**', route => {
+        const url = new URL(route.request().url());
+        requested.push(url.pathname);
+        const [z, x, y] = url.pathname
+            .split('/')
+            .slice(-3)
+            .map(Number);
+        const key = `${z}/${x}/${y}`;
+        if (!cache.has(key)) {
+            const downsample = 2 ** (TISSUE_META.max_zoom - z);
+            cache.set(
+                key,
+                encodePng(256, 256, (i, j) =>
+                    tissueColor(
+                        (x * 256 + i + 0.5) * downsample,
+                        (y * 256 + j + 0.5) * downsample
+                    )
+                )
+            );
+        }
+        return route.fulfill({
+            status: 200,
+            contentType: 'image/png',
+            body: cache.get(key)!,
+        });
+    });
+    return requested;
+}
+
+/**
+ * Opens the synthetic slide centred on image point (cx, cy) at viewport
+ * zoom `z` (1: the slide's width fills the view); returns a mapping from
+ * image pixels to the page.
+ */
+async function gotoTissueView(page: Page, cx: number, cy: number, z: number) {
+    await page.goto(
+        `/wsi/patient/${PATIENT_ID}?studyId=${STUDY_ID}#wsi:slide=${SLIDE_KEY}&x=${cx}&y=${cy}&z=${z}`
+    );
+    await expect(page.getByTestId('wsi-annotation-toolbar')).toBeVisible({
+        timeout: 30_000,
+    });
+    const stage = page.locator('.openseadragon-container').first();
+    const box = (await stage.boundingBox())!;
+    const perScreen = TISSUE_SLIDE / (box.width * z);
+    return (x: number, y: number) => ({
+        x: box.x + box.width / 2 + (x - cx) / perScreen,
+        y: box.y + box.height / 2 + (y - cy) / perScreen,
+    });
+}
+
+/** The wand's outline once it has settled; its data attributes. */
+async function settledOutline(page: Page) {
+    const outline = page.getByTestId('annotation-tissue-outline');
+    await expect(outline).toHaveAttribute('data-busy', 'false', {
+        timeout: 20_000,
+    });
+    await expect(outline).not.toHaveAttribute('data-ms', '');
+    return outline;
+}
+
+/** The subpaths (rings) of the wand's outline path. */
+async function outlineRings(page: Page): Promise<number> {
+    const d = await page
+        .getByTestId('annotation-tissue-outline')
+        .locator('path')
+        .first()
+        .getAttribute('d');
+    return (d || '').split('M').length - 1;
 }
 
 /** Turns Annotate on once the slide's annotations have loaded. */
@@ -2159,6 +2328,224 @@ if (process.env.PW_SUITE === 'wsi') {
             );
             expect(byId('parts').geometry.type).toBe('MultiPolygon');
             expect(byId('parts').geometry.coordinates).toHaveLength(2);
+        });
+    });
+
+    test.describe('WSI tissue tools', () => {
+        test('outlines tissue with the magic wand: tolerance, Shift adds, Alt cuts, saves and undoes', async ({
+            page,
+        }) => {
+            await openAnnotatedSlide(page, TISSUE_SLIDE, {}, TISSUE_META);
+            const tiles = await routeTissueTiles(page);
+            const service = await routeAnnotationService(page);
+            // Zoomed out (about 7×): the wand fetches 10× tiles.
+            const at = await gotoTissueView(page, 2048, 2048, 0.8);
+            await startAnnotating(page);
+            const magnification = await page
+                .getByTestId('wsi-magnification')
+                .textContent();
+            await page.keyboard.press('w');
+            await expect(
+                page.getByTestId('annotation-tool-outline')
+            ).toHaveAttribute('aria-pressed', 'true');
+            const value = page.getByTestId('annotation-tissue-tolerance-value');
+            await expect(value).toHaveText('15');
+            const fetchedBefore = tiles.length;
+            const purple = at(1500, 2000);
+            await page.mouse.click(purple.x, purple.y);
+            const outline = await settledOutline(page);
+            await expect(outline).toHaveAttribute('data-source', 'tiles');
+            // Level 2 (10×, downsample 4) tiles were fetched for it.
+            expect(
+                tiles.slice(fetchedBefore).some(path => /\/zxy\/2\//.test(path))
+            ).toBe(true);
+            await expect(
+                page.getByTestId('annotation-tissue-source')
+            ).toContainText('10× tiles');
+            expect(await outlineRings(page)).toBe(1);
+            // Dragging the press up 20 pixels raises the tolerance by 10; a
+            // scroll down lowers it by 1 and does not zoom.
+            await page.mouse.move(purple.x, purple.y);
+            await page.mouse.down();
+            await page.mouse.move(purple.x, purple.y - 10);
+            await page.mouse.move(purple.x, purple.y - 20);
+            await page.mouse.up();
+            await expect(value).toHaveText('25');
+            await expect(
+                page.getByTestId('annotation-tissue-tolerance-chip')
+            ).toHaveText('Tolerance 25');
+            await page.mouse.wheel(0, 100);
+            await expect(value).toHaveText('24');
+            await expect(page.getByTestId('wsi-magnification')).toHaveText(
+                magnification!
+            );
+            await settledOutline(page);
+            // Shift+click adds the brown disk: two parts.
+            const brown = at(2200, 2900);
+            await page.keyboard.down('Shift');
+            await page.mouse.click(brown.x, brown.y);
+            await page.keyboard.up('Shift');
+            await expect.poll(() => outlineRings(page)).toBe(2);
+            await settledOutline(page);
+            if (process.env.WSI_SHOT_DIR) {
+                await page.screenshot({
+                    path: `${process.env.WSI_SHOT_DIR}/wand-shift-add.png`,
+                });
+            }
+            await page.keyboard.press('Enter');
+            await expect.poll(() => service.writes.length).toBe(1);
+            expect(service.writes[0].method).toBe('POST');
+            const saved = service.writes[0].body.target.selector.value;
+            expect(selectorRings(saved)).toHaveLength(2);
+            const purpleArea =
+                ringArea(selectorRings(saved)[0]) +
+                ringArea(selectorRings(saved)[1]);
+            const expected = Math.PI * (300 * 300 + 150 * 150);
+            expect(purpleArea / expected).toBeGreaterThan(0.95);
+            expect(purpleArea / expected).toBeLessThan(1.05);
+            await expect(
+                page.getByTestId('annotation-tissue-outline')
+            ).toHaveCount(0);
+            // Undo deletes it.
+            await page.getByTestId('annotation-undo').click();
+            await expect.poll(() => service.writes.length).toBe(2);
+            expect(service.writes[1].method).toBe('DELETE');
+
+            // The pink tissue at 24 takes in the lighter disk; Alt+click on
+            // it, dragged down to 4, cuts it out as a hole.
+            const pink = at(2048, 2500);
+            await page.mouse.click(pink.x, pink.y);
+            await settledOutline(page);
+            const ringsBefore = await outlineRings(page);
+            const light = at(2500, 1500);
+            await page.keyboard.down('Alt');
+            await page.mouse.move(light.x, light.y);
+            await page.mouse.down();
+            await page.mouse.move(light.x, light.y + 20);
+            await page.mouse.move(light.x, light.y + 40);
+            await page.mouse.up();
+            await page.keyboard.up('Alt');
+            await expect(value).toHaveText('4');
+            await expect.poll(() => outlineRings(page)).toBe(ringsBefore + 1);
+            await settledOutline(page);
+            if (process.env.WSI_SHOT_DIR) {
+                await page.screenshot({
+                    path: `${process.env.WSI_SHOT_DIR}/wand-alt-cut.png`,
+                });
+            }
+            // A double-click inside the outline saves it.
+            await page.mouse.dblclick(pink.x, pink.y);
+            await expect.poll(() => service.writes.length).toBe(3);
+            const holed = service.writes[2].body.target.selector.value;
+            expect(holed).toMatch(/^<svg><g><path fill-rule="evenodd" d="M /);
+            // The outer ring with the purple, lumen, brown and cut holes.
+            expect(selectorRings(holed)).toHaveLength(ringsBefore + 1);
+            await page.getByTestId('annotation-undo').click();
+            await expect.poll(() => service.writes.length).toBe(4);
+            expect(service.writes[3].method).toBe('DELETE');
+        });
+
+        test('outlines the same tissue from 10× tiles and from on-screen pixels', async ({
+            page,
+        }) => {
+            await openAnnotatedSlide(page, TISSUE_SLIDE, {}, TISSUE_META);
+            await routeTissueTiles(page);
+            const service = await routeAnnotationService(page);
+            const areas: Record<string, number> = {};
+            for (const [z, source] of [
+                [0.8, 'tiles'],
+                [3, 'screen'],
+            ] as const) {
+                const at = await gotoTissueView(page, 1500, 2000, z);
+                if (source === 'tiles') {
+                    await startAnnotating(page);
+                } else {
+                    // Same document: reload for the new view. Annotate stays
+                    // on (remembered).
+                    await page.reload();
+                    await expect(
+                        page.getByTestId('annotation-mode-toggle')
+                    ).toHaveAttribute('aria-disabled', 'false', {
+                        timeout: 15_000,
+                    });
+                    await expect(
+                        page.getByTestId('annotation-tools')
+                    ).toBeVisible();
+                }
+                await page.keyboard.press('w');
+                await expect(
+                    page.getByTestId('annotation-tool-outline')
+                ).toHaveAttribute('aria-pressed', 'true');
+                const purple = at(1500, 2000);
+                await page.mouse.click(purple.x, purple.y);
+                const outline = await settledOutline(page);
+                await expect(outline).toHaveAttribute('data-source', source);
+                const writes = service.writes.length;
+                await page.keyboard.press('Enter');
+                await expect.poll(() => service.writes.length).toBe(writes + 1);
+                const rings = selectorRings(
+                    service.writes[writes].body.target.selector.value
+                );
+                expect(rings).toHaveLength(1);
+                areas[source] = ringArea(rings[0]);
+                if (process.env.WSI_SHOT_DIR && source === 'screen') {
+                    await page.screenshot({
+                        path: `${process.env.WSI_SHOT_DIR}/wand-screen-saved.png`,
+                    });
+                }
+            }
+            const disk = Math.PI * 300 * 300;
+            expect(areas.tiles / disk).toBeGreaterThan(0.96);
+            expect(areas.screen / disk).toBeGreaterThan(0.96);
+            expect(Math.abs(areas.tiles - areas.screen) / disk).toBeLessThan(
+                0.03
+            );
+        });
+
+        test('paints along a tissue edge with the smart brush', async ({
+            page,
+        }) => {
+            await openAnnotatedSlide(page, TISSUE_SLIDE, {}, TISSUE_META);
+            await routeTissueTiles(page);
+            const service = await routeAnnotationService(page);
+            const at = await gotoTissueView(page, 1500, 2000, 2);
+            await startAnnotating(page);
+            await page.keyboard.press('Shift+B');
+            await expect(
+                page.getByTestId('annotation-brush-width')
+            ).toBeVisible();
+            await expect(
+                page.getByTestId('annotation-tissue-tolerance')
+            ).toBeVisible();
+            // 50 µm: 200 image pixels wide.
+            await page.getByTestId('annotation-brush-width').selectOption('50');
+            // Just inside the purple disk's left edge (x = 1200 at y = 2000).
+            const start = at(1240, 1850);
+            const end = at(1240, 2150);
+            await page.mouse.move(start.x, start.y);
+            await page.mouse.down();
+            await page.mouse.move(end.x, end.y, { steps: 12 });
+            await expect(
+                page.getByTestId('annotation-tissue-outline')
+            ).toHaveAttribute('data-tool', 'smartBrush');
+            if (process.env.WSI_SHOT_DIR) {
+                await page.screenshot({
+                    path: `${process.env.WSI_SHOT_DIR}/smart-brush-stroke.png`,
+                });
+            }
+            await page.mouse.up();
+            await expect.poll(() => service.writes.length).toBe(1);
+            const rings = selectorRings(
+                service.writes[0].body.target.selector.value
+            );
+            const xs = rings[0].map(([x]) => x);
+            // It stops at the disk's edge (x ≥ 1200 near y = 2000) and
+            // reaches at most 100 pixels right of the stroke.
+            expect(Math.min(...xs)).toBeGreaterThan(1190);
+            expect(Math.max(...xs)).toBeLessThan(1345);
+            rings[0].forEach(([x, y]) =>
+                expect(Math.hypot(x - 1500, y - 2000)).toBeLessThan(310)
+            );
         });
     });
 }

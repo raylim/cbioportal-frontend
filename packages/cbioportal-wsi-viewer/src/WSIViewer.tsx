@@ -53,6 +53,7 @@ import {
     WsiAnnotationOverlay,
 } from './wsiAnnotationOverlay';
 import { WsiAnnotationReviewCard } from './wsiAnnotationReview';
+import { WsiTissueBar, WsiTissueOverlay } from './wsiTissueOverlay';
 import { WsiSlideNotesPanel } from './wsiSlideNotesPanel';
 import {
     checkWsiTileServerOrigin,
@@ -318,6 +319,9 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
         this.annotationController.setCurrentUser(props.annotationUser);
         this.annotationController.setMppProvider(
             () => this.viewerState.selectedMpp
+        );
+        this.annotationController.setObjectivePowerProvider(
+            () => this.viewerState.selectedObjectivePower
         );
         this.annotationController.setLinkBuilder(props.annotationLink);
         this.annotationController.requestAnnotation(
@@ -1234,6 +1238,14 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
                         <WsiAnnotationDrawPreview
                             controller={this.annotationController}
                         />
+                    )}
+                    {this.props.annotationApiUrl && (
+                        <WsiTissueOverlay
+                            controller={this.annotationController}
+                        />
+                    )}
+                    {this.props.annotationApiUrl && (
+                        <WsiTissueBar controller={this.annotationController} />
                     )}
                     {this.props.annotationApiUrl && (
                         <WsiAnnotationReviewCard

@@ -132,13 +132,13 @@ The toolbar over the slide starts with only **Annotate**, **Display** (an eye) a
 | **Shape** (R) | Rectangle, ellipse, circle or HPF field. The button draws with the last one picked; the arrow next to it opens the menu |
 | **Line** (L) | A line, with its length shown while drawing |
 | **Measure** (M) | A quick ruler that is never saved (see Quick ruler) |
-| **Outline** | Polygon (P), freehand (F) or brush (B); like Shape, the button reuses the last one |
+| **Outline** | Polygon (P), freehand (F), brush (B), smart brush (Shift+B) or magic wand (W); like Shape, the button reuses the last one |
 | **Point** (.) | Points, one per click |
 | **Drawing as** | The layer, label and color of new annotations (see below) |
 | **Undo**, **Redo** | See Editing and undo |
 | Save status | "Saved", "Saving… N" or "N not saved" with **Retry** (see below) |
 
-The brush width shows next to the tools only while the brush is on, and the point count only while the Point tool is on. A drawing tool stays on after each shape, so shapes can be drawn one after another without picking the tool again; the toolbar keeps it highlighted. It stays on until Esc, Select (V), clicking the active tool again, or picking another tool. Esc first drops a shape being drawn (a drag, a stroke, or a polygon's vertices so far) and keeps the tool; with nothing being drawn it goes back to Select; with Select it clears the selection. A polygon ends with a double-click or a click on its first vertex, and the next click starts a new one. Each new shape gets the next auto label. Shift+click and Shift+drag select only with Select. Single-key shortcuts work only while Annotate is on and the focus is not in a text field or menu; while Annotate is on, "." picks the Point tool instead of toggling the details sidebar, and OpenSeadragon's R (rotate) and F (flip) keys are off. **⋯** holds **Review AI annotations** (see Reviewing AI annotations), the sharing of new annotations (Shared or Private), **Export** (all annotations, or those on visible layers), **Import…**, and a list of the keyboard shortcuts.
+The brush width shows next to the tools only while the brush or smart brush is on, the tolerance while the magic wand or smart brush is on, and the point count only while the Point tool is on. A drawing tool stays on after each shape, so shapes can be drawn one after another without picking the tool again; the toolbar keeps it highlighted. It stays on until Esc, Select (V), clicking the active tool again, or picking another tool. Esc first drops a shape being drawn (a drag, a stroke, or a polygon's vertices so far) and keeps the tool; with nothing being drawn it goes back to Select; with Select it clears the selection. A polygon ends with a double-click or a click on its first vertex, and the next click starts a new one. Each new shape gets the next auto label. Shift+click and Shift+drag select only with Select. Single-key shortcuts work only while Annotate is on and the focus is not in a text field or menu; while Annotate is on, "." picks the Point tool instead of toggling the details sidebar, and OpenSeadragon's R (rotate), F (flip) and W (pan up) keys are off (the arrow keys still pan). **⋯** holds **Review AI annotations** (see Reviewing AI annotations), the sharing of new annotations (Shared or Private), **Export** (all annotations, or those on visible layers), **Import…**, and a list of the keyboard shortcuts.
 
 The **save status**, before the Display eye, says whether changes are saved: **Saving… N** while N annotations, comments or notes are being sent or wait to be sent (dropped points not yet sent, and the items of each write request not yet answered: a batch counts its items), **N not saved** with **Retry** for dropped points the service refused (Retry sends them again, as the Annotations section's Retry does), and **Saved** once a change on this slide was saved. "Saved" shows only while Annotate is on; saving and not saved show either way. It is a `role="status"` region that stays on the page, so screen readers announce each change, and its tooltip says more. Failed edits, deletes and reviews reload the slide and say so in the Annotations section instead, since the slide then shows what is stored.
 
@@ -174,6 +174,11 @@ Keys do nothing while the focus is in a text field. On a Mac, ⌘ works for Ctrl
 | R | Shape (the menu's last: rectangle, ellipse, circle or HPF field) | Annotate on, review card closed |
 | L | Line | Annotate on |
 | P, F, B | Polygon, freehand, brush | Annotate on |
+| Shift+B | Smart brush | Annotate on |
+| W | Magic wand | Annotate on |
+| Click; Shift+click; Alt+click | Outline the tissue of similar color; add it to the outline; cut it out (see Magic wand) | Magic wand on |
+| Drag up or down; scroll | Raise or lower the tolerance of the outline waiting (scroll does not zoom then) | Magic wand on, an outline waiting |
+| Enter or double-click; Esc; Ctrl+Z | Save the outline; discard it; take back its last click | Magic wand on, an outline waiting |
 | . | Point (otherwise "." shows or hides the details sidebar) | Annotate on |
 | M | Measure: a quick ruler, not saved | Annotate on |
 | Esc | Drop the shape being drawn, else clear the ruler, else back to Select | A drawing tool is on, or a ruler shows |
@@ -294,6 +299,27 @@ The brush width is chosen in the toolbar in µm of tissue (10–500 µm, 50 µm 
 
 The brush is stored as a polygon, not as a line with a width, so it has an area and perimeter, edits like any polygon, and exports to QuPath as a region. A stroke that doubles back sharply can give an outline that touches itself.
 
+#### Magic wand and smart brush
+
+Both select tissue by color, with classical image processing (no model), and save ordinary regions: a polygon, or a region with holes or parts (see Editing shapes), drawn as the toolbar's layer, label and color. They load with their Web Worker as their own async chunk (`wsi-tissue`, about 70 KB) when either is first picked.
+
+**Magic wand** (W, in the Outline menu). A click on tissue shows, at once, a dashed outline of the connected region of similar color around the click (a flood fill). While it waits:
+
+- dragging the press up raises the tolerance and down lowers it (2 screen pixels per step), and the scroll wheel does the same (up raises, Shift by 5); the outline follows, and the tolerance shows next to the click and in the toolbar (1–80, 15 by default). While an outline waits the wheel does not zoom: the scroll would otherwise also change which pixels the wand reads. The zoom buttons and keys still zoom; Enter or Esc gives the wheel back;
+- **Shift+click** adds the region at the click (a union; regions apart stay parts), **Alt+click** cuts it out of the outline (a hole, or a notch). Each click has its own tolerance: a drag or scroll changes the last one's. A plain click outside the outline starts a new one; a press inside it only adjusts the tolerance;
+- **Enter** or a double-click saves it, **Esc** discards it, **Ctrl+Z** takes back the last click. The wand stays on for the next outline, and the saved region undoes like any shape;
+- **Alt** as the first click, with regions selected, makes an outline (dashed red) that Enter cuts out of the selected regions, as Alt does with any shape; in **Cut a hole…** the outline is the shape cut out.
+
+**Smart brush** (Shift+B, in the Outline menu next to Brush). Paints like the brush, with the same width in µm, but only pixels within the tolerance of the color under the start of the stroke, and only those connected within the band to the stroke itself: it stops at a tissue edge and does not jump a gap to similar tissue beyond. The painted area shows as a live dashed outline while painting, and the stroke saves as its outline (a polygon, or a region with parts and holes). Alt held as it ends cuts it out of the selected regions; nothing painted says so and saves nothing.
+
+**Color distance.** Pixels are compared with the clicked color (the mean of 5×5 pixels) in CIELAB: `√((0.5·ΔL*)² + Δa*² + Δb*²)`. Lab is close to perceptually uniform, so one tolerance means about the same visible difference on any stain: eosin pink, hematoxylin blue-purple, DAB brown and the white background differ mostly in hue and chroma (a*, b*), which count in full; staining intensity within one tissue varies with section thickness and focus more than the hue does, so lightness counts half. The pixels are first smoothed with a 3×3 box blur, so nuclei and noise do not break a region up. A stain-separation measure (color deconvolution) needs stain vectors per stain and scanner; Lab needs none and works the same for H&E and IHC. Colors are quantized to 5 bits per channel for a 32,768-color Lab table, a smaller error (under about 2) than the tolerance step matters.
+
+**Outline.** The selection is a pixel mask: holes smaller than 500 µm² (about 25 µm across: nuclei, specks) are filled, larger holes (lumens, vessels) are kept, and the smart brush drops parts smaller than 50 µm². The mask's boundary is followed pixel edge by pixel edge (4-connected regions, so regions touching only at a corner stay apart) and placed through the edge midpoints, which is the marching-squares contour of the mask, then simplified with Douglas–Peucker at 1 µm of tissue (and at least 0.75 analysis pixels), so the result does not depend on the zoom it was made at. Without a scale, holes under 64 analysis pixels are filled and the outline is simplified at 0.75 pixels.
+
+**Where the pixels come from.** At an effective magnification of 10× or more (as the status bar shows it: the objective power times screen pixels per image pixel, or 1 µm per screen pixel without one), the wand reads the pixels OpenSeadragon has drawn, from its canvas at the canvas's resolution (CSS pixels × devicePixelRatio), mapped to level-0 image pixels through the viewport: instant, and only what is in view, so an outline that reaches the edge of the view stops there and says so. It waits up to 1.5 s for the view's tiles to finish loading first. Zoomed out further, or when the slide is rotated or flipped, or the canvas cannot be read, it fetches the tile server's tiles of the level nearest 10× (about 1 µm per pixel) around the click, with the viewer's own tile URLs (`/wsi/tiles/zxy/…?studyId&key&enc`, the session cookie, as blobs, so they can always be read), stitched into an offscreen raster. That starts at about 1024 pixels square and grows 2 tiles at a time on each side the selection reaches, up to 4096 pixels a side (about 4 mm at 10×); a selection cut at that limit says so, and the rest can be added with Shift+click. A spinner shows while tiles load. Either way the outline is in level-0 image pixels, and the two sources give nearly the same outline for the same click (the tests compare them on a synthetic slide: within 3% of the area). The status under the slide names the source and the time from the click to the outline.
+
+**Responsiveness.** The flood fill, hole filling and contour tracing run in a Web Worker (built into the package with `rollup-plugin-web-worker-loader` and started from a Blob URL, so hosts serve no extra file); the raster is transferred to it once per click and kept for tolerance changes, and only the latest tolerance is computed. Where a worker cannot start (no `Worker`, or a Content Security Policy without `blob:` workers), the same code runs on the main thread, each request after yielding to the page once.
+
 #### Editing and undo
 
 While Annotate is on, clicking a rectangle, ellipse, line or polygon (including freehand and brush shapes) with Select selects it for editing: Annotorious shows handles to move it or drag its vertices. The viewer saves the new geometry with a versioned `PUT` and keeps the label, note, layer, sharing and provenance as stored. Points are not draggable; delete one and drop it again.
@@ -412,5 +438,5 @@ From the repository root, `pnpm run buildModules` builds every package, and the 
 Rules for changes:
 
 - Keep the package free of app imports (`config/…`, `shared/…`, `pages/…`). Anything portal-specific goes through `WsiViewerConfig` or a prop.
-- Keep `openseadragon` behind the dynamic import in `wsiOpenSeadragonLoader.ts`.
+- Keep `openseadragon` behind the dynamic import in `wsiOpenSeadragonLoader.ts`, and the tissue tools behind the one in `wsiTissueLoader.ts` (`checkWsiBundle` checks both).
 - Export from the light entry only what hosts import statically. Components and anything heavy belong in `viewer`.

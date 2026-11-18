@@ -11,6 +11,7 @@ import {
     parseAnnotationShape,
     polygonArea,
     regionSelectorSvg,
+    regionShape,
     shapeBounds,
     shapeRegion,
     simplifyPath,
@@ -63,6 +64,15 @@ import {
     WsiScreenAffine,
 } from './wsiAnnotationSnapshot';
 import { getWsiViewerRuntime } from './wsiViewerConfig';
+import { loadTissueTools, WsiTissueModule } from './wsiTissueLoader';
+import {
+    DEFAULT_TISSUE_TOLERANCE,
+    MAX_TISSUE_TOLERANCE,
+    MIN_TISSUE_TOLERANCE,
+} from './wsiTissueConstants';
+// Types only: the tissue tools load in their own chunk (wsiTissueLoader).
+import { WsiTissueSession, WsiTissueView } from './wsiTissueSelect';
+import { WsiTissuePixelHost } from './wsiTissuePixels';
 import { WsiSlideNotes, WsiSlideNotesHost } from './wsiSlideNotes';
 import {
     MAX_IMPORT_BYTES,
@@ -93,6 +103,10 @@ export type WsiAnnotationTool =
     | 'point'
     | 'freehand'
     | 'brush'
+    /** A brush that paints only tissue like the color under its start. */
+    | 'smartBrush'
+    /** The magic wand: outlines the region of similar color at a click. */
+    | 'wand'
     /** A quick ruler: measures a length on the slide, never saved. */
     | 'measure'
     | null;
@@ -103,7 +117,13 @@ type WsiPointerAnnotationTool = Exclude<WsiAnnotationTool, null>;
 export const SHAPE_TOOLS = ['rectangle', 'ellipse', 'circle', 'hpf'] as const;
 export type WsiShapeTool = typeof SHAPE_TOOLS[number];
 /** The tools of the toolbar's Outline menu. */
-export const OUTLINE_TOOLS = ['polygon', 'freehand', 'brush'] as const;
+export const OUTLINE_TOOLS = [
+    'polygon',
+    'freehand',
+    'brush',
+    'smartBrush',
+    'wand',
+] as const;
 export type WsiOutlineTool = typeof OUTLINE_TOOLS[number];
 
 function isShapeTool(tool: WsiAnnotationTool): tool is WsiShapeTool {
@@ -129,8 +149,12 @@ export const WSI_TOOL_SHORTCUTS: Record<
     p: 'polygon',
     f: 'freehand',
     b: 'brush',
+    w: 'wand',
     '.': 'point',
 };
+
+/** Shift+B picks the smart brush (B alone is the brush). */
+export const WSI_SMART_BRUSH_SHORTCUT = 'Shift+B';
 
 /**
  * High-power field areas offered, in mm², with the field diameter each
@@ -935,9 +959,25 @@ export const DEFAULT_BRUSH_WIDTH_UM = 50;
 export const BRUSH_WIDTHS_PX = [8, 16, 32, 64];
 export const DEFAULT_BRUSH_WIDTH_PX = 16;
 
-function isStrokeTool(tool: WsiAnnotationTool): tool is 'freehand' | 'brush' {
-    return tool === 'freehand' || tool === 'brush';
+function isStrokeTool(
+    tool: WsiAnnotationTool
+): tool is 'freehand' | 'brush' | 'smartBrush' {
+    return tool === 'freehand' || tool === 'brush' || tool === 'smartBrush';
 }
+
+/** A brush tool: its width is chosen in the toolbar. */
+function isBrushTool(tool: WsiAnnotationTool): tool is 'brush' | 'smartBrush' {
+    return tool === 'brush' || tool === 'smartBrush';
+}
+
+/** Whether image point `point` is inside `region` (not in a hole). */
+function regionContainsPoint(region: WsiRegion, point: WsiXY): boolean {
+    const shape = region.length ? regionShape(region) : null;
+    return !!shape && shapeContainsPoint(shape, point, 0);
+}
+
+/** Wand tolerance change per screen pixel of vertical drag. */
+const TOLERANCE_PER_DRAG_PX = 0.5;
 
 type WsiXY = { x: number; y: number };
 
@@ -1102,6 +1142,28 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
      * on, on screen.
      */
     @observable.ref private brushPointer: WsiXY | null = null;
+    /** The magic wand's and smart brush's tolerance (a color distance). */
+    @observable tissueTolerance = DEFAULT_TISSUE_TOLERANCE;
+    /**
+     * What the magic wand or smart brush shows: its selection (image
+     * pixels), tolerance, pixel source and progress; null when idle.
+     */
+    @observable.ref tissueView: WsiTissueView | null = null;
+    /** A message from the magic wand or smart brush, e.g. nothing selected. */
+    @observable tissueMessage: string | null = null;
+    private tissueSession: WsiTissueSession | null = null;
+    private tissueSessionPromise: Promise<WsiTissueSession | null> | null = null;
+    /** A wand press: dragging it up or down changes the tolerance. */
+    private tissueDrag: {
+        pointerId: number;
+        startY: number;
+        start: number;
+        moved: boolean;
+    } | null = null;
+    /** The smart brush stroke being drawn and whether its session has it. */
+    private smartStroke: { points: WsiXY[]; started: boolean } | null = null;
+    private tissueHostFactory: (() => WsiTissuePixelHost) | null = null;
+    private objectivePowerProvider: () => number | undefined = () => undefined;
     /**
      * The signed-in user as the annotation service names creators, when the
      * host knows it. Unknown: every annotation offers edit and delete, and
@@ -1314,6 +1376,23 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
     @action
     setMppProvider(provider: () => WsiMpp | null | undefined) {
         this.mppProvider = provider;
+    }
+
+    /**
+     * Supplies the open slide's objective power, from which the tissue
+     * tools judge the magnification (as the status bar shows it).
+     */
+    setObjectivePowerProvider(provider: () => number | undefined) {
+        this.objectivePowerProvider = provider;
+    }
+
+    /**
+     * Replaces where the magic wand and smart brush read slide pixels; by
+     * default the OpenSeadragon canvas and tiles (`createOsdTissueHost`).
+     */
+    setTissueHost(factory: (() => WsiTissuePixelHost) | null) {
+        this.tissueHostFactory = factory;
+        this.disposeTissue();
     }
 
     /** Sets how links to one annotation are made; null hides Copy link. */
@@ -3103,6 +3182,10 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
         this.activeTool = tool;
         this.brushPointer = null;
         this.resetGesture();
+        this.tissueMessage = null;
+        if (tool === 'wand' || tool === 'smartBrush') {
+            void this.ensureTissueSession(tool);
+        }
         if (!this.annotorious) return;
         const pointerDrawing = isPointerAnnotationTool(tool);
         this.annotorious.cancelDrawing?.();
@@ -3129,6 +3212,289 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
         else this.brushWidthPx = width;
     }
 
+    /** Sets the wand's and smart brush's tolerance; a pending wand outline follows. */
+    @action.bound
+    setTissueTolerance(tolerance: number) {
+        if (!Number.isFinite(tolerance)) return;
+        const value = Math.max(
+            MIN_TISSUE_TOLERANCE,
+            Math.min(MAX_TISSUE_TOLERANCE, Math.round(tolerance))
+        );
+        this.tissueTolerance = value;
+        if (this.activeTool === 'wand' && this.tissueSession?.pending) {
+            this.tissueSession.setTolerance(value);
+        }
+    }
+
+    /**
+     * The magic wand's or smart brush's session for `tool`, loading the
+     * tissue chunk first; null when the tool changed meanwhile or there is
+     * no slide.
+     */
+    private ensureTissueSession(
+        tool: 'wand' | 'smartBrush'
+    ): Promise<WsiTissueSession | null> {
+        if (this.tissueSession?.tool === tool) {
+            return Promise.resolve(this.tissueSession);
+        }
+        if (this.tissueSessionPromise && this.tissueSessionTool === tool) {
+            return this.tissueSessionPromise;
+        }
+        this.disposeTissue();
+        this.tissueSessionTool = tool;
+        const promise: Promise<WsiTissueSession | null> = loadTissueTools().then(
+            action((mod: WsiTissueModule) => {
+                if (this.tissueSessionPromise !== promise) return null;
+                const viewer = this.osdViewer;
+                const host =
+                    this.tissueHostFactory?.() ||
+                    (viewer
+                        ? mod.createOsdTissueHost({
+                              viewer,
+                              imagePoint: (x: number, y: number) =>
+                                  this.imagePoint(x, y),
+                              mpp: () => this.mpp,
+                              objectivePower: () =>
+                                  this.objectivePowerProvider(),
+                          })
+                        : null);
+                if (!host) {
+                    this.tissueSessionPromise = null;
+                    return null;
+                }
+                const session: WsiTissueSession = new mod.WsiTissueSession(
+                    tool,
+                    host,
+                    action((view: WsiTissueView | null) => {
+                        if (this.tissueSession === session) {
+                            this.tissueView = view;
+                        }
+                    })
+                );
+                this.tissueSession = session;
+                return session;
+            }),
+            action(() => {
+                if (this.tissueSessionPromise === promise) {
+                    this.tissueSessionPromise = null;
+                    this.tissueMessage =
+                        'The magic wand could not be loaded. Pick the tool again to retry.';
+                }
+                return null;
+            })
+        );
+        this.tissueSessionPromise = promise;
+        return promise;
+    }
+
+    private tissueSessionTool: 'wand' | 'smartBrush' | null = null;
+
+    /** Ends the tissue session (another slide, or a new pixel host). */
+    private disposeTissue() {
+        this.tissueSession?.dispose();
+        this.tissueSession = null;
+        this.tissueSessionPromise = null;
+        this.tissueSessionTool = null;
+        this.tissueView = null;
+        this.tissueDrag = null;
+        this.smartStroke = null;
+    }
+
+    /** Whether the magic wand has an outline waiting for Enter. */
+    get tissuePending(): boolean {
+        return !!this.tissueSession?.pending;
+    }
+
+    /**
+     * A magic wand press at `image`: Shift adds the region to the outline
+     * waiting, Alt cuts it out of it; Alt with no outline waiting starts
+     * one that is cut out of the selected regions when saved. A press inside
+     * the waiting outline starts nothing new: dragging it changes the
+     * tolerance (as dragging any press does).
+     */
+    private wandPress(event: PointerEvent, image: WsiXY) {
+        const session = this.tissueSession;
+        const pending = !!session?.pending;
+        let kind: 'new' | 'add' | 'subtract' = 'new';
+        let cut = false;
+        if (pending && event.shiftKey) kind = 'add';
+        else if (pending && event.altKey) kind = 'subtract';
+        else if (!pending && event.altKey && this.selectedRegions.length) {
+            cut = true;
+        }
+        const inside =
+            pending &&
+            kind === 'new' &&
+            regionContainsPoint(session!.region, image);
+        this.tissueMessage = null;
+        this.tissueDrag = {
+            pointerId: event.pointerId,
+            startY: event.clientY,
+            start: inside
+                ? session!.tolerance ?? this.tissueTolerance
+                : this.tissueTolerance,
+            moved: false,
+        };
+        if (inside) return;
+        const tolerance = this.tissueTolerance;
+        if (session?.tool === 'wand') {
+            // At once, so a drag of this press adjusts this click.
+            void session.wandClick(image, kind, tolerance, cut);
+            return;
+        }
+        void this.ensureTissueSession('wand').then(ready =>
+            ready?.wandClick(image, kind, tolerance, cut)
+        );
+    }
+
+    /**
+     * Saves the magic wand's outline (Enter or a double-click) as a polygon
+     * or multipolygon annotation, drawn as the toolbar's layer, label and
+     * color; an outline started with Alt is cut out of the selected regions
+     * instead, and in "Cut a hole…" it is the shape cut out.
+     */
+    async saveTissueSelection(): Promise<boolean> {
+        const session = this.tissueSession;
+        if (!session?.pending) return false;
+        await session.whenIdle();
+        if (this.tissueSession !== session || !session.pending) return false;
+        const region = session.region;
+        const cut = session.isCut;
+        session.discard();
+        if (!region.length) {
+            action(() => {
+                this.tissueMessage =
+                    'Nothing is selected: raise the tolerance, or click on tissue.';
+            })();
+            return false;
+        }
+        await this.createRegionShape(
+            region,
+            cut || this.shapeEditMode !== null
+        );
+        return true;
+    }
+
+    /** Drops the magic wand's outline (Esc); the tool stays on. */
+    discardTissueSelection() {
+        this.tissueSession?.discard();
+        this.tissueDrag = null;
+    }
+
+    /** Takes back the magic wand's last click (Ctrl+Z while one waits). */
+    undoTissueStep() {
+        this.tissueSession?.undoStep();
+    }
+
+    /**
+     * Ends a smart brush stroke: its painted region is saved like a brush
+     * shape (or cut out of the selected regions with Alt, or split along).
+     */
+    private async finishSmartBrush(
+        points: WsiXY[],
+        imagePerScreen: number,
+        edit: boolean
+    ) {
+        const stroke = this.smartStroke;
+        this.smartStroke = null;
+        const session = await this.ensureTissueSession('smartBrush');
+        if (!session || !stroke) return;
+        if (this.shapeEditMode === 'split') {
+            session.discard();
+            await this.applyDrawnEdit({
+                path: simplifyPath(
+                    points,
+                    STROKE_SIMPLIFY_TOLERANCE * imagePerScreen
+                ),
+            });
+            return;
+        }
+        if (!stroke.started) {
+            this.startSmartStroke(session, stroke);
+        }
+        const last = points[points.length - 1];
+        if (last) session.strokeAdd(last);
+        const { region } = await session.strokeEnd();
+        session.discard();
+        if (!region.length) {
+            action(() => {
+                this.tissueMessage =
+                    'Nothing like the color under the start of the stroke was painted: raise the tolerance, or start on tissue.';
+            })();
+            return;
+        }
+        await this.createRegionShape(region, edit);
+    }
+
+    /** Hands a smart brush stroke's points so far to the session. */
+    private startSmartStroke(
+        session: WsiTissueSession,
+        stroke: { points: WsiXY[]; started: boolean }
+    ) {
+        const width =
+            this.drawGesture?.strokeImageWidth ??
+            this.brushImageWidth(this.imagePixelsPerScreenPixel());
+        session.strokeStart(stroke.points[0], width / 2, this.tissueTolerance);
+        stroke.points.slice(1).forEach(point => session.strokeAdd(point));
+        stroke.started = true;
+    }
+
+    /**
+     * Saves a region from the magic wand or smart brush: as a new
+     * annotation, or with `edit` as the shape of a cut (or split).
+     */
+    private async createRegionShape(region: WsiRegion, edit: boolean) {
+        if (!region.length) return;
+        if (edit) {
+            this.resetGesture();
+            await this.applyDrawnEdit({ region });
+            return;
+        }
+        const annotation = this.draftAnnotation(
+            regionSelectorSvg(region),
+            this.newShapeLabel()
+        );
+        this.resetGesture();
+        await this.createAnnotation(annotation);
+    }
+
+    /**
+     * The magic wand's or smart brush's outline on screen (an even-odd
+     * path), with where its last click is; null when there is none.
+     */
+    @computed get tissueOutline(): {
+        d: string;
+        cut: boolean;
+        anchor: WsiXY | null;
+    } | null {
+        const view = this.tissueView;
+        if (!view) return null;
+        void this.viewportRevision;
+        const place = this.screenTransform();
+        if (!place) return null;
+        const d = view.region
+            .map(rings =>
+                rings
+                    .map(
+                        ring =>
+                            `M${ring
+                                .map(point => {
+                                    const at = place(point);
+                                    return `${Math.round(at.x * 10) /
+                                        10},${Math.round(at.y * 10) / 10}`;
+                                })
+                                .join('L')}Z`
+                    )
+                    .join('')
+            )
+            .join('');
+        return {
+            d,
+            cut: view.cut,
+            anchor: view.seed ? place(view.seed) : null,
+        };
+    }
+
     /** The brush width in image pixels, with `imagePerScreen` at this zoom. */
     private brushImageWidth(imagePerScreen: number): number {
         return brushWidthInImagePixels(
@@ -3149,7 +3515,7 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
         diameter: number;
     } | null {
         const pointer = this.brushPointer;
-        if (!pointer || this.activeTool !== 'brush') return null;
+        if (!pointer || !isBrushTool(this.activeTool)) return null;
         // Read so that the outline resizes as the slide zooms.
         void this.viewportRevision;
         const imagePerScreen = this.imagePixelsPerScreenPixel();
@@ -3255,7 +3621,8 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
         return (
             !!this.drawGesture ||
             !!this.pointerDown ||
-            this.polygonPoints.length > 0
+            this.polygonPoints.length > 0 ||
+            !!this.tissueView
         );
     }
 
@@ -3917,6 +4284,7 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
             this.selectedIds.size > 0 ||
             !!this.selectionDrag ||
             !!this.ruler ||
+            !!this.tissueView ||
             (this.showSlideLabels && !this.hideAll)
         );
     }
@@ -6801,6 +7169,21 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
             this.annotationTooltip = null;
             // A point or field drops on click; a drag still pans the slide.
             if (tool === 'point' || tool === 'hpf') return;
+            if (tool === 'wand') {
+                // A click outlines; the press's drag changes the tolerance.
+                this.pointerDown = null;
+                try {
+                    if (event.pointerId !== undefined) {
+                        element.setPointerCapture?.(event.pointerId);
+                    }
+                } catch (_) {
+                    /* the pointer is already gone */
+                }
+                this.wandPress(event, image);
+                this.reportCursor(screen, image);
+                stop(event);
+                return;
+            }
             // Keep the press when the pointer leaves the slide.
             if (event.pointerId !== undefined) {
                 try {
@@ -6818,11 +7201,29 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
                     pointer: screen,
                     // Fixed for the stroke: µm of tissue, or screen pixels
                     // at the zoom it starts without a scale.
-                    strokeImageWidth:
-                        tool === 'brush'
-                            ? this.brushImageWidth(imagePerScreen)
-                            : undefined,
+                    strokeImageWidth: isBrushTool(tool)
+                        ? this.brushImageWidth(imagePerScreen)
+                        : undefined,
                 };
+                if (tool === 'smartBrush') {
+                    const stroke = {
+                        points: this.drawGesture.imagePoints!,
+                        started: false,
+                    };
+                    this.smartStroke = stroke;
+                    this.tissueMessage = null;
+                    void this.ensureTissueSession('smartBrush').then(
+                        session => {
+                            if (
+                                session &&
+                                this.smartStroke === stroke &&
+                                !stroke.started
+                            ) {
+                                this.startSmartStroke(session, stroke);
+                            }
+                        }
+                    );
+                }
             } else if (tool === 'polygon') {
                 this.drawGesture = {
                     tool,
@@ -6846,10 +7247,23 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
                 stop(event);
                 return;
             }
+            const tissueDrag = this.tissueDrag;
+            if (tissueDrag && tissueDrag.pointerId === event.pointerId) {
+                // Up raises the tolerance, down lowers it.
+                const dy = event.clientY - tissueDrag.startY;
+                if (tissueDrag.moved || Math.abs(dy) >= CLICK_TOLERANCE) {
+                    tissueDrag.moved = true;
+                    this.setTissueTolerance(
+                        tissueDrag.start - dy * TOLERANCE_PER_DRAG_PX
+                    );
+                }
+                stop(event);
+                return;
+            }
             if (otherPointer(event)) return;
             const tool = this.activeTool;
             const screen = local(event);
-            if (tool === 'brush' || tool === 'hpf') this.brushPointer = screen;
+            if (isBrushTool(tool) || tool === 'hpf') this.brushPointer = screen;
             const gesture = this.drawGesture;
             if (!isPointerAnnotationTool(tool) || !gesture) return;
             // A polygon's edge follows the pointer between clicks; other
@@ -6872,6 +7286,9 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
                     );
                     // Added in place: no copy of the stroke per move.
                     points.push(image!);
+                    if (tool === 'smartBrush' && this.smartStroke?.started) {
+                        this.tissueSession?.strokeAdd(image!);
+                    }
                 }
                 this.drawGesture = {
                     ...gesture,
@@ -6888,6 +7305,14 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
         const up = action((event: PointerEvent) => {
             // Alt as a shape ends cuts it out of the selected regions.
             this.drawAlt = !!event.altKey;
+            if (
+                this.tissueDrag &&
+                this.tissueDrag.pointerId === event.pointerId
+            ) {
+                this.tissueDrag = null;
+                stop(event);
+                return;
+            }
             const drag = this.selectionDrag;
             if (drag) {
                 if (drag.pointerId !== event.pointerId) return;
@@ -6921,12 +7346,20 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
                     this.imagePixelsPerScreenPixel()
                 );
                 this.endPress(start.tool);
-                void this.createStrokeShape(
-                    start.tool,
-                    points,
-                    imagePerScreen,
-                    gesture?.strokeImageWidth
-                );
+                if (start.tool === 'smartBrush') {
+                    void this.finishSmartBrush(
+                        points,
+                        imagePerScreen,
+                        this.drawingForShapeEdit
+                    );
+                } else {
+                    void this.createStrokeShape(
+                        start.tool,
+                        points,
+                        imagePerScreen,
+                        gesture?.strokeImageWidth
+                    );
+                }
                 stop(event);
                 return;
             }
@@ -7008,12 +7441,28 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
                 this.selectionDrag = null;
                 return;
             }
+            if (
+                this.tissueDrag &&
+                this.tissueDrag.pointerId === event.pointerId
+            ) {
+                this.tissueDrag = null;
+                return;
+            }
             const start = this.pointerDown;
             if (!start || otherPointer(event)) return;
             this.pointerDown = null;
             this.endPress(start.tool);
+            if (start.tool === 'smartBrush') {
+                this.smartStroke = null;
+                this.tissueSession?.discard();
+            }
         });
         const doubleClick = action((event: MouseEvent) => {
+            if (this.activeTool === 'wand' && this.tissueSession?.pending) {
+                void this.saveTissueSelection();
+                stop(event);
+                return;
+            }
             if (this.activeTool !== 'polygon' || this.polygonPoints.length < 3)
                 return;
             this.drawAlt = !!event.altKey;
@@ -7025,6 +7474,21 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
         });
         const leave = action(() => {
             this.brushPointer = null;
+        });
+        // While a wand outline waits, the wheel changes its tolerance (up
+        // raises it) instead of zooming; the zoom buttons still zoom.
+        const wheel = action((event: WheelEvent) => {
+            if (this.activeTool !== 'wand' || !this.tissueSession?.pending) {
+                return;
+            }
+            stop(event);
+            const direction = event.deltaY < 0 ? 1 : event.deltaY > 0 ? -1 : 0;
+            if (!direction) return;
+            const current =
+                this.tissueSession.tolerance ?? this.tissueTolerance;
+            this.setTissueTolerance(
+                current + direction * (event.shiftKey ? 5 : 1)
+            );
         });
         // Redraws the shape being drawn and the brush outline as the slide
         // moves under them.
@@ -7045,6 +7509,10 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
         listeners.forEach(([name, listener]) =>
             element.addEventListener(name, listener, true)
         );
+        element.addEventListener('wheel', wheel, {
+            capture: true,
+            passive: false,
+        });
         VIEWPORT_EVENTS.forEach(name =>
             viewer.addHandler?.(name, viewportChanged)
         );
@@ -7052,6 +7520,7 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
             listeners.forEach(([name, listener]) =>
                 element.removeEventListener(name, listener, true)
             );
+            element.removeEventListener('wheel', wheel, true);
             VIEWPORT_EVENTS.forEach(name =>
                 viewer.removeHandler?.(name, viewportChanged)
             );
@@ -7077,6 +7546,8 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
         this.pointerDown = null;
         this.strokeImagePerScreen = Infinity;
         this.polygonPoints = [];
+        this.discardTissueSelection();
+        this.smartStroke = null;
     }
 
     private setCustomPointerEvents(enabled: boolean) {
@@ -7094,6 +7565,24 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
     private readonly handleKeyDown = (event: KeyboardEvent) => {
         const typing = isTypingTarget(event.target);
         if (this.handleReviewKey(event, typing)) return;
+        if (!typing && this.tissueSession?.pending) {
+            // Enter saves the magic wand's outline; Ctrl+Z takes back its
+            // last click (the outline goes with the first).
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                void this.saveTissueSelection();
+                return;
+            }
+            if (
+                (event.ctrlKey || event.metaKey) &&
+                !event.shiftKey &&
+                event.key.toLowerCase() === 'z'
+            ) {
+                event.preventDefault();
+                this.undoTissueStep();
+                return;
+            }
+        }
         // Esc drops the shape being drawn, then the quick ruler, then goes
         // back to Select; with Select it clears the selection (below).
         if (
@@ -7168,6 +7657,11 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
         if (key === WSI_HIDE_ALL_KEY && !event.shiftKey && this.visible) {
             event.preventDefault();
             this.toggleHideAll();
+            return;
+        }
+        if (this.toolShortcutsActive && key === 'b' && event.shiftKey) {
+            event.preventDefault();
+            this.setTool('smartBrush');
             return;
         }
         const shortcut = this.toolShortcutsActive
@@ -7677,6 +8171,7 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
         this.setCustomPointerEvents(false);
         this.brushPointer = null;
         this.resetGesture();
+        this.disposeTissue();
         try {
             this.annotorious?.destroy?.();
         } catch (_) {

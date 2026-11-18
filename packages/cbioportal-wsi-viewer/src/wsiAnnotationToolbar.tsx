@@ -17,6 +17,10 @@ import {
     SoloIcon,
 } from './wsiAnnotationControls';
 import { WsiAnnotationBulkBar } from './wsiAnnotationBulkBar';
+import {
+    MAX_TISSUE_TOLERANCE,
+    MIN_TISSUE_TOLERANCE,
+} from './wsiTissueConstants';
 
 type DrawingTool = Exclude<WsiAnnotationTool, null>;
 
@@ -82,6 +86,18 @@ export const TOOL_INFO: Record<DrawingTool, ToolInfo> = {
         shortcut: 'B',
         hint: 'hold the mouse button and paint over the region',
     },
+    smartBrush: {
+        label: 'Smart brush',
+        shortcut: 'Shift+B',
+        hint:
+            'paint over tissue: only pixels like the color under the start of the stroke are painted, so it stops at tissue edges',
+    },
+    wand: {
+        label: 'Magic wand',
+        shortcut: 'W',
+        hint:
+            'click on tissue to outline the region of similar color; drag up or down, or scroll, to change the tolerance; Shift+click adds, Alt+click cuts out; Enter or double-click saves, Esc discards',
+    },
     point: {
         label: 'Point',
         shortcut: '.',
@@ -116,6 +132,8 @@ export const SHORTCUT_HELP: ShortcutSection[] = [
             [['P'], 'Polygon'],
             [['F'], 'Freehand'],
             [['B'], 'Brush'],
+            [['Shift+B'], 'Smart brush: paints only tissue like its start'],
+            [['W'], 'Magic wand: outline the tissue of similar color'],
             [['.'], 'Point'],
             [
                 ['Esc'],
@@ -127,6 +145,25 @@ export const SHORTCUT_HELP: ShortcutSection[] = [
             ],
             [['Ctrl+Z'], 'Undo'],
             [['Ctrl+Shift+Z', 'Ctrl+Y'], 'Redo'],
+        ],
+    },
+    {
+        title: 'Magic wand',
+        when: 'While the magic wand is on (W)',
+        keys: [
+            [['Click'], 'Outline the region of similar color at the click'],
+            [
+                ['Drag up/down', 'Scroll'],
+                'Raise or lower the tolerance while the outline waits (scroll does not zoom then; Shift+scroll by 5)',
+            ],
+            [['Shift+click'], 'Add the region there to the outline'],
+            [
+                ['Alt+click'],
+                'Cut the region there out of the outline; as the first click, the saved outline is cut out of the selected regions',
+            ],
+            [['Enter', 'Double-click'], 'Save the outline as an annotation'],
+            [['Ctrl+Z'], 'Take back the last click'],
+            [['Esc'], 'Discard the outline'],
         ],
     },
     {
@@ -214,6 +251,22 @@ const iconPaths: Record<string, React.ReactNode> = {
             strokeWidth="3.4"
             strokeOpacity="0.75"
         />
+    ),
+    smartBrush: (
+        <>
+            <path d="M1.5 3.5h13" strokeDasharray="1.6 1.4" />
+            <path
+                d="M2.5 13c2.5-3.5 6-1 11-6"
+                strokeWidth="3.4"
+                strokeOpacity="0.75"
+            />
+        </>
+    ),
+    wand: (
+        <>
+            <path d="M2.5 13.5l7.5-7.5" strokeWidth="1.8" />
+            <path d="M11.5 1.5v3M10 3h3M14 5.5v2M13 6.5h2M8.5 1.8v1.4M7.8 2.5h1.4" />
+        </>
     ),
     point: <circle cx="8" cy="8" r="2.6" fill="currentColor" />,
     measure: (
@@ -778,6 +831,72 @@ export const BrushWidthControl = observer(
                         No slide scale: screen px
                     </span>
                 )}
+            </span>
+        );
+    }
+);
+
+/**
+ * The magic wand's and smart brush's tolerance: how different a color may
+ * be from the clicked one (a Lab color distance) and still be selected.
+ */
+export const TissueToleranceControl = observer(
+    ({ controller }: { controller: WsiAnnotationController }) => {
+        const view = controller.tissueView;
+        const value = controller.tissueTolerance;
+        return (
+            <span style={groupStyle}>
+                <label
+                    style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 4,
+                        fontSize: 11,
+                    }}
+                    title="How far a color may be from the clicked color and still be selected (Lab color distance; lightness counts half). Drag up or down on the slide, or scroll, while an outline waits."
+                >
+                    Tolerance
+                    <input
+                        type="range"
+                        data-toolbar-item
+                        data-testid="annotation-tissue-tolerance"
+                        aria-label="Tolerance"
+                        aria-valuetext={String(value)}
+                        min={MIN_TISSUE_TOLERANCE}
+                        max={MAX_TISSUE_TOLERANCE}
+                        step={1}
+                        value={value}
+                        onChange={event =>
+                            controller.setTissueTolerance(
+                                Number(event.target.value)
+                            )
+                        }
+                        style={{ width: 80 }}
+                    />
+                    <span
+                        data-testid="annotation-tissue-tolerance-value"
+                        style={{
+                            minWidth: 18,
+                            fontVariantNumeric: 'tabular-nums',
+                            fontWeight: 600,
+                        }}
+                    >
+                        {value}
+                    </span>
+                </label>
+                {view?.fetching ? (
+                    <span
+                        role="status"
+                        data-testid="annotation-tissue-loading"
+                        style={{ fontSize: 10, color: colors.muted }}
+                    >
+                        <i
+                            aria-hidden="true"
+                            className="fa fa-spinner fa-spin"
+                        />{' '}
+                        Loading tiles…
+                    </span>
+                ) : null}
             </span>
         );
     }
@@ -2085,8 +2204,11 @@ export const WsiAnnotationToolbar = observer(
                                 testId="annotation-tool-point"
                             />
                         </span>
-                        {tool === 'brush' && (
+                        {(tool === 'brush' || tool === 'smartBrush') && (
                             <BrushWidthControl controller={controller} />
+                        )}
+                        {(tool === 'wand' || tool === 'smartBrush') && (
+                            <TissueToleranceControl controller={controller} />
                         )}
                         {tool === 'hpf' && (
                             <HpfAreaControl controller={controller} />

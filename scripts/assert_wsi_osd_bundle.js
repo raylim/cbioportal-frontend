@@ -9,6 +9,8 @@ const OPENSEADRAGON_MARKER = '[Viewer.addTiledImage]';
 const OSD_LIBRARY_MARKER = /versionStr\s*:\s*["'`]\d/;
 // A class name from the Annotorious annotation layer.
 const ANNOTORIOUS_MARKER = 'a9s-annotationlayer';
+// A message of the magic wand (wsiTissueSelect.ts), in the wsi-tissue chunk.
+const TISSUE_MARKER = 'The outline stops at the edge of the view';
 
 function containsOpenSeadragon(bundle) {
     return bundle.includes(OPENSEADRAGON_MARKER);
@@ -106,6 +108,18 @@ function assertWsiOsdBundle(options = {}) {
         );
     }
 
+    // The magic wand and smart brush load when either tool is picked.
+    const initialTissueBundles = bundleEntries.filter(({ bundle }) =>
+        bundle.includes(TISSUE_MARKER)
+    );
+    if (initialTissueBundles.length) {
+        throw new Error(
+            `Expected the tissue tools in an asynchronous chunk, but they are in ${initialTissueBundles
+                .map(({ bundlePath }) => path.basename(bundlePath))
+                .join(', ')}`
+        );
+    }
+
     return {
         distDir,
         reactAppDir,
@@ -126,5 +140,6 @@ if (require.main === module) {
 module.exports = {
     assertWsiOsdBundle,
     OPENSEADRAGON_MARKER,
+    TISSUE_MARKER,
     getInitialBundlePaths,
 };
