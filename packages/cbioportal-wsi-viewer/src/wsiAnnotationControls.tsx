@@ -18,6 +18,7 @@ import {
     isUnreviewedAi,
 } from './wsiAnnotationBody';
 import { ReviewQueueButton } from './wsiAnnotationReview';
+import { HPF_RATE_HELP, useHpfHelpId, WsiHpfInfo } from './wsiHpfHelp';
 import { WsiRulerLine } from './wsiAnnotationOverlay';
 import { AnnotationThread } from './wsiAnnotationThread';
 
@@ -1534,12 +1535,20 @@ function transferButtonStyle(primary = false): React.CSSProperties {
 const HpfSummary = observer(
     ({ controller }: { controller: WsiAnnotationController }) => {
         const summary = controller.hpfSummary;
+        const helpId = useHpfHelpId();
         if (!summary) return null;
         const per10 = (value: number) =>
             value.toLocaleString('en-US', { maximumFractionDigits: 1 });
+        const perMm2 = (count: number) =>
+            summary.areaMm2 > 0
+                ? (count / summary.areaMm2).toLocaleString('en-US', {
+                      maximumFractionDigits: 1,
+                  })
+                : '–';
         return (
             <table
                 data-testid="annotation-hpf-summary"
+                aria-describedby={helpId}
                 style={{
                     width: '100%',
                     fontSize: 11,
@@ -1560,7 +1569,13 @@ const HpfSummary = observer(
                         ? ` (${summary.areaMm2.toLocaleString('en-US', {
                               maximumFractionDigits: 3,
                           })} mm²)`
-                        : ''}
+                        : ''}{' '}
+                    <WsiHpfInfo
+                        testId="annotation-hpf-summary"
+                        describedById={helpId}
+                        rates
+                        style={{ fontSize: 11 }}
+                    />
                 </caption>
                 <thead>
                     <tr style={{ color: colors.muted, fontSize: 10 }}>
@@ -1570,8 +1585,17 @@ const HpfSummary = observer(
                         <th style={{ textAlign: 'right', fontWeight: 400 }}>
                             In fields
                         </th>
-                        <th style={{ textAlign: 'right', fontWeight: 400 }}>
+                        <th
+                            style={{ textAlign: 'right', fontWeight: 400 }}
+                            title={HPF_RATE_HELP[0].text}
+                        >
                             Per 10 HPF
+                        </th>
+                        <th
+                            style={{ textAlign: 'right', fontWeight: 400 }}
+                            title={HPF_RATE_HELP[1].text}
+                        >
+                            Per mm²
                         </th>
                     </tr>
                 </thead>
@@ -1591,6 +1615,9 @@ const HpfSummary = observer(
                             >
                                 {per10(item.per10)}
                             </td>
+                            <td style={{ textAlign: 'right' }}>
+                                {perMm2(item.count)}
+                            </td>
                         </tr>
                     ))}
                     {summary.byLabel.length !== 1 && (
@@ -1606,6 +1633,9 @@ const HpfSummary = observer(
                                 }}
                             >
                                 {per10(summary.per10)}
+                            </td>
+                            <td style={{ textAlign: 'right' }}>
+                                {perMm2(summary.total)}
                             </td>
                         </tr>
                     )}

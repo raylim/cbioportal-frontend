@@ -3,6 +3,7 @@ import { observer } from 'mobx-react';
 import {
     BRUSH_WIDTHS_PX,
     BRUSH_WIDTHS_UM,
+    DEFAULT_HPF_AREA_MM2,
     HPF_AREA_MAX_MM2,
     HPF_AREA_MIN_MM2,
     HPF_AREA_PRESETS,
@@ -17,6 +18,7 @@ import {
     SoloIcon,
 } from './wsiAnnotationControls';
 import { WsiAnnotationBulkBar } from './wsiAnnotationBulkBar';
+import { HPF_HELP_TEXT, useHpfHelpId, WsiHpfInfo } from './wsiHpfHelp';
 import {
     MAX_TISSUE_TOLERANCE,
     MIN_TISSUE_TOLERANCE,
@@ -553,6 +555,7 @@ function MenuItem({
     checked,
     disabled,
     title,
+    describedBy,
     onSelect,
     children,
 }: {
@@ -563,6 +566,8 @@ function MenuItem({
     checked?: boolean;
     disabled?: boolean;
     title?: string;
+    /** The id of an element describing the item. */
+    describedBy?: string;
     onSelect: () => void;
     children: React.ReactNode;
 }) {
@@ -571,6 +576,7 @@ function MenuItem({
             type="button"
             role={checked === undefined ? 'menuitem' : 'menuitemradio'}
             aria-checked={checked}
+            aria-describedby={describedBy}
             data-testid={testId}
             tabIndex={-1}
             disabled={disabled}
@@ -685,6 +691,7 @@ const ToolMenuButton = observer(
         }, []);
         const active = tools.includes(controller.activeTool as DrawingTool);
         const shortcut = groupShortcut || TOOL_INFO[current].shortcut;
+        const hpfHelpId = useHpfHelpId();
         return (
             <span
                 ref={anchor}
@@ -761,13 +768,30 @@ const ToolMenuButton = observer(
                                 }
                                 checked={controller.activeTool === tool}
                                 disabled={!!why}
-                                title={why || undefined}
+                                title={
+                                    why ||
+                                    (tool === 'hpf' ? HPF_HELP_TEXT : undefined)
+                                }
+                                describedBy={
+                                    tool === 'hpf' ? hpfHelpId : undefined
+                                }
                                 onSelect={() => {
                                     controller.setTool(tool);
                                     close(true);
                                 }}
                             >
                                 {TOOL_INFO[tool].label}
+                                {tool === 'hpf' && (
+                                    <i
+                                        aria-hidden="true"
+                                        className="fa fa-info-circle"
+                                        data-testid="annotation-tool-hpf-info"
+                                        style={{
+                                            marginLeft: 4,
+                                            color: colors.muted,
+                                        }}
+                                    />
+                                )}
                                 {why && (
                                     <span
                                         style={{
@@ -783,6 +807,15 @@ const ToolMenuButton = observer(
                         );
                     })}
                 </Menu>
+                {tools.includes('hpf') && (
+                    <span
+                        id={hpfHelpId}
+                        hidden
+                        data-testid="annotation-tool-hpf-help"
+                    >
+                        {HPF_HELP_TEXT}
+                    </span>
+                )}
             </span>
         );
     }
@@ -910,6 +943,7 @@ export const HpfAreaControl = observer(
     ({ controller }: { controller: WsiAnnotationController }) => {
         const area = controller.hpfAreaMm2;
         const preset = HPF_AREA_PRESETS.some(item => item.areaMm2 === area);
+        const helpId = useHpfHelpId();
         const [custom, setCustom] = React.useState(!preset);
         const [draft, setDraft] = React.useState(String(area));
         const apply = () => {
@@ -926,7 +960,8 @@ export const HpfAreaControl = observer(
                     data-toolbar-item
                     data-testid="annotation-hpf-area"
                     aria-label="High-power field area"
-                    title="Area of each high-power field placed, in mm² of tissue"
+                    aria-describedby={helpId}
+                    title="Area of each high-power field placed, in mm² of tissue (field diameter in brackets)"
                     value={custom ? 'custom' : String(area)}
                     onChange={event => {
                         if (event.target.value === 'custom') {
@@ -941,7 +976,10 @@ export const HpfAreaControl = observer(
                 >
                     {HPF_AREA_PRESETS.map(item => (
                         <option key={item.areaMm2} value={String(item.areaMm2)}>
-                            {item.areaMm2} mm² ({item.diameterMm} mm field)
+                            {item.areaMm2} mm² ({item.diameterMm} mm)
+                            {item.areaMm2 === DEFAULT_HPF_AREA_MM2
+                                ? ', default'
+                                : ''}
                         </option>
                     ))}
                     <option value="custom">Custom…</option>
@@ -969,6 +1007,10 @@ export const HpfAreaControl = observer(
                         mm²
                     </span>
                 )}
+                <WsiHpfInfo
+                    testId="annotation-hpf-area"
+                    describedById={helpId}
+                />
             </span>
         );
     }

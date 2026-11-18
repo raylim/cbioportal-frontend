@@ -15,6 +15,7 @@ import {
 } from './wsiAnnotationGeometryUtils';
 import { WsiAnnotationPanel } from './wsiAnnotationControls';
 import { WsiAnnotationToolbar } from './wsiAnnotationToolbar';
+import { HPF_HELP_TEXT, HPF_RATE_HELP } from './wsiHpfHelp';
 import {
     attachTestController,
     flush,
@@ -174,7 +175,17 @@ describe('High-power fields and points inside regions', () => {
         render(<WsiAnnotationToolbar controller={controller} />);
         expect(screen.queryByTestId('annotation-hpf-area')).toBeNull();
         fireEvent.click(screen.getByTestId('annotation-tool-shape-menu'));
-        fireEvent.click(screen.getByTestId('annotation-tool-hpf'));
+        // The menu item explains what a field is (tooltip and description).
+        const item = screen.getByTestId('annotation-tool-hpf');
+        expect(item.getAttribute('title')).toBe(HPF_HELP_TEXT);
+        const itemHelp = document.getElementById(
+            item.getAttribute('aria-describedby')!
+        )!;
+        expect(itemHelp.textContent).toBe(HPF_HELP_TEXT);
+        expect(HPF_HELP_TEXT).toMatch(
+            /^HPF \(high-power field\): the area of tissue seen through the microscope at high magnification \(40× objective\)\./
+        );
+        fireEvent.click(item);
         const select = screen.getByTestId(
             'annotation-hpf-area'
         ) as HTMLSelectElement;
@@ -183,7 +194,26 @@ describe('High-power fields and points inside regions', () => {
             within(select)
                 .getAllByRole('option')
                 .map(option => option.textContent)
-        ).toContain('0.237 mm² (0.55 mm field)');
+        ).toEqual([
+            '0.159 mm² (0.45 mm)',
+            '0.196 mm² (0.5 mm)',
+            '0.237 mm² (0.55 mm), default',
+            '0.283 mm² (0.6 mm)',
+            '0.332 mm² (0.65 mm)',
+            '0.374 mm² (0.69 mm)',
+            'Custom…',
+        ]);
+        // The picker is described by the help; its info icon shows it on
+        // focus.
+        expect(
+            document.getElementById(select.getAttribute('aria-describedby')!)!
+                .textContent
+        ).toBe(HPF_HELP_TEXT);
+        const info = screen.getByTestId('annotation-hpf-area-info');
+        expect(info.getAttribute('aria-label')).toBe(
+            'What a high-power field (HPF) is'
+        );
+        expect(info.getAttribute('tabindex')).toBe('0');
         fireEvent.change(select, { target: { value: '0.312' } });
         fireEvent.change(select, { target: { value: 'custom' } });
         const input = screen.getByTestId('annotation-hpf-area-custom');
@@ -288,14 +318,28 @@ describe('High-power fields and points inside regions', () => {
         expect(summary.per10).toBe(25);
         render(<WsiAnnotationPanel controller={controller} />);
         const table = screen.getByTestId('annotation-hpf-summary');
-        expect(table.querySelector('caption')!.textContent).toBe(
-            '2 high-power fields (0.474 mm²)'
+        // The caption, then its info icon and the hidden help.
+        expect(table.querySelector('caption')!.textContent).toMatch(
+            /^2 high-power fields \(0\.474 mm²\) HPF \(high-power field\)/
         );
+        // Per 10 HPF and per mm² of the fields' area (4 / 0.474 mm²).
+        expect(
+            Array.from(table.querySelectorAll('th')).map(th => th.textContent)
+        ).toEqual(['Points', 'In fields', 'Per 10 HPF', 'Per mm²']);
         expect(
             screen.getByTestId('annotation-hpf-rate-Mitosis').textContent
-        ).toBe('Mitosis420');
+        ).toMatch(/^Mitosis4208\.4$/);
         expect(
             screen.getByTestId('annotation-hpf-rate-total').textContent
-        ).toBe('All points525');
+        ).toMatch(/^All points52510\.5$/);
+        // The table is described by the help, which explains both rates.
+        const help = document.getElementById(
+            table.getAttribute('aria-describedby')!
+        )!.textContent!;
+        expect(help).toContain(HPF_HELP_TEXT);
+        HPF_RATE_HELP.forEach(item =>
+            expect(help).toContain(`${item.label}: ${item.text}`)
+        );
+        expect(screen.getByTestId('annotation-hpf-summary-info')).toBeTruthy();
     });
 });

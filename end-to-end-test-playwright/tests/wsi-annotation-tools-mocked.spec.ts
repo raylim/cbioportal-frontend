@@ -1728,9 +1728,10 @@ if (process.env.PW_SUITE === 'wsi') {
             ).toHaveText(/^Points inside: 3 \(Mitosis 3\) · [\d,.]+ per mm²$/, {
                 timeout: 15_000,
             });
+            // Count, per 10 HPF, then per mm² of the field.
             await expect(
                 page.getByTestId('annotation-hpf-rate-Mitosis')
-            ).toHaveText('Mitosis330');
+            ).toHaveText(/^Mitosis330[\d,.]+$/);
         });
 
         test('says when changes are being saved and when they are saved', async ({
