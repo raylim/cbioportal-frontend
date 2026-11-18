@@ -10,7 +10,7 @@ import { WsiRgbaRaster } from './wsiTissueCore';
  * - **Tiles**, zoomed out further: the tile server's tiles of the level
  *   nearest 10× (about 1 µm per pixel, finer than the view), fetched as
  *   blobs with the viewer's own tile URLs (`/wsi/tiles/zxy/…?studyId&key&enc`)
- *   and stitched into an offscreen raster. It starts as about 1024×1024
+ *   and stitched into an offscreen raster. It starts as about 512×512
  *   pixels around the click and grows `GROW_TILES` tiles at a time on each
  *   side the selection reaches, up to `TISSUE_RASTER_CAP` pixels a side.
  *
@@ -25,8 +25,12 @@ export const SCREEN_MIN_MAGNIFICATION = 10;
 export const TILE_ANALYSIS_MAGNIFICATION = 10;
 /** The largest raster, in pixels a side (4096: 16.8 M pixels, 64 MB). */
 export const TISSUE_RASTER_CAP = 4096;
-/** The first tile window around a click, in raster pixels a side. */
-export const INITIAL_WINDOW = 1024;
+/**
+ * The first tile window around a click, in raster pixels a side (2 or 3
+ * tiles each way): most clicks need no more, and each tile costs a
+ * request; larger selections grow it.
+ */
+export const INITIAL_WINDOW = 512;
 /** Tiles added on a side the selection reaches. */
 export const GROW_TILES = 2;
 

@@ -287,6 +287,14 @@ export const WSI_HIDE_ALL_KEY = 'h';
 /** Whether `target` is a field the user types in. */
 export function isTypingTarget(target: EventTarget | null): boolean {
     const element = target as HTMLElement | null;
+    // A slider takes no text: Enter, Esc and the shortcuts still apply
+    // after the tolerance or fill opacity is dragged.
+    if (
+        element?.tagName === 'INPUT' &&
+        (element as HTMLInputElement).type === 'range'
+    ) {
+        return false;
+    }
     return (
         !!element &&
         (/^(INPUT|TEXTAREA|SELECT)$/.test(element.tagName) ||

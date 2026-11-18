@@ -210,7 +210,7 @@ describe('tissue sessions', () => {
 
     it('grows the tile window as the fill spreads, keeping the lumen a hole', async () => {
         // A click on the pink tissue: the disk (radius 2400 = 1200 pixels
-        // at 10×) outgrows the first 1024-pixel window.
+        // at 10×) outgrows the first 512-pixel window.
         const run = session('wand', { imagePerScreen: 32 });
         await run.tissue.wandClick({ x: 4096, y: 2000 }, 'new', 12);
         const region = run.tissue.region;

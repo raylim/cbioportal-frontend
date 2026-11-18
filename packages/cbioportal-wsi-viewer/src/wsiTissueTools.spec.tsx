@@ -18,6 +18,7 @@ import {
     TestAnnotationService,
 } from './wsiAnnotationTestService';
 import { loadTissueTools } from './wsiTissueLoader';
+import { isTypingTarget } from './wsiAnnotationController';
 import {
     SLIDE_PINK,
     SLIDE_PURPLE,
@@ -246,6 +247,15 @@ describe('Magic wand and smart brush', () => {
         harness.pointer('pointermove', 400, 480);
         harness.pointer('pointerup', 400, 480);
         expect(controller.tissueTolerance).toBe(24);
+        // With the tolerance slider focused (as after dragging it), Enter
+        // still saves: a slider takes no text.
+        const slider = document.createElement('input');
+        slider.type = 'range';
+        document.body.appendChild(slider);
+        slider.focus();
+        expect(isTypingTarget(slider)).toBe(false);
+        expect(isTypingTarget(document.createElement('input'))).toBe(true);
+        slider.remove();
         await until(
             () =>
                 controller.tissueView?.tolerance === 24 &&
