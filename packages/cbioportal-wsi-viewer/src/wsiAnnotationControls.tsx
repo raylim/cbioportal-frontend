@@ -12,6 +12,7 @@ import { WsiAnnotation } from './wsiViewerTypes';
 import { formatMeasurement, WsiPoint } from './wsiAnnotationGeometryUtils';
 import {
     aiOriginDescription,
+    annotationHistory,
     isAiProvenance,
     isUnreviewedAi,
 } from './wsiAnnotationBody';
@@ -1197,18 +1198,12 @@ const AnnotationRow = observer(
                                     </button>
                                 </div>
                             )}
-                            {(creator || created) && (
-                                <div
-                                    style={{
-                                        color: colors.muted,
-                                        fontSize: 10,
-                                    }}
-                                >
-                                    {creator}
-                                    {creator && created ? ' · ' : ''}
-                                    {created}
-                                </div>
-                            )}
+                            <AnnotationHistory
+                                annotation={annotation}
+                                name={name}
+                                creator={creator}
+                                created={created}
+                            />
                         </>
                     )}
                 </div>
@@ -1806,6 +1801,102 @@ const AnnotationNote = observer(
     }
 );
 
+/** A date and time as the user reads them, or the text as stored. */
+function formatTime(value: string | undefined): string {
+    if (!value) return '';
+    const time = Date.parse(value);
+    return Number.isFinite(time) ? new Date(time).toLocaleString() : value;
+}
+
+let historyCount = 0;
+
+/**
+ * Who made an annotation and when, and a History disclosure with what the
+ * service stores: creation, the review, and the last change with its
+ * version. The service keeps no change log, so earlier changes are not
+ * listed.
+ */
+function AnnotationHistory({
+    annotation,
+    name,
+    creator,
+    created,
+}: {
+    annotation: WsiAnnotation;
+    name: string;
+    creator: string;
+    created: string;
+}) {
+    const [open, setOpen] = React.useState(false);
+    const id = React.useRef('');
+    if (!id.current) id.current = `wsi-annotation-history-${++historyCount}`;
+    if (!creator && !created && !annotation.version) return null;
+    const entries = annotationHistory(annotation);
+    return (
+        <>
+            <div
+                style={{
+                    display: 'flex',
+                    flexWrap: 'wrap',
+                    alignItems: 'center',
+                    gap: 4,
+                    color: colors.muted,
+                    fontSize: 10,
+                }}
+            >
+                <span>
+                    {creator}
+                    {creator && created ? ' · ' : ''}
+                    {created}
+                </span>
+                {annotation.version !== undefined && (
+                    <button
+                        type="button"
+                        data-testid={`annotation-history-toggle-${annotation.id}`}
+                        aria-expanded={open}
+                        aria-controls={id.current}
+                        aria-label={`History of ${name}`}
+                        onClick={() => setOpen(!open)}
+                        style={{
+                            border: 'none',
+                            background: 'transparent',
+                            color: colors.blue,
+                            fontSize: 10,
+                            padding: 0,
+                            cursor: 'pointer',
+                        }}
+                    >
+                        History {open ? '▾' : '▸'}
+                    </button>
+                )}
+            </div>
+            {open && (
+                <div
+                    id={id.current}
+                    data-testid={`annotation-history-${annotation.id}`}
+                    style={{ fontSize: 10, color: colors.text, marginTop: 1 }}
+                >
+                    <ul style={{ margin: 0, paddingLeft: 14 }}>
+                        {entries.map(entry => (
+                            <li key={entry.what}>
+                                {entry.what}
+                                {entry.who ? ` by ${entry.who}` : ''}
+                                {entry.when
+                                    ? `, ${formatTime(entry.when)}`
+                                    : ''}
+                            </li>
+                        ))}
+                    </ul>
+                    <div style={{ color: colors.muted }}>
+                        The annotation service keeps only these fields; a full
+                        change log would need one in the service.
+                    </div>
+                </div>
+            )}
+        </>
+    );
+}
+
 function reviewButtonStyle(color: string): React.CSSProperties {
     return {
         fontSize: 10,
@@ -2023,6 +2114,14 @@ export const WsiAnnotationTooltip = observer(
                 {tooltip.layerName && (
                     <div style={{ marginTop: 2, fontSize: 10, opacity: 0.7 }}>
                         Layer: {tooltip.layerName}
+                    </div>
+                )}
+                {tooltip.history && (
+                    <div
+                        data-testid="annotation-tooltip-history"
+                        style={{ marginTop: 2, fontSize: 10, opacity: 0.85 }}
+                    >
+                        {tooltip.history}
                     </div>
                 )}
             </div>

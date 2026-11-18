@@ -184,3 +184,82 @@ export function acceptedProvenance(
         reviewed_at: now.toISOString(),
     };
 }
+
+/** One line of an annotation's history: what happened, who, and when. */
+export interface WsiHistoryEntry {
+    what: string;
+    who?: string;
+    when?: string;
+}
+
+/** A review and a save this close together are the same change. */
+const REVIEW_SAVE_GAP_MS = 5000;
+
+/**
+ * An annotation's history from the fields the service stores: who created
+ * it and when, its version and its last change, its AI origin and its
+ * review. The service keeps no change log, so the last change is credited
+ * to the reviewer when it is the review (saved within a few seconds of
+ * `reviewed_at`), else to the creator, the only user who may edit it.
+ */
+export function annotationHistory(annotation: {
+    creator?: string;
+    created?: string;
+    updated?: string;
+    version?: number;
+    provenance?: Record<string, unknown> | null;
+}): WsiHistoryEntry[] {
+    const entries: WsiHistoryEntry[] = [];
+    const provenance = annotation.provenance || null;
+    const origin = aiOriginDescription(provenance);
+    entries.push({
+        what: origin
+            ? `Created (${origin.replace(/^Made by /, 'by ')})`
+            : 'Created',
+        who: annotation.creator,
+        when: annotation.created,
+    });
+    const version = annotation.version || 1;
+    const reviewedAt =
+        typeof provenance?.reviewed_at === 'string'
+            ? provenance.reviewed_at
+            : undefined;
+    const reviewedBy =
+        typeof provenance?.reviewed_by === 'string'
+            ? provenance.reviewed_by
+            : undefined;
+    const status =
+        typeof provenance?.review_status === 'string'
+            ? provenance.review_status
+            : undefined;
+    if (status && (reviewedAt || reviewedBy)) {
+        entries.push({
+            what:
+                status === AI_REVIEW_ACCEPTED
+                    ? 'Accepted'
+                    : status === AI_REVIEW_REJECTED
+                    ? 'Rejected'
+                    : `Review: ${status}`,
+            who: reviewedBy,
+            when: reviewedAt,
+        });
+    }
+    if (version > 1) {
+        const time = (value: string | undefined) => {
+            const parsed = value ? Date.parse(value) : NaN;
+            return Number.isFinite(parsed) ? parsed : null;
+        };
+        const updated = time(annotation.updated);
+        const reviewed = time(reviewedAt);
+        const byReview =
+            updated !== null &&
+            reviewed !== null &&
+            Math.abs(updated - reviewed) <= REVIEW_SAVE_GAP_MS;
+        entries.push({
+            what: `Last changed (version ${version})`,
+            who: byReview ? reviewedBy : annotation.creator,
+            when: annotation.updated,
+        });
+    }
+    return entries;
+}

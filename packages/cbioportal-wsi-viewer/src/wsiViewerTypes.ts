@@ -132,6 +132,8 @@ export interface WsiAnnotation {
         };
     };
     created?: string;
+    /** When the service last saved a change (`updated_at`). */
+    updated?: string;
     creator?: string;
     version?: number;
     color?: string;

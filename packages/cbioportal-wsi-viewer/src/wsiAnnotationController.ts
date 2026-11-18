@@ -189,6 +189,12 @@ export type WsiSaveStatus =
     | { state: 'saving'; count: number; unsaved: number }
     | { state: 'unsaved'; count: number };
 
+/**
+ * Who an annotation comes from, for the Display popover's Show toggles:
+ * the user, other users, or a machine (the assistant or a model).
+ */
+export type WsiAnnotationOrigin = 'mine' | 'others' | 'ai';
+
 /** Steps to the next / previous annotation listed, Annotate on or off. */
 export const WSI_NEXT_ANNOTATION_KEY = ']';
 export const WSI_PREVIOUS_ANNOTATION_KEY = '[';
@@ -979,6 +985,15 @@ export class WsiAnnotationController {
     private hiddenBeforeSolo: Set<string> | null = null;
     /** Hides AI annotations no one has reviewed, on the slide and list. */
     @observable hideUnreviewedAi = false;
+    /**
+     * Which origins show on the slide and in the list (see
+     * `annotationOrigin`). For this visit only, like hiding all.
+     */
+    @observable.ref shownOrigins: Record<WsiAnnotationOrigin, boolean> = {
+        mine: true,
+        others: true,
+        ai: true,
+    };
     @observable.ref listFilter: WsiAnnotationListFilter = EMPTY_LIST_FILTER;
     /**
      * The label new annotations get. Empty: an auto-label from the active
@@ -1048,6 +1063,8 @@ export class WsiAnnotationController {
         measurement?: string;
         /** The points inside a region (see `pointsInside`). */
         pointsInside?: string;
+        /** Who made it and its version, e.g. "By alice · version 3". */
+        history?: string;
         note?: string;
     } | null = null;
     /**
@@ -1272,6 +1289,10 @@ export class WsiAnnotationController {
         }
         if (this.hideUnreviewedAi && isUnreviewedAi(annotation.provenance)) {
             this.hideUnreviewedAi = false;
+        }
+        const origin = this.annotationOrigin(annotation);
+        if (!this.shownOrigins[origin]) {
+            this.shownOrigins = { ...this.shownOrigins, [origin]: true };
         }
         if (this.hideAll) this.toggleHideAll();
         this.applyLayerFilter();
@@ -2459,8 +2480,43 @@ export class WsiAnnotationController {
         if (annotation.id === this.reviewQueue?.currentId) return true;
         return (
             !this.hiddenLayerNames.has(annotation.layerName || DEFAULT_LAYER) &&
-            !(this.hideUnreviewedAi && isUnreviewedAi(annotation.provenance))
+            !(this.hideUnreviewedAi && isUnreviewedAi(annotation.provenance)) &&
+            this.shownOrigins[this.annotationOrigin(annotation)]
         );
+    }
+
+    /**
+     * Who `annotation` comes from: AI when a machine made it, else the
+     * user's own, or another user's. With the user unknown every manual
+     * annotation counts as the user's.
+     */
+    annotationOrigin(annotation: WsiAnnotation): WsiAnnotationOrigin {
+        if (isAiProvenance(annotation.provenance)) return 'ai';
+        return this.currentUser &&
+            annotation.creator &&
+            annotation.creator !== this.currentUser
+            ? 'others'
+            : 'mine';
+    }
+
+    /** The slide's annotations per origin (see `annotationOrigin`). */
+    @computed get originCounts(): Record<WsiAnnotationOrigin, number> {
+        const counts = { mine: 0, others: 0, ai: 0 };
+        this.annotations.forEach(annotation => {
+            counts[this.annotationOrigin(annotation)] += 1;
+        });
+        return counts;
+    }
+
+    /** Shows or hides the annotations of one origin, on the slide and list. */
+    @action.bound
+    setOriginShown(origin: WsiAnnotationOrigin, shown: boolean) {
+        this.shownOrigins = { ...this.shownOrigins, [origin]: shown };
+        if (!shown) {
+            this.annotorious?.cancelSelected?.();
+            this.annotationTooltip = null;
+        }
+        this.applyLayerFilter();
     }
 
     @computed get annotationsByLayer(): Map<string, WsiAnnotation[]> {
@@ -4961,6 +5017,7 @@ export class WsiAnnotationController {
                 })(),
             },
             created: item.created_at,
+            updated: item.updated_at,
             creator: item.created_by,
             version: item.version,
             color: parsedColor.color,
@@ -5800,6 +5857,15 @@ export class WsiAnnotationController {
         return `${base} ${count}`;
     }
 
+    /** "By alice · version 3", for the tooltip; undefined for a draft. */
+    private historySummary(annotation: WsiAnnotation): string | undefined {
+        if (!annotation.creator) return undefined;
+        const version = annotation.version || 1;
+        return `By ${annotation.creator}${
+            version > 1 ? ` · version ${version}` : ''
+        }`;
+    }
+
     @action
     private showAnnotationTooltip(
         annotation: WsiAnnotation,
@@ -5828,6 +5894,7 @@ export class WsiAnnotationController {
             pointsInside: inside
                 ? `Points inside: ${formatRegionCount(inside)}`
                 : undefined,
+            history: this.historySummary(stored || annotation),
             note: note || undefined,
         };
     }

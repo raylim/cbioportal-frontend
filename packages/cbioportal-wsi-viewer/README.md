@@ -147,6 +147,7 @@ The toolbar is a `role="toolbar"`: the arrow keys, Home and End move between its
 - **Outlines only**: shapes without fill.
 - **Labels on the slide**: each shape's label at the top-left corner of its box, in white on a dark band (at least 7:1 on any tissue). Larger shapes are labelled first; a label that would overlap one already shown is left out, shapes under 24 screen pixels on both sides get none (so zooming out drops them), points get none, and at most 150 show. The labels move with the slide.
 - **Hide all annotations** (H): hides every annotation on the slide, also while Annotate is off; the list, counts and tools stay. A dot on the eye marks any setting that differs from the default, and the eye is crossed out while all are hidden.
+- **Show: Mine, Other users', AI**, each with its count: which annotations are drawn on the slide (and so listed, counted, stepped through and exported as visible). AI means a machine made it (the assistant or a model, as the AI badge); of the rest, the user's own are Mine and the others' are Other users'. With the signed-in user unknown there is no Other users' toggle, and Mine reads **Manual** (every annotation not made by a machine). The annotation under review still shows, and a link to a hidden annotation turns its origin back on. For this visit only, like hiding all.
 
 Fill, outlines only and labels are remembered in `localStorage` (and the viewer works without it); hiding all is not, so a slide never opens looking empty. Labels, highlights and selection frames are drawn over the slide in their own layer that ignores the pointer. GeoJSON exports hold annotation data only.
 
@@ -230,6 +231,10 @@ Only an annotation's creator may edit, move or delete it, or change its note or 
 The **Drawing as** label field sets the label of new annotations; left empty, a new shape is auto-labelled with the layer color's name and a number (and a point with the color's name, or "Point" for the default color). With a `labelVocabulary` the field and the list's label editor suggest those terms, then the labels already used on the slide, and still accept free text. With `labelVocabularyStrict` they become a choice of the terms only, new shapes default to the first term, and a label outside the list cannot be saved (an annotation that already has one keeps it until it is relabelled). Strict is ignored without terms.
 
 The viewer ships no default vocabulary: which terms fit depends on the site and the study, and a built-in list would quietly steer labels everywhere. Without one the field suggests the slide's existing labels, which keeps them consistent within a slide.
+
+#### History
+
+Under each annotation the list shows who created it and when, and **History ▸** (a disclosure, `aria-expanded`) lists what the service stores about its changes: created (by whom, when, and by which assistant or model), the review (accepted or rejected, by whom, when, from `provenance.review_status`, `reviewed_by`, `reviewed_at`), and the last change with the version number (`version`, `updated_at`). The service records no editor for an update, so the last change is credited to the reviewer when it is the review (saved within 5 seconds of `reviewed_at`), else to the creator, the only user who may edit. The click tooltip says "By alice · version 3". Earlier changes are not kept: a full audit log would need a change table in the annotation service, and the History block says so.
 
 #### Notes
 

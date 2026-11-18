@@ -1173,14 +1173,20 @@ const DisplayMenu = observer(
                 popup.current?.querySelector<HTMLElement>('input')?.focus();
         }, [open]);
         const percent = Math.round(controller.fillOpacity * 100);
+        const origins = controller.shownOrigins;
         const changed =
             controller.hideAll ||
             controller.outlineOnly ||
             controller.showSlideLabels ||
-            controller.soloLayer !== null;
+            controller.soloLayer !== null ||
+            !origins.mine ||
+            !origins.others ||
+            !origins.ai;
+        const counts = controller.originCounts;
+        const userKnown = !!controller.currentUser;
         const title = controller.hideAll
             ? 'Display: all annotations are hidden (H shows them)'
-            : 'Display: fill, outlines, labels on the slide, hide all (H)';
+            : 'Display: fill, outlines, labels on the slide, hide all (H), whose annotations show';
         return (
             <span ref={anchor} style={{ position: 'relative', ...groupStyle }}>
                 <button
@@ -1318,6 +1324,68 @@ const DisplayMenu = observer(
                                 H
                             </kbd>
                         </label>
+                        <fieldset
+                            data-testid="annotation-show-origins"
+                            style={{
+                                border: 'none',
+                                margin: '0 0 6px',
+                                padding: 0,
+                            }}
+                        >
+                            <legend
+                                style={{
+                                    fontSize: 12,
+                                    fontWeight: 600,
+                                    color: colors.text,
+                                    border: 'none',
+                                    margin: '0 0 2px',
+                                    padding: 0,
+                                    width: 'auto',
+                                }}
+                            >
+                                Show
+                            </legend>
+                            {(['mine', 'others', 'ai'] as const)
+                                .filter(
+                                    origin => userKnown || origin !== 'others'
+                                )
+                                .map(origin => (
+                                    <label
+                                        key={origin}
+                                        style={{
+                                            ...fieldRowStyle,
+                                            margin: '0 0 2px',
+                                        }}
+                                    >
+                                        <input
+                                            type="checkbox"
+                                            data-testid={`annotation-show-${origin}`}
+                                            checked={origins[origin]}
+                                            onChange={event =>
+                                                controller.setOriginShown(
+                                                    origin,
+                                                    event.target.checked
+                                                )
+                                            }
+                                        />
+                                        {origin === 'ai'
+                                            ? 'AI (assistant and models)'
+                                            : origin === 'others'
+                                            ? 'Other users’'
+                                            : userKnown
+                                            ? 'Mine'
+                                            : 'Manual'}
+                                        <span
+                                            style={{
+                                                marginLeft: 'auto',
+                                                color: colors.muted,
+                                            }}
+                                        >
+                                            {counts[origin]}
+                                        </span>
+                                    </label>
+                                ))}
+                        </fieldset>
                         {controller.soloLayer !== null ? (
                             <div
                                 data-testid="annotation-solo-status"
