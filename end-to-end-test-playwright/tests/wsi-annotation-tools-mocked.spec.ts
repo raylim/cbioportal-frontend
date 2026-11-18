@@ -23,51 +23,109 @@ const MACHINE_SOURCES = ['agent', 'assistant', 'ai', 'model', 'precomputed'];
  * id and version 1; updates and deletes are creator-only and check the
  * version; any user may review a machine-made annotation, and a rejected one
  * is kept but not listed. A batch item labelled "refuse" is refused with a
- * 422 naming it. Returns the rows and the writes it received.
+ * 422 naming it. `batch-update`, `batch-delete` and `batch-review` are all or
+ * none (403/404 name the first failing item, 409 lists stale ones); comment
+ * threads and slide notes follow the service's rules. While `hold` is set,
+ * writes wait for `release()`. Returns the rows, comments, notes and the
+ * writes it received.
  */
 async function routeAnnotationService(page: Page, seed: any[] = []) {
     const rows = new Map<string, any>(seed.map(row => [row.id, row]));
+    const comments = new Map<string, any[]>();
+    const notes = new Map<string, any>();
     const writes: Array<{ method: string; path: string; body: any }> = [];
     let next = 0;
+    let held: Array<() => void> = [];
+    const control = { hold: false };
+    const release = () => {
+        control.hold = false;
+        held.splice(0).forEach(resolve => resolve());
+    };
+    const now = () => new Date().toISOString();
     const create = (item: any) => {
         const row = {
             ...item,
             id: `annotation-${++next}`,
             created_by: USER,
             version: 1,
-            created_at: new Date().toISOString(),
+            created_at: now(),
+            updated_at: now(),
         };
         rows.set(row.id, row);
         return row;
     };
-    await page.route('**/wsi/annotations**', async (route: Route) => {
+    const listed = (row: any) => ({
+        ...row,
+        comment_count: (comments.get(row.id) || []).filter(c => !c.deleted)
+            .length,
+    });
+    const isMachine = (row: any) =>
+        MACHINE_SOURCES.includes(
+            String(row.body?.provenance?.source || '').toLowerCase()
+        );
+    const reviewed = (row: any, decision: string) => ({
+        ...row,
+        body: {
+            ...row.body,
+            provenance: {
+                ...row.body.provenance,
+                review_status: decision === 'accept' ? 'accepted' : 'rejected',
+                reviewed_by: USER,
+                reviewed_at: now(),
+            },
+        },
+        version: row.version + 1,
+        updated_at: now(),
+    });
+    const updated = (row: any, item: any) => ({
+        ...row,
+        body: item.body ?? row.body,
+        target: item.target ?? row.target,
+        visible_to: 'visible_to' in item ? item.visible_to : row.visible_to,
+        version: row.version + 1,
+        updated_at: now(),
+    });
+    const json = (route: Route, status: number, value: unknown) =>
+        route.fulfill({
+            status,
+            contentType: 'application/json',
+            body: JSON.stringify(value),
+        });
+    const receive = async (route: Route) => {
         const request = route.request();
         const method = request.method();
         const url = new URL(request.url());
         expect(url.searchParams.getAll('studyId')).toEqual([STUDY_ID]);
+        const body = request.postData()
+            ? JSON.parse(request.postData()!)
+            : null;
         if (method !== 'GET') {
             expect(request.headers()['x-requested-with']).toBe(
                 'XMLHttpRequest'
             );
+            writes.push({ method, path: url.pathname, body });
+            if (control.hold) {
+                await new Promise<void>(resolve => held.push(resolve));
+            }
         }
+        return { method, url, body };
+    };
+    await page.route('**/wsi/annotations**', async (route: Route) => {
+        const { method, url, body } = await receive(route);
         const parts = url.pathname.split('/');
         const id = decodeURIComponent(parts[3] || '');
-        const body = request.postData()
-            ? JSON.parse(request.postData()!)
-            : null;
-        if (method !== 'GET') writes.push({ method, path: url.pathname, body });
-        const json = (status: number, value: unknown) =>
-            route.fulfill({
-                status,
-                contentType: 'application/json',
-                body: JSON.stringify(value),
-            });
-        if (method === 'GET') {
+        const sub = parts[4];
+        const cid = parts[5] && decodeURIComponent(parts[5]);
+        if (method === 'GET' && !id) {
             return json(
+                route,
                 200,
-                Array.from(rows.values()).filter(
-                    row => row.body?.provenance?.review_status !== 'rejected'
-                )
+                Array.from(rows.values())
+                    .filter(
+                        row =>
+                            row.body?.provenance?.review_status !== 'rejected'
+                    )
+                    .map(listed)
             );
         }
         if (method === 'POST' && id === 'batch') {
@@ -77,71 +135,199 @@ async function routeAnnotationService(page: Page, seed: any[] = []) {
                 )
                 .filter((index: number) => index >= 0);
             if (refused.length) {
-                return json(422, {
+                return json(route, 422, {
                     detail: refused.map((index: number) => ({
                         loc: ['body', 'annotations', index, 'body', 'label'],
                         msg: 'label is not allowed',
                     })),
                 });
             }
-            return json(201, body.annotations.map(create));
+            return json(route, 201, body.annotations.map(create));
         }
-        if (method === 'POST' && !id) return json(201, create(body));
+        if (method === 'POST' && /^batch-(update|delete|review)$/.test(id)) {
+            const kind = id.slice('batch-'.length);
+            const conflicts: any[] = [];
+            for (let index = 0; index < body.items.length; index++) {
+                const item = body.items[index];
+                const row = rows.get(item.id);
+                const refuse = (status: number, msg: string) =>
+                    json(route, status, {
+                        detail: {
+                            msg,
+                            index,
+                            id: item.id,
+                            loc: ['body', 'items', index],
+                        },
+                    });
+                if (!row) return refuse(404, 'Annotation not found');
+                if (kind === 'review' && !isMachine(row)) {
+                    return refuse(
+                        403,
+                        'Only machine-made annotations can be reviewed'
+                    );
+                }
+                if (kind !== 'review' && row.created_by !== USER) {
+                    return refuse(
+                        403,
+                        'Only the creator may change this annotation'
+                    );
+                }
+                if (row.version !== item.version) {
+                    conflicts.push({
+                        index,
+                        id: item.id,
+                        version: item.version,
+                        current_version: row.version,
+                    });
+                }
+            }
+            if (conflicts.length) {
+                return json(route, 409, {
+                    detail: { msg: 'Version conflict', conflicts },
+                });
+            }
+            return json(
+                route,
+                200,
+                body.items.map((item: any) => {
+                    const row = rows.get(item.id);
+                    if (kind === 'delete') {
+                        rows.delete(item.id);
+                        return listed(row);
+                    }
+                    const saved =
+                        kind === 'review'
+                            ? reviewed(row, item.decision)
+                            : updated(row, item);
+                    rows.set(item.id, saved);
+                    return listed(saved);
+                })
+            );
+        }
+        if (method === 'POST' && !id) return json(route, 201, create(body));
         const row = rows.get(id);
-        if (!row) return json(404, { detail: 'Annotation not found' });
-        if (method === 'POST' && parts[4] === 'review') {
-            const source = String(row.body?.provenance?.source || '');
-            if (!MACHINE_SOURCES.includes(source.toLowerCase())) {
-                return json(403, {
+        if (!row) return json(route, 404, { detail: 'Annotation not found' });
+        if (sub === 'comments') {
+            const thread = comments.get(id) || [];
+            comments.set(id, thread);
+            if (method === 'GET') {
+                return json(
+                    route,
+                    200,
+                    thread.filter(c => !c.deleted)
+                );
+            }
+            if (method === 'POST') {
+                const comment = {
+                    id: `comment-${++next}`,
+                    annotation_id: id,
+                    study_id: STUDY_ID,
+                    author: USER,
+                    body: String(body.body).trim(),
+                    created_at: now(),
+                    updated_at: now(),
+                };
+                thread.push(comment);
+                return json(route, 201, comment);
+            }
+            const comment = thread.find(c => c.id === cid && !c.deleted);
+            if (!comment)
+                return json(route, 404, { detail: 'Comment not found' });
+            if (method === 'PUT') {
+                comment.body = String(body.body).trim();
+                comment.updated_at = new Date(Date.now() + 1000).toISOString();
+                return json(route, 200, comment);
+            }
+            comment.deleted = true;
+            return route.fulfill({ status: 204, body: '' });
+        }
+        if (method === 'POST' && sub === 'review') {
+            if (!isMachine(row)) {
+                return json(route, 403, {
                     detail: 'Only machine-made annotations can be reviewed',
                 });
             }
             if (body.version !== row.version) {
-                return json(409, { detail: 'Version conflict' });
+                return json(route, 409, { detail: 'Version conflict' });
             }
-            const reviewed = {
-                ...row,
-                body: {
-                    ...row.body,
-                    provenance: {
-                        ...row.body.provenance,
-                        review_status:
-                            body.decision === 'accept'
-                                ? 'accepted'
-                                : 'rejected',
-                        reviewed_by: USER,
-                        reviewed_at: new Date().toISOString(),
-                    },
-                },
-                version: row.version + 1,
-            };
-            rows.set(id, reviewed);
-            return json(200, reviewed);
+            const saved = reviewed(row, body.decision);
+            rows.set(id, saved);
+            return json(route, 200, listed(saved));
         }
         if (row.created_by !== USER) {
-            return json(403, {
+            return json(route, 403, {
                 detail: 'Only the creator may change this annotation',
             });
         }
         if (method === 'PUT') {
             if (body.version !== row.version) {
-                return json(409, { detail: 'Version conflict' });
+                return json(route, 409, { detail: 'Version conflict' });
             }
-            const updated = {
-                ...row,
-                body: body.body ?? row.body,
-                target: body.target ?? row.target,
-                visible_to:
-                    'visible_to' in body ? body.visible_to : row.visible_to,
-                version: row.version + 1,
-            };
-            rows.set(id, updated);
-            return json(200, updated);
+            const saved = updated(row, body);
+            rows.set(id, saved);
+            return json(route, 200, listed(saved));
         }
         rows.delete(id);
         return route.fulfill({ status: 204, body: '' });
     });
-    return { rows, writes };
+    await page.route('**/wsi/slide-notes**', async (route: Route) => {
+        const { method, url, body } = await receive(route);
+        const id = decodeURIComponent(url.pathname.split('/')[3] || '');
+        if (method === 'GET') {
+            const listedNotes = Array.from(notes.values()).filter(
+                note =>
+                    note.slide_id === url.searchParams.get('slide_id') &&
+                    (note.created_by === USER || Array.isArray(note.visible_to))
+            );
+            const counts = new Map<string, number>();
+            listedNotes.forEach(note =>
+                note.tags.forEach((tag: string) =>
+                    counts.set(tag, (counts.get(tag) || 0) + 1)
+                )
+            );
+            return json(route, 200, {
+                slide_id: url.searchParams.get('slide_id'),
+                notes: listedNotes,
+                tags: Array.from(counts.entries())
+                    .sort((a, b) => b[1] - a[1])
+                    .map(([tag, count]) => ({ tag, count })),
+            });
+        }
+        if (method === 'POST') {
+            const note = {
+                id: `note-${++next}`,
+                slide_id: body.slide_id,
+                study_id: body.study_id,
+                text: String(body.text || '').trim(),
+                tags: body.tags || [],
+                created_by: USER,
+                visible_to: body.visible_to ?? null,
+                version: 1,
+                created_at: now(),
+                updated_at: now(),
+            };
+            notes.set(note.id, note);
+            return json(route, 201, note);
+        }
+        const note = notes.get(id);
+        if (!note) return json(route, 404, { detail: 'Slide note not found' });
+        if (method === 'PUT') {
+            const saved = {
+                ...note,
+                text: body.text ?? note.text,
+                tags: body.tags ?? note.tags,
+                visible_to:
+                    'visible_to' in body ? body.visible_to : note.visible_to,
+                version: note.version + 1,
+                updated_at: now(),
+            };
+            notes.set(id, saved);
+            return json(route, 200, saved);
+        }
+        notes.delete(id);
+        return route.fulfill({ status: 204, body: '' });
+    });
+    return { rows, comments, notes, writes, control, release };
 }
 
 /** Another user's annotation, as the service stores it. */
@@ -776,11 +962,18 @@ if (process.env.PW_SUITE === 'wsi') {
             ).toHaveText(
                 'Relabelled 2 annotations; skipped 1 that is not yours.'
             );
+            // One all-or-nothing batch with both, each with its version.
             expect(
                 service.writes.map(write => [write.method, write.path])
+            ).toEqual([['POST', '/wsi/annotations/batch-update']]);
+            expect(
+                service.writes[0].body.items.map((item: any) => [
+                    item.id,
+                    item.version,
+                ])
             ).toEqual([
-                ['PUT', '/wsi/annotations/mine-1'],
-                ['PUT', '/wsi/annotations/mine-2'],
+                ['mine-1', 1],
+                ['mine-2', 1],
             ]);
             expect(service.rows.get('mine-2').body.label).toBe('Tumor');
             expect(service.rows.get('theirs').body.label).toBe('Unsure');
@@ -1191,6 +1384,282 @@ if (process.env.PW_SUITE === 'wsi') {
             expect(Math.abs(q.y - p.y)).toBeLessThan(2);
             expect(Math.abs(r.x - q.x)).toBeLessThan(2);
             expect(Math.abs(q.x - p.x - (r.y - q.y))).toBeLessThan(2);
+        });
+
+        test('measures with a quick ruler that is never saved', async ({
+            page,
+        }) => {
+            await openAnnotatedSlide(page);
+            const service = await routeAnnotationService(page);
+            const at = await gotoSlide(page);
+            await startAnnotating(page);
+            await page.keyboard.press('m');
+            const measure = page.getByTestId('annotation-tool-measure');
+            await expect(measure).toHaveAttribute('aria-pressed', 'true');
+            const a = at(0.3, 0.6);
+            const b = at(0.7, 0.6);
+            await page.mouse.move(a.x, a.y);
+            await page.mouse.down();
+            await page.mouse.move(b.x, b.y, { steps: 5 });
+            await expect(
+                page.getByTestId('annotation-draw-measurement')
+            ).toHaveText(/^[\d.,]+ (µm|mm) · 0°$/);
+            await page.mouse.up();
+            const reading = page.getByTestId('annotation-ruler-text');
+            await expect(reading).toHaveText(/^[\d.,]+ (µm|mm) · 0°$/);
+            // Never sent, and not an annotation.
+            await expect(page.getByTestId('annotation-list')).toHaveCount(0);
+            expect(service.writes).toEqual([]);
+            // Esc clears it and keeps the tool; Esc again goes to Select.
+            await page.keyboard.press('Escape');
+            await expect(page.getByTestId('annotation-ruler')).toHaveCount(0);
+            await expect(measure).toHaveAttribute('aria-pressed', 'true');
+            await page.keyboard.press('Escape');
+            await expect(
+                page.getByTestId('annotation-tool-select')
+            ).toHaveAttribute('aria-pressed', 'true');
+            expect(service.writes).toEqual([]);
+        });
+
+        test('places a high-power field and counts the points inside it', async ({
+            page,
+        }) => {
+            await openAnnotatedSlide(page);
+            const point = (id: string, x: number, y: number) => ({
+                ...seededAnnotation(id, 'Mitosis', '0,0 1,0 1,1'),
+                created_by: USER,
+                target: {
+                    selector: {
+                        type: 'SvgSelector',
+                        value: `<svg><circle cx="${x}" cy="${y}" r="0" /></svg>`,
+                    },
+                },
+            });
+            const service = await routeAnnotationService(page, [
+                point('p1', 256, 256),
+                point('p2', 290, 256),
+                point('p3', 256, 300),
+                point('far', 20, 20),
+            ]);
+            const at = await gotoSlide(page);
+            await startAnnotating(page);
+            await pickFromMenu(page, 'shape', 'hpf');
+            // A custom field of 0.01 mm²: a radius of about 226 pixels.
+            await page
+                .getByTestId('annotation-hpf-area')
+                .selectOption('custom');
+            const custom = page.getByTestId('annotation-hpf-area-custom');
+            await custom.fill('0.01');
+            await custom.press('Enter');
+            const centre = at(0.5, 0.5);
+            await page.mouse.click(centre.x, centre.y);
+            await expect.poll(() => service.rows.size).toBe(5);
+            const field = service.writes.find(
+                write => write.path === '/wsi/annotations'
+            )!.body;
+            expect(field.body.label).toBe('HPF 1');
+            expect(field.target.selector.value).toMatch(/^<svg><ellipse /);
+            await expect(
+                page.getByTestId(`annotation-points-inside-annotation-1`)
+            ).toHaveText(/^Points inside: 3 \(Mitosis 3\) · [\d,.]+ per mm²$/, {
+                timeout: 15_000,
+            });
+            await expect(
+                page.getByTestId('annotation-hpf-rate-Mitosis')
+            ).toHaveText('Mitosis330');
+        });
+
+        test('says when changes are being saved and when they are saved', async ({
+            page,
+        }) => {
+            await openAnnotatedSlide(page);
+            const service = await routeAnnotationService(page);
+            const at = await gotoSlide(page);
+            await startAnnotating(page);
+            const status = page.getByTestId('annotation-save-status');
+            await expect(status).toHaveAttribute('role', 'status');
+            service.control.hold = true;
+            await page.keyboard.press('r');
+            const a = at(0.35, 0.35);
+            const b = at(0.55, 0.55);
+            await page.mouse.move(a.x, a.y);
+            await page.mouse.down();
+            await page.mouse.move(b.x, b.y, { steps: 4 });
+            await page.mouse.up();
+            await expect(status).toHaveText('Saving… 1');
+            service.release();
+            await expect(status).toHaveText('Saved');
+            expect(service.rows.size).toBe(1);
+        });
+
+        test('adds and edits a comment in an annotation thread', async ({
+            page,
+        }) => {
+            await openAnnotatedSlide(page);
+            const service = await routeAnnotationService(page, [
+                {
+                    ...seededAnnotation(
+                        'mine-1',
+                        'Tumor',
+                        '40,40 140,40 140,140'
+                    ),
+                    created_by: USER,
+                },
+            ]);
+            await gotoSlide(page);
+            const toggle = page.getByTestId(
+                'annotation-comments-toggle-mine-1'
+            );
+            await expect(toggle).toHaveAttribute(
+                'aria-label',
+                'Comments on Tumor: 0',
+                { timeout: 15_000 }
+            );
+            await toggle.click();
+            const input = page.getByTestId('annotation-comment-input-mine-1');
+            await expect(input).toBeFocused();
+            await input.fill('Is this the deep margin?');
+            await input.press('Control+Enter');
+            await expect(
+                page.getByTestId('annotation-comment-count-mine-1')
+            ).toHaveText('1');
+            await expect(input).toHaveValue('');
+            const comment = service.comments.get('mine-1')![0];
+            await page
+                .getByTestId(`annotation-comment-edit-${comment.id}`)
+                .click();
+            const edit = page.getByTestId(
+                `annotation-comment-edit-input-${comment.id}`
+            );
+            await edit.fill('Deep margin, 1 mm.');
+            await page
+                .getByTestId(`annotation-comment-edit-input-${comment.id}-save`)
+                .click();
+            await expect(
+                page.getByTestId(`annotation-comment-body-${comment.id}`)
+            ).toHaveText('Deep margin, 1 mm.');
+            await expect(
+                page.getByTestId(`annotation-comment-${comment.id}`)
+            ).toContainText('(edited)');
+            expect(
+                service.writes.map(write => [write.method, write.path])
+            ).toEqual([
+                ['POST', '/wsi/annotations/mine-1/comments'],
+                ['PUT', `/wsi/annotations/mine-1/comments/${comment.id}`],
+            ]);
+            // The annotation's own note is untouched.
+            expect(service.rows.get('mine-1').body.comment).toBe('');
+        });
+
+        test('adds a slide note with tags', async ({ page }) => {
+            await openAnnotatedSlide(page);
+            const service = await routeAnnotationService(page);
+            await gotoSlide(page);
+            const notes = page.getByTestId('wsi-slide-notes');
+            await expect(notes).toContainText('No notes on this slide yet.', {
+                timeout: 15_000,
+            });
+            await page
+                .getByTestId('slide-note-new-text')
+                .fill('Recut ordered for block A2');
+            const tags = page.getByTestId('slide-note-new-tags');
+            await tags.fill('QC');
+            await tags.press('Enter');
+            await tags.type('margin,');
+            await page
+                .getByTestId('slide-note-new-sharing')
+                .selectOption('private');
+            await page.getByTestId('slide-note-new-submit').click();
+            await expect(notes).toContainText('Recut ordered for block A2');
+            await expect(page.getByTestId('slide-notes-tag-QC')).toHaveText(
+                'QC 1'
+            );
+            await expect(page.getByTestId('slide-note-new-text')).toBeFocused();
+            const post = service.writes.find(
+                write => write.path === '/wsi/slide-notes'
+            )!;
+            expect(post.body).toEqual({
+                slide_id: SLIDE_KEY,
+                study_id: STUDY_ID,
+                text: 'Recut ordered for block A2',
+                tags: ['QC', 'margin'],
+                visible_to: null,
+            });
+            await expect(
+                page.getByTestId('wsi-sidebar-section-slideNotes-toggle')
+            ).toContainText('Slide notes (1)');
+        });
+
+        test('accepts AI annotations in bulk with one batch review', async ({
+            page,
+        }) => {
+            await openAnnotatedSlide(page);
+            const service = await routeAnnotationService(page, [
+                seededAnnotation('ai-1', 'Tumor', '40,40 140,40 140,140', {
+                    source: 'precomputed',
+                }),
+                seededAnnotation('ai-2', 'Tumor', '200,40 300,40 300,140', {
+                    source: 'precomputed',
+                }),
+            ]);
+            await gotoSlide(page);
+            await page.getByTestId('annotation-select-ai-1').check({
+                timeout: 15_000,
+            });
+            await page.getByTestId('annotation-select-ai-2').check();
+            const accept = page.getByTestId('annotation-bulk-accept');
+            await expect(accept).toHaveText(/\(2\)/);
+            await accept.click();
+            await expect(
+                page.getByTestId('annotation-bulk-message')
+            ).toHaveText('Accepted 2 annotations.');
+            expect(
+                service.writes.map(write => [write.method, write.path])
+            ).toEqual([['POST', '/wsi/annotations/batch-review']]);
+            expect(service.writes[0].body.items).toEqual([
+                { id: 'ai-1', version: 1, decision: 'accept' },
+                { id: 'ai-2', version: 1, decision: 'accept' },
+            ]);
+            await expect(
+                page.getByTestId('annotation-ai-badge-ai-2')
+            ).toHaveText('AI · accepted');
+        });
+
+        test('undoes points dropped one after another in one step', async ({
+            page,
+        }) => {
+            await openAnnotatedSlide(page);
+            const service = await routeAnnotationService(page);
+            const at = await gotoSlide(page);
+            await startAnnotating(page);
+            await page.keyboard.press('.');
+            for (const [fx, fy] of [
+                [0.4, 0.4],
+                [0.45, 0.4],
+                [0.5, 0.4],
+            ]) {
+                const point = at(fx, fy);
+                await page.mouse.click(point.x, point.y);
+            }
+            await expect.poll(() => service.rows.size).toBe(3);
+            const undo = page.getByTestId('annotation-undo');
+            await expect(undo).toHaveAttribute(
+                'title',
+                /Undo create of 3 points/
+            );
+            await undo.click();
+            await expect.poll(() => service.rows.size).toBe(0);
+            const deletes = service.writes.filter(
+                write => write.path === '/wsi/annotations/batch-delete'
+            );
+            expect(deletes).toHaveLength(1);
+            expect(deletes[0].body.items).toHaveLength(3);
+            await expect(page.getByTestId('annotation-redo')).toHaveAttribute(
+                'title',
+                /Redo create of 3 points/
+            );
+            await page.getByTestId('annotation-redo').click();
+            await expect.poll(() => service.rows.size).toBe(3);
         });
 
         test('imports GeoJSON in one batch request and reports refused features', async ({
