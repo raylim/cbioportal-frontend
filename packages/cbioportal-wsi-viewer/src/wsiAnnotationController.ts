@@ -673,9 +673,10 @@ export function pointSelectorSvg(point: { x: number; y: number }): string {
  * (its previous version saved again) or annotations deleted (created again).
  */
 export type WsiUndoEntry =
-    | { kind: 'create'; ids: string[] }
+    /** `pointRun` marks a run of dropped points (see `POINT_UNDO_GROUP_MS`). */
+    | { kind: 'create'; ids: string[]; pointRun?: number }
     | { kind: 'update'; before: WsiAnnotation }
-    | { kind: 'delete'; before: WsiAnnotation[] }
+    | { kind: 'delete'; before: WsiAnnotation[]; pointRun?: number }
     /** Edits of several annotations made together, e.g. a bulk relabel. */
     | { kind: 'group'; entries: WsiUndoEntry[] };
 
@@ -701,7 +702,9 @@ function describeChange(entry: WsiUndoEntry, redo = false): string {
             : (entry.kind === 'create') !== redo
             ? 'create'
             : 'delete';
-    return `${what}${n > 1 ? ` of ${n} annotations` : ''}`;
+    const noun =
+        entry.kind !== 'update' && entry.pointRun ? 'point' : 'annotation';
+    return `${what}${n > 1 ? ` of ${n} ${noun}s` : ''}`;
 }
 
 /**
@@ -803,6 +806,14 @@ const BATCH_MAX_BYTES = 3 * 1024 * 1024;
 const KEEPALIVE_MAX_BYTES = 60 * 1024;
 /** Points dropped within this many milliseconds are saved together. */
 export const POINT_SAVE_DELAY_MS = 500;
+/**
+ * Points dropped one after another undo as one step: a run of drops in
+ * one Point tool session, with no other change recorded in between and at
+ * most this many milliseconds between two drops. Picking another tool (or
+ * the Point tool again), Esc, any other change, undo or redo, or a longer
+ * pause ends the run. Each point stays its own annotation.
+ */
+export const POINT_UNDO_GROUP_MS = 3000;
 
 /** The service's body for creating one annotation. */
 interface WsiCreatePayload {
@@ -1180,6 +1191,11 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
     private pointTimer: ReturnType<typeof setTimeout> | null = null;
     /** The point save in flight, which undo waits for. */
     private pointSave: Promise<void> | null = null;
+    /** The run of point drops in progress (see `POINT_UNDO_GROUP_MS`). */
+    private pointRun: { id: number; lastAt: number } | null = null;
+    private nextPointRun = 1;
+    /** The run each dropped point not yet saved belongs to, by draft id. */
+    private readonly pointRunOf = new Map<string, number>();
     /**
      * Points sent and not yet answered, by their draft id: each resolves to
      * the saved point, or null when it was not saved. An edit or delete of
@@ -2364,8 +2380,28 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
     /** Records a new change: it can be undone, and nothing can be redone. */
     @action
     private pushUndo(entry: WsiUndoEntry) {
+        // Any other change ends a run of point drops.
+        if (entry.kind !== 'create' || !entry.pointRun) this.pointRun = null;
         this.undoStack = [...this.undoStack, entry].slice(-MAX_UNDO);
         this.redoStack = [];
+    }
+
+    /**
+     * Records saved points of run `run` for undo: added to the last step
+     * when that is the same run, else as a new step.
+     */
+    @action
+    private recordPointRun(run: number, ids: string[]) {
+        const last = this.undoStack[this.undoStack.length - 1];
+        if (last?.kind === 'create' && last.pointRun === run) {
+            this.undoStack = [
+                ...this.undoStack.slice(0, -1),
+                { ...last, ids: [...last.ids, ...ids] },
+            ];
+            this.redoStack = [];
+        } else {
+            this.pushUndo({ kind: 'create', ids, pointRun: run });
+        }
     }
 
     /** Forgets the undo and redo history, e.g. on another slide. */
@@ -2373,6 +2409,7 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
     private clearHistory() {
         this.undoStack = [];
         this.redoStack = [];
+        this.pointRun = null;
     }
 
     /**
@@ -2413,6 +2450,7 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
     @action.bound
     async undo(): Promise<boolean> {
         await this.flushPoints();
+        this.pointRun = null;
         if (!this.canUndo) return false;
         const entry = this.undoStack[this.undoStack.length - 1];
         this.undoStack = this.undoStack.slice(0, -1);
@@ -2432,6 +2470,7 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
     @action.bound
     async redo(): Promise<boolean> {
         await this.flushPoints();
+        this.pointRun = null;
         if (!this.canRedo) return false;
         const entry = this.redoStack[this.redoStack.length - 1];
         this.redoStack = this.redoStack.slice(0, -1);
@@ -2482,6 +2521,16 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
                 : null;
         }
         if (entry.kind === 'create') {
+            if (entry.pointRun && entry.ids.length > 1) {
+                const deleted = await this.deletePointRun(entry.ids);
+                return deleted.length
+                    ? {
+                          kind: 'delete',
+                          before: deleted,
+                          pointRun: entry.pointRun,
+                      }
+                    : null;
+            }
             const deleted: WsiAnnotation[] = [];
             for (const id of entry.ids) {
                 const current = this.annotations.find(item => item.id === id);
@@ -2508,6 +2557,12 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
             );
             return saved ? { kind: 'update', before: current } : null;
         }
+        if (entry.pointRun && entry.before.length > 1) {
+            const created = await this.createPointRun(entry.before);
+            return created.length
+                ? { kind: 'create', ids: created, pointRun: entry.pointRun }
+                : null;
+        }
         const created: string[] = [];
         for (const before of entry.before) {
             const saved = await this.createAnnotation(
@@ -2525,6 +2580,82 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
             }
         }
         return created.length ? { kind: 'create', ids: created } : null;
+    }
+
+    /**
+     * Deletes a run of points for undo: with `batch-delete` in requests of
+     * up to 100 when the service has it, else (or for a request it
+     * refuses) one by one. Resolves to the points deleted.
+     */
+    private async deletePointRun(ids: string[]): Promise<WsiAnnotation[]> {
+        const points = ids
+            .map(id => this.annotations.find(item => item.id === id))
+            .filter((item): item is WsiAnnotation => !!item);
+        const deleted: WsiAnnotation[] = [];
+        for (let start = 0; start < points.length; start += BATCH_MAX_ITEMS) {
+            const chunk = points.slice(start, start + BATCH_MAX_ITEMS);
+            if (this.bulkRoutes.delete !== false) {
+                const outcome = await this.sendBulkBatch(
+                    'delete',
+                    chunk.map(annotation => ({ annotation, fields: {} }))
+                );
+                if (outcome.kind === 'saved') {
+                    action(() => {
+                        this.bulkRoutes = { ...this.bulkRoutes, delete: true };
+                    })();
+                    this.removeManyLocally(new Set(chunk.map(item => item.id)));
+                    deleted.push(...chunk);
+                    continue;
+                }
+                if (outcome.kind === 'missing') {
+                    action(() => {
+                        this.bulkRoutes = { ...this.bulkRoutes, delete: false };
+                    })();
+                }
+                if (outcome.kind === 'access') break;
+            }
+            const results = await runLimited(
+                chunk,
+                SINGLE_SAVE_CONCURRENCY,
+                point => this.deleteAnnotation(point.id, false)
+            );
+            chunk.forEach((point, index) => {
+                if (results[index]) deleted.push(point);
+            });
+        }
+        return deleted;
+    }
+
+    /**
+     * Creates a run of points again for redo, in batch saves; the history
+     * follows their new ids. Resolves to the new ids.
+     */
+    private async createPointRun(before: WsiAnnotation[]): Promise<string[]> {
+        const drafts = before.map(point => ({
+            ...point,
+            id: `client-undo-${Date.now()}-${Math.random()
+                .toString(36)
+                .slice(2)}`,
+        }));
+        const results = await this.saveAnnotations(drafts);
+        const saved = this.addSaved(results);
+        const created: string[] = [];
+        results.forEach((result, index) => {
+            if (result.annotation) {
+                this.renameInHistory(before[index].id, result.annotation.id);
+                created.push(result.annotation.id);
+            }
+        });
+        if (saved.length < before.length && this.accessIssue === null) {
+            action(() => {
+                this.error = `${before.length - saved.length} of ${
+                    before.length
+                } points could not be created again (${describeFailures(
+                    results
+                )}).`;
+            })();
+        }
+        return created;
     }
 
     /** AI annotations that no one has reviewed yet. */
@@ -2887,6 +3018,7 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
         // A high-power field needs the slide's scale.
         if (tool === 'hpf' && !this.mpp) return;
         void this.flushPoints();
+        this.pointRun = null;
         if (isShapeTool(tool)) this.shapeTool = tool;
         if (isOutlineTool(tool)) this.outlineTool = tool;
         if (tool !== null && !this.annotating) {
@@ -3068,6 +3200,7 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
     @action.bound
     cancelDrawing() {
         void this.flushPoints();
+        this.pointRun = null;
         this.activeTool = null;
         this.brushPointer = null;
         this.resetGesture();
@@ -6415,6 +6548,16 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
             pointSelectorSvg(point),
             this.activePointLabel
         );
+        const now = Date.now();
+        if (
+            !this.pointRun ||
+            now - this.pointRun.lastAt > POINT_UNDO_GROUP_MS
+        ) {
+            this.pointRun = { id: this.nextPointRun++, lastAt: now };
+        } else {
+            this.pointRun.lastAt = now;
+        }
+        this.pointRunOf.set(annotation.id, this.pointRun.id);
         this.annotations = [...this.annotations, annotation];
         this.applyLayerFilter(false);
         this.pointQueue.push(annotation);
@@ -6490,8 +6633,20 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
                     })();
                 }
                 settleAll(results);
-                saved.forEach(item =>
-                    this.pushUndo({ kind: 'create', ids: [item.id] })
+                // Each run of drops undoes as one step.
+                const runs = new Map<number, string[]>();
+                drafts.forEach((draft, index) => {
+                    const savedPoint = results[index]?.annotation;
+                    if (!savedPoint) return;
+                    const run = this.pointRunOf.get(draft.id) || 0;
+                    runs.set(run, [...(runs.get(run) || []), savedPoint.id]);
+                });
+                runs.forEach((ids, run) =>
+                    run
+                        ? this.recordPointRun(run, ids)
+                        : ids.forEach(id =>
+                              this.pushUndo({ kind: 'create', ids: [id] })
+                          )
                 );
                 const failed = results.filter(result => result.reason);
                 if (failed.length && this.accessIssue === null) {
@@ -6502,6 +6657,7 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
                     })();
                 }
             } finally {
+                drafts.forEach(draft => this.pointRunOf.delete(draft.id));
                 // Edits and deletes waiting on these points go to the saved
                 // ids, even after the slide changed.
                 settleAll(results);

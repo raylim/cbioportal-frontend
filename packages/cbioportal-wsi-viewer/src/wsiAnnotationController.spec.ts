@@ -76,10 +76,28 @@ describe('WsiAnnotationController', () => {
     // Viewers attach synchronously once the Annotorious chunk has loaded.
     beforeAll(() => loadAnnotorious());
 
+    // Controllers attached to a viewer listen for keys on the document;
+    // remove those listeners after each test, so that one test's
+    // controller never answers the next test's keys.
+    const documentListeners: Array<[string, EventListener]> = [];
     beforeEach(() => {
         jest.restoreAllMocks();
         window.localStorage.clear();
         global.fetch = jest.fn() as typeof fetch;
+        const add = document.addEventListener.bind(document);
+        jest.spyOn(document, 'addEventListener').mockImplementation(
+            (type: string, listener: any, options?: any) => {
+                documentListeners.push([type, listener]);
+                add(type, listener, options);
+            }
+        );
+    });
+    afterEach(() => {
+        documentListeners
+            .splice(0)
+            .forEach(([type, listener]) =>
+                document.removeEventListener(type, listener)
+            );
     });
 
     it('calls the service with the session cookie, the study and the CSRF header on writes', async () => {
