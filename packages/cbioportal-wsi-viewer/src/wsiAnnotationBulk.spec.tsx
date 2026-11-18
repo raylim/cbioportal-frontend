@@ -85,6 +85,10 @@ function setup() {
                 json: async () => value,
             } as any);
         if (method === 'GET') return json(200, Object.values(rows));
+        // A service without the bulk batch routes (see wsiAnnotationBatch.spec).
+        if (method === 'POST' && /^batch-/.test(id || '')) {
+            return json(405, { detail: 'Method Not Allowed' });
+        }
         if (method === 'POST' && id && action === 'review') {
             rows[id] = {
                 ...rows[id],
@@ -311,10 +315,13 @@ describe('Selecting annotations and bulk actions', () => {
         await act(async () => {
             await controller.bulkRelabel('Tumor');
         });
+        // Without the batch route (a 405), one request each.
         expect(writes()).toEqual([
+            ['POST', '/annotations/batch-update'],
             ['PUT', '/annotations/mine1'],
             ['PUT', '/annotations/mine2'],
         ]);
+        expect(controller.bulkRoutes.update).toBe(false);
         expect(rows.mine1.body.label).toBe('Tumor');
         expect(rows.theirs.body.label).toBe('Label theirs');
         expect(controller.bulkMessage).toBe(
@@ -358,7 +365,10 @@ describe('Selecting annotations and bulk actions', () => {
         await act(async () => {
             await controller.bulkReview('reject');
         });
-        expect(writes()).toEqual([['POST', '/annotations/ai/review']]);
+        expect(writes()).toEqual([
+            ['POST', '/annotations/batch-review'],
+            ['POST', '/annotations/ai/review'],
+        ]);
         expect(controller.bulkMessage).toBe(
             'Rejected 1 annotation; skipped 3 that are not unreviewed AI annotations you can review.'
         );

@@ -104,6 +104,9 @@ annotations: {
 | `PUT {apiUrl}/annotations/{id}?studyId=…` | Update one, with its `version` (creator only) |
 | `POST {apiUrl}/annotations/{id}/review?studyId=…` | Accept or reject an AI annotation, with its `version` (any user of the study) |
 | `DELETE {apiUrl}/annotations/{id}?studyId=…` | Delete one (creator only) |
+| `POST {apiUrl}/annotations/batch-update?studyId=…` | Update 1–100, `{items: [{id, version, body, target, visible_to}]}`, all or none |
+| `POST {apiUrl}/annotations/batch-delete?studyId=…` | Delete 1–100, `{items: [{id, version}]}`, all or none |
+| `POST {apiUrl}/annotations/batch-review?studyId=…` | Review 1–100, `{items: [{id, version, decision}]}`, all or none |
 | `GET {apiUrl}/annotations/{id}/comments?studyId=…` | The annotation's comment thread, oldest first |
 | `POST {apiUrl}/annotations/{id}/comments?studyId=…` | Add `{body}` (1–4,000 characters) |
 | `PUT` / `DELETE {apiUrl}/annotations/{id}/comments/{cid}?studyId=…` | Edit `{body}` or delete one's own comment |
@@ -329,7 +332,15 @@ While any are selected, a bar under the toolbar says "N selected" and offers, ea
 - **Accept** and **Reject**: for the unreviewed AI annotations the user may review, anyone's, with the review route as above (without the route, only the user's own).
 - **Delete**: the user's own, after a confirmation.
 
-Others are skipped, and a status says what was done and skipped, e.g. "Relabelled 2 annotations; skipped 1 that is not yours.", and how many could not be saved. Relabel, move and sharing undo and redo as one step, as does a delete; reviews are not on the history. The service has no bulk update, delete or review route, so these send one request per annotation, four at a time, each with the annotation's current `version`; a 409 reloads the slide and the rest go on from the reloaded versions. The selection is cleared when another slide opens.
+Others are skipped, and a status says what was done and skipped, e.g. "Relabelled 2 annotations; skipped 1 that is not yours.", and how many could not be saved. Relabel, move and sharing undo and redo as one step, as does a delete; reviews are not on the history. The selection is cleared when another slide opens.
+
+Bulk actions use the service's batch routes: `POST /annotations/batch-update` (relabel, move, sharing), `batch-delete` and `batch-review` (accept, reject), with `{items: [{id, version, …}]}` of up to 100 annotations per request, each from its current `version`; the service saves a request whole or not at all. When it refuses one:
+
+- **409**, listing every stale annotation: those are reported as changed elsewhere ("\"Tumor 3\": changed elsewhere; reloaded"), the slide reloads so they show as stored, and the rest of the request is sent again from the reloaded versions.
+- **403** or **404** naming the first refused annotation (`{msg, index, id}`): it is reported by its label with the service's reason, and the rest are sent again; a missing one also reloads the slide at the end.
+- **404** "Not Found" or **405**: the service has no such route, so that action and later ones of its kind in the session send one request per annotation (`PUT`, `DELETE`, `POST …/review`), four at a time, with the per-annotation handling above. Without the review route, reviews always go one by one (the creator-only fallback).
+
+The status names up to three annotations that could not be saved, and why. Relabel, move and sharing still undo and redo as one step, and a delete as one step.
 
 #### Export and import (GeoJSON)
 

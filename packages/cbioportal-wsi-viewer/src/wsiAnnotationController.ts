@@ -217,6 +217,13 @@ export interface WsiCommentThread {
 /** The longest comment the service takes, in characters. */
 export const COMMENT_MAX_LENGTH = 4000;
 
+/**
+ * A bulk action's batch route: `POST /annotations/batch-update`,
+ * `-delete` or `-review`; `review-fallback` is a review without the
+ * review route, which always goes one by one.
+ */
+export type WsiBulkKind = 'update' | 'delete' | 'review' | 'review-fallback';
+
 /** Steps to the next / previous annotation listed, Annotate on or off. */
 export const WSI_NEXT_ANNOTATION_KEY = ']';
 export const WSI_PREVIOUS_ANNOTATION_KEY = '[';
@@ -1067,6 +1074,17 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
      * unknown until the first batch save.
      */
     @observable batchRoute: boolean | null = null;
+    /**
+     * Whether the service has the bulk batch routes (`batch-update`,
+     * `batch-delete`, `batch-review`): unknown until the first bulk action
+     * of the kind.
+     */
+    @observable.ref bulkRoutes: Record<WsiBulkKind, boolean | null> = {
+        update: null,
+        delete: null,
+        review: null,
+        'review-fallback': false,
+    };
     /**
      * Whether the service has comment threads: true once the annotation
      * list carries `comment_count`, false once the thread route answers 404
@@ -2608,6 +2626,12 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
             this.reviewRoute = null;
             this.batchRoute = null;
             this.commentRoute = null;
+            this.bulkRoutes = {
+                update: null,
+                delete: null,
+                review: null,
+                'review-fallback': false,
+            };
         }
         this.apiUrl = apiUrl;
         this.studyId = studyId;
@@ -4012,15 +4036,34 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
     }
 
     /**
-     * Applies `task` to the selected annotations `eligible` allows, a few
-     * at a time (the service has no bulk update, delete or review), and
-     * says what was done, skipped (`why`) and not saved.
+     * Applies a bulk action to the selected annotations `eligible` allows,
+     * and says what was done, skipped (`why`) and not saved.
+     *
+     * With the service's batch route for `kind` (`POST
+     * /annotations/batch-update`, `-delete`, `-review`), the annotations go
+     * in requests of up to `BATCH_MAX_ITEMS`, each with its current
+     * `version`, saved all or none:
+     * - a 409 lists every stale annotation: those are reported as changed
+     *   elsewhere, the slide is reloaded so they show as stored, and the
+     *   rest are sent again from the reloaded versions;
+     * - a 403 or 404 names the first refused annotation: it is reported by
+     *   its label with the service's reason, and the rest are sent again
+     *   (a missing one also reloads the slide at the end);
+     * - a 404 "Not Found" or a 405 means the service has no such route: the
+     *   rest, and later bulk actions of the kind, use one request per
+     *   annotation (`single`), four at a time.
+     * `item` gives an annotation's batch fields besides `id` and `version`,
+     * or null when it needs no change (it counts as done); `saved` takes
+     * the saved rows (as they were, for a delete) to apply them.
      */
     private async runBulk(
+        kind: WsiBulkKind,
         verb: string,
         eligible: (annotation: WsiAnnotation) => boolean,
         why: string,
-        task: (annotation: WsiAnnotation) => Promise<boolean>
+        item: (annotation: WsiAnnotation) => Record<string, unknown> | null,
+        single: (annotation: WsiAnnotation) => Promise<boolean>,
+        saved: (pairs: Array<[WsiAnnotation, any]>) => void
     ): Promise<{ done: number; skipped: number; failed: number }> {
         const selected = this.selectedAnnotations;
         const targets = selected.filter(eligible);
@@ -4030,22 +4073,147 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
             this.bulkMessage = null;
             this.error = null;
         })();
-        let results: boolean[] = [];
-        try {
-            results = await runLimited(
-                targets,
+        let done = 0;
+        const reasons: string[] = [];
+        let failed = 0;
+        const fail = (
+            annotation: WsiAnnotation | undefined,
+            reason: string
+        ) => {
+            failed += 1;
+            const label = annotation?.body?.[0]?.value || '(unlabeled)';
+            if (reasons.length < 3) reasons.push(`"${label}": ${reason}`);
+        };
+        /** The latest stored version, as a conflict may have reloaded it. */
+        const current = (id: string) =>
+            this.annotations.find(annotation => annotation.id === id);
+        const singles = async (rest: WsiAnnotation[]) => {
+            const results = await runLimited(
+                rest,
                 SINGLE_SAVE_CONCURRENCY,
                 async target => {
-                    // The latest version: a conflict may have reloaded it.
-                    const current = this.annotations.find(
-                        item => item.id === target.id
-                    );
-                    return !!current && eligible(current) && task(current);
+                    const latest = current(target.id);
+                    return !!latest && eligible(latest) && single(latest);
                 }
             );
+            results.forEach((ok, index) => {
+                if (ok) done += 1;
+                else fail(rest[index], this.error || 'not saved');
+            });
+        };
+        try {
+            if (this.bulkRoutes[kind] === false) {
+                await singles(targets);
+            } else {
+                let reload = false;
+                for (
+                    let start = 0;
+                    start < targets.length;
+                    start += BATCH_MAX_ITEMS
+                ) {
+                    let pending = targets.slice(start, start + BATCH_MAX_ITEMS);
+                    // Each pass saves the chunk or drops at least one item.
+                    while (pending.length) {
+                        if (this.bulkRoutes[kind] === false) {
+                            await singles(pending);
+                            pending = [];
+                            break;
+                        }
+                        const batch: Array<{
+                            annotation: WsiAnnotation;
+                            fields: Record<string, unknown>;
+                        }> = [];
+                        pending.forEach(target => {
+                            const latest = current(target.id);
+                            if (!latest || !eligible(latest)) {
+                                fail(
+                                    target,
+                                    'no longer on the slide or allowed'
+                                );
+                                return;
+                            }
+                            const fields = item(latest);
+                            if (fields === null) done += 1;
+                            else batch.push({ annotation: latest, fields });
+                        });
+                        pending = [];
+                        if (!batch.length) break;
+                        const outcome = await this.sendBulkBatch(kind, batch);
+                        if (outcome.kind === 'missing') {
+                            action(() => {
+                                this.bulkRoutes = {
+                                    ...this.bulkRoutes,
+                                    [kind]: false,
+                                };
+                            })();
+                            pending = batch.map(entry => entry.annotation);
+                            continue;
+                        }
+                        if (outcome.kind === 'saved') {
+                            action(() => {
+                                this.bulkRoutes = {
+                                    ...this.bulkRoutes,
+                                    [kind]: true,
+                                };
+                            })();
+                            saved(
+                                batch.map((entry, index) => [
+                                    entry.annotation,
+                                    outcome.rows[index],
+                                ])
+                            );
+                            done += batch.length;
+                            break;
+                        }
+                        if (outcome.kind === 'conflict') {
+                            const stale = new Set(outcome.ids);
+                            batch
+                                .filter(entry => stale.has(entry.annotation.id))
+                                .forEach(entry =>
+                                    fail(
+                                        entry.annotation,
+                                        'changed elsewhere; reloaded'
+                                    )
+                                );
+                            await this.reloadCurrentSlide(
+                                'Some annotations changed elsewhere; reloaded latest data.'
+                            );
+                            pending = batch
+                                .map(entry => entry.annotation)
+                                .filter(
+                                    annotation => !stale.has(annotation.id)
+                                );
+                            continue;
+                        }
+                        if (outcome.kind === 'refused') {
+                            const refused = batch[outcome.index];
+                            fail(refused?.annotation, outcome.reason);
+                            if (outcome.status === 404) reload = true;
+                            pending = batch
+                                .filter((_, index) => index !== outcome.index)
+                                .map(entry => entry.annotation);
+                            continue;
+                        }
+                        // Access refused, or the request failed: none saved.
+                        batch.forEach(entry =>
+                            fail(entry.annotation, outcome.reason)
+                        );
+                        if (outcome.kind === 'access') break;
+                    }
+                    if (this.accessIssue !== null) {
+                        targets
+                            .slice(start + BATCH_MAX_ITEMS)
+                            .forEach(target => fail(target, 'no access'));
+                        break;
+                    }
+                }
+                if (reload) {
+                    await this.reloadCurrentSlide(
+                        'An annotation was deleted elsewhere; reloaded latest data.'
+                    );
+                }
+            }
         } finally {
-            const done = results.filter(Boolean).length;
-            const failed = targets.length - done;
             const plural = (n: number) =>
                 `${n} annotation${n === 1 ? '' : 's'}`;
             const parts = [`${verb} ${plural(done)}`];
@@ -4059,7 +4227,11 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
             if (failed) {
                 parts.push(
                     `${failed} could not be saved${
-                        this.error ? ` (${this.error})` : ''
+                        reasons.length
+                            ? ` (${reasons.join('; ')}${
+                                  failed > reasons.length ? '; …' : ''
+                              })`
+                            : ''
                     }`
                 );
             }
@@ -4068,8 +4240,170 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
                 this.bulkMessage = `${parts.join('; ')}.`;
             })();
         }
-        const done = results.filter(Boolean).length;
-        return { done, skipped, failed: targets.length - done };
+        return { done, skipped, failed };
+    }
+
+    /**
+     * Sends one bulk batch request (see `runBulk`) and says how it went:
+     * saved (with the rows in order), a conflict (the stale ids), one item
+     * refused (its position and the service's reason), the route missing,
+     * access refused, or failed.
+     */
+    private async sendBulkBatch(
+        kind: WsiBulkKind,
+        batch: Array<{
+            annotation: WsiAnnotation;
+            fields: Record<string, unknown>;
+        }>
+    ): Promise<
+        | { kind: 'saved'; rows: any[] }
+        | { kind: 'conflict'; ids: string[] }
+        | { kind: 'refused'; index: number; reason: string; status: number }
+        | { kind: 'missing' }
+        | { kind: 'access'; reason: string }
+        | { kind: 'failed'; reason: string }
+    > {
+        const context = {
+            generation: this.generation,
+            slideKey: this.slideKey,
+            signal: this.abortController?.signal,
+        };
+        let response: Response;
+        try {
+            response = await this.request(
+                `/annotations/batch-${kind}`,
+                {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        items: batch.map(({ annotation, fields }) => ({
+                            id: annotation.id,
+                            version: annotation.version || 1,
+                            ...fields,
+                        })),
+                    }),
+                },
+                context.signal
+            );
+        } catch (_) {
+            return { kind: 'failed', reason: 'network error' };
+        }
+        if (!this.isCurrent(context)) {
+            return { kind: 'failed', reason: 'another slide opened' };
+        }
+        const detail = response.ok
+            ? undefined
+            : await this.errorDetail(response);
+        if (
+            response.status === 405 ||
+            (response.status === 404 && detail === 'Not Found')
+        ) {
+            return { kind: 'missing' };
+        }
+        if (response.status === 409) {
+            const conflicts = (detail as any)?.conflicts;
+            const ids = Array.isArray(conflicts)
+                ? conflicts
+                      .map((conflict: any) => conflict?.id)
+                      .filter((id: unknown) => typeof id === 'string')
+                : [];
+            return ids.length
+                ? { kind: 'conflict', ids }
+                : { kind: 'conflict', ids: batch.map(e => e.annotation.id) };
+        }
+        if (
+            (response.status === 403 || response.status === 404) &&
+            detail &&
+            typeof detail === 'object' &&
+            typeof (detail as any).index === 'number'
+        ) {
+            const index = (detail as any).index;
+            const message = String((detail as any).msg || 'refused');
+            return {
+                kind: 'refused',
+                index:
+                    index >= 0 && index < batch.length
+                        ? index
+                        : Math.max(
+                              0,
+                              batch.findIndex(
+                                  entry =>
+                                      entry.annotation.id === (detail as any).id
+                              )
+                          ),
+                reason: message,
+                status: response.status,
+            };
+        }
+        if (response.status === 422) {
+            const named = batchItemErrors(
+                Array.isArray(detail)
+                    ? detail.map((error: any) => ({
+                          ...error,
+                          loc: Array.isArray(error?.loc)
+                              ? error.loc.map((part: unknown) =>
+                                    part === 'items' ? 'annotations' : part
+                                )
+                              : error?.loc,
+                      }))
+                    : detail
+            );
+            const first = Array.from(named.entries())[0];
+            if (first) {
+                return {
+                    kind: 'refused',
+                    index: first[0],
+                    reason: first[1],
+                    status: 422,
+                };
+            }
+        }
+        if (this.refuseAccess(response)) {
+            return {
+                kind: 'access',
+                reason: this.accessMessage || 'no access',
+            };
+        }
+        if (!response.ok) {
+            return {
+                kind: 'failed',
+                reason:
+                    typeof detail === 'string'
+                        ? detail
+                        : `save failed (${response.status})`,
+            };
+        }
+        try {
+            const rows = await response.json();
+            if (Array.isArray(rows) && rows.length === batch.length) {
+                return { kind: 'saved', rows };
+            }
+        } catch (_) {
+            // Reported below.
+        }
+        return { kind: 'failed', reason: 'unexpected response' };
+    }
+
+    /** Puts saved rows in place of their annotations, in one change. */
+    @action
+    private replaceSaved(rows: any[]) {
+        const byId = new Map<string, WsiAnnotation>();
+        rows.forEach(row => {
+            const annotation = this.fromApi(row, this.slideKey || '');
+            byId.set(annotation.id, annotation);
+        });
+        this.annotations = this.annotations.map(
+            annotation => byId.get(annotation.id) || annotation
+        );
+        this.applyLayerFilter();
+        this.refreshStyle();
+    }
+
+    /** Removes annotations, in one change. */
+    @action
+    private removeManyLocally(ids: Set<string>) {
+        this.annotations = this.annotations.filter(item => !ids.has(item.id));
+        this.applyLayerFilter();
+        this.refreshStyle();
     }
 
     /**
@@ -4082,15 +4416,31 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
     ) {
         const before: WsiAnnotation[] = [];
         const result = await this.runBulk(
+            'update',
             verb,
             annotation => this.canModify(annotation),
             'not yours',
+            annotation => {
+                const updated = change(annotation);
+                if (!updated) return null;
+                return {
+                    body: this.toApiBody(updated),
+                    target: { selector: updated.target.selector },
+                    ...(updated.visibleTo !== undefined
+                        ? { visible_to: updated.visibleTo }
+                        : {}),
+                };
+            },
             async annotation => {
                 const updated = change(annotation);
                 if (!updated) return true;
                 const saved = await this.updateAnnotation(updated, false);
                 if (saved) before.push(annotation);
                 return !!saved;
+            },
+            pairs => {
+                pairs.forEach(([annotation]) => before.push(annotation));
+                this.replaceSaved(pairs.map(([, row]) => row));
             }
         );
         if (before.length) {
@@ -4160,15 +4510,35 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
 
     /**
      * Accepts or rejects the selected unreviewed AI annotations with the
-     * review route; reviews are not on the undo history.
+     * review routes (`batch-review`, else one review each); reviews are not
+     * on the undo history.
      */
     @action.bound
     bulkReview(decision: 'accept' | 'reject') {
         return this.runBulk(
+            // Without the review route, reviews fall back one by one.
+            this.reviewRoute === false ? 'review-fallback' : 'review',
             decision === 'accept' ? 'Accepted' : 'Rejected',
             annotation => this.canReview(annotation),
             'not unreviewed AI annotations you can review',
-            annotation => this.reviewAnnotation(annotation.id, decision)
+            () => ({ decision }),
+            annotation => this.reviewAnnotation(annotation.id, decision),
+            pairs => {
+                action(() => {
+                    this.reviewRoute = true;
+                })();
+                const rejected = new Set<string>();
+                const kept: any[] = [];
+                pairs.forEach(([annotation, row]) => {
+                    if (isRejectedAi(this.fromApi(row, '').provenance)) {
+                        rejected.add(annotation.id);
+                    } else {
+                        kept.push(row);
+                    }
+                });
+                if (kept.length) this.replaceSaved(kept);
+                if (rejected.size) this.removeManyLocally(rejected);
+            }
         );
     }
 
@@ -4177,13 +4547,21 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
     async bulkDelete() {
         const deleted: WsiAnnotation[] = [];
         const result = await this.runBulk(
+            'delete',
             'Deleted',
             annotation => this.canModify(annotation),
             'not yours',
+            () => ({}),
             async annotation => {
                 const done = await this.deleteAnnotation(annotation.id, false);
                 if (done) deleted.push(annotation);
                 return done;
+            },
+            pairs => {
+                pairs.forEach(([annotation]) => deleted.push(annotation));
+                this.removeManyLocally(
+                    new Set(pairs.map(([annotation]) => annotation.id))
+                );
             }
         );
         if (deleted.length) this.pushUndo({ kind: 'delete', before: deleted });
