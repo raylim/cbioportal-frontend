@@ -81,6 +81,18 @@ function tracePath(
                 2 * Math.PI
             );
             return true;
+        case 'multipolygon':
+            shape.polygons.forEach(rings =>
+                rings.forEach(ring => {
+                    ring.forEach((point, index) =>
+                        index
+                            ? context.lineTo(point.x, point.y)
+                            : context.moveTo(point.x, point.y)
+                    );
+                    context.closePath();
+                })
+            );
+            return true;
         case 'polygon':
         case 'polyline':
         case 'line':
@@ -149,7 +161,8 @@ export function drawAnnotationScene(
         if (closed && scene.fillOpacity > 0) {
             context.globalAlpha = scene.fillOpacity;
             context.fillStyle = color;
-            context.fill();
+            // Holes are rings inside their part: even-odd leaves them empty.
+            context.fill(shape.kind === 'multipolygon' ? 'evenodd' : 'nonzero');
         }
         context.globalAlpha = 1;
         context.strokeStyle = color;

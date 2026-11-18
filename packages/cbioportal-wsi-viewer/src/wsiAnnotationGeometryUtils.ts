@@ -50,7 +50,15 @@ export type WsiAnnotationShape =
     | { kind: 'line'; points: [WsiPoint, WsiPoint] }
     | { kind: 'polyline'; points: WsiPoint[] }
     | { kind: 'polygon'; points: WsiPoint[] }
+    /**
+     * A region with holes or several parts: each polygon is a list of
+     * rings, its outer ring first and its holes after.
+     */
+    | { kind: 'multipolygon'; polygons: WsiPoint[][][] }
     | { kind: 'point'; x: number; y: number };
+
+/** A region's polygons, each its outer ring then its holes (image pixels). */
+export type WsiRegion = WsiPoint[][][];
 
 function svgAttributes(element: string): Record<string, string> {
     const attributes: Record<string, string> = {};
@@ -78,6 +86,222 @@ function parsePointList(value: string | undefined): WsiPoint[] | null {
     return points;
 }
 
+/**
+ * The subpaths of an SVG path's `d`, with whether each is closed (`Z`).
+ * Straight segments only (M, L, H, V and Z, absolute or relative); null
+ * for curves or anything else.
+ */
+function parsePathData(
+    d: string
+): Array<{ points: WsiPoint[]; closed: boolean }> | null {
+    const tokens = d.match(
+        /[a-zA-Z]|[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?/g
+    );
+    if (!tokens) return null;
+    const subpaths: Array<{ points: WsiPoint[]; closed: boolean }> = [];
+    let current: { points: WsiPoint[]; closed: boolean } | null = null;
+    let at: WsiPoint = { x: 0, y: 0 };
+    let start: WsiPoint = { x: 0, y: 0 };
+    let command = '';
+    let i = 0;
+    const number = () => {
+        const value = Number(tokens[i++]);
+        if (!Number.isFinite(value)) throw new Error('bad number');
+        return value;
+    };
+    const isNumber = () => i < tokens.length && !/^[a-zA-Z]$/.test(tokens[i]);
+    try {
+        while (i < tokens.length) {
+            if (/^[a-zA-Z]$/.test(tokens[i])) command = tokens[i++];
+            else if (!command) return null;
+            const relative = command === command.toLowerCase();
+            switch (command.toUpperCase()) {
+                case 'M': {
+                    const x = number();
+                    const y = number();
+                    at = relative ? { x: at.x + x, y: at.y + y } : { x, y };
+                    start = at;
+                    current = { points: [at], closed: false };
+                    subpaths.push(current);
+                    // Further pairs are lines.
+                    command = relative ? 'l' : 'L';
+                    break;
+                }
+                case 'L':
+                case 'H':
+                case 'V': {
+                    if (!current) return null;
+                    const upper = command.toUpperCase();
+                    const x = upper === 'V' ? (relative ? 0 : at.x) : number();
+                    const y =
+                        upper === 'H'
+                            ? relative
+                                ? 0
+                                : at.y
+                            : upper === 'V'
+                            ? number()
+                            : number();
+                    at = relative ? { x: at.x + x, y: at.y + y } : { x, y };
+                    current.points.push(at);
+                    break;
+                }
+                case 'Z':
+                    if (!current) return null;
+                    current.closed = true;
+                    at = start;
+                    current = null;
+                    // A new subpath must start with M.
+                    command = '';
+                    if (isNumber()) return null;
+                    break;
+                default:
+                    return null;
+            }
+        }
+    } catch (_) {
+        return null;
+    }
+    return subpaths;
+}
+
+/** A ring without a last point that repeats its first. */
+function openRing(points: WsiPoint[]): WsiPoint[] {
+    const first = points[0];
+    const last = points[points.length - 1];
+    return points.length > 1 && first.x === last.x && first.y === last.y
+        ? points.slice(0, -1)
+        : points;
+}
+
+/**
+ * The shape of an SVG holding `<path>` elements, as Annotorious writes a
+ * multi-polygon: each path one polygon, its first closed subpath the outer
+ * ring and the others its holes (drawn with `fill-rule="evenodd"`). One
+ * open path is a polyline. Null for curves or rings of under 3 points.
+ */
+function parsePathShape(svg: string): WsiAnnotationShape | null {
+    const paths: Array<Array<{ points: WsiPoint[]; closed: boolean }>> = [];
+    const re = /<path\b([^>]*)>/gi;
+    let match: RegExpExecArray | null;
+    while ((match = re.exec(svg))) {
+        const d = svgAttributes(match[1]).d;
+        const subpaths = d ? parsePathData(d) : null;
+        if (!subpaths || !subpaths.length) return null;
+        paths.push(subpaths);
+    }
+    if (!paths.length) return null;
+    if (paths.length === 1 && paths[0].length === 1 && !paths[0][0].closed) {
+        const points = paths[0][0].points;
+        return points.length >= 2 ? { kind: 'polyline', points } : null;
+    }
+    const polygons = paths.map(subpaths =>
+        subpaths.map(subpath => openRing(subpath.points))
+    );
+    if (polygons.some(rings => rings.some(ring => ring.length < 3))) {
+        return null;
+    }
+    return regionShape(polygons);
+}
+
+/**
+ * A region as a shape: a plain polygon when it is one ring, else a
+ * multipolygon. Null when it is empty.
+ */
+export function regionShape(region: WsiRegion): WsiAnnotationShape | null {
+    const polygons = region.filter(rings => rings.length && rings[0].length);
+    if (!polygons.length) return null;
+    if (polygons.length === 1 && polygons[0].length === 1) {
+        return { kind: 'polygon', points: polygons[0][0] };
+    }
+    return { kind: 'multipolygon', polygons };
+}
+
+function roundCoordinate(value: number): number {
+    return Math.round(value * 100) / 100;
+}
+
+/**
+ * The SVG selector value of a region, in image pixels rounded to 0.01: a
+ * `<polygon>` for one ring, as before; with holes or several parts, a
+ * `<path fill-rule="evenodd">` per part in a `<g>`, its outer ring then its
+ * holes as closed subpaths (`M x,y L x,y … Z`), the form Annotorious reads
+ * and writes for a multi-polygon.
+ */
+export function regionSelectorSvg(region: WsiRegion): string {
+    const polygons = region.filter(rings => rings.length && rings[0].length);
+    const pair = (point: WsiPoint) =>
+        `${roundCoordinate(point.x)},${roundCoordinate(point.y)}`;
+    if (polygons.length === 1 && polygons[0].length === 1) {
+        return `<svg><polygon points="${polygons[0][0]
+            .map(pair)
+            .join(' ')}" /></svg>`;
+    }
+    const paths = polygons.map(
+        rings =>
+            `<path fill-rule="evenodd" d="${rings
+                .map(ring => `M ${ring.map(pair).join(' L ')} Z`)
+                .join(' ')}" />`
+    );
+    return `<svg><g>${paths.join('')}</g></svg>`;
+}
+
+/** Vertices of an ellipse turned into a polygon, e.g. to cut or merge it. */
+export const ELLIPSE_REGION_VERTICES = 96;
+
+/**
+ * A closed shape (rectangle, ellipse, polygon or multipolygon) as a region;
+ * an ellipse becomes a polygon of `ellipseVertices`. Null for lines and
+ * points.
+ */
+export function shapeRegion(
+    shape: WsiAnnotationShape,
+    ellipseVertices = ELLIPSE_REGION_VERTICES
+): WsiRegion | null {
+    switch (shape.kind) {
+        case 'rectangle': {
+            const { x, y, width, height } = shape;
+            return [
+                [
+                    [
+                        { x, y },
+                        { x: x + width, y },
+                        { x: x + width, y: y + height },
+                        { x, y: y + height },
+                    ],
+                ],
+            ];
+        }
+        case 'ellipse': {
+            const ring: WsiPoint[] = [];
+            for (let i = 0; i < ellipseVertices; i++) {
+                const angle = (2 * Math.PI * i) / ellipseVertices;
+                ring.push({
+                    x: shape.cx + shape.rx * Math.cos(angle),
+                    y: shape.cy + shape.ry * Math.sin(angle),
+                });
+            }
+            return [[ring]];
+        }
+        case 'polygon':
+            return [[shape.points]];
+        case 'multipolygon':
+            return shape.polygons;
+        default:
+            return null;
+    }
+}
+
+/** Whether a shape is a region: a rectangle, ellipse or (multi)polygon. */
+export function isRegionShape(shape: WsiAnnotationShape | null): boolean {
+    return (
+        !!shape &&
+        (shape.kind === 'rectangle' ||
+            shape.kind === 'ellipse' ||
+            shape.kind === 'polygon' ||
+            shape.kind === 'multipolygon')
+    );
+}
+
 function finite(...values: number[]): boolean {
     return values.every(value => Number.isFinite(value));
 }
@@ -85,7 +309,9 @@ function finite(...values: number[]): boolean {
 /**
  * The shape an annotation selector describes: a `FragmentSelector` rectangle
  * (`xywh=pixel:x,y,w,h`) or the first shape of an `SvgSelector`. A circle of
- * radius 0 is a point. Null for anything else, such as an SVG path.
+ * radius 0 is a point. `<path>` elements with closed subpaths are a region
+ * with holes or several parts (see `parsePathShape`). Null for anything
+ * else, such as a curved path.
  */
 export function parseAnnotationShape(
     selector: { type?: string; value?: unknown } | null | undefined
@@ -102,11 +328,12 @@ export function parseAnnotationShape(
             : null;
     }
     if (selector.type !== 'SvgSelector') return null;
-    const element = /<(rect|ellipse|circle|line|polygon|polyline)\b([^>]*)>/i.exec(
+    const element = /<(rect|ellipse|circle|line|polygon|polyline|path)\b([^>]*)>/i.exec(
         selector.value
     );
     if (!element) return null;
     const tag = element[1].toLowerCase();
+    if (tag === 'path') return parsePathShape(selector.value);
     const a = svgAttributes(element[2]);
     const n = (name: string) => Number(a[name]);
     switch (tag) {
@@ -273,6 +500,19 @@ export function measureShape(
                 perimeter: pathLength(points, true),
             };
         }
+        case 'multipolygon': {
+            // Each part's outer ring less its holes; every ring's edge.
+            let area = 0;
+            let perimeter = 0;
+            shape.polygons.forEach(rings =>
+                rings.forEach((ring, index) => {
+                    const points = scale(ring);
+                    area += (index ? -1 : 1) * polygonArea(points);
+                    perimeter += pathLength(points, true);
+                })
+            );
+            return { unit, area: Math.max(0, area), perimeter };
+        }
         default:
             return null;
     }
@@ -386,6 +626,22 @@ export function shapeBounds(shape: WsiAnnotationShape): WsiBounds {
                 maxX: shape.x,
                 maxY: shape.y,
             };
+        case 'multipolygon': {
+            const outer = shape.polygons.map(rings => rings[0]);
+            let minX = Infinity;
+            let minY = Infinity;
+            let maxX = -Infinity;
+            let maxY = -Infinity;
+            outer.forEach(ring =>
+                ring.forEach(point => {
+                    minX = Math.min(minX, point.x);
+                    minY = Math.min(minY, point.y);
+                    maxX = Math.max(maxX, point.x);
+                    maxY = Math.max(maxY, point.y);
+                })
+            );
+            return { minX, minY, maxX, maxY };
+        }
         default: {
             const xs = shape.points.map(point => point.x);
             const ys = shape.points.map(point => point.y);

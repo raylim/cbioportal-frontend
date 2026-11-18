@@ -12,6 +12,14 @@ export const TEST_API = 'https://tiles.example/wsi';
 
 const MACHINE_SOURCES = ['agent', 'assistant', 'ai', 'model', 'precomputed'];
 
+/** The service refuses a machine-made create from a user (not a trusted writer). */
+const MACHINE_CREATE_REFUSED = {
+    status: 422,
+    body: {
+        detail: 'Only a trusted writer may create a machine-made annotation',
+    },
+};
+
 /** A stored annotation row, as the service answers it. */
 export function serviceRow(
     id: string,
@@ -267,12 +275,31 @@ export class TestAnnotationService {
                         .map(row => this.listed(row)),
                 };
             }
-            if (method === 'POST')
+            if (method === 'POST') {
+                if (this.isMachine(body)) return MACHINE_CREATE_REFUSED;
                 return { status: 201, body: this.create(body) };
+            }
         }
         if (id === 'batch' && method === 'POST') {
             if (this.missing('batch')) {
                 return { status: 405, body: { detail: 'Method Not Allowed' } };
+            }
+            const machine = body.annotations.findIndex((item: any) =>
+                this.isMachine(item)
+            );
+            if (machine >= 0) {
+                return {
+                    status: 422,
+                    body: {
+                        detail: [
+                            {
+                                loc: ['body', 'annotations', machine],
+                                msg:
+                                    'Only a trusted writer may create a machine-made annotation',
+                            },
+                        ],
+                    },
+                };
             }
             return {
                 status: 201,
@@ -327,6 +354,20 @@ export class TestAnnotationService {
         if (method === 'PUT') {
             if (body.version !== row.version) {
                 return { status: 409, body: { detail: 'Version conflict' } };
+            }
+            // A user may keep an annotation's machine source, not set one.
+            const source = (item: any) =>
+                this.isMachine(item)
+                    ? String(item.body.provenance.source).toLowerCase()
+                    : null;
+            if (body.body && source(body) && source(body) !== source(row)) {
+                return {
+                    status: 422,
+                    body: {
+                        detail:
+                            'Only a trusted writer may mark an annotation machine-made',
+                    },
+                };
             }
             const updated = this.updated(row, body);
             this.rows.set(id, updated);

@@ -7,25 +7,44 @@ import {
     measureRuler,
     measureShape,
     normalizeSvgSelector,
+    isRegionShape,
     parseAnnotationShape,
     polygonArea,
+    regionSelectorSvg,
     shapeBounds,
+    shapeRegion,
     simplifyPath,
     strokeOutline,
     WsiAnnotationShape,
     WsiBounds,
     WsiMeasurement,
     WsiMpp,
+    WsiPoint,
+    WsiRegion,
 } from './wsiAnnotationGeometryUtils';
+import {
+    boundsOverlap,
+    intersectRegions,
+    regionArea,
+    regionBounds,
+    regionParts,
+    splitRegionByPath,
+    subtractRegions,
+    unionRegions,
+} from './wsiAnnotationShapeOps';
 import {
     acceptedProvenance,
     aiOriginDescription,
+    derivedProvenance,
+    editedProvenance,
     isAiProvenance,
+    isEditedAi,
     isRejectedAi,
     isUnreviewedAi,
     readLayerAndNote,
     serviceColor,
     WsiAnnotationApiBody,
+    WsiShapeOperation,
 } from './wsiAnnotationBody';
 import {
     WsiServiceAccessIssue,
@@ -677,8 +696,21 @@ export type WsiUndoEntry =
     | { kind: 'create'; ids: string[]; pointRun?: number }
     | { kind: 'update'; before: WsiAnnotation }
     | { kind: 'delete'; before: WsiAnnotation[]; pointRun?: number }
-    /** Edits of several annotations made together, e.g. a bulk relabel. */
-    | { kind: 'group'; entries: WsiUndoEntry[] };
+    /**
+     * Changes made together, e.g. a bulk relabel, or a shape operation
+     * (`label`, e.g. "merge") that created, edited and deleted annotations.
+     */
+    | { kind: 'group'; entries: WsiUndoEntry[]; label?: string };
+
+/** How undo and redo name a shape operation, e.g. "Undo merge". */
+const SHAPE_OPERATION_NAMES: Record<WsiShapeOperation, string> = {
+    merge: 'merge',
+    subtract: 'subtract',
+    intersect: 'intersect',
+    cut: 'cut',
+    split: 'split',
+    separate: 'separate parts',
+};
 
 /**
  * The change an undo entry reverses, e.g. "delete of 2 annotations"; with
@@ -687,6 +719,7 @@ export type WsiUndoEntry =
  */
 function describeChange(entry: WsiUndoEntry, redo = false): string {
     if (entry.kind === 'group') {
+        if (entry.label) return entry.label;
         const n = entry.entries.length;
         return `edit${n > 1 ? ` of ${n} annotations` : ''}`;
     }
@@ -1122,6 +1155,8 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
         text: string;
         layerName?: string;
         ai?: 'unreviewed' | 'accepted';
+        /** An AI annotation a person changed (see `isEditedAi`). */
+        aiEdited?: boolean;
         /** Who made an AI annotation (see `aiOriginDescription`). */
         aiOrigin?: string;
         measurement?: string;
@@ -1247,6 +1282,14 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
     @observable bulkBusy = false;
     /** What the last bulk action did, and what it skipped. */
     @observable bulkMessage: string | null = null;
+    /**
+     * A shape edit waiting for a shape to be drawn: `cut` cuts the next
+     * closed shape out of the selected regions, `split` splits the selected
+     * region along the next line.
+     */
+    @observable shapeEditMode: 'cut' | 'split' | null = null;
+    /** Whether Alt was held as the last drawn shape ended (cuts it out). */
+    private drawAlt = false;
     /** The link messages, e.g. "Link copied." */
     @observable linkMessage: string | null = null;
 
@@ -1657,21 +1700,14 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
     }
 
     /**
-     * The points inside a region (a rectangle, ellipse or polygon): all
-     * points on the slide, whatever layer or filter hides them, counted by
-     * label term, and per mm² on a slide with a scale. Null for other
-     * shapes, and on a slide without points.
+     * The points inside a region (a rectangle, ellipse or polygon, not in
+     * its holes): all points on the slide, whatever layer or filter hides
+     * them, counted by label term, and per mm² on a slide with a scale.
+     * Null for other shapes, and on a slide without points.
      */
     pointsInside(annotation: WsiAnnotation): WsiRegionPointCount | null {
         const shape = this.shapeOf(annotation);
-        if (
-            !shape ||
-            (shape.kind !== 'rectangle' &&
-                shape.kind !== 'ellipse' &&
-                shape.kind !== 'polygon')
-        ) {
-            return null;
-        }
+        if (!shape || !isRegionShape(shape)) return null;
         const index = this.pointIndex;
         if (!index.points.length) return null;
         const cached = index.counts.get(annotation);
@@ -1710,6 +1746,23 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
         }
         index.counts.set(annotation, count);
         return count;
+    }
+
+    /**
+     * The points inside a region as the list and tooltip show them: only
+     * when there are any, or while counting (the Point or HPF tool is on,
+     * or the region is a high-power field), so a region without points
+     * does not read "Points inside: 0".
+     */
+    shownPointsInside(annotation: WsiAnnotation): WsiRegionPointCount | null {
+        const count = this.pointsInside(annotation);
+        if (!count) return null;
+        return count.total > 0 ||
+            this.activeTool === 'point' ||
+            this.activeTool === 'hpf' ||
+            this.isHpf(annotation)
+            ? count
+            : null;
     }
 
     /**
@@ -2215,6 +2268,7 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
                         ? 'unreviewed'
                         : 'accepted'
                     : undefined,
+                aiEdited: isEditedAi(annotation.provenance) || undefined,
             });
         });
         return toGeoJsonFeatureCollection(items, this.slideKey || '', this.mpp);
@@ -2531,7 +2585,7 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
                 )
             ).filter((part): part is WsiUndoEntry => !!part);
             return inverses.length
-                ? { kind: 'group', entries: inverses }
+                ? { kind: 'group', entries: inverses, label: entry.label }
                 : null;
         }
         if (entry.kind === 'create') {
@@ -2895,6 +2949,8 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
                               ...stored.target,
                               selector: annotation.target.selector,
                           },
+                          // A person reshaped it: an AI one is now edited.
+                          provenance: editedProvenance(stored.provenance),
                       }
                     : annotation
             );
@@ -3215,6 +3271,7 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
     cancelDrawing() {
         void this.flushPoints();
         this.pointRun = null;
+        this.shapeEditMode = null;
         this.activeTool = null;
         this.brushPointer = null;
         this.resetGesture();
@@ -3822,6 +3879,7 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
         this.selectedIds = new Set<string>();
         this.selectionDrag = null;
         this.bulkMessage = null;
+        this.shapeEditMode = null;
     }
 
     /**
@@ -4075,6 +4133,9 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
     private setSelection(ids: Set<string>) {
         this.selectedIds = ids;
         this.bulkMessage = null;
+        if (this.shapeEditMode && !this.shapeEditTargets().length) {
+            this.shapeEditMode = null;
+        }
         this.refreshStyle();
     }
 
@@ -4724,6 +4785,750 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
     @action.bound
     dismissBulkMessage() {
         this.bulkMessage = null;
+    }
+
+    // ---- shape editing: merge, subtract, intersect, cut, split ----
+
+    /** The selected annotations, in the order they were selected. */
+    @computed get selectionInOrder(): WsiAnnotation[] {
+        const byId = new Map(this.annotations.map(item => [item.id, item]));
+        return Array.from(this.selectedIds)
+            .map(id => byId.get(id))
+            .filter((item): item is WsiAnnotation => !!item);
+    }
+
+    /** An annotation's region (see `shapeRegion`), or null for a line or point. */
+    regionOf(annotation: WsiAnnotation): WsiRegion | null {
+        const shape = this.shapeOf(annotation);
+        return shape ? shapeRegion(shape) : null;
+    }
+
+    /**
+     * The selected regions (rectangles, ellipses, polygons with or without
+     * holes or parts), in the order they were selected.
+     */
+    @computed get selectedRegions(): WsiAnnotation[] {
+        return this.selectionInOrder.filter(item =>
+            isRegionShape(this.shapeOf(item))
+        );
+    }
+
+    /** What a cut or split in progress applies to. */
+    private shapeEditTargets(): WsiAnnotation[] {
+        const regions = this.selectedRegions;
+        return this.shapeEditMode === 'split' ? regions.slice(0, 1) : regions;
+    }
+
+    /**
+     * The shape operations the selection allows, each with its menu text
+     * and why it is off. Results are saved as the user's: a new annotation
+     * of a merge or intersection; a subtraction, cut, split or separation
+     * changes the user's own region in place, and makes a new annotation of
+     * the user's from another user's region, which stays as it is.
+     */
+    @computed get shapeOps(): Record<
+        WsiShapeOperation,
+        { enabled: boolean; text: string; title: string }
+    > {
+        const regions = this.selectedRegions;
+        const n = regions.length;
+        const first = regions[0];
+        const name = first
+            ? `"${first.body?.[0]?.value || '(unlabeled)'}"`
+            : '';
+        const off = !this.canEdit
+            ? 'Annotations are read-only here'
+            : this.bulkBusy
+            ? 'Saving…'
+            : null;
+        const op = (
+            text: string,
+            ready: boolean,
+            title: string,
+            why: string
+        ) => ({
+            enabled: !off && ready,
+            text,
+            title: off || (ready ? title : why),
+        });
+        const multipart = regions.filter(item => {
+            const shape = this.shapeOf(item);
+            return shape?.kind === 'multipolygon' && shape.polygons.length > 1;
+        }).length;
+        return {
+            merge: op(
+                `Merge ${n} regions`,
+                n >= 2,
+                'One new annotation of yours covering all of them, labelled as the first selected; your own originals are replaced',
+                'Select two or more regions to merge'
+            ),
+            subtract: op(
+                n >= 2 ? `Subtract the others from ${name}` : 'Subtract',
+                n >= 2,
+                `Cut the other selected regions out of ${name}, the first selected`,
+                'Select the region to cut from first, then the regions to cut out'
+            ),
+            intersect: op(
+                `Intersect ${n} regions`,
+                n >= 2,
+                'One new annotation of yours where all of them overlap; the originals stay',
+                'Select two or more regions to intersect'
+            ),
+            cut: op(
+                'Cut a hole…',
+                n >= 1,
+                'Draw a shape inside the selected regions to cut it out (or hold Alt while finishing a shape)',
+                'Select a region to cut a hole in'
+            ),
+            split: op(
+                n === 1 ? `Split ${name} by a line…` : 'Split by a line…',
+                n === 1,
+                'Draw a line across the region, from edge to edge; each piece becomes its own annotation',
+                'Select one region to split'
+            ),
+            separate: op(
+                multipart
+                    ? `Separate the parts of ${multipart} region${
+                          multipart === 1 ? '' : 's'
+                      }`
+                    : 'Separate parts',
+                multipart > 0,
+                'Each part of a multi-part region becomes its own annotation',
+                'None of the selected regions has more than one part'
+            ),
+        };
+    }
+
+    /** Runs the shape operation picked in the selection bar. */
+    @action.bound
+    runShapeOp(operation: WsiShapeOperation): Promise<boolean> | void {
+        if (!this.shapeOps[operation].enabled) return;
+        switch (operation) {
+            case 'merge':
+                return this.mergeSelected();
+            case 'subtract':
+                return this.subtractSelected();
+            case 'intersect':
+                return this.intersectSelected();
+            case 'separate':
+                return this.separateSelected();
+            default:
+                this.startShapeEdit(operation);
+        }
+    }
+
+    /**
+     * Waits for a shape to be drawn: for `cut`, a closed shape (the Outline
+     * menu's last tool is picked unless a closed-shape tool is on), cut out
+     * of the selected regions; for `split`, a line (the Line tool, or a
+     * freehand or polygon path) across the selected region. Stays on for
+     * further cuts; a split ends it. Esc or Select stops it.
+     */
+    @action.bound
+    startShapeEdit(mode: 'cut' | 'split') {
+        if (!this.shapeOps[mode].enabled) return;
+        const tool = this.activeTool;
+        if (mode === 'cut') {
+            const closed =
+                tool === 'rectangle' ||
+                tool === 'ellipse' ||
+                tool === 'circle' ||
+                isOutlineTool(tool);
+            if (!closed) this.setTool(this.outlineTool);
+        } else if (
+            tool !== 'line' &&
+            tool !== 'freehand' &&
+            tool !== 'polygon'
+        ) {
+            this.setTool('line');
+        }
+        this.shapeEditMode = mode;
+        this.bulkMessage = null;
+    }
+
+    /** Stops a cut or split and goes back to Select. */
+    @action.bound
+    stopShapeEdit() {
+        this.shapeEditMode = null;
+        this.cancelDrawing();
+    }
+
+    /** What to draw for the cut or split in progress, for the selection bar. */
+    @computed get shapeEditHint(): string | null {
+        const targets = this.shapeEditTargets();
+        if (!this.shapeEditMode || !targets.length) return null;
+        const name =
+            targets.length === 1
+                ? `"${targets[0].body?.[0]?.value || '(unlabeled)'}"`
+                : `the ${targets.length} selected regions`;
+        return this.shapeEditMode === 'cut'
+            ? `Cut a hole: draw a shape inside ${name}; it is cut out. Esc stops.`
+            : `Split: draw a line across ${name}, from edge to edge. Esc stops.`;
+    }
+
+    /** Whether the shape being finished is for a cut or split, not saved. */
+    private get drawingForShapeEdit(): boolean {
+        return (
+            this.shapeEditMode !== null ||
+            (this.drawAlt && this.selectedRegions.length > 0)
+        );
+    }
+
+    /**
+     * A shape drawn for a cut or split: a closed region is cut out of the
+     * selected regions (a cut, or Alt), a path splits the selected region.
+     */
+    private async applyDrawnEdit(drawn: {
+        region?: WsiRegion | null;
+        path?: WsiPoint[];
+    }) {
+        this.drawAlt = false;
+        if (this.shapeEditMode === 'split') {
+            if (drawn.path && drawn.path.length >= 2) {
+                await this.splitSelected(drawn.path);
+            } else {
+                action(() => {
+                    this.bulkMessage =
+                        'To split, draw a line (or a freehand or polygon path) across the region.';
+                })();
+            }
+            return;
+        }
+        if (drawn.region && drawn.region.length) {
+            await this.cutSelected(drawn.region);
+        } else {
+            action(() => {
+                this.bulkMessage =
+                    'To cut a hole, draw a closed shape: a rectangle, ellipse, polygon, freehand or brush shape.';
+            })();
+        }
+    }
+
+    /** "Tumor 1" in quotes, for messages. */
+    private quoted(annotation: WsiAnnotation): string {
+        return `"${annotation.body?.[0]?.value || '(unlabeled)'}"`;
+    }
+
+    /**
+     * A new annotation of the user's with `region`, made by `operation` from
+     * `sources`: `from`'s label, layer and color; its sharing when it is
+     * the user's own, else the default for new annotations; a provenance
+     * naming the sources (see `derivedProvenance`).
+     */
+    private derivedDraft(
+        from: WsiAnnotation,
+        region: WsiRegion,
+        operation: WsiShapeOperation,
+        sources: WsiAnnotation[]
+    ): WsiAnnotation {
+        const draft = this.draftAnnotation(
+            regionSelectorSvg(region),
+            from.body?.[0]?.value || this.newShapeLabel()
+        );
+        return {
+            ...draft,
+            color: from.color || draft.color,
+            colorName: from.colorName ?? draft.colorName,
+            layerName: from.layerName || draft.layerName,
+            visibleTo: this.canModify(from) ? from.visibleTo : undefined,
+            provenance: derivedProvenance(operation, sources),
+        };
+    }
+
+    /**
+     * Saves a shape operation as one undo step: new annotations first (in
+     * batch saves; when none is saved nothing else is done), then the new
+     * geometry of the user's own regions (versioned `PUT`s; an AI one keeps
+     * its source and is marked edited), then deletes of the user's own
+     * annotations. Undo deletes what was created, puts the previous
+     * geometry back and creates the deleted ones again.
+     */
+    private async applyShapeEdit(
+        operation: WsiShapeOperation,
+        plan: {
+            creates: WsiAnnotation[];
+            updates: Array<{ annotation: WsiAnnotation; region: WsiRegion }>;
+            deletes: WsiAnnotation[];
+        }
+    ): Promise<{
+        created: WsiAnnotation[];
+        updated: WsiAnnotation[];
+        deleted: WsiAnnotation[];
+        failed: number;
+    }> {
+        action(() => {
+            this.bulkBusy = true;
+            this.bulkMessage = null;
+            this.error = null;
+        })();
+        const created: WsiAnnotation[] = [];
+        const updated: WsiAnnotation[] = [];
+        const deleted: WsiAnnotation[] = [];
+        const befores: WsiAnnotation[] = [];
+        let failed = 0;
+        try {
+            if (plan.creates.length) {
+                const results = await this.saveAnnotations(plan.creates);
+                created.push(...this.addSaved(results, plan.creates));
+                failed += plan.creates.length - created.length;
+                if (!created.length) {
+                    return { created, updated, deleted, failed };
+                }
+            }
+            for (const { annotation, region } of plan.updates) {
+                const before = this.annotations.find(
+                    item => item.id === annotation.id
+                );
+                if (!before) {
+                    failed += 1;
+                    continue;
+                }
+                const saved = await this.updateAnnotation(
+                    {
+                        ...before,
+                        target: {
+                            ...before.target,
+                            selector: {
+                                type: 'SvgSelector',
+                                value: regionSelectorSvg(region),
+                            },
+                        },
+                        provenance: editedProvenance(before.provenance),
+                    },
+                    false
+                );
+                if (saved) {
+                    updated.push(saved);
+                    befores.push(before);
+                } else failed += 1;
+            }
+            for (const annotation of plan.deletes) {
+                if (await this.deleteAnnotation(annotation.id, false)) {
+                    deleted.push(annotation);
+                } else failed += 1;
+            }
+        } finally {
+            const entries: WsiUndoEntry[] = [
+                ...(created.length
+                    ? [
+                          {
+                              kind: 'create',
+                              ids: created.map(item => item.id),
+                          } as WsiUndoEntry,
+                      ]
+                    : []),
+                ...befores.map(
+                    before => ({ kind: 'update', before } as WsiUndoEntry)
+                ),
+                ...(deleted.length
+                    ? [{ kind: 'delete', before: deleted } as WsiUndoEntry]
+                    : []),
+            ];
+            action(() => {
+                this.bulkBusy = false;
+                if (entries.length) {
+                    this.pushUndo({
+                        kind: 'group',
+                        label: SHAPE_OPERATION_NAMES[operation],
+                        entries,
+                    });
+                }
+            })();
+        }
+        return { created, updated, deleted, failed };
+    }
+
+    /**
+     * A plan that gives `target` the `pieces` left by an operation: the
+     * user's own region takes the first piece in place (keeping its id) and
+     * the rest become new annotations; another user's region stays as it is
+     * and every piece becomes a new annotation of the user's.
+     */
+    private replacementPlan(
+        operation: WsiShapeOperation,
+        target: WsiAnnotation,
+        pieces: WsiRegion[],
+        sources: WsiAnnotation[]
+    ) {
+        const own = this.canModify(target);
+        return {
+            updates: own ? [{ annotation: target, region: pieces[0] }] : [],
+            creates: (own ? pieces.slice(1) : pieces).map(piece =>
+                this.derivedDraft(target, piece, operation, sources)
+            ),
+            kept: own ? [] : [target],
+        };
+    }
+
+    /** Says what a shape operation did, kept and could not save. */
+    @action
+    private reportShapeEdit(
+        done: string,
+        outcome: { failed: number },
+        notes: string[] = []
+    ) {
+        const parts = [done, ...notes];
+        if (outcome.failed) {
+            parts.push(
+                `${outcome.failed} change${
+                    outcome.failed === 1 ? '' : 's'
+                } could not be saved${this.error ? ` (${this.error})` : ''}.`
+            );
+        }
+        this.bulkMessage = parts.join(' ');
+    }
+
+    /** "Kept 2 that are not yours." */
+    private keptNote(kept: WsiAnnotation[]): string[] {
+        if (!kept.length) return [];
+        return [
+            `Kept ${kept.map(item => this.quoted(item)).join(', ')}: ${
+                kept.length === 1 ? 'it is' : 'they are'
+            } not yours, so ${
+                kept.length === 1 ? 'it stays' : 'they stay'
+            } as ${kept.length === 1 ? 'it is' : 'they are'}.`,
+        ];
+    }
+
+    /**
+     * Merges the selected regions into one new annotation of the user's
+     * (the union; parts that do not touch stay parts), with the label,
+     * layer and color of the first selected. The user's own originals are
+     * deleted, except AI ones (the service lets only trusted writers create
+     * AI annotations, so undo could not bring them back); other users'
+     * stay. One undo step. The result is selected.
+     */
+    @action.bound
+    async mergeSelected(): Promise<boolean> {
+        const regions = this.selectedRegions;
+        if (regions.length < 2 || !this.canEdit) return false;
+        const union = unionRegions(
+            regions.map(item => this.regionOf(item)!).filter(Boolean)
+        );
+        if (!union.length) {
+            this.bulkMessage = 'Nothing to merge: the regions have no area.';
+            return false;
+        }
+        const kept = regions.filter(item => !this.canModify(item));
+        const keptAi = regions.filter(
+            item => this.canModify(item) && isAiProvenance(item.provenance)
+        );
+        const deletes = regions.filter(
+            item => this.canModify(item) && !isAiProvenance(item.provenance)
+        );
+        const outcome = await this.applyShapeEdit('merge', {
+            creates: [this.derivedDraft(regions[0], union, 'merge', regions)],
+            updates: [],
+            deletes,
+        });
+        const result = outcome.created[0];
+        if (!result) {
+            this.reportShapeEdit('The merged region was not saved.', outcome);
+            return false;
+        }
+        this.select([result.id], false);
+        this.reportShapeEdit(
+            `Merged ${regions.length} regions into ${this.quoted(result)}.`,
+            outcome,
+            [
+                ...this.keptNote(kept),
+                ...(keptAi.length
+                    ? [
+                          `Kept your AI annotation${
+                              keptAi.length === 1 ? '' : 's'
+                          } ${keptAi
+                              .map(item => this.quoted(item))
+                              .join(
+                                  ', '
+                              )}: only the service's trusted writers can create AI annotations, so undo could not bring ${
+                              keptAi.length === 1 ? 'it' : 'them'
+                          } back. Reject or delete ${
+                              keptAi.length === 1 ? 'it' : 'them'
+                          } if no longer needed.`,
+                      ]
+                    : []),
+            ]
+        );
+        return true;
+    }
+
+    /**
+     * Cuts the other selected regions out of the first selected: in place
+     * when it is the user's, else as a new annotation of the user's. The
+     * others stay. One undo step.
+     */
+    @action.bound
+    async subtractSelected(): Promise<boolean> {
+        const regions = this.selectedRegions;
+        if (regions.length < 2 || !this.canEdit) return false;
+        const [subject, ...clips] = regions;
+        const region = this.regionOf(subject)!;
+        const result = subtractRegions(
+            region,
+            clips.map(item => this.regionOf(item)!)
+        );
+        if (!result.length) {
+            this.bulkMessage = `Nothing would be left of ${this.quoted(
+                subject
+            )}; nothing was changed.`;
+            return false;
+        }
+        if (Math.abs(regionArea(result) - regionArea(region)) < 1e-6) {
+            this.bulkMessage = `The other regions do not overlap ${this.quoted(
+                subject
+            )}; nothing was changed.`;
+            return false;
+        }
+        const plan = this.replacementPlan(
+            'subtract',
+            subject,
+            [result],
+            regions
+        );
+        const outcome = await this.applyShapeEdit('subtract', {
+            ...plan,
+            deletes: [],
+        });
+        if (!outcome.created.length && !outcome.updated.length) {
+            this.reportShapeEdit('The subtraction was not saved.', outcome);
+            return false;
+        }
+        this.reportShapeEdit(
+            `Cut ${clips.length} region${
+                clips.length === 1 ? '' : 's'
+            } out of ${this.quoted(subject)}${
+                plan.kept.length ? ', as a new annotation of yours' : ''
+            }.`,
+            outcome,
+            this.keptNote(plan.kept)
+        );
+        return true;
+    }
+
+    /**
+     * Saves where all the selected regions overlap as one new annotation of
+     * the user's, labelled as the first selected. The originals stay.
+     */
+    @action.bound
+    async intersectSelected(): Promise<boolean> {
+        const regions = this.selectedRegions;
+        if (regions.length < 2 || !this.canEdit) return false;
+        const result = intersectRegions(
+            regions.map(item => this.regionOf(item)!)
+        );
+        if (!result.length) {
+            this.bulkMessage =
+                'The selected regions do not all overlap; nothing was saved.';
+            return false;
+        }
+        const outcome = await this.applyShapeEdit('intersect', {
+            creates: [
+                this.derivedDraft(regions[0], result, 'intersect', regions),
+            ],
+            updates: [],
+            deletes: [],
+        });
+        const created = outcome.created[0];
+        if (!created) {
+            this.reportShapeEdit('The intersection was not saved.', outcome);
+            return false;
+        }
+        this.select([created.id], false);
+        this.reportShapeEdit(
+            `Saved where ${regions.length} regions overlap as ${this.quoted(
+                created
+            )}.`,
+            outcome
+        );
+        return true;
+    }
+
+    /**
+     * Cuts `cutter` out of each selected region it overlaps: a hole when it
+     * lies inside, a notch at an edge, pieces when it cuts across. The
+     * user's own regions change in place, another user's region gives a new
+     * annotation of the user's. A region it would remove entirely is left.
+     * One undo step for all.
+     */
+    async cutSelected(cutter: WsiRegion): Promise<boolean> {
+        const targets = this.selectedRegions;
+        const bounds = regionBounds(cutter);
+        if (!targets.length || !bounds || !this.canEdit) return false;
+        const creates: WsiAnnotation[] = [];
+        const updates: Array<{
+            annotation: WsiAnnotation;
+            region: WsiRegion;
+        }> = [];
+        const kept: WsiAnnotation[] = [];
+        const whole: WsiAnnotation[] = [];
+        const cut: WsiAnnotation[] = [];
+        targets.forEach(target => {
+            const region = this.regionOf(target)!;
+            const box = regionBounds(region);
+            if (!box || !boundsOverlap(box, bounds)) return;
+            const result = subtractRegions(region, [cutter]);
+            if (Math.abs(regionArea(result) - regionArea(region)) < 1e-6) {
+                return;
+            }
+            if (!result.length) {
+                whole.push(target);
+                return;
+            }
+            const plan = this.replacementPlan(
+                'cut',
+                target,
+                [result],
+                [target]
+            );
+            creates.push(...plan.creates);
+            updates.push(...plan.updates);
+            kept.push(...plan.kept);
+            cut.push(target);
+        });
+        if (!cut.length) {
+            action(() => {
+                this.bulkMessage = whole.length
+                    ? `The shape covers all of ${whole
+                          .map(item => this.quoted(item))
+                          .join(', ')}; nothing was cut.`
+                    : 'The shape does not overlap a selected region; nothing was cut.';
+            })();
+            return false;
+        }
+        const outcome = await this.applyShapeEdit('cut', {
+            creates,
+            updates,
+            deletes: [],
+        });
+        if (!outcome.created.length && !outcome.updated.length) {
+            this.reportShapeEdit('The cut was not saved.', outcome);
+            return false;
+        }
+        this.reportShapeEdit(
+            `Cut the shape out of ${cut
+                .map(item => this.quoted(item))
+                .join(', ')}.`,
+            outcome,
+            [
+                ...(kept.length
+                    ? [
+                          `${kept.map(item => this.quoted(item)).join(', ')} ${
+                              kept.length === 1 ? 'is' : 'are'
+                          } not yours: the cut was saved as a new annotation of yours, and the original stays.`,
+                      ]
+                    : []),
+                ...(whole.length
+                    ? [
+                          `Left ${whole
+                              .map(item => this.quoted(item))
+                              .join(', ')}: the shape covers all of it.`,
+                      ]
+                    : []),
+            ]
+        );
+        return true;
+    }
+
+    /**
+     * Splits the selected region along `path` (a line or polyline across
+     * it): the user's own region keeps the largest piece and the others
+     * become new annotations with its label, layer and color; another
+     * user's region stays and every piece is a new annotation of the
+     * user's. One undo step. Ends the split, selecting the pieces.
+     */
+    async splitSelected(path: WsiPoint[]): Promise<boolean> {
+        const target = this.selectedRegions[0];
+        if (!target || !this.canEdit) return false;
+        const pieces = splitRegionByPath(this.regionOf(target)!, path);
+        if (pieces.length < 2) {
+            action(() => {
+                this.bulkMessage = `The line does not cut ${this.quoted(
+                    target
+                )} in two: draw it across the region, from edge to edge.`;
+            })();
+            return false;
+        }
+        const plan = this.replacementPlan('split', target, pieces, [target]);
+        const outcome = await this.applyShapeEdit('split', {
+            ...plan,
+            deletes: [],
+        });
+        if (!outcome.created.length && !outcome.updated.length) {
+            this.reportShapeEdit('The split was not saved.', outcome);
+            return false;
+        }
+        action(() => {
+            this.shapeEditMode = null;
+        })();
+        this.cancelDrawing();
+        this.select(
+            [...outcome.updated, ...outcome.created].map(item => item.id),
+            false
+        );
+        this.reportShapeEdit(
+            `Split ${this.quoted(target)} into ${pieces.length} pieces.`,
+            outcome,
+            plan.kept.length
+                ? [
+                      `${this.quoted(
+                          target
+                      )} is not yours: the pieces are new annotations of yours, and the original stays.`,
+                  ]
+                : []
+        );
+        return true;
+    }
+
+    /**
+     * Makes each part of the selected multi-part regions its own annotation:
+     * the user's own region keeps its first part, another user's region
+     * stays and every part is new. One undo step.
+     */
+    @action.bound
+    async separateSelected(): Promise<boolean> {
+        const targets = this.selectedRegions.filter(item => {
+            const shape = this.shapeOf(item);
+            return shape?.kind === 'multipolygon' && shape.polygons.length > 1;
+        });
+        if (!targets.length || !this.canEdit) return false;
+        const creates: WsiAnnotation[] = [];
+        const updates: Array<{
+            annotation: WsiAnnotation;
+            region: WsiRegion;
+        }> = [];
+        const kept: WsiAnnotation[] = [];
+        let parts = 0;
+        targets.forEach(target => {
+            const pieces = regionParts(this.regionOf(target)!);
+            parts += pieces.length;
+            const plan = this.replacementPlan('separate', target, pieces, [
+                target,
+            ]);
+            creates.push(...plan.creates);
+            updates.push(...plan.updates);
+            kept.push(...plan.kept);
+        });
+        const outcome = await this.applyShapeEdit('separate', {
+            creates,
+            updates,
+            deletes: [],
+        });
+        if (!outcome.created.length && !outcome.updated.length) {
+            this.reportShapeEdit('The parts were not saved.', outcome);
+            return false;
+        }
+        this.select(
+            [...outcome.updated, ...outcome.created].map(item => item.id),
+            false
+        );
+        this.reportShapeEdit(
+            `Separated ${parts} parts of ${targets.length} region${
+                targets.length === 1 ? '' : 's'
+            }.`,
+            outcome,
+            this.keptNote(kept)
+        );
+        return true;
     }
 
     // ---- comment threads ----
@@ -5828,6 +6633,7 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
         }
     }
 
+    @action
     private replaceAnnotation(oldId: string, replacement: WsiAnnotation) {
         const next = this.annotations.map(item =>
             item.id === oldId ? replacement : item
@@ -6080,6 +6886,8 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
             stop(event);
         });
         const up = action((event: PointerEvent) => {
+            // Alt as a shape ends cuts it out of the selected regions.
+            this.drawAlt = !!event.altKey;
             const drag = this.selectionDrag;
             if (drag) {
                 if (drag.pointerId !== event.pointerId) return;
@@ -6208,6 +7016,7 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
         const doubleClick = action((event: MouseEvent) => {
             if (this.activeTool !== 'polygon' || this.polygonPoints.length < 3)
                 return;
+            this.drawAlt = !!event.altKey;
             const points = this.polygonPoints;
             this.polygonPoints = [];
             this.drawGesture = null;
@@ -6297,6 +7106,10 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
         }
         if (event.key === 'Escape' && this.ruler && !typing) {
             this.clearRuler();
+            return;
+        }
+        if (event.key === 'Escape' && this.shapeEditMode && !typing) {
+            this.stopShapeEdit();
             return;
         }
         if (event.key === 'Escape' && this.activeTool) {
@@ -6452,7 +7265,7 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
             return;
         }
         const radius = Math.min(rx, ry);
-        const selector =
+        const selector: string =
             tool === 'rectangle'
                 ? `<svg><rect x="${Math.min(start.x, end.x)}" y="${Math.min(
                       start.y,
@@ -6465,6 +7278,19 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
                 : `<svg><ellipse cx="${cx}" cy="${cy}" rx="${
                       tool === 'circle' ? radius : rx
                   }" ry="${tool === 'circle' ? radius : ry}" /></svg>`;
+        if (this.drawingForShapeEdit) {
+            this.resetGesture();
+            const shape = parseAnnotationShape({
+                type: 'SvgSelector',
+                value: selector,
+            });
+            await this.applyDrawnEdit(
+                shape?.kind === 'line'
+                    ? { path: shape.points }
+                    : { region: shape && shapeRegion(shape) }
+            );
+            return;
+        }
         const annotation = this.draftAnnotation(selector, this.newShapeLabel());
         // The tool stays on; the next shape may start before this one is saved.
         this.resetGesture();
@@ -6496,6 +7322,11 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
             STROKE_SIMPLIFY_TOLERANCE * imagePerScreen
         );
         this.resetGesture();
+        if (this.shapeEditMode === 'split') {
+            // The stroke is the line to split along.
+            await this.applyDrawnEdit({ path });
+            return;
+        }
         if (tool === 'freehand') {
             // The polygon closes itself; drop an end that returns to the start.
             const first = path[0];
@@ -6522,7 +7353,18 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
     }
 
     private async createPolygonShape(points: Array<{ x: number; y: number }>) {
+        if (this.shapeEditMode === 'split' && points.length >= 2) {
+            // The vertices are the path to split along.
+            this.resetGesture();
+            await this.applyDrawnEdit({ path: points });
+            return;
+        }
         if (points.length < 3) return;
+        if (this.drawingForShapeEdit) {
+            this.resetGesture();
+            await this.applyDrawnEdit({ region: [[points]] });
+            return;
+        }
         const round = (value: number) => Math.round(value * 100) / 100;
         const selector = `<svg><polygon points="${points
             .map(point => `${round(point.x)},${round(point.y)}`)
@@ -6784,7 +7626,7 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
         const text = annotation.body?.[0]?.value || '';
         const stored = this.annotations.find(item => item.id === annotation.id);
         const measurement = this.measurementOf(stored || annotation);
-        const inside = this.pointsInside(stored || annotation);
+        const inside = this.shownPointsInside(stored || annotation);
         const note = (stored || annotation).note || '';
         if (!text && !measurement && !note) return;
         this.annotationTooltip = {
@@ -6797,6 +7639,7 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
                     ? 'unreviewed'
                     : 'accepted'
                 : undefined,
+            aiEdited: isEditedAi(annotation.provenance) || undefined,
             aiOrigin: aiOriginDescription(annotation.provenance) || undefined,
             measurement: measurement
                 ? formatMeasurement(measurement)

@@ -1,8 +1,10 @@
 import {
+    regionSelectorSvg,
     WsiAnnotationShape,
     WsiMeasurement,
     WsiMpp,
     WsiPoint,
+    WsiRegion,
 } from './wsiAnnotationGeometryUtils';
 
 /**
@@ -17,7 +19,8 @@ type Position = [number, number];
 export type WsiGeoJsonGeometry =
     | { type: 'Point'; coordinates: Position }
     | { type: 'LineString'; coordinates: Position[] }
-    | { type: 'Polygon'; coordinates: Position[][] };
+    | { type: 'Polygon'; coordinates: Position[][] }
+    | { type: 'MultiPolygon'; coordinates: Position[][][] };
 
 export interface WsiGeoJsonFeature {
     type: 'Feature';
@@ -55,6 +58,8 @@ export interface WsiExportItem {
         densityPerMm2?: number;
     };
     aiReviewStatus?: 'unreviewed' | 'accepted';
+    /** An AI annotation a person changed ("AI, edited"). */
+    aiEdited?: boolean;
 }
 
 /** Vertices of an exported ellipse; GeoJSON has no ellipse. */
@@ -110,6 +115,13 @@ export function shapeToGeometry(shape: WsiAnnotationShape): WsiGeoJsonGeometry {
                 });
             }
             return { type: 'Polygon', coordinates: [closedRing(points)] };
+        }
+        case 'multipolygon': {
+            // A part's outer ring first, then its holes.
+            const polygons = shape.polygons.map(rings => rings.map(closedRing));
+            return polygons.length === 1
+                ? { type: 'Polygon', coordinates: polygons[0] }
+                : { type: 'MultiPolygon', coordinates: polygons };
         }
         default:
             return { type: 'Polygon', coordinates: [closedRing(shape.points)] };
@@ -214,6 +226,7 @@ export function toGeoJsonFeatureCollection(
                 properties.ai_generated = true;
                 properties.ai_review_status = item.aiReviewStatus;
             }
+            if (item.aiEdited) properties.ai_edited = true;
             return {
                 type: 'Feature',
                 id: item.id,
@@ -272,11 +285,14 @@ function text(value: unknown, max: number): string | undefined {
 
 /**
  * Validates GeoJSON (a FeatureCollection, a Feature or an array of
- * Features) and turns its features into annotation drafts. Points,
- * lines and polygons are kept, multi-geometries split into one annotation
- * per part, and a polygon's holes dropped. A feature is skipped when its
- * coordinates are not finite, fall outside `size` (the slide in level-0
- * pixels) when given, or have more than `MAX_IMPORT_VERTICES` vertices.
+ * Features) and turns its features into annotation drafts. Points, lines
+ * and polygons are kept: a polygon with its holes, and a MultiPolygon as one
+ * annotation of all its parts and their holes; MultiPoint and
+ * MultiLineString split into one annotation per part. A feature is skipped
+ * when its coordinates are not finite, a ring has fewer than 3 vertices,
+ * they fall outside `size` (the slide in level-0 pixels) when given, or it
+ * has more than `MAX_IMPORT_VERTICES` vertices (all rings and parts
+ * together); the reason names the part of a MultiPolygon.
  * Throws when the input is not GeoJSON features or holds more than
  * `MAX_IMPORT_FEATURES` annotations.
  */
@@ -370,26 +386,47 @@ export function parseGeoJsonImport(
                           )}" /></svg>`,
             });
         };
-        const addPolygon = (value: unknown) => {
-            const ring = Array.isArray(value) ? value[0] : null;
-            if (!Array.isArray(ring) || !ring.every(isPosition)) {
-                throw new Error('invalid coordinates');
+        /** A GeoJSON polygon's rings: the outer ring, then its holes. */
+        const polygonRings = (value: unknown, part?: number): WsiPoint[][] => {
+            const where = part === undefined ? '' : `part ${part + 1}: `;
+            if (!Array.isArray(value) || !value.length) {
+                throw new Error(`${where}invalid coordinates`);
             }
-            const open =
-                ring.length > 1 &&
-                ring[0][0] === ring[ring.length - 1][0] &&
-                ring[0][1] === ring[ring.length - 1][1]
-                    ? ring.slice(0, -1)
-                    : ring;
-            if (open.length < 3) throw new Error('fewer than 3 vertices');
-            if (open.length > MAX_IMPORT_VERTICES) {
+            return value.map((ring: unknown, index: number) => {
+                if (!Array.isArray(ring) || !ring.every(isPosition)) {
+                    throw new Error(`${where}invalid coordinates`);
+                }
+                const open =
+                    ring.length > 1 &&
+                    ring[0][0] === ring[ring.length - 1][0] &&
+                    ring[0][1] === ring[ring.length - 1][1]
+                        ? ring.slice(0, -1)
+                        : ring;
+                if (open.length < 3) {
+                    throw new Error(
+                        `${where}${
+                            index ? 'a hole has ' : ''
+                        }fewer than 3 vertices`
+                    );
+                }
+                if (!inside(open)) throw new Error(`${where}outside the slide`);
+                return open.map(([x, y]: Position) => ({ x, y }));
+            });
+        };
+        /** One annotation of a polygon with holes, or of every part. */
+        const addRegion = (region: WsiRegion) => {
+            const vertices = region.reduce(
+                (sum, rings) =>
+                    sum + rings.reduce((n, ring) => n + ring.length, 0),
+                0
+            );
+            if (vertices > MAX_IMPORT_VERTICES) {
                 throw new Error('too many vertices');
             }
-            if (!inside(open)) throw new Error('outside the slide');
             parts.push({
                 ...base,
                 kind: 'polygon',
-                svg: `<svg><polygon points="${svgPoints(open)}" /></svg>`,
+                svg: regionSelectorSvg(region),
             });
         };
         try {
@@ -407,10 +444,17 @@ export function parseGeoJsonImport(
                     (coordinates || []).forEach(addLine);
                     break;
                 case 'Polygon':
-                    addPolygon(coordinates);
+                    addRegion([polygonRings(coordinates)]);
                     break;
                 case 'MultiPolygon':
-                    (coordinates || []).forEach(addPolygon);
+                    if (!Array.isArray(coordinates) || !coordinates.length) {
+                        throw new Error('invalid coordinates');
+                    }
+                    addRegion(
+                        coordinates.map((polygon: unknown, part: number) =>
+                            polygonRings(polygon, part)
+                        )
+                    );
                     break;
                 default:
                     throw new Error(

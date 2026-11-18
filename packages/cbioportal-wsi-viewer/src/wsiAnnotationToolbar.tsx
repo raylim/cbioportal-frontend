@@ -121,6 +121,10 @@ export const SHORTCUT_HELP: ShortcutSection[] = [
                 ['Esc'],
                 'Drop the shape being drawn, else clear the ruler, else back to Select',
             ],
+            [
+                ['Alt'],
+                'Held as a shape ends: cut it out of the selected regions',
+            ],
             [['Ctrl+Z'], 'Undo'],
             [['Ctrl+Shift+Z', 'Ctrl+Y'], 'Redo'],
         ],

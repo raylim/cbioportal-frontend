@@ -221,9 +221,17 @@ function insidePolygon(p: WsiPoint, points: WsiPoint[]): boolean {
     return inside;
 }
 
+/** Whether `point` is within `tolerance` of a closed ring's edge. */
+function nearRing(p: WsiPoint, ring: WsiPoint[], tolerance: number): boolean {
+    return ring.some(
+        (a, i) =>
+            distanceToSegment(p, a, ring[(i + 1) % ring.length]) <= tolerance
+    );
+}
+
 /**
- * Whether `point` (image pixels) is on `shape`: inside an area, or within
- * `tolerance` image pixels of a line or point.
+ * Whether `point` (image pixels) is on `shape`: inside an area (not in a
+ * hole), or within `tolerance` image pixels of an edge, line or point.
  */
 export function shapeContainsPoint(
     shape: WsiAnnotationShape,
@@ -254,14 +262,16 @@ export function shapeContainsPoint(
         case 'polygon':
             return (
                 insidePolygon(point, shape.points) ||
-                shape.points.some(
-                    (a, i) =>
-                        distanceToSegment(
-                            point,
-                            a,
-                            shape.points[(i + 1) % shape.points.length]
-                        ) <= tolerance
-                )
+                nearRing(point, shape.points, tolerance)
+            );
+        case 'multipolygon':
+            // Inside a part but in none of its holes, or on any ring's edge.
+            return shape.polygons.some(
+                ([outer, ...holes]) =>
+                    (insidePolygon(point, outer) &&
+                        !holes.some(hole => insidePolygon(point, hole))) ||
+                    nearRing(point, outer, tolerance) ||
+                    holes.some(hole => nearRing(point, hole, tolerance))
             );
         default:
             return shape.points.some(

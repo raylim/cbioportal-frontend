@@ -14,6 +14,7 @@ import {
     aiOriginDescription,
     annotationHistory,
     isAiProvenance,
+    isEditedAi,
     isUnreviewedAi,
 } from './wsiAnnotationBody';
 import { ReviewQueueButton } from './wsiAnnotationReview';
@@ -952,7 +953,7 @@ const AnnotationRow = observer(
         const canReview = controller.canReview(annotation);
         const canModify = controller.canModify(annotation);
         const measurement = controller.measurementOf(annotation);
-        const inside = controller.pointsInside(annotation);
+        const inside = controller.shownPointsInside(annotation);
         const created = annotation.created
             ? new Date(annotation.created).toLocaleDateString()
             : '';
@@ -1921,12 +1922,28 @@ function reviewButtonStyle(color: string): React.CSSProperties {
  * says which.
  */
 function AiBadge({ annotation }: { annotation: WsiAnnotation }) {
-    const origin = aiOriginDescription(annotation.provenance);
-    if (!origin) return null;
-    const unreviewed = isUnreviewedAi(annotation.provenance);
-    const description = `${origin}; ${
-        unreviewed ? 'not reviewed yet' : 'accepted'
+    const provenance = annotation.provenance;
+    const machine = aiOriginDescription(provenance);
+    const edited = isEditedAi(provenance);
+    if (!machine && !edited) return null;
+    // Machine-made and still to review, or accepted; else made by a person
+    // from AI annotations.
+    const unreviewed = !!machine && isUnreviewedAi(provenance);
+    const origin =
+        machine ||
+        `Made by ${annotation.creator || 'a person'} from AI annotations${
+            typeof provenance?.operation === 'string'
+                ? ` (${provenance.operation})`
+                : ''
+        }`;
+    const description = `${origin}${edited && machine ? ', then edited' : ''}${
+        machine ? `; ${unreviewed ? 'not reviewed yet' : 'accepted'}` : ''
     }`;
+    const text = edited
+        ? `AI, edited${unreviewed ? ' · unreviewed' : ''}`
+        : unreviewed
+        ? 'AI · unreviewed'
+        : 'AI · accepted';
     return (
         <span
             data-testid={`annotation-ai-badge-${annotation.id}`}
@@ -1943,7 +1960,7 @@ function AiBadge({ annotation }: { annotation: WsiAnnotation }) {
                 lineHeight: '12px',
             }}
         >
-            {unreviewed ? 'AI · unreviewed' : 'AI · accepted'}
+            {text}
         </span>
     );
 }
@@ -2105,9 +2122,15 @@ export const WsiAnnotationTooltip = observer(
                         {tooltip.note}
                     </div>
                 )}
-                {tooltip.ai && (
+                {(tooltip.ai || tooltip.aiEdited) && (
                     <div style={{ marginTop: 2, fontSize: 10 }}>
-                        {tooltip.ai === 'unreviewed'
+                        {tooltip.aiEdited
+                            ? `AI, edited${
+                                  tooltip.ai === 'unreviewed'
+                                      ? ' · not reviewed yet'
+                                      : ''
+                              }`
+                            : tooltip.ai === 'unreviewed'
                             ? 'AI · not reviewed yet'
                             : 'AI · accepted'}
                         {tooltip.aiOrigin && (

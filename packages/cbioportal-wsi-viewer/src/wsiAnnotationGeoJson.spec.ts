@@ -217,7 +217,9 @@ describe('parseGeoJsonImport', () => {
             {
                 kind: 'polygon',
                 featureIndex: 0,
-                svg: '<svg><polygon points="0,0 10,0 10,10" /></svg>',
+                // The hole is kept: an evenodd path of both rings.
+                svg:
+                    '<svg><g><path fill-rule="evenodd" d="M 0,0 L 10,0 L 10,10 Z M 2,2 L 3,2 L 3,3 Z" /></g></svg>',
                 label: 'Tumor',
                 className: 'Tumor',
                 color: '#ff0000',
@@ -243,8 +245,13 @@ describe('parseGeoJsonImport', () => {
                 kind: 'line',
                 svg: '<svg><polyline points="0,0 5,5 9,1" /></svg>',
             }),
-            expect.objectContaining({ kind: 'polygon' }),
-            expect.objectContaining({ kind: 'polygon' }),
+            // A MultiPolygon is one annotation of all its parts.
+            expect.objectContaining({
+                kind: 'polygon',
+                featureIndex: 4,
+                svg:
+                    '<svg><g><path fill-rule="evenodd" d="M 0,0 L 1,0 L 1,1 Z" /><path fill-rule="evenodd" d="M 5,5 L 6,5 L 6,6 Z" /></g></svg>',
+            }),
         ]);
     });
 
@@ -333,7 +340,7 @@ describe('parseGeoJsonImport', () => {
             { index: 0, reason: 'too many vertices' },
             { index: 1, reason: 'too many vertices' },
             { index: 2, reason: 'unsupported geometry Circle' },
-            { index: 3, reason: 'invalid coordinates' },
+            { index: 3, reason: 'part 2: invalid coordinates' },
             { index: 4, reason: 'fewer than 3 vertices' },
         ]);
         expect(result.drafts.map(draft => draft.featureIndex)).toEqual([5]);

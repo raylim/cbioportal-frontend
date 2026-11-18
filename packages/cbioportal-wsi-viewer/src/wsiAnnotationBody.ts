@@ -171,6 +171,72 @@ export function aiOriginDescription(
 }
 
 /**
+ * Whether an annotation is an AI annotation a person changed ("AI,
+ * edited"): a machine-made one whose geometry a user edited
+ * (`provenance.edited`), or a person's annotation made from AI annotations
+ * by a shape operation (`provenance.derived_from_ai`).
+ */
+export function isEditedAi(
+    provenance: Record<string, unknown> | null | undefined
+): boolean {
+    if (!provenance) return false;
+    return (
+        (isAiProvenance(provenance) && provenance.edited === true) ||
+        provenance.derived_from_ai === true
+    );
+}
+
+/**
+ * The provenance to save with a new geometry: a machine-made annotation
+ * keeps its source and is marked `edited: true` (the service lets its
+ * creator keep the source on an update); any other keeps what it has.
+ */
+export function editedProvenance(
+    provenance: Record<string, unknown> | null | undefined
+): Record<string, unknown> | null {
+    if (!provenance) return null;
+    return isAiProvenance(provenance)
+        ? { ...provenance, edited: true }
+        : provenance;
+}
+
+/** A shape operation that makes or changes regions. */
+export type WsiShapeOperation =
+    | 'merge'
+    | 'subtract'
+    | 'intersect'
+    | 'cut'
+    | 'split'
+    | 'separate';
+
+/**
+ * The provenance of a new annotation a shape operation made from others:
+ * `source: "manual"` (a person made it; the service lets only trusted
+ * writers create machine-made annotations), the operation, the ids it came
+ * from, and `derived_from_ai: true` when any of them was AI (machine-made or
+ * itself derived from AI), shown as "AI, edited".
+ */
+export function derivedProvenance(
+    operation: WsiShapeOperation,
+    sources: Array<{
+        id: string;
+        provenance?: Record<string, unknown> | null;
+    }>
+): Record<string, unknown> {
+    const fromAi = sources.some(
+        source =>
+            isAiProvenance(source.provenance) ||
+            source.provenance?.derived_from_ai === true
+    );
+    return {
+        source: 'manual',
+        operation,
+        derived_from: sources.map(source => source.id),
+        ...(fromAi ? { derived_from_ai: true } : {}),
+    };
+}
+
+/**
  * The provenance of an accepted AI annotation: the stored one, marked
  * `review_status: "accepted"` with the time of review.
  */
@@ -212,13 +278,27 @@ export function annotationHistory(annotation: {
     const entries: WsiHistoryEntry[] = [];
     const provenance = annotation.provenance || null;
     const origin = aiOriginDescription(provenance);
+    const derivedFrom = Array.isArray(provenance?.derived_from)
+        ? provenance!.derived_from.length
+        : 0;
+    const operation =
+        typeof provenance?.operation === 'string' && derivedFrom
+            ? `${provenance.operation} of ${derivedFrom} annotation${
+                  derivedFrom === 1 ? '' : 's'
+              }${provenance.derived_from_ai === true ? ', from AI' : ''}`
+            : null;
     entries.push({
         what: origin
             ? `Created (${origin.replace(/^Made by /, 'by ')})`
+            : operation
+            ? `Created (${operation})`
             : 'Created',
         who: annotation.creator,
         when: annotation.created,
     });
+    if (origin && provenance?.edited === true) {
+        entries.push({ what: 'Shape edited by a person (AI, edited)' });
+    }
     const version = annotation.version || 1;
     const reviewedAt =
         typeof provenance?.reviewed_at === 'string'

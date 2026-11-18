@@ -2,7 +2,11 @@ import {
     acceptedProvenance,
     aiOrigin,
     aiOriginDescription,
+    annotationHistory,
+    derivedProvenance,
+    editedProvenance,
     isAiProvenance,
+    isEditedAi,
     isRejectedAi,
     isUnreviewedAi,
     isLegacyLayerComment,
@@ -163,5 +167,50 @@ describe('wsiAnnotationBody', () => {
         expect(isRejectedAi(rejected)).toBe(true);
         expect(isRejectedAi({ source: 'precomputed' })).toBe(false);
         expect(isRejectedAi({ review_status: 'rejected' })).toBe(false);
+    });
+
+    it('marks AI annotations a person changed as "AI, edited"', () => {
+        const agent = { source: 'agent', review_status: 'accepted' };
+        expect(editedProvenance(agent)).toEqual({ ...agent, edited: true });
+        expect(isEditedAi(editedProvenance(agent))).toBe(true);
+        // A person's annotation keeps its provenance, and has none added.
+        expect(editedProvenance(null)).toBeNull();
+        expect(editedProvenance({ source: 'manual' })).toEqual({
+            source: 'manual',
+        });
+        expect(isEditedAi({ source: 'manual', edited: true })).toBe(false);
+        const derived = derivedProvenance('merge', [
+            { id: 'a', provenance: agent },
+            { id: 'b', provenance: null },
+        ]);
+        expect(derived).toEqual({
+            source: 'manual',
+            operation: 'merge',
+            derived_from: ['a', 'b'],
+            derived_from_ai: true,
+        });
+        // Not machine-made, so the service lets a user create it.
+        expect(isAiProvenance(derived)).toBe(false);
+        expect(isEditedAi(derived)).toBe(true);
+        // Made from an edited AI annotation, it is still from AI.
+        expect(
+            derivedProvenance('split', [{ id: 'c', provenance: derived }])
+                .derived_from_ai
+        ).toBe(true);
+        expect(
+            derivedProvenance('cut', [{ id: 'd', provenance: null }])
+        ).toEqual({ source: 'manual', operation: 'cut', derived_from: ['d'] });
+        expect(
+            annotationHistory({ creator: 'me', provenance: derived })[0].what
+        ).toBe('Created (merge of 2 annotations, from AI)');
+        expect(
+            annotationHistory({
+                creator: 'me',
+                provenance: { source: 'agent', edited: true },
+            }).map(entry => entry.what)
+        ).toEqual([
+            'Created (by the research assistant)',
+            'Shape edited by a person (AI, edited)',
+        ]);
     });
 });
