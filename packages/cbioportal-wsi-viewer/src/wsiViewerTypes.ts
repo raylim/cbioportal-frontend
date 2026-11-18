@@ -160,6 +160,11 @@ export interface WsiAnnotation {
     unsaved?: boolean;
     /** `body.provenance` as stored, kept on every update. */
     provenance?: Record<string, unknown> | null;
+    /**
+     * Comments in the annotation's thread, from a service that has threads
+     * (`comment_count`); undefined otherwise.
+     */
+    commentCount?: number;
 }
 
 /** A label/value row for the sidebar's Clinical section, built by the host. */

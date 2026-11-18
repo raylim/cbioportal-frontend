@@ -18,6 +18,7 @@ import {
 } from './wsiAnnotationBody';
 import { ReviewQueueButton } from './wsiAnnotationReview';
 import { WsiRulerLine } from './wsiAnnotationOverlay';
+import { AnnotationThread } from './wsiAnnotationThread';
 
 // Text colors keep at least 4.5:1 contrast on the panel's white.
 const colors = {
@@ -1155,6 +1156,11 @@ const AnnotationRow = observer(
                                 controller={controller}
                                 annotation={annotation}
                             />
+                            <AnnotationThread
+                                controller={controller}
+                                annotation={annotation}
+                                name={name}
+                            />
                             {canReview && (
                                 <div
                                     style={{
@@ -2114,6 +2120,14 @@ export const WsiAnnotationTooltip = observer(
                 {tooltip.layerName && (
                     <div style={{ marginTop: 2, fontSize: 10, opacity: 0.7 }}>
                         Layer: {tooltip.layerName}
+                    </div>
+                )}
+                {tooltip.comments && (
+                    <div
+                        data-testid="annotation-tooltip-comments"
+                        style={{ marginTop: 2, fontSize: 10 }}
+                    >
+                        {tooltip.comments} (in the Annotations list)
                     </div>
                 )}
                 {tooltip.history && (

@@ -195,6 +195,27 @@ export type WsiSaveStatus =
  */
 export type WsiAnnotationOrigin = 'mine' | 'others' | 'ai';
 
+/** A comment in an annotation's thread. */
+export interface WsiComment {
+    id: string;
+    author: string;
+    body: string;
+    created: string;
+    updated: string;
+}
+
+/** An annotation's comment thread as loaded, and what is happening to it. */
+export interface WsiCommentThread {
+    loading: boolean;
+    /** A comment is being saved. */
+    busy: boolean;
+    comments: WsiComment[];
+    error: string | null;
+}
+
+/** The longest comment the service takes, in characters. */
+export const COMMENT_MAX_LENGTH = 4000;
+
 /** Steps to the next / previous annotation listed, Annotate on or off. */
 export const WSI_NEXT_ANNOTATION_KEY = ']';
 export const WSI_PREVIOUS_ANNOTATION_KEY = '[';
@@ -1046,6 +1067,19 @@ export class WsiAnnotationController {
      */
     @observable batchRoute: boolean | null = null;
     /**
+     * Whether the service has comment threads: true once the annotation
+     * list carries `comment_count`, false once the thread route answers 404
+     * (the framework's "Not Found") or 405; unknown until then.
+     */
+    @observable commentRoute: boolean | null = null;
+    /** The comment threads opened on this slide, by annotation id. */
+    @observable.ref threads: ReadonlyMap<string, WsiCommentThread> = new Map();
+    /** Comment counts changed on this slide since the annotations loaded. */
+    @observable.ref private commentCounts: ReadonlyMap<
+        string,
+        number
+    > = new Map();
+    /**
      * Dropped points not saved on the slide or study last closed, because
      * the service refused them; reported once the next one opens.
      */
@@ -1065,6 +1099,8 @@ export class WsiAnnotationController {
         pointsInside?: string;
         /** Who made it and its version, e.g. "By alice · version 3". */
         history?: string;
+        /** "2 comments", when the annotation's thread has any. */
+        comments?: string;
         note?: string;
     } | null = null;
     /**
@@ -2564,6 +2600,7 @@ export class WsiAnnotationController {
         if (apiUrl !== this.apiUrl) {
             this.reviewRoute = null;
             this.batchRoute = null;
+            this.commentRoute = null;
         }
         this.apiUrl = apiUrl;
         this.studyId = studyId;
@@ -3595,6 +3632,8 @@ export class WsiAnnotationController {
 
     /** Forgets the review queue and the focused annotation. */
     private resetFocus() {
+        this.threads = new Map();
+        this.commentCounts = new Map();
         this.savedOnSlide = false;
         this.ruler = null;
         this.reviewQueue = null;
@@ -4147,6 +4186,270 @@ export class WsiAnnotationController {
         this.bulkMessage = null;
     }
 
+    // ---- comment threads ----
+
+    /** Whether annotations offer comment threads here. */
+    @computed get commentsAvailable(): boolean {
+        return this.commentRoute === true;
+    }
+
+    /** The comments in `annotation`'s thread, as this slide knows them. */
+    commentCountOf(annotation: WsiAnnotation): number {
+        return (
+            this.commentCounts.get(annotation.id) ??
+            annotation.commentCount ??
+            0
+        );
+    }
+
+    /** Whether the user may change `comment`: its author (the service checks). */
+    canChangeComment(comment: WsiComment): boolean {
+        return (
+            this.canEdit &&
+            (!this.currentUser || comment.author === this.currentUser)
+        );
+    }
+
+    @action
+    private setThread(id: string, patch: Partial<WsiCommentThread>) {
+        const threads = new Map(this.threads);
+        threads.set(id, {
+            loading: false,
+            busy: false,
+            comments: [],
+            error: null,
+            ...threads.get(id),
+            ...patch,
+        });
+        this.threads = threads;
+    }
+
+    @action
+    private setCommentCount(id: string, count: number) {
+        const counts = new Map(this.commentCounts);
+        counts.set(id, Math.max(0, count));
+        this.commentCounts = counts;
+    }
+
+    private toComment(item: any): WsiComment {
+        return {
+            id: String(item?.id),
+            author: String(item?.author || ''),
+            body: String(item?.body || ''),
+            created: String(item?.created_at || ''),
+            updated: String(item?.updated_at || item?.created_at || ''),
+        };
+    }
+
+    /**
+     * Handles a thread request's refusal; returns whether `response` was
+     * one. A 404 or 405 from a service without threads turns them off; a
+     * missing annotation reloads the slide; the service's own refusals are
+     * shown on the thread; the proxy's refuse the study.
+     */
+    private async refuseThread(
+        id: string,
+        response: Response
+    ): Promise<boolean> {
+        if (response.ok) return false;
+        const detail = await this.errorDetail(response);
+        if (
+            response.status === 405 ||
+            (response.status === 404 && detail === 'Not Found')
+        ) {
+            action(() => {
+                this.commentRoute = false;
+            })();
+            return true;
+        }
+        if (response.status === 404 && detail === 'Annotation not found') {
+            this.setThread(id, { loading: false, busy: false });
+            await this.reloadCurrentSlide(
+                'The annotation was deleted or is no longer shared; reloaded latest data.'
+            );
+            return true;
+        }
+        if (
+            (response.status === 403 || response.status === 404) &&
+            typeof detail === 'string'
+        ) {
+            // A comment deleted meanwhile: show the thread as it is now.
+            if (response.status === 404) await this.loadComments(id);
+            this.setThread(id, {
+                loading: false,
+                busy: false,
+                error:
+                    response.status === 404
+                        ? 'That comment was deleted meanwhile; the thread was reloaded.'
+                        : /only the author/i.test(detail)
+                        ? 'Only its author can change this comment.'
+                        : detail,
+            });
+            return true;
+        }
+        if (this.refuseAccess(response)) {
+            this.setThread(id, { loading: false, busy: false });
+            return true;
+        }
+        this.setThread(id, {
+            loading: false,
+            busy: false,
+            error:
+                response.status === 422
+                    ? 'A comment needs 1 to 4,000 characters.'
+                    : `The comment thread could not be saved or loaded (${response.status}).`,
+        });
+        return true;
+    }
+
+    /** Loads `id`'s comment thread, oldest first. */
+    @action.bound
+    async loadComments(id: string): Promise<void> {
+        if (!this.commentsAvailable || id.startsWith('client-')) return;
+        const context = {
+            generation: this.generation,
+            slideKey: this.slideKey,
+            signal: this.abortController?.signal,
+        };
+        this.setThread(id, { loading: true, error: null });
+        try {
+            const response = await this.request(
+                `/annotations/${encodeURIComponent(id)}/comments`,
+                {},
+                context.signal
+            );
+            if (!this.isCurrent(context)) return;
+            if (await this.refuseThread(id, response)) return;
+            const raw = await response.json();
+            if (!this.isCurrent(context)) return;
+            const comments = Array.isArray(raw)
+                ? raw.map(item => this.toComment(item))
+                : [];
+            this.setThread(id, { loading: false, comments });
+            this.setCommentCount(id, comments.length);
+        } catch (_) {
+            if (!this.isCurrent(context)) return;
+            this.setThread(id, {
+                loading: false,
+                error: 'The comments could not be loaded.',
+            });
+        }
+    }
+
+    /**
+     * Sends a comment request on `id`'s thread; resolves to the answer's
+     * JSON (null for none), or undefined when it was refused or failed.
+     */
+    private async sendComment(
+        id: string,
+        path: string,
+        init: RequestInit
+    ): Promise<any | undefined> {
+        const context = {
+            generation: this.generation,
+            slideKey: this.slideKey,
+            signal: this.abortController?.signal,
+        };
+        this.setThread(id, { busy: true, error: null });
+        try {
+            const response = await this.request(path, init, context.signal);
+            if (!this.isCurrent(context)) return undefined;
+            if (await this.refuseThread(id, response)) return undefined;
+            const value =
+                response.status === 204 ? null : await response.json();
+            if (!this.isCurrent(context)) return undefined;
+            this.setThread(id, { busy: false });
+            return value;
+        } catch (_) {
+            if (!this.isCurrent(context)) return undefined;
+            this.setThread(id, {
+                busy: false,
+                error: 'The comment could not be saved.',
+            });
+            return undefined;
+        }
+    }
+
+    /** Adds a comment to `id`'s thread; resolves to whether it was saved. */
+    @action.bound
+    async addComment(id: string, text: string): Promise<boolean> {
+        const body = text.trim();
+        if (!body || body.length > COMMENT_MAX_LENGTH || !this.canEdit) {
+            return false;
+        }
+        const saved = await this.sendComment(
+            id,
+            `/annotations/${encodeURIComponent(id)}/comments`,
+            { method: 'POST', body: JSON.stringify({ body }) }
+        );
+        if (!saved) return false;
+        const comments = [
+            ...(this.threads.get(id)?.comments || []),
+            this.toComment(saved),
+        ];
+        this.setThread(id, { comments });
+        const annotation = this.annotations.find(item => item.id === id);
+        this.setCommentCount(
+            id,
+            (annotation ? this.commentCountOf(annotation) : 0) + 1
+        );
+        return true;
+    }
+
+    /** Edits the user's comment `commentId`; resolves to whether it was saved. */
+    @action.bound
+    async editComment(
+        id: string,
+        commentId: string,
+        text: string
+    ): Promise<boolean> {
+        const body = text.trim();
+        if (!body || body.length > COMMENT_MAX_LENGTH) return false;
+        const saved = await this.sendComment(
+            id,
+            `/annotations/${encodeURIComponent(
+                id
+            )}/comments/${encodeURIComponent(commentId)}`,
+            { method: 'PUT', body: JSON.stringify({ body }) }
+        );
+        if (!saved) return false;
+        const comment = this.toComment(saved);
+        this.setThread(id, {
+            comments: (this.threads.get(id)?.comments || []).map(item =>
+                item.id === commentId ? comment : item
+            ),
+        });
+        return true;
+    }
+
+    /** Deletes the user's comment `commentId`; resolves to whether it went. */
+    @action.bound
+    async deleteComment(id: string, commentId: string): Promise<boolean> {
+        const done = await this.sendComment(
+            id,
+            `/annotations/${encodeURIComponent(
+                id
+            )}/comments/${encodeURIComponent(commentId)}`,
+            { method: 'DELETE' }
+        );
+        if (done === undefined) return false;
+        const comments = (this.threads.get(id)?.comments || []).filter(
+            item => item.id !== commentId
+        );
+        this.setThread(id, { comments });
+        const annotation = this.annotations.find(item => item.id === id);
+        this.setCommentCount(
+            id,
+            (annotation ? this.commentCountOf(annotation) : 1) - 1
+        );
+        return true;
+    }
+
+    @action.bound
+    dismissThreadError(id: string) {
+        this.setThread(id, { error: null });
+    }
+
     // ---- display ----
 
     private saveDisplayPrefs() {
@@ -4333,6 +4636,13 @@ export class WsiAnnotationController {
                 .map(item => this.fromApi(item, slideKey))
                 .filter(annotation => !isRejectedAi(annotation.provenance));
             action(() => {
+                if (
+                    this.commentRoute === null &&
+                    raw.some(item => item && 'comment_count' in item)
+                ) {
+                    this.commentRoute = true;
+                }
+                this.commentCounts = new Map();
                 this.annotations = annotations;
                 this.loading = false;
                 this.loadFailed = false;
@@ -5035,6 +5345,9 @@ export class WsiAnnotationController {
                 typeof item.body.provenance === 'object'
                     ? item.body.provenance
                     : null,
+            ...(typeof item.comment_count === 'number'
+                ? { commentCount: item.comment_count }
+                : {}),
         };
     }
 
@@ -5895,6 +6208,14 @@ export class WsiAnnotationController {
                 ? `Points inside: ${formatRegionCount(inside)}`
                 : undefined,
             history: this.historySummary(stored || annotation),
+            comments: (() => {
+                const count = this.commentsAvailable
+                    ? this.commentCountOf(stored || annotation)
+                    : 0;
+                return count
+                    ? `${count} comment${count === 1 ? '' : 's'}`
+                    : undefined;
+            })(),
             note: note || undefined,
         };
     }

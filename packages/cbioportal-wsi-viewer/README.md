@@ -104,6 +104,9 @@ annotations: {
 | `PUT {apiUrl}/annotations/{id}?studyId=…` | Update one, with its `version` (creator only) |
 | `POST {apiUrl}/annotations/{id}/review?studyId=…` | Accept or reject an AI annotation, with its `version` (any user of the study) |
 | `DELETE {apiUrl}/annotations/{id}?studyId=…` | Delete one (creator only) |
+| `GET {apiUrl}/annotations/{id}/comments?studyId=…` | The annotation's comment thread, oldest first |
+| `POST {apiUrl}/annotations/{id}/comments?studyId=…` | Add `{body}` (1–4,000 characters) |
+| `PUT` / `DELETE {apiUrl}/annotations/{id}/comments/{cid}?studyId=…` | Edit `{body}` or delete one's own comment |
 
 The service sits behind a proxy that authorizes each request with the portal session cookie for the study in `studyId`, and forwards the user and study to the service. So every request:
 
@@ -239,6 +242,12 @@ Under each annotation the list shows who created it and when, and **History ▸*
 #### Notes
 
 Each annotation can carry a free-text note, kept in `body.comment` and separate from its label. The list shows it under the annotation, with **+ Note** / **Edit note** for users who can edit (Ctrl/Cmd+Enter saves, Esc cancels); saving sends a `PUT` with the annotation's `version`. The click tooltip shows it too.
+
+#### Comment threads
+
+Each saved annotation has a comment thread for discussion, separate from its note (the note is the creator's own text in `body.comment`). The list row shows **Comments** with the thread's count (`comment_count` from the service) as a badge; it is a disclosure (`aria-expanded`, `aria-controls`) that loads the thread and shows it under the row, oldest first, each comment with its author, time and "(edited)" when changed. Users who can edit in the study add a comment in the field under it (**Comment**, or Ctrl/Cmd+Enter; 1–4,000 characters, with a count near the limit), and edit or delete their own (**Edit**, **Delete** after a confirmation); others' comments have no controls, and the service refuses them anyway. Opening the thread focuses the field; after a post the field empties and keeps the focus, and after a delete the focus goes to it. The click tooltip says "2 comments".
+
+The thread appears only on a service that has threads, known from the `comment_count` on the listed annotations. A 404 whose JSON `detail` is "Not Found", or a 405, from the thread route turns threads off for the session. The service's refusals show on the thread (`role="alert"`): another user's comment ("Only its author can change this comment."), and a comment deleted meanwhile (the thread reloads); an annotation gone or no longer shared (404 "Annotation not found") reloads the slide. A 401 or 403 from the proxy is the usual sign-in or read-only state.
 
 #### Measurements
 
