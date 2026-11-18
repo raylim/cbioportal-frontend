@@ -4,7 +4,8 @@
 
 import { WsiAnnotationController } from './wsiAnnotationController';
 import { drawAnnotationScene } from './wsiAnnotationSnapshot';
-import { composeSnapshot } from './wsiViewStateUtils';
+import { backgroundBehind, composeSnapshot } from './wsiViewStateUtils';
+import { WsiViewerController } from './wsiViewerController';
 
 jest.mock('@annotorious/openseadragon', () => ({
     createOSDAnnotator: jest.fn(),
@@ -258,5 +259,86 @@ describe('composeSnapshot', () => {
         expect(drawImage).toHaveBeenCalledWith(slide, 0, 0);
         expect(draw).toHaveBeenCalledWith({ drawImage }, 2);
         getContext.mockRestore();
+    });
+
+    it('fills the background before the slide, so the area outside it is not black', () => {
+        const calls: string[] = [];
+        const context = {
+            set fillStyle(value: string) {
+                calls.push(`fillStyle ${value}`);
+            },
+            fillRect: (...args: number[]) =>
+                calls.push(`fillRect ${args.join(',')}`),
+            drawImage: () => calls.push('drawImage'),
+        };
+        const getContext = jest
+            .spyOn(HTMLCanvasElement.prototype, 'getContext')
+            .mockReturnValue(context as any);
+        const slide = document.createElement('canvas');
+        slide.width = 30;
+        slide.height = 20;
+        composeSnapshot(slide, undefined, 'rgb(232, 232, 232)');
+        expect(calls).toEqual([
+            'fillStyle rgb(232, 232, 232)',
+            'fillRect 0,0,30,20',
+            'drawImage',
+        ]);
+        getContext.mockRestore();
+    });
+
+    it('takes the background from the nearest opaque ancestor', () => {
+        const stage = document.createElement('div');
+        stage.style.background = '#e8e8e8';
+        const container = document.createElement('div');
+        container.style.background = 'transparent';
+        const canvas = document.createElement('canvas');
+        container.appendChild(canvas);
+        stage.appendChild(container);
+        document.body.appendChild(stage);
+        expect(backgroundBehind(canvas, '#fff')).toBe('rgb(232, 232, 232)');
+        stage.remove();
+        container.removeChild(canvas);
+        expect(backgroundBehind(canvas, '#fff')).toBe('#fff');
+    });
+
+    it('downloads the view on the stage background, with or without annotations', () => {
+        const fillRect = jest.fn();
+        const styles: string[] = [];
+        const context = {
+            set fillStyle(value: string) {
+                styles.push(value);
+            },
+            fillRect,
+            drawImage: jest.fn(),
+        };
+        const getContext = jest
+            .spyOn(HTMLCanvasElement.prototype, 'getContext')
+            .mockReturnValue(context as any);
+        const toBlob = jest
+            .spyOn(HTMLCanvasElement.prototype, 'toBlob')
+            .mockImplementation(() => undefined);
+        const canvas = document.createElement('canvas');
+        canvas.width = 40;
+        canvas.height = 10;
+        const controller = new WsiViewerController(
+            {} as any,
+            { hierarchy: null, selectedSlide: null } as any,
+            () => Promise.resolve(null)
+        );
+        (controller as any).osdViewer = {
+            drawer: { canvas },
+            viewport: {
+                getCenter: () => ({ x: 0.5, y: 0.5 }),
+                viewportToImageCoordinates: () => ({ x: 5, y: 6 }),
+            },
+        };
+        (controller as any).osdSlideMounted = true;
+        controller.downloadView();
+        expect(styles[0]).toBe('#e8e8e8');
+        expect(fillRect).toHaveBeenCalledWith(0, 0, 40, 10);
+        const downloaded = toBlob.mock.instances[0] as any;
+        expect(downloaded).not.toBe(canvas);
+        getContext.mockRestore();
+        toBlob.mockRestore();
     });
 });

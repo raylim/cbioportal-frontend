@@ -4,6 +4,7 @@ import {
     buildWsiDownloadFilename,
     buildWsiViewState,
     clampImageCoordinates,
+    backgroundBehind,
     composeSnapshot,
     copyCurrentUrlToClipboard,
     hashUrlState,
@@ -12,6 +13,7 @@ import {
     writeSelectedSlideState,
 } from './wsiViewStateUtils';
 import { getWsiViewerRuntime } from './wsiViewerConfig';
+import { WSI_THEME } from './wsiTheme';
 import {
     buildOsdOptions,
     createOsdMouseTracker,
@@ -660,7 +662,13 @@ export class WsiViewerController {
             });
             const overlay = this.host.drawDownloadOverlay;
             downloadCanvasAsJpeg(
-                overlay ? composeSnapshot(canvas, overlay) : canvas,
+                composeSnapshot(
+                    canvas,
+                    overlay
+                        ? (context, scale) => overlay(context, scale)
+                        : undefined,
+                    backgroundBehind(canvas, WSI_THEME.stageBg)
+                ),
                 filename
             );
         } catch (_) {
