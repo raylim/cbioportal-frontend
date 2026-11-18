@@ -84,7 +84,10 @@ export interface WsiTissuePixelHost {
     mpp(): { x: number; y: number } | null | undefined;
     /** A key that changes when the view moves (to reuse a screen read). */
     viewKey(): string;
-    /** The slide as drawn now, or null (rotated or flipped, no canvas, tainted). */
+    /**
+     * The slide as drawn now, or null (rotated or flipped, no canvas,
+     * tainted, or its tiles still loading).
+     */
     readScreen(): Promise<WsiTissueRaster | null>;
     /** The pyramid's levels the tile server serves. */
     levels(): WsiTileLevel[];
@@ -457,8 +460,12 @@ async function decodeTile(blob: Blob): Promise<WsiRgbaRaster | null> {
     return { width, height, data: image.data };
 }
 
-/** How long to wait for the view's tiles before reading the canvas. */
-const FULLY_LOADED_WAIT_MS = 1500;
+/**
+ * How long to wait for the view's tiles before reading the canvas; still
+ * loading after that, the tiles are used instead, so an outline never comes
+ * from a half-drawn view.
+ */
+export const FULLY_LOADED_WAIT_MS = 5000;
 
 /**
  * The tissue tools' pixel host on an OpenSeadragon viewer: its canvas for
@@ -480,22 +487,24 @@ export function createOsdTissueHost(options: {
         return a && b ? Math.hypot(b.x - a.x, b.y - a.y) / 100 || 1 : 1;
     };
     const tiledImage = () => viewer?.world?.getItemAt?.(0);
+    // Whether the view's tiles are all drawn, waiting up to
+    // `FULLY_LOADED_WAIT_MS` for them.
     const waitFullyLoaded = () =>
-        new Promise<void>(resolve => {
+        new Promise<boolean>(resolve => {
             const item = tiledImage();
             if (!item || item.getFullyLoaded?.() !== false) {
-                resolve();
+                resolve(true);
                 return;
             }
-            const done = () => {
+            const done = (loaded: boolean) => {
                 clearTimeout(timer);
                 item.removeHandler?.('fully-loaded-change', handler);
-                resolve();
+                resolve(loaded);
             };
             const handler = (event: any) => {
-                if (event?.fullyLoaded) done();
+                if (event?.fullyLoaded) done(true);
             };
-            const timer = setTimeout(done, FULLY_LOADED_WAIT_MS);
+            const timer = setTimeout(() => done(false), FULLY_LOADED_WAIT_MS);
             item.addHandler?.('fully-loaded-change', handler);
         });
     return {
@@ -520,7 +529,8 @@ export function createOsdTissueHost(options: {
                 | HTMLCanvasElement
                 | undefined;
             if (!canvas || typeof canvas.getContext !== 'function') return null;
-            await waitFullyLoaded();
+            // Still loading: tiles, rather than a half-drawn view.
+            if (!(await waitFullyLoaded())) return null;
             const cssWidth =
                 canvas.clientWidth || viewer?.container?.clientWidth;
             if (!cssWidth || !canvas.width || !canvas.height) return null;
