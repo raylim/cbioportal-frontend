@@ -334,6 +334,24 @@ export function ToolIcon({ name, size = 16 }: { name: string; size?: number }) {
     );
 }
 
+/** The tool options strip, just under the toolbar's left end. */
+const optionsStripStyle: React.CSSProperties = {
+    position: 'absolute',
+    top: '100%',
+    left: -1,
+    marginTop: 2,
+    display: 'flex',
+    alignItems: 'center',
+    gap: 6,
+    minHeight: 26,
+    padding: '1px 6px',
+    background: colors.bar,
+    border: `1px solid ${colors.border}`,
+    borderRadius: 4,
+    boxShadow: '0 1px 3px rgba(0,0,0,0.12)',
+    whiteSpace: 'nowrap',
+};
+
 const barStyle: React.CSSProperties = {
     position: 'absolute',
     top: 4,
@@ -865,6 +883,52 @@ export const BrushWidthControl = observer(
                     </span>
                 )}
             </span>
+        );
+    }
+);
+
+/**
+ * The active tool's options (brush width, tolerance, field area, the point
+ * count), in a strip anchored under the toolbar: out of the toolbar's flow,
+ * so the tools, Drawing as and the rest never move as tools change. It
+ * follows the tools in the DOM, so the arrow keys still reach its controls
+ * between the tools and Drawing as; a labelled group.
+ */
+const ToolOptions = observer(
+    ({ controller }: { controller: WsiAnnotationController }) => {
+        const tool = controller.activeTool;
+        const brush = tool === 'brush' || tool === 'smartBrush';
+        const tissue = tool === 'wand' || tool === 'smartBrush';
+        if (!brush && !tissue && tool !== 'hpf' && tool !== 'point') {
+            return null;
+        }
+        return (
+            <div
+                role="group"
+                aria-label={`${TOOL_INFO[tool!].label} options`}
+                data-testid="annotation-tool-options"
+                style={optionsStripStyle}
+            >
+                {brush && <BrushWidthControl controller={controller} />}
+                {tissue && <TissueToleranceControl controller={controller} />}
+                {tool === 'hpf' && <HpfAreaControl controller={controller} />}
+                {tool === 'point' && (
+                    <span
+                        role="status"
+                        data-testid="annotation-point-count"
+                        aria-live="polite"
+                        style={{
+                            fontWeight: 600,
+                            whiteSpace: 'nowrap',
+                            padding: '0 2px',
+                            fontVariantNumeric: 'tabular-nums',
+                        }}
+                    >
+                        {controller.activePointLabel}:{' '}
+                        {controller.activePointCount}
+                    </span>
+                )}
+            </div>
         );
     }
 );
@@ -2031,11 +2095,20 @@ export const SaveStatus = observer(
                     data-state={show ? status.state : 'idle'}
                     title={show ? title : undefined}
                     style={{
-                        display: show ? 'inline-flex' : 'none',
+                        // While annotating, always there and at least as
+                        // wide as "Saving… 999", so the controls after it do
+                        // not move.
+                        display:
+                            show || controller.annotating
+                                ? 'inline-flex'
+                                : 'none',
+                        visibility: show ? 'visible' : 'hidden',
+                        minWidth: controller.annotating ? 84 : undefined,
                         alignItems: 'center',
                         gap: 3,
                         padding: '0 3px',
                         whiteSpace: 'nowrap',
+                        fontVariantNumeric: 'tabular-nums',
                         color:
                             status.state === 'unsaved'
                                 ? colors.error
@@ -2246,30 +2319,7 @@ export const WsiAnnotationToolbar = observer(
                                 testId="annotation-tool-point"
                             />
                         </span>
-                        {(tool === 'brush' || tool === 'smartBrush') && (
-                            <BrushWidthControl controller={controller} />
-                        )}
-                        {(tool === 'wand' || tool === 'smartBrush') && (
-                            <TissueToleranceControl controller={controller} />
-                        )}
-                        {tool === 'hpf' && (
-                            <HpfAreaControl controller={controller} />
-                        )}
-                        {tool === 'point' && (
-                            <span
-                                role="status"
-                                data-testid="annotation-point-count"
-                                aria-live="polite"
-                                style={{
-                                    fontWeight: 600,
-                                    whiteSpace: 'nowrap',
-                                    padding: '0 2px',
-                                }}
-                            >
-                                {controller.activePointLabel}:{' '}
-                                {controller.activePointCount}
-                            </span>
-                        )}
+                        <ToolOptions controller={controller} />
                         <Divider />
                         <DrawingAs controller={controller} />
                         <Divider />

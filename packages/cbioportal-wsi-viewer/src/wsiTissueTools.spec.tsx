@@ -351,8 +351,16 @@ describe('Magic wand and smart brush', () => {
         ).toMatch(/^Enter or double-click saves/);
         // The brush width shows for the smart brush, with the tolerance.
         act(() => controller.setTool('smartBrush'));
-        expect(screen.getByTestId('annotation-brush-width')).toBeTruthy();
-        expect(screen.getByTestId('annotation-tissue-tolerance')).toBeTruthy();
+        // In the options strip under the toolbar, a labelled group.
+        const options = screen.getByRole('group', {
+            name: 'Smart brush options',
+        });
+        expect(
+            options.querySelector('[data-testid="annotation-brush-width"]')
+        ).toBeTruthy();
+        expect(
+            options.querySelector('[data-testid="annotation-tissue-tolerance"]')
+        ).toBeTruthy();
         const wand = SHORTCUT_HELP.find(
             section => section.title === 'Magic wand'
         )!;

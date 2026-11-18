@@ -2332,6 +2332,88 @@ if (process.env.PW_SUITE === 'wsi') {
         });
     });
 
+    test.describe('WSI annotation toolbar layout', () => {
+        test('keeps the tool buttons and Drawing as in place whatever tool is on', async ({
+            page,
+        }) => {
+            // Wide enough for the whole toolbar on one row, where options
+            // appearing next to the tools would push the rest along.
+            await page.setViewportSize({ width: 1920, height: 900 });
+            await openAnnotatedSlide(page, 2048);
+            const service = await routeAnnotationService(page);
+            const at = await gotoSlide(page);
+            await startAnnotating(page);
+            const fixed = [
+                'annotation-tool-select',
+                'annotation-tool-shape',
+                'annotation-tool-line',
+                'annotation-tool-measure',
+                'annotation-tool-outline',
+                'annotation-tool-point',
+                'annotation-drawing-as',
+                'annotation-undo',
+                'annotation-display-button',
+                'annotation-more-menu-button',
+            ];
+            const boxes = async () => {
+                const out: Record<string, string> = {};
+                for (const id of fixed) {
+                    const box = (await page.getByTestId(id).boundingBox())!;
+                    out[id] = [box.x, box.y, box.width, box.height]
+                        .map(value => value.toFixed(1))
+                        .join(',');
+                }
+                return out;
+            };
+            const before = await boxes();
+            const shot = async (name: string) => {
+                if (process.env.WSI_SHOT_DIR) {
+                    await page.screenshot({
+                        path: `${process.env.WSI_SHOT_DIR}/${process.env
+                            .WSI_SHOT_PREFIX || ''}toolbar-${name}.png`,
+                        clip: { x: 300, y: 60, width: 1300, height: 110 },
+                    });
+                }
+            };
+            await shot('select');
+            const steps: Array<[string, () => Promise<void>]> = [
+                ['rectangle', () => pickFromMenu(page, 'shape', 'rectangle')],
+                ['ellipse', () => pickFromMenu(page, 'shape', 'ellipse')],
+                ['circle', () => pickFromMenu(page, 'shape', 'circle')],
+                ['hpf', () => pickFromMenu(page, 'shape', 'hpf')],
+                ['line', () => page.keyboard.press('l')],
+                ['measure', () => page.keyboard.press('m')],
+                ['polygon', () => pickFromMenu(page, 'outline', 'polygon')],
+                ['freehand', () => pickFromMenu(page, 'outline', 'freehand')],
+                ['brush', () => pickFromMenu(page, 'outline', 'brush')],
+                [
+                    'smartBrush',
+                    () => pickFromMenu(page, 'outline', 'smartBrush'),
+                ],
+                ['wand', () => pickFromMenu(page, 'outline', 'wand')],
+                ['point', () => page.keyboard.press('.')],
+            ];
+            for (const [name, pick] of steps) {
+                await pick();
+                await shot(name);
+                expect(await boxes(), name).toEqual(before);
+            }
+            // Points dropped: the count grows and "Saving…"/"Saved" show.
+            await page.mouse.click(at(0.3, 0.6).x, at(0.3, 0.6).y);
+            await page.mouse.click(at(0.35, 0.6).x, at(0.35, 0.6).y);
+            await expect(
+                page.getByTestId('annotation-point-count')
+            ).toContainText(': 2');
+            await page.keyboard.press('Escape');
+            await expect.poll(() => service.writes.length).toBeGreaterThan(0);
+            await expect(page.getByTestId('annotation-save-status')).toHaveText(
+                'Saved'
+            );
+            await shot('saved');
+            expect(await boxes(), 'saved').toEqual(before);
+        });
+    });
+
     test.describe('WSI tissue tools', () => {
         test('outlines tissue with the magic wand: tolerance, Shift adds, Alt cuts, saves and undoes', async ({
             page,
@@ -2473,7 +2555,7 @@ if (process.env.PW_SUITE === 'wsi') {
                         page.getByTestId('annotation-tools')
                     ).toBeVisible();
                 }
-                await page.keyboard.press('w');
+                await pickFromMenu(page, 'outline', 'wand');
                 await expect(
                     page.getByTestId('annotation-tool-outline')
                 ).toHaveAttribute('aria-pressed', 'true');
