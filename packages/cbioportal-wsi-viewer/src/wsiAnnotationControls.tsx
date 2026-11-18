@@ -4,6 +4,7 @@ import {
     annotationVisibility,
     DEFAULT_COLOR,
     DEFAULT_LAYER,
+    formatRegionCount,
     WsiAnnotationAiFilter,
     WsiAnnotationController,
 } from './wsiAnnotationController';
@@ -637,6 +638,7 @@ export const WsiAnnotationPanel = observer(
                 )}
                 <MeasurementScaleNote controller={controller} />
                 <PointTally controller={controller} />
+                <HpfSummary controller={controller} />
                 <AnnotationListFilters controller={controller} />
                 <AnnotationCounts controller={controller} />
                 <div
@@ -690,6 +692,7 @@ const AnnotationRow = observer(
         const canReview = controller.canReview(annotation);
         const canModify = controller.canModify(annotation);
         const measurement = controller.measurementOf(annotation);
+        const inside = controller.pointsInside(annotation);
         const created = annotation.created
             ? new Date(annotation.created).toLocaleDateString()
             : '';
@@ -864,6 +867,17 @@ const AnnotationRow = observer(
                                     }}
                                 >
                                     {formatMeasurement(measurement)}
+                                </div>
+                            )}
+                            {inside && (
+                                <div
+                                    data-testid={`annotation-points-inside-${annotation.id}`}
+                                    style={{
+                                        color: colors.text,
+                                        fontSize: 10,
+                                    }}
+                                >
+                                    Points inside: {formatRegionCount(inside)}
                                 </div>
                             )}
                             <AnnotationNote
@@ -1241,6 +1255,94 @@ function transferButtonStyle(primary = false): React.CSSProperties {
     };
 }
 
+/**
+ * The high-power fields on the slide: how many, their area, and the points
+ * inside them per label, per 10 fields.
+ */
+const HpfSummary = observer(
+    ({ controller }: { controller: WsiAnnotationController }) => {
+        const summary = controller.hpfSummary;
+        if (!summary) return null;
+        const per10 = (value: number) =>
+            value.toLocaleString('en-US', { maximumFractionDigits: 1 });
+        return (
+            <table
+                data-testid="annotation-hpf-summary"
+                style={{
+                    width: '100%',
+                    fontSize: 11,
+                    borderCollapse: 'collapse',
+                    marginBottom: 6,
+                }}
+            >
+                <caption
+                    style={{
+                        textAlign: 'left',
+                        fontSize: 10,
+                        color: colors.muted,
+                    }}
+                >
+                    {summary.fields} high-power field
+                    {summary.fields === 1 ? '' : 's'}
+                    {summary.areaMm2 > 0
+                        ? ` (${summary.areaMm2.toLocaleString('en-US', {
+                              maximumFractionDigits: 3,
+                          })} mm²)`
+                        : ''}
+                </caption>
+                <thead>
+                    <tr style={{ color: colors.muted, fontSize: 10 }}>
+                        <th style={{ textAlign: 'left', fontWeight: 400 }}>
+                            Points
+                        </th>
+                        <th style={{ textAlign: 'right', fontWeight: 400 }}>
+                            In fields
+                        </th>
+                        <th style={{ textAlign: 'right', fontWeight: 400 }}>
+                            Per 10 HPF
+                        </th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {summary.byLabel.map(item => (
+                        <tr
+                            key={item.label}
+                            data-testid={`annotation-hpf-rate-${item.label}`}
+                        >
+                            <td>{item.label}</td>
+                            <td style={{ textAlign: 'right' }}>{item.count}</td>
+                            <td
+                                style={{
+                                    textAlign: 'right',
+                                    fontWeight: 600,
+                                }}
+                            >
+                                {per10(item.per10)}
+                            </td>
+                        </tr>
+                    ))}
+                    {summary.byLabel.length !== 1 && (
+                        <tr data-testid="annotation-hpf-rate-total">
+                            <td>All points</td>
+                            <td style={{ textAlign: 'right' }}>
+                                {summary.total}
+                            </td>
+                            <td
+                                style={{
+                                    textAlign: 'right',
+                                    fontWeight: 600,
+                                }}
+                            >
+                                {per10(summary.per10)}
+                            </td>
+                        </tr>
+                    )}
+                </tbody>
+            </table>
+        );
+    }
+);
+
 /** Point counts per layer and label, e.g. mitoses. */
 const PointTally = observer(
     ({ controller }: { controller: WsiAnnotationController }) => {
@@ -1615,6 +1717,14 @@ export const WsiAnnotationTooltip = observer(
                         {tooltip.measurement}
                     </div>
                 )}
+                {tooltip.pointsInside && (
+                    <div
+                        data-testid="annotation-tooltip-points-inside"
+                        style={{ marginTop: 2, fontSize: 11 }}
+                    >
+                        {tooltip.pointsInside}
+                    </div>
+                )}
                 {tooltip.note && (
                     <div
                         data-testid="annotation-tooltip-note"
@@ -1674,6 +1784,35 @@ const BrushCursor = observer(
 export const WsiAnnotationDrawPreview = observer(
     ({ controller }: { controller: WsiAnnotationController }) => {
         const preview = controller.customDrawPreview;
+        const field = controller.hpfCursor;
+        if (!preview && field) {
+            return (
+                <svg
+                    data-testid="annotation-hpf-cursor-layer"
+                    style={{
+                        position: 'absolute',
+                        inset: 0,
+                        width: '100%',
+                        height: '100%',
+                        pointerEvents: 'none',
+                        zIndex: 19,
+                    }}
+                >
+                    <ellipse
+                        data-testid="annotation-hpf-cursor"
+                        cx={field.x}
+                        cy={field.y}
+                        rx={field.rx}
+                        ry={field.ry}
+                        stroke={controller.activeColor}
+                        strokeWidth={1.5}
+                        strokeDasharray="5 4"
+                        fill={controller.activeColor}
+                        fillOpacity={0.08}
+                    />
+                </svg>
+            );
+        }
         if (!preview) {
             return controller.brushCursor ? (
                 <svg

@@ -66,6 +66,8 @@ export type WsiAnnotationTool =
     | 'rectangle'
     | 'ellipse'
     | 'circle'
+    /** A high-power field: a circle of a set area, placed by a click. */
+    | 'hpf'
     | 'line'
     | 'polygon'
     | 'point'
@@ -78,7 +80,7 @@ export type WsiAnnotationTool =
 type WsiPointerAnnotationTool = Exclude<WsiAnnotationTool, null>;
 
 /** The tools of the toolbar's Shape menu. */
-export const SHAPE_TOOLS = ['rectangle', 'ellipse', 'circle'] as const;
+export const SHAPE_TOOLS = ['rectangle', 'ellipse', 'circle', 'hpf'] as const;
 export type WsiShapeTool = typeof SHAPE_TOOLS[number];
 /** The tools of the toolbar's Outline menu. */
 export const OUTLINE_TOOLS = ['polygon', 'freehand', 'brush'] as const;
@@ -109,6 +111,72 @@ export const WSI_TOOL_SHORTCUTS: Record<
     b: 'brush',
     '.': 'point',
 };
+
+/**
+ * High-power field areas offered, in mm², with the field diameter each
+ * comes from (area = π·(d/2)²); 0.237 mm² (0.55 mm) is the default.
+ */
+export const HPF_AREA_PRESETS: ReadonlyArray<{
+    areaMm2: number;
+    diameterMm: number;
+}> = [
+    { areaMm2: 0.159, diameterMm: 0.45 },
+    { areaMm2: 0.196, diameterMm: 0.5 },
+    { areaMm2: 0.237, diameterMm: 0.55 },
+    { areaMm2: 0.283, diameterMm: 0.6 },
+    { areaMm2: 0.332, diameterMm: 0.65 },
+    { areaMm2: 0.374, diameterMm: 0.69 },
+];
+export const DEFAULT_HPF_AREA_MM2 = 0.237;
+/** The smallest and largest custom high-power field areas, in mm². */
+export const HPF_AREA_MIN_MM2 = 0.01;
+export const HPF_AREA_MAX_MM2 = 5;
+/** A high-power field's label: "HPF" and its number on the slide. */
+export const HPF_LABEL_RE = /^HPF (\d+)$/;
+
+/** Points inside a region: how many, by label term, and per mm². */
+export interface WsiRegionPointCount {
+    total: number;
+    /** Counts per label term, most first. */
+    byLabel: Array<{ label: string; count: number }>;
+    /** Points per mm² of the region; only on a slide with a scale. */
+    densityPerMm2?: number;
+}
+
+/** The high-power fields on the slide and the points counted in them. */
+export interface WsiHpfSummary {
+    fields: number;
+    /** The fields' total area, in mm². */
+    areaMm2: number;
+    total: number;
+    /** Points per 10 fields (the count over the fields, times 10). */
+    per10: number;
+    byLabel: Array<{ label: string; count: number; per10: number }>;
+}
+
+/** "12 (Mitosis 7, Lymphocyte 5) · 51 per mm²"; "0" with none inside. */
+export function formatRegionCount(count: WsiRegionPointCount): string {
+    const labels = count.byLabel
+        .map(item => `${item.label} ${item.count}`)
+        .join(', ');
+    const density =
+        count.densityPerMm2 !== undefined
+            ? ` · ${formatDensity(count.densityPerMm2)}`
+            : '';
+    return `${count.total}${labels ? ` (${labels})` : ''}${density}`;
+}
+
+/** A density, e.g. "51 per mm²" or "4.2 per mm²". */
+export function formatDensity(perMm2: number): string {
+    const value =
+        perMm2 >= 100
+            ? Math.round(perMm2).toLocaleString('en-US')
+            : perMm2.toLocaleString('en-US', {
+                  maximumFractionDigits: 1,
+                  minimumFractionDigits: perMm2 > 0 && perMm2 < 10 ? 1 : 0,
+              });
+    return `${value} per mm²`;
+}
 
 /** Steps to the next / previous annotation listed, Annotate on or off. */
 export const WSI_NEXT_ANNOTATION_KEY = ']';
@@ -160,6 +228,19 @@ const LOCALSTORAGE_DEFAULT_SHARED_KEY = 'wsi_annotation_default_shared_v1';
 const LOCALSTORAGE_TOOLBAR_KEY = 'wsi_annotation_toolbar_v1';
 const LOCALSTORAGE_LAYER_COLORS_KEY = 'wsi_annotation_layer_colors_v1';
 const LOCALSTORAGE_DISPLAY_KEY = 'wsi_annotation_display_v1';
+const LOCALSTORAGE_HPF_KEY = 'wsi_annotation_hpf_area_v1';
+
+function loadHpfArea(): number {
+    try {
+        const value = Number(localStorage.getItem(LOCALSTORAGE_HPF_KEY));
+        if (value >= HPF_AREA_MIN_MM2 && value <= HPF_AREA_MAX_MM2) {
+            return value;
+        }
+    } catch (_) {
+        // Ignore unavailable local storage.
+    }
+    return DEFAULT_HPF_AREA_MM2;
+}
 const HEX_COLOR_RE = /^#[0-9a-fA-F]{3,8}$/;
 
 function loadNamedColors(): NamedColor[] {
@@ -912,7 +993,15 @@ export class WsiAnnotationController {
     @observable brushWidthUm = DEFAULT_BRUSH_WIDTH_UM;
     /** Brush width in screen pixels, used when the slide has no scale. */
     @observable brushWidthPx = DEFAULT_BRUSH_WIDTH_PX;
-    /** Where the pointer is over the slide while the brush is on, on screen. */
+    /**
+     * The area of a high-power field placed with the HPF tool, in mm²;
+     * remembered between visits.
+     */
+    @observable hpfAreaMm2 = loadHpfArea();
+    /**
+     * Where the pointer is over the slide while the brush or HPF tool is
+     * on, on screen.
+     */
     @observable.ref private brushPointer: WsiXY | null = null;
     /**
      * The signed-in user as the annotation service names creators, when the
@@ -946,6 +1035,8 @@ export class WsiAnnotationController {
         /** Who made an AI annotation (see `aiOriginDescription`). */
         aiOrigin?: string;
         measurement?: string;
+        /** The points inside a region (see `pointsInside`). */
+        pointsInside?: string;
         note?: string;
     } | null = null;
     /**
@@ -1396,6 +1487,239 @@ export class WsiAnnotationController {
         return shape ? measureShape(shape, this.mpp) : null;
     }
 
+    /** Whether `annotation` is a high-power field (see `HPF_LABEL_RE`). */
+    isHpf(annotation: WsiAnnotation): boolean {
+        return (
+            HPF_LABEL_RE.test((annotation.body?.[0]?.value || '').trim()) &&
+            this.shapeOf(annotation)?.kind === 'ellipse'
+        );
+    }
+
+    private pointIndexKey: [WsiAnnotation[], NamedColor[]] | null = null;
+    private pointIndexValue: {
+        xs: number[];
+        points: Array<{ x: number; y: number; label: string }>;
+        counts: WeakMap<WsiAnnotation, WsiRegionPointCount>;
+    } | null = null;
+
+    /**
+     * The slide's points sorted by x, with their label terms, for counting
+     * the points inside regions; rebuilt when the annotations change.
+     */
+    private get pointIndex() {
+        // Label terms depend on the annotations and the palette only.
+        const annotations = this.annotations;
+        const palette = this.customColors;
+        const key = this.pointIndexKey;
+        if (
+            !this.pointIndexValue ||
+            !key ||
+            key[0] !== annotations ||
+            key[1] !== palette
+        ) {
+            const points: Array<{ x: number; y: number; label: string }> = [];
+            annotations.forEach(annotation => {
+                const shape = this.shapeOf(annotation);
+                if (shape?.kind !== 'point') return;
+                points.push({
+                    x: shape.x,
+                    y: shape.y,
+                    label: this.labelTerm(
+                        annotation.body?.[0]?.value || 'Point'
+                    ),
+                });
+            });
+            points.sort((a, b) => a.x - b.x);
+            this.pointIndexKey = [annotations, palette];
+            this.pointIndexValue = {
+                xs: points.map(point => point.x),
+                points,
+                counts: new WeakMap(),
+            };
+        }
+        return this.pointIndexValue;
+    }
+
+    /**
+     * The points inside a region (a rectangle, ellipse or polygon): all
+     * points on the slide, whatever layer or filter hides them, counted by
+     * label term, and per mm² on a slide with a scale. Null for other
+     * shapes, and on a slide without points.
+     */
+    pointsInside(annotation: WsiAnnotation): WsiRegionPointCount | null {
+        const shape = this.shapeOf(annotation);
+        if (
+            !shape ||
+            (shape.kind !== 'rectangle' &&
+                shape.kind !== 'ellipse' &&
+                shape.kind !== 'polygon')
+        ) {
+            return null;
+        }
+        const index = this.pointIndex;
+        if (!index.points.length) return null;
+        const cached = index.counts.get(annotation);
+        if (cached) return cached;
+        const bounds = shapeBounds(shape);
+        // The first point at or right of the region's left edge.
+        let low = 0;
+        let high = index.xs.length;
+        while (low < high) {
+            const middle = (low + high) >> 1;
+            if (index.xs[middle] < bounds.minX) low = middle + 1;
+            else high = middle;
+        }
+        const byLabel = new Map<string, number>();
+        let total = 0;
+        for (let i = low; i < index.points.length; i++) {
+            const point = index.points[i];
+            if (point.x > bounds.maxX) break;
+            if (point.y < bounds.minY || point.y > bounds.maxY) continue;
+            if (!shapeContainsPoint(shape, point, 0)) continue;
+            total += 1;
+            byLabel.set(point.label, (byLabel.get(point.label) || 0) + 1);
+        }
+        const count: WsiRegionPointCount = {
+            total,
+            byLabel: Array.from(byLabel.entries())
+                .map(([label, n]) => ({ label, count: n }))
+                .sort(
+                    (a, b) =>
+                        b.count - a.count || a.label.localeCompare(b.label)
+                ),
+        };
+        const measurement = this.mpp ? measureShape(shape, this.mpp) : null;
+        if (measurement?.area) {
+            count.densityPerMm2 = total / (measurement.area / 1e6);
+        }
+        index.counts.set(annotation, count);
+        return count;
+    }
+
+    /**
+     * The high-power fields on the slide and the points inside them: per
+     * label term, and per 10 fields (the mitotic count's usual unit).
+     */
+    @computed get hpfSummary(): WsiHpfSummary | null {
+        const fields = this.annotations.filter(annotation =>
+            this.isHpf(annotation)
+        );
+        if (!fields.length) return null;
+        const byLabel = new Map<string, number>();
+        let total = 0;
+        let areaMm2 = 0;
+        fields.forEach(field => {
+            const count = this.pointsInside(field);
+            const shape = this.shapeOf(field);
+            const measurement = shape && measureShape(shape, this.mpp);
+            if (measurement?.area && measurement.unit === 'um') {
+                areaMm2 += measurement.area / 1e6;
+            }
+            count?.byLabel.forEach(item =>
+                byLabel.set(
+                    item.label,
+                    (byLabel.get(item.label) || 0) + item.count
+                )
+            );
+            total += count?.total || 0;
+        });
+        const per10 = (n: number) => (n / fields.length) * 10;
+        return {
+            fields: fields.length,
+            areaMm2,
+            total,
+            per10: per10(total),
+            byLabel: Array.from(byLabel.entries())
+                .map(([label, count]) => ({
+                    label,
+                    count,
+                    per10: per10(count),
+                }))
+                .sort(
+                    (a, b) =>
+                        b.count - a.count || a.label.localeCompare(b.label)
+                ),
+        };
+    }
+
+    /** Sets the area of new high-power fields, in mm², and remembers it. */
+    @action.bound
+    setHpfArea(areaMm2: number) {
+        if (!(areaMm2 >= HPF_AREA_MIN_MM2 && areaMm2 <= HPF_AREA_MAX_MM2)) {
+            return;
+        }
+        this.hpfAreaMm2 = Math.round(areaMm2 * 1000) / 1000;
+        try {
+            localStorage.setItem(LOCALSTORAGE_HPF_KEY, String(this.hpfAreaMm2));
+        } catch (_) {
+            // Ignore unavailable local storage.
+        }
+    }
+
+    /** A high-power field's radii in image pixels, from the slide's mpp. */
+    private hpfRadii(): { rx: number; ry: number } | null {
+        const mpp = this.mpp;
+        if (!mpp) return null;
+        const radiusUm = Math.sqrt(this.hpfAreaMm2 / Math.PI) * 1000;
+        return { rx: radiusUm / mpp.x, ry: radiusUm / mpp.y };
+    }
+
+    /**
+     * The Shape button's tool: the menu's last, unless that is the HPF
+     * tool on a slide without a scale (then the rectangle).
+     */
+    @computed get shapeToolNow(): WsiShapeTool {
+        return this.shapeTool === 'hpf' && !this.mpp
+            ? 'rectangle'
+            : this.shapeTool;
+    }
+
+    /** The field under the pointer while the HPF tool is on, on screen. */
+    @computed get hpfCursor(): {
+        x: number;
+        y: number;
+        rx: number;
+        ry: number;
+    } | null {
+        const pointer = this.brushPointer;
+        const radii = this.hpfRadii();
+        if (!pointer || this.activeTool !== 'hpf' || !radii) return null;
+        void this.viewportRevision;
+        const imagePerScreen = this.imagePixelsPerScreenPixel();
+        return {
+            x: pointer.x,
+            y: pointer.y,
+            rx: radii.rx / imagePerScreen,
+            ry: radii.ry / imagePerScreen,
+        };
+    }
+
+    /** The label of the next high-power field: "HPF" and the next number. */
+    private nextHpfLabel(): string {
+        let last = 0;
+        this.annotations.forEach(annotation => {
+            const match = HPF_LABEL_RE.exec(
+                (annotation.body?.[0]?.value || '').trim()
+            );
+            if (match) last = Math.max(last, Number(match[1]));
+        });
+        return `HPF ${last + 1}`;
+    }
+
+    /** Places a high-power field centred on `center`, in image pixels. */
+    private async createHpf(center: WsiXY) {
+        const radii = this.hpfRadii();
+        if (!radii) return;
+        const round = (value: number) => Math.round(value * 100) / 100;
+        const annotation = this.draftAnnotation(
+            `<svg><ellipse cx="${round(center.x)}" cy="${round(
+                center.y
+            )}" rx="${round(radii.rx)}" ry="${round(radii.ry)}" /></svg>`,
+            this.nextHpfLabel()
+        );
+        await this.createAnnotation(annotation);
+    }
+
     /** The size of the shape being drawn, for a live readout. */
     @computed get drawPreviewMeasurement(): string | null {
         const preview = this.customDrawPreview;
@@ -1701,6 +2025,7 @@ export class WsiAnnotationController {
                 layer,
                 note: annotation.note,
                 measurement: measureShape(shape, this.mpp),
+                pointCount: this.pointsInside(annotation) || undefined,
                 aiReviewStatus: isAiProvenance(annotation.provenance)
                     ? isUnreviewedAi(annotation.provenance)
                         ? 'unreviewed'
@@ -2359,6 +2684,8 @@ export class WsiAnnotationController {
     @action.bound
     setTool(tool: WsiAnnotationTool) {
         if (tool !== null && !this.canEdit) return;
+        // A high-power field needs the slide's scale.
+        if (tool === 'hpf' && !this.mpp) return;
         void this.flushPoints();
         if (isShapeTool(tool)) this.shapeTool = tool;
         if (isOutlineTool(tool)) this.outlineTool = tool;
@@ -4599,8 +4926,8 @@ export class WsiAnnotationController {
                 client: { x: event.clientX, y: event.clientY },
             };
             this.annotationTooltip = null;
-            // A point drops on click; a drag still pans the slide.
-            if (tool === 'point') return;
+            // A point or field drops on click; a drag still pans the slide.
+            if (tool === 'point' || tool === 'hpf') return;
             // Keep the press when the pointer leaves the slide.
             if (event.pointerId !== undefined) {
                 try {
@@ -4649,7 +4976,7 @@ export class WsiAnnotationController {
             if (otherPointer(event)) return;
             const tool = this.activeTool;
             const screen = local(event);
-            if (tool === 'brush') this.brushPointer = screen;
+            if (tool === 'brush' || tool === 'hpf') this.brushPointer = screen;
             const gesture = this.drawGesture;
             if (!isPointerAnnotationTool(tool) || !gesture) return;
             // A polygon's edge follows the pointer between clicks; other
@@ -4727,12 +5054,15 @@ export class WsiAnnotationController {
                 return;
             }
 
-            if (start.tool === 'point') {
+            if (start.tool === 'point' || start.tool === 'hpf') {
                 const moved = Math.hypot(
                     event.clientX - start.client.x,
                     event.clientY - start.client.y
                 );
-                if (moved <= CLICK_TOLERANCE) this.createPoint(endPoint);
+                if (moved <= CLICK_TOLERANCE) {
+                    if (start.tool === 'point') this.createPoint(endPoint);
+                    else void this.createHpf(endPoint);
+                }
                 return;
             }
 
@@ -4964,7 +5294,7 @@ export class WsiAnnotationController {
         if (!shortcut) return;
         event.preventDefault();
         if (shortcut === 'select') this.cancelDrawing();
-        else this.setTool(shortcut === 'shape' ? this.shapeTool : shortcut);
+        else this.setTool(shortcut === 'shape' ? this.shapeToolNow : shortcut);
     };
 
     /**
@@ -5350,6 +5680,7 @@ export class WsiAnnotationController {
         const text = annotation.body?.[0]?.value || '';
         const stored = this.annotations.find(item => item.id === annotation.id);
         const measurement = this.measurementOf(stored || annotation);
+        const inside = this.pointsInside(stored || annotation);
         const note = (stored || annotation).note || '';
         if (!text && !measurement && !note) return;
         this.annotationTooltip = {
@@ -5365,6 +5696,9 @@ export class WsiAnnotationController {
             aiOrigin: aiOriginDescription(annotation.provenance) || undefined,
             measurement: measurement
                 ? formatMeasurement(measurement)
+                : undefined,
+            pointsInside: inside
+                ? `Points inside: ${formatRegionCount(inside)}`
                 : undefined,
             note: note || undefined,
         };

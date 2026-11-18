@@ -120,7 +120,7 @@ The toolbar over the slide starts with only **Annotate**, **Display** (an eye) a
 | Control | Contents |
 | --- | --- |
 | **Select** (V) | Pan, and click a shape to select it; the user's own shapes can then be moved or reshaped |
-| **Shape** (R) | Rectangle, ellipse or circle. The button draws with the last one picked; the arrow next to it opens the menu |
+| **Shape** (R) | Rectangle, ellipse, circle or HPF field. The button draws with the last one picked; the arrow next to it opens the menu |
 | **Line** (L) | A line, with its length shown while drawing |
 | **Measure** (M) | A quick ruler that is never saved (see Quick ruler) |
 | **Outline** | Polygon (P), freehand (F) or brush (B); like Shape, the button reuses the last one |
@@ -158,7 +158,7 @@ Keys do nothing while the focus is in a text field. On a Mac, ⌘ works for Ctrl
 | Key | Does | When |
 | --- | --- | --- |
 | V | Select | Annotate on |
-| R | Shape (the menu's last: rectangle, ellipse or circle) | Annotate on, review card closed |
+| R | Shape (the menu's last: rectangle, ellipse, circle or HPF field) | Annotate on, review card closed |
 | L | Line | Annotate on |
 | P, F, B | Polygon, freehand, brush | Annotate on |
 | . | Point (otherwise "." shows or hides the details sidebar) | Annotate on |
@@ -235,6 +235,12 @@ Each annotation can carry a free-text note, kept in `body.comment` and separate 
 #### Measurements
 
 The list and the click tooltip show each annotation's size: the length of a line, and the area and perimeter of a rectangle, ellipse, circle or polygon (including freehand and brush shapes). Coordinates are level-0 image pixels, scaled by the slide's microns-per-pixel (`tile_metadata.mpp`, the scale the status bar uses) on each axis, so slides with unequal x and y scales measure correctly. Lengths are shown in µm, or mm from 1 mm; areas in µm², or mm² from 0.01 mm². An ellipse's perimeter uses Ramanujan's approximation. Without a valid mpp the sizes are in pixels and the panel says so, also before any annotation exists. Drawing a line, rectangle, ellipse or circle shows its length or area next to the cursor. `wsiAnnotationGeometryUtils.ts` holds the math.
+
+#### High-power fields and points inside regions
+
+**HPF field**, in the Shape menu, places a high-power field with a click (a drag still pans): a circle of a set area of tissue, centred on the click and saved as a circle annotation (an ellipse in pixels on a slide whose x and y scales differ) labelled "HPF 1", "HPF 2", … (the next number after the highest on the slide), on the active layer in its color. While the tool is on, a dashed circle under the pointer shows the field, and the toolbar offers the field area: 0.159, 0.196, 0.237 (the default, a 0.55 mm field), 0.283, 0.332 or 0.374 mm² (fields of 0.45 to 0.69 mm), or a custom area of 0.01–5 mm², remembered in `localStorage`. The tool needs the slide's mpp; without one its menu item is disabled and says why. An annotation counts as a field when its label is "HPF" and a number and it is an ellipse or circle.
+
+Every region (rectangle, ellipse, circle, polygon, freehand, brush) shows **Points inside: N (label n, …) · d per mm²** in the list and its tooltip, once the slide has points: all points on the slide, whatever layer or filter hides them, counted by label term (as the point tally groups them), with the density from the region's area on a slide with a scale. With fields on the slide, the Annotations section adds a table of the points inside them per label, with the count **per 10 HPF** (the count over the number of fields, times 10) and the fields' total area. Counting uses the points sorted by x, so each region only tests the points within its bounds. GeoJSON exports add `Num points`, `Num points: <label>` and `Points per mm^2` to a region's `measurements`.
 
 #### Quick ruler
 

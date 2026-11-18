@@ -3,6 +3,9 @@ import { observer } from 'mobx-react';
 import {
     BRUSH_WIDTHS_PX,
     BRUSH_WIDTHS_UM,
+    HPF_AREA_MAX_MM2,
+    HPF_AREA_MIN_MM2,
+    HPF_AREA_PRESETS,
     OUTLINE_TOOLS,
     SHAPE_TOOLS,
     WsiAnnotationController,
@@ -51,6 +54,12 @@ export const TOOL_INFO: Record<DrawingTool, ToolInfo> = {
         label: 'Circle',
         shortcut: 'R',
         hint: 'click and drag a box to fit it in',
+    },
+    hpf: {
+        label: 'HPF field',
+        shortcut: 'R',
+        hint:
+            'click to place a high-power field of the chosen area, labelled HPF 1, HPF 2, …',
     },
     line: {
         label: 'Line',
@@ -101,7 +110,7 @@ export const SHORTCUT_HELP: ShortcutSection[] = [
             'While Annotate is on; a drawing tool stays on, shape after shape, until Esc, V or another tool',
         keys: [
             [['V'], 'Select: pan, and select or edit shapes'],
-            [['R'], 'Shape: the last of rectangle, ellipse, circle'],
+            [['R'], 'Shape: the last of rectangle, ellipse, circle, HPF field'],
             [['L'], 'Line'],
             [['M'], 'Measure: a quick ruler, not saved'],
             [['P'], 'Polygon'],
@@ -181,6 +190,12 @@ const iconPaths: Record<string, React.ReactNode> = {
     rectangle: <rect x="2.5" y="3.5" width="11" height="9" rx="0.5" />,
     ellipse: <ellipse cx="8" cy="8" rx="6" ry="4" />,
     circle: <circle cx="8" cy="8" r="5.5" />,
+    hpf: (
+        <>
+            <circle cx="8" cy="8" r="5.5" strokeDasharray="2.2 1.6" />
+            <path d="M8 5.6v4.8M5.6 8h4.8" />
+        </>
+    ),
     line: (
         <>
             <path d="M2.5 13.5l11-11" />
@@ -467,6 +482,7 @@ function MenuItem({
     shortcut,
     checked,
     disabled,
+    title,
     onSelect,
     children,
 }: {
@@ -476,6 +492,7 @@ function MenuItem({
     /** Set for a `menuitemradio`. */
     checked?: boolean;
     disabled?: boolean;
+    title?: string;
     onSelect: () => void;
     children: React.ReactNode;
 }) {
@@ -487,6 +504,7 @@ function MenuItem({
             data-testid={testId}
             tabIndex={-1}
             disabled={disabled}
+            title={title}
             onClick={onSelect}
             style={{
                 ...menuItemStyle(!!checked),
@@ -576,6 +594,7 @@ const ToolMenuButton = observer(
         tools,
         current,
         groupShortcut,
+        unavailable,
     }: {
         controller: WsiAnnotationController;
         group: 'shape' | 'outline';
@@ -584,6 +603,8 @@ const ToolMenuButton = observer(
         current: DrawingTool;
         /** The key for the whole group, when it has one (Shape: R). */
         groupShortcut?: string;
+        /** Why a tool cannot be used now, or null when it can. */
+        unavailable?: (tool: DrawingTool) => string | null;
     }) => {
         const [open, setOpen] = React.useState(false);
         const button = React.useRef<HTMLButtonElement>(null);
@@ -656,25 +677,41 @@ const ToolMenuButton = observer(
                     anchor={anchor}
                     onClose={close}
                 >
-                    {tools.map(tool => (
-                        <MenuItem
-                            key={tool}
-                            testId={`annotation-tool-${tool}`}
-                            icon={tool}
-                            shortcut={
-                                groupShortcut
-                                    ? undefined
-                                    : TOOL_INFO[tool].shortcut
-                            }
-                            checked={controller.activeTool === tool}
-                            onSelect={() => {
-                                controller.setTool(tool);
-                                close(true);
-                            }}
-                        >
-                            {TOOL_INFO[tool].label}
-                        </MenuItem>
-                    ))}
+                    {tools.map(tool => {
+                        const why = unavailable?.(tool) || null;
+                        return (
+                            <MenuItem
+                                key={tool}
+                                testId={`annotation-tool-${tool}`}
+                                icon={tool}
+                                shortcut={
+                                    groupShortcut
+                                        ? undefined
+                                        : TOOL_INFO[tool].shortcut
+                                }
+                                checked={controller.activeTool === tool}
+                                disabled={!!why}
+                                title={why || undefined}
+                                onSelect={() => {
+                                    controller.setTool(tool);
+                                    close(true);
+                                }}
+                            >
+                                {TOOL_INFO[tool].label}
+                                {why && (
+                                    <span
+                                        style={{
+                                            display: 'block',
+                                            fontSize: 10,
+                                            color: colors.muted,
+                                        }}
+                                    >
+                                        {why}
+                                    </span>
+                                )}
+                            </MenuItem>
+                        );
+                    })}
                 </Menu>
             </span>
         );
@@ -722,6 +759,78 @@ export const BrushWidthControl = observer(
                         style={{ fontSize: 10, color: colors.muted }}
                     >
                         No slide scale: screen px
+                    </span>
+                )}
+            </span>
+        );
+    }
+);
+
+/**
+ * The area of new high-power fields: the common field sizes, or a custom
+ * area in mm².
+ */
+export const HpfAreaControl = observer(
+    ({ controller }: { controller: WsiAnnotationController }) => {
+        const area = controller.hpfAreaMm2;
+        const preset = HPF_AREA_PRESETS.some(item => item.areaMm2 === area);
+        const [custom, setCustom] = React.useState(!preset);
+        const [draft, setDraft] = React.useState(String(area));
+        const apply = () => {
+            const value = Number(draft);
+            if (value >= HPF_AREA_MIN_MM2 && value <= HPF_AREA_MAX_MM2) {
+                controller.setHpfArea(value);
+            } else {
+                setDraft(String(controller.hpfAreaMm2));
+            }
+        };
+        return (
+            <span style={groupStyle}>
+                <select
+                    data-toolbar-item
+                    data-testid="annotation-hpf-area"
+                    aria-label="High-power field area"
+                    title="Area of each high-power field placed, in mm² of tissue"
+                    value={custom ? 'custom' : String(area)}
+                    onChange={event => {
+                        if (event.target.value === 'custom') {
+                            setDraft(String(area));
+                            setCustom(true);
+                        } else {
+                            setCustom(false);
+                            controller.setHpfArea(Number(event.target.value));
+                        }
+                    }}
+                    style={{ fontSize: 11, height: 24 }}
+                >
+                    {HPF_AREA_PRESETS.map(item => (
+                        <option key={item.areaMm2} value={String(item.areaMm2)}>
+                            {item.areaMm2} mm² ({item.diameterMm} mm field)
+                        </option>
+                    ))}
+                    <option value="custom">Custom…</option>
+                </select>
+                {custom && (
+                    <input
+                        type="number"
+                        data-toolbar-item
+                        data-testid="annotation-hpf-area-custom"
+                        aria-label="Custom high-power field area in mm²"
+                        min={HPF_AREA_MIN_MM2}
+                        max={HPF_AREA_MAX_MM2}
+                        step={0.001}
+                        value={draft}
+                        onChange={event => setDraft(event.target.value)}
+                        onBlur={apply}
+                        onKeyDown={event => {
+                            if (event.key === 'Enter') apply();
+                        }}
+                        style={{ width: 64, fontSize: 11, height: 24 }}
+                    />
+                )}
+                {custom && (
+                    <span style={{ fontSize: 10, color: colors.muted }}>
+                        mm²
                     </span>
                 )}
             </span>
@@ -1767,8 +1876,13 @@ export const WsiAnnotationToolbar = observer(
                                 group="shape"
                                 label="Shape"
                                 tools={SHAPE_TOOLS}
-                                current={controller.shapeTool}
+                                current={controller.shapeToolNow}
                                 groupShortcut="R"
+                                unavailable={tool =>
+                                    tool === 'hpf' && !controller.mpp
+                                        ? 'Needs the slide scale (µm per pixel)'
+                                        : null
+                                }
                             />
                             <ToolButton
                                 controller={controller}
@@ -1795,6 +1909,9 @@ export const WsiAnnotationToolbar = observer(
                         </span>
                         {tool === 'brush' && (
                             <BrushWidthControl controller={controller} />
+                        )}
+                        {tool === 'hpf' && (
+                            <HpfAreaControl controller={controller} />
                         )}
                         {tool === 'point' && (
                             <span

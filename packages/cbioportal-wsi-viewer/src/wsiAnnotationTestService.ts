@@ -631,20 +631,18 @@ export async function attachTestController(
     };
     controller.attachViewer(viewer, {}, TEST_SLIDE_KEY);
     const scale = options.imagePerScreen || (() => 1);
-    jest.spyOn(
-        controller as any,
-        'imagePoint'
-    ).mockImplementation((x: any, y: any) => ({
-        x: x * scale(),
-        y: y * scale(),
-    }));
-    jest.spyOn(
-        controller as any,
-        'screenPoint'
-    ).mockImplementation((point: any) => ({
-        x: point.x / scale(),
-        y: point.y / scale(),
-    }));
+    jest.spyOn(controller as any, 'imagePoint').mockImplementation(
+        (x: any, y: any) => ({
+            x: x * scale(),
+            y: y * scale(),
+        })
+    );
+    jest.spyOn(controller as any, 'screenPoint').mockImplementation(
+        (point: any) => ({
+            x: point.x / scale(),
+            y: point.y / scale(),
+        })
+    );
     const pointer = (
         type: string,
         x: number,

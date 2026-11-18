@@ -48,6 +48,12 @@ export interface WsiExportItem {
     layer: string;
     note?: string;
     measurement?: WsiMeasurement | null;
+    /** The points inside a region, by label term, and per mm². */
+    pointCount?: {
+        total: number;
+        byLabel: Array<{ label: string; count: number }>;
+        densityPerMm2?: number;
+    };
     aiReviewStatus?: 'unreviewed' | 'accepted';
 }
 
@@ -152,6 +158,23 @@ function measurementProperties(
     return values;
 }
 
+/**
+ * The points inside a region as measurements: "Num points", one "Num
+ * points: <label>" per label term, and "Points per mm^2" with a scale.
+ */
+function pointCountProperties(
+    count: NonNullable<WsiExportItem['pointCount']>
+): Record<string, number> {
+    const values: Record<string, number> = { 'Num points': count.total };
+    count.byLabel.forEach(item => {
+        values[`Num points: ${item.label}`] = item.count;
+    });
+    if (count.densityPerMm2 !== undefined) {
+        values['Points per mm^2'] = round(count.densityPerMm2);
+    }
+    return values;
+}
+
 export function toGeoJsonFeatureCollection(
     items: WsiExportItem[],
     slideKey: string,
@@ -176,10 +199,16 @@ export function toGeoJsonFeatureCollection(
                 layer: item.layer,
             };
             if (item.note) properties.note = item.note;
-            if (item.measurement) {
-                properties.measurements = measurementProperties(
-                    item.measurement
-                );
+            const measurements: Record<string, number> = {
+                ...(item.measurement
+                    ? measurementProperties(item.measurement)
+                    : {}),
+                ...(item.pointCount
+                    ? pointCountProperties(item.pointCount)
+                    : {}),
+            };
+            if (Object.keys(measurements).length) {
+                properties.measurements = measurements;
             }
             if (item.aiReviewStatus) {
                 properties.ai_generated = true;
