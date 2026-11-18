@@ -2842,13 +2842,26 @@ export class WsiAnnotationController {
         // Read so that the outline is redrawn as the slide moves.
         void this.viewportRevision;
         const current = gesture.pointer;
-        const points = gesture.imagePoints
-            ?.map(point => this.screenPoint(point))
-            .filter((point): point is WsiXY => !!point);
         const first = gesture.imageStart ?? gesture.imagePoints?.[0];
         const start = (first && this.screenPoint(first)) || current;
         const preview: WsiDrawPreview = { tool: gesture.tool, start, current };
-        if (points) preview.points = points;
+        const imagePoints = gesture.imagePoints;
+        if (imagePoints) {
+            // Placed on screen only when read: a stroke's preview adds its
+            // new points itself (see `strokePoints`), so following the
+            // pointer costs the same at any stroke length.
+            const count = imagePoints.length;
+            let placed: WsiXY[] | undefined;
+            Object.defineProperty(preview, 'points', {
+                enumerable: true,
+                get: () =>
+                    placed ||
+                    (placed = imagePoints
+                        .slice(0, count)
+                        .map(point => this.screenPoint(point))
+                        .filter((point): point is WsiXY => !!point)),
+            });
+        }
         if (gesture.strokeImageWidth !== undefined) {
             preview.strokeWidth =
                 gesture.strokeImageWidth / this.imagePixelsPerScreenPixel();
@@ -2882,6 +2895,31 @@ export class WsiAnnotationController {
             y2: b.y,
             text: formatRuler(measureRuler(ruler.start, ruler.end, this.mpp)),
         };
+    }
+
+    /**
+     * The freehand or brush stroke being drawn, in image pixels. Points are
+     * added to the array in place as the pointer moves; a new stroke is a
+     * new array.
+     */
+    strokePoints(): readonly WsiXY[] | null {
+        const gesture = this.drawGesture;
+        return gesture && isStrokeTool(gesture.tool)
+            ? gesture.imagePoints || null
+            : null;
+    }
+
+    /**
+     * Image pixels to screen pixels as the slide is shown now, for placing
+     * many points at once; changes with `viewRevision`.
+     */
+    strokeScreenMapper(): ((point: WsiXY) => WsiXY) | null {
+        return this.screenTransform();
+    }
+
+    /** Bumped when the slide moves on screen (see `strokeScreenMapper`). */
+    get viewRevision(): number {
+        return this.viewportRevision;
     }
 
     /** Whether a shape is being drawn: a press, a stroke or polygon vertices. */
@@ -5082,10 +5120,12 @@ export class WsiAnnotationController {
                         this.strokeImagePerScreen,
                         imagePerScreen
                     );
+                    // Added in place: no copy of the stroke per move.
+                    points.push(image!);
                 }
                 this.drawGesture = {
                     ...gesture,
-                    imagePoints: sampled ? [...points, image!] : points,
+                    imagePoints: points,
                     pointer: screen,
                 };
             } else {

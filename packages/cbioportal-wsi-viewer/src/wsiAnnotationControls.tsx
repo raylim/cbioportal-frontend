@@ -9,7 +9,7 @@ import {
     WsiAnnotationController,
 } from './wsiAnnotationController';
 import { WsiAnnotation } from './wsiViewerTypes';
-import { formatMeasurement } from './wsiAnnotationGeometryUtils';
+import { formatMeasurement, WsiPoint } from './wsiAnnotationGeometryUtils';
 import {
     aiOriginDescription,
     isAiProvenance,
@@ -641,33 +641,288 @@ export const WsiAnnotationPanel = observer(
                 <HpfSummary controller={controller} />
                 <AnnotationListFilters controller={controller} />
                 <AnnotationCounts controller={controller} />
+                <AnnotationList controller={controller} listed={listed} />
+            </div>
+        );
+    }
+);
+
+/** The annotation list's height, in pixels; it scrolls beyond. */
+export const ANNOTATION_LIST_HEIGHT = 260;
+/** Lists longer than this render only the rows in and near the view. */
+export const VIRTUALIZE_ABOVE = 100;
+/** A row's height until it is measured, in pixels. */
+const ROW_HEIGHT_ESTIMATE = 64;
+/** Rows rendered above and below the view, in pixels. */
+const OVERSCAN = 300;
+
+/** The rendered row of annotation `id` in `list`, if any. */
+function rowElement(list: HTMLElement, id: string): HTMLElement | null {
+    return (
+        Array.from(
+            list.querySelectorAll<HTMLElement>('[data-annotation-row]')
+        ).find(row => row.getAttribute('data-annotation-row') === id) || null
+    );
+}
+
+/** The first index whose row ends below `y` (offsets are row tops). */
+function rowAt(offsets: number[], y: number): number {
+    let low = 0;
+    let high = offsets.length - 1;
+    while (low < high) {
+        const middle = (low + high) >> 1;
+        if (offsets[middle + 1] <= y) low = middle + 1;
+        else high = middle;
+    }
+    return low;
+}
+
+/**
+ * The annotation rows. A long list (more than `VIRTUALIZE_ABOVE` rows)
+ * renders only the rows in and near the view, placed at their measured
+ * offsets, so thousands of annotations scroll smoothly; the row holding
+ * the focus stays rendered while it is scrolled away. In either case:
+ * ↑/↓ (and Home/End) move between rows' labels, rendering a row before
+ * focusing it, and the list scrolls to the annotation the slide is
+ * pointed at (`]`/`[`, review, a link).
+ */
+const AnnotationList = observer(
+    ({
+        controller,
+        listed,
+    }: {
+        controller: WsiAnnotationController;
+        listed: WsiAnnotation[];
+    }) => {
+        const container = React.useRef<HTMLDivElement>(null);
+        const heights = React.useRef(new Map<string, number>());
+        const [scrollTop, setScrollTop] = React.useState(0);
+        const [, setMeasured] = React.useState(0);
+        const [focusedRow, setFocusedRow] = React.useState<string | null>(null);
+        const [pendingFocus, setPendingFocus] = React.useState<string | null>(
+            null
+        );
+        const virtual = listed.length > VIRTUALIZE_ABOVE;
+        const indexById = React.useMemo(() => {
+            const map = new Map<string, number>();
+            listed.forEach((annotation, index) =>
+                map.set(annotation.id, index)
+            );
+            return map;
+        }, [listed]);
+        // Row tops, measured where rendered, estimated elsewhere.
+        const offsets: number[] = [0];
+        if (virtual) {
+            listed.forEach(annotation =>
+                offsets.push(
+                    offsets[offsets.length - 1] +
+                        (heights.current.get(annotation.id) ||
+                            ROW_HEIGHT_ESTIMATE)
+                )
+            );
+        }
+        const total = offsets[offsets.length - 1];
+        const viewHeight =
+            container.current?.clientHeight || ANNOTATION_LIST_HEIGHT;
+        let rendered: number[];
+        if (virtual) {
+            const first = rowAt(offsets, Math.max(0, scrollTop - OVERSCAN));
+            const last = rowAt(offsets, scrollTop + viewHeight + OVERSCAN);
+            const indices = new Set<number>();
+            for (let i = first; i <= last && i < listed.length; i++) {
+                indices.add(i);
+            }
+            [focusedRow, pendingFocus].forEach(id => {
+                const index = id !== null ? indexById.get(id) : undefined;
+                if (index !== undefined) indices.add(index);
+            });
+            rendered = Array.from(indices).sort((a, b) => a - b);
+        } else {
+            rendered = listed.map((_, index) => index);
+        }
+
+        // Measure the rendered rows; a changed height places them again. A
+        // row that grows on its own (a note or thread opened) is measured
+        // again through the ResizeObserver.
+        const resizes = React.useRef<ResizeObserver | null>(null);
+        const measure = React.useCallback(() => {
+            if (!container.current) return;
+            let changed = false;
+            container.current
+                .querySelectorAll<HTMLElement>('[data-annotation-row]')
+                .forEach(row => {
+                    const id = row.getAttribute('data-annotation-row')!;
+                    const height = row.offsetHeight;
+                    if (height > 0 && heights.current.get(id) !== height) {
+                        heights.current.set(id, height);
+                        changed = true;
+                    }
+                });
+            if (changed) setMeasured(n => n + 1);
+        }, []);
+        React.useEffect(() => {
+            if (!virtual || typeof ResizeObserver === 'undefined') return;
+            resizes.current = new ResizeObserver(measure);
+            return () => {
+                resizes.current?.disconnect();
+                resizes.current = null;
+            };
+        }, [virtual, measure]);
+        React.useLayoutEffect(() => {
+            if (!virtual || !container.current) return;
+            container.current
+                .querySelectorAll<HTMLElement>('[data-annotation-row]')
+                .forEach(row => resizes.current?.observe(row));
+            measure();
+        });
+
+        /** Scrolls the list so that row `index` shows. */
+        const reveal = (index: number) => {
+            const element = container.current;
+            if (!element) return;
+            let top: number;
+            let height: number;
+            if (virtual) {
+                top = offsets[index];
+                height = offsets[index + 1] - top;
+            } else {
+                const row = rowElement(element, listed[index].id);
+                if (!row) return;
+                top = row.offsetTop - element.offsetTop;
+                height = row.offsetHeight;
+            }
+            const view = element.clientHeight || ANNOTATION_LIST_HEIGHT;
+            if (top < element.scrollTop) {
+                element.scrollTop = top;
+            } else if (top + height > element.scrollTop + view) {
+                element.scrollTop = top + height - view;
+            } else {
+                return;
+            }
+            setScrollTop(element.scrollTop);
+        };
+
+        // Follow the annotation the slide is pointed at.
+        const focusedAnnotation = controller.focusedAnnotationId;
+        React.useEffect(() => {
+            const index =
+                focusedAnnotation !== null
+                    ? indexById.get(focusedAnnotation)
+                    : undefined;
+            if (index !== undefined) reveal(index);
+            // eslint-disable-next-line react-hooks/exhaustive-deps
+        }, [focusedAnnotation]);
+
+        // Focus a row once it is rendered (arrow keys, Home, End).
+        React.useEffect(() => {
+            if (pendingFocus === null) return;
+            const row =
+                container.current &&
+                rowElement(container.current, pendingFocus);
+            if (!row) return;
+            row.querySelector<HTMLElement>('[data-row-focus]')?.focus();
+            setPendingFocus(null);
+        });
+
+        const onKeyDown = (event: React.KeyboardEvent) => {
+            const target = event.target as HTMLElement;
+            if (
+                !target.hasAttribute('data-row-focus') ||
+                !['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)
+            ) {
+                return;
+            }
+            const id = target
+                .closest('[data-annotation-row]')
+                ?.getAttribute('data-annotation-row');
+            const at = id ? indexById.get(id) : undefined;
+            if (at === undefined || !listed.length) return;
+            const next =
+                event.key === 'Home'
+                    ? 0
+                    : event.key === 'End'
+                    ? listed.length - 1
+                    : Math.min(
+                          listed.length - 1,
+                          Math.max(0, at + (event.key === 'ArrowDown' ? 1 : -1))
+                      );
+            event.preventDefault();
+            reveal(next);
+            setPendingFocus(listed[next].id);
+        };
+
+        return (
+            <div
+                ref={container}
+                role="list"
+                aria-label="Annotations"
+                data-testid="annotation-list"
+                data-virtual={virtual || undefined}
+                tabIndex={-1}
+                onScroll={event =>
+                    setScrollTop((event.target as HTMLElement).scrollTop)
+                }
+                onKeyDown={onKeyDown}
+                onFocus={event => {
+                    const id = (event.target as HTMLElement)
+                        .closest('[data-annotation-row]')
+                        ?.getAttribute('data-annotation-row');
+                    setFocusedRow(id || null);
+                }}
+                onBlur={event => {
+                    if (
+                        !container.current?.contains(
+                            event.relatedTarget as Node | null
+                        )
+                    ) {
+                        setFocusedRow(null);
+                    }
+                }}
+                style={{
+                    maxHeight: ANNOTATION_LIST_HEIGHT,
+                    overflowY: 'auto',
+                    position: 'relative',
+                }}
+            >
                 <div
-                    role="list"
-                    aria-label="Annotations"
-                    data-testid="annotation-list"
-                    tabIndex={-1}
-                    style={{ maxHeight: 260, overflowY: 'auto' }}
+                    style={
+                        virtual
+                            ? { position: 'relative', height: total }
+                            : undefined
+                    }
                 >
-                    {listed.map(annotation => (
-                        <AnnotationRow
-                            key={annotation.id}
-                            controller={controller}
-                            annotation={annotation}
-                        />
-                    ))}
-                    {!listed.length && (
-                        <div
-                            role="status"
-                            style={{
-                                color: colors.muted,
-                                fontSize: 11,
-                                padding: 4,
-                            }}
-                        >
-                            No annotations match the filters.
-                        </div>
-                    )}
+                    {rendered.map(index => {
+                        const annotation = listed[index];
+                        return (
+                            <AnnotationRow
+                                key={annotation.id}
+                                controller={controller}
+                                annotation={annotation}
+                                position={
+                                    virtual
+                                        ? {
+                                              top: offsets[index],
+                                              index,
+                                              size: listed.length,
+                                          }
+                                        : undefined
+                                }
+                            />
+                        );
+                    })}
                 </div>
+                {!listed.length && (
+                    <div
+                        role="status"
+                        style={{
+                            color: colors.muted,
+                            fontSize: 11,
+                            padding: 4,
+                        }}
+                    >
+                        No annotations match the filters.
+                    </div>
+                )}
             </div>
         );
     }
@@ -677,9 +932,12 @@ const AnnotationRow = observer(
     ({
         controller,
         annotation,
+        position,
     }: {
         controller: WsiAnnotationController;
         annotation: WsiAnnotation;
+        /** Where a virtualized list places the row (see `AnnotationList`). */
+        position?: { top: number; index: number; size: number };
     }) => {
         const [editing, setEditing] = React.useState(false);
         const [label, setLabel] = React.useState(
@@ -725,12 +983,24 @@ const AnnotationRow = observer(
                 ref={rowRef}
                 role="listitem"
                 data-testid={`annotation-row-${annotation.id}`}
+                data-annotation-row={annotation.id}
+                aria-posinset={position ? position.index + 1 : undefined}
+                aria-setsize={position ? position.size : undefined}
                 style={{
                     display: 'flex',
                     alignItems: 'flex-start',
                     gap: 4,
                     padding: '4px 0',
                     borderBottom: `1px solid ${colors.border}`,
+                    ...(position
+                        ? {
+                              position: 'absolute',
+                              top: position.top,
+                              left: 0,
+                              right: 0,
+                              boxSizing: 'border-box',
+                          }
+                        : {}),
                 }}
             >
                 <input
@@ -1760,6 +2030,76 @@ export const WsiAnnotationTooltip = observer(
     }
 );
 
+/**
+ * The freehand or brush stroke being drawn. Its points are added to the
+ * polyline as they come (`SVGPointList.appendItem`, one per new point), and
+ * placed again only when the slide moves or a new stroke starts, so a long
+ * stroke stays as fast as a short one. Without `SVGPointList` (e.g. in
+ * jsdom) it sets the `points` attribute.
+ */
+const StrokePolyline = observer(
+    ({
+        controller,
+        ...props
+    }: { controller: WsiAnnotationController } & React.SVGProps<
+        SVGPolylineElement
+    >) => {
+        const ref = React.useRef<SVGPolylineElement>(null);
+        const drawn = React.useRef<{
+            points: readonly WsiPoint[] | null;
+            count: number;
+            revision: number;
+            text: string;
+        }>({ points: null, count: 0, revision: -1, text: '' });
+        const points = controller.strokePoints();
+        const revision = controller.viewRevision;
+        // Re-rendered as the pointer moves, to add the new points.
+        void controller.customDrawPreview;
+        React.useLayoutEffect(() => {
+            const element = ref.current;
+            const place = controller.strokeScreenMapper();
+            if (!element || !points || !place) return;
+            const state = drawn.current;
+            const list = (element as any).points as SVGPointList | undefined;
+            const owner = element.ownerSVGElement;
+            const native =
+                !!list &&
+                typeof list.appendItem === 'function' &&
+                typeof owner?.createSVGPoint === 'function';
+            const restart =
+                state.points !== points ||
+                state.revision !== revision ||
+                state.count > points.length;
+            if (restart) {
+                state.text = '';
+                if (native) list!.clear();
+            }
+            for (let i = restart ? 0 : state.count; i < points.length; i++) {
+                const at = place(points[i]);
+                if (native) {
+                    const point = owner!.createSVGPoint();
+                    point.x = at.x;
+                    point.y = at.y;
+                    list!.appendItem(point);
+                } else {
+                    state.text += `${state.text ? ' ' : ''}${at.x},${at.y}`;
+                }
+            }
+            if (!native) element.setAttribute('points', state.text);
+            state.points = points;
+            state.count = points.length;
+            state.revision = revision;
+        });
+        return (
+            <polyline
+                ref={ref}
+                data-testid="annotation-stroke-preview"
+                {...props}
+            />
+        );
+    }
+);
+
 /** The brush's size under the pointer while the brush tool is on. */
 const BrushCursor = observer(
     ({ controller }: { controller: WsiAnnotationController }) => {
@@ -1842,9 +2182,11 @@ export const WsiAnnotationDrawPreview = observer(
         const radius = Math.min(rawRx, rawRy);
         const rx = preview.tool === 'circle' ? radius : rawRx;
         const ry = preview.tool === 'circle' ? radius : rawRy;
-        const polygonPoints = preview.points
-            ?.map(point => `${point.x},${point.y}`)
-            .join(' ');
+        const stroke = preview.tool === 'freehand' || preview.tool === 'brush';
+        // A stroke's points are placed by StrokePolyline as they come.
+        const polygonPoints = stroke
+            ? undefined
+            : preview.points?.map(point => `${point.x},${point.y}`).join(' ');
         const polygonPreviewPoints = [
             ...(polygonPoints ? [polygonPoints] : []),
             `${x2},${y2}`,
@@ -1864,9 +2206,8 @@ export const WsiAnnotationDrawPreview = observer(
                 }}
             >
                 {preview.tool === 'freehand' || preview.tool === 'brush' ? (
-                    <polyline
-                        data-testid="annotation-stroke-preview"
-                        points={polygonPoints}
+                    <StrokePolyline
+                        controller={controller}
                         stroke={controller.activeColor}
                         strokeOpacity={preview.tool === 'brush' ? 0.45 : 1}
                         strokeWidth={
