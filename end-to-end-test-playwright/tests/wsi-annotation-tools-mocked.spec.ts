@@ -865,6 +865,45 @@ if (process.env.PW_SUITE === 'wsi') {
             expect(await stroke()).toBeCloseTo(100, -1);
         });
 
+        test('opens the toolbar menus over the zoom buttons', async ({
+            page,
+        }) => {
+            await openAnnotatedSlide(page);
+            await routeAnnotationService(page);
+            await gotoSlide(page);
+            await page.getByTestId('annotation-more-menu-button').click();
+            const menu = page.getByRole('menu');
+            await expect(menu).toBeVisible();
+            const box = (await menu.boundingBox())!;
+            // The nav buttons the open menu lies over: each is hidden by it.
+            const covered: string[] = [];
+            for (const name of ['Zoom in', 'Zoom out', 'Fit to view']) {
+                const button = (await page
+                    .getByRole('button', { name, exact: true })
+                    .boundingBox())!;
+                const x = button.x + button.width / 2;
+                const y = button.y + button.height / 2;
+                if (
+                    x < box.x ||
+                    x > box.x + box.width ||
+                    y < box.y ||
+                    y > box.y + box.height
+                ) {
+                    continue;
+                }
+                covered.push(name);
+                const hit = await page.evaluate(
+                    ([px, py]) =>
+                        !!document
+                            .elementFromPoint(px, py)
+                            ?.closest('[role="menu"]'),
+                    [x, y]
+                );
+                expect(hit, `${name} is under the menu`).toBe(true);
+            }
+            expect(covered.length).toBeGreaterThan(0);
+        });
+
         test('keeps the drawing tool on for shape after shape until Esc', async ({
             page,
         }) => {

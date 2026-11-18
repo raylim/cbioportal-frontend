@@ -248,7 +248,9 @@ const barStyle: React.CSSProperties = {
     fontSize: 11,
     color: colors.text,
     backdropFilter: 'blur(2px)',
-    zIndex: 20,
+    // Above the zoom buttons (100), so that the menus and popovers opened
+    // from the toolbar cover them; below the viewer's error notice (110).
+    zIndex: 105,
 };
 
 const groupStyle: React.CSSProperties = {
