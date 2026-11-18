@@ -22,8 +22,9 @@ function padded(box: WsiScreenBox, padding: number, min: number) {
 /**
  * Drawn over the slide, in screen pixels, following it as it moves: labels
  * on the slide, and the highlight of the focused annotation (under review,
- * stepped to, or opened by a link). It ignores the pointer, and is not part
- * of exports or of the downloaded view, which draw the slide's canvas only.
+ * stepped to, or opened by a link). It ignores the pointer. The downloaded
+ * view draws the labels again (see `wsiAnnotationSnapshot`), not the
+ * highlight or selection.
  */
 export const WsiAnnotationOverlay = observer(
     ({ controller }: { controller: WsiAnnotationController }) => {

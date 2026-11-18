@@ -179,9 +179,14 @@ function seededAnnotation(
 
 /**
  * Opens the mocked slide (`size` pixels square, 512 by default, at `MPP` µm
- * per pixel) with annotations on, signed in as `USER`.
+ * per pixel) with annotations on, signed in as `USER`; `config` adds to the
+ * portal's config.
  */
-async function openAnnotatedSlide(page: Page, size = 512) {
+async function openAnnotatedSlide(
+    page: Page,
+    size = 512,
+    config: Record<string, unknown> = {}
+) {
     await installFoundationMocks(page);
     await page.route('**/config_service', route =>
         route.fulfill({
@@ -193,6 +198,7 @@ async function openAnnotatedSlide(page: Page, size = 512) {
                 user_display_name: USER,
                 wsi_tile_server_url: '/wsi',
                 wsi_annotation_api_url: '/wsi',
+                ...config,
             }),
         })
     );
@@ -863,6 +869,138 @@ if (process.env.PW_SUITE === 'wsi') {
                 .poll(cursorDiameter, { timeout: 10_000 })
                 .toBeGreaterThan(before * 1.5);
             expect(await stroke()).toBeCloseTo(100, -1);
+        });
+
+        test('downloads the view with the annotations shown on it', async ({
+            page,
+        }) => {
+            await openAnnotatedSlide(page, 512, {
+                skin_hide_download_controls: 'show',
+            });
+            await routeAnnotationService(page, [
+                seededAnnotation(
+                    'square',
+                    'Necrosis',
+                    '100,100 400,100 400,400 100,400'
+                ),
+                seededAnnotation('small', 'Margin', '40,430 160,430 160,500'),
+            ]);
+            await gotoSlide(page);
+            await expect(page.getByTestId('annotation-row-small')).toBeVisible({
+                timeout: 15_000,
+            });
+            // The labels on the slide give the shapes' places on screen:
+            // each sits 2 pixels inside its shape's top-left corner.
+            await page.getByTestId('annotation-display-button').click();
+            await page.getByTestId('annotation-slide-labels').check();
+            await page.keyboard.press('Escape');
+            const corner = async (id: string) =>
+                (await page
+                    .getByTestId(`annotation-slide-label-${id}`)
+                    .locator('rect')
+                    .boundingBox())!;
+            const a = await corner('square');
+            const b = await corner('small');
+            const scale = (a.x - b.x) / 60;
+            const screenAt = (x: number, y: number) => ({
+                x: a.x - 2 + (x - 100) * scale,
+                y: a.y - 2 + (y - 100) * scale,
+            });
+            const slide = (await page
+                .locator('.openseadragon-canvas canvas')
+                .first()
+                .boundingBox())!;
+
+            /** Downloads the view; returns how red it is at screen points. */
+            const download = async () => {
+                const [file] = await Promise.all([
+                    page.waitForEvent('download'),
+                    page.getByTestId('wsi-download-button').click(),
+                ]);
+                expect(file.suggestedFilename()).toMatch(
+                    new RegExp(
+                        `^wsi-${PATIENT_ID}-${SLIDE_KEY}-x\\d+-y\\d+\\.jpg$`
+                    )
+                );
+                const data = fs
+                    .readFileSync((await file.path())!)
+                    .toString('base64');
+                const probes = {
+                    // On the square's right edge, its bottom edge, and inside.
+                    right: screenAt(400, 250),
+                    bottom: screenAt(250, 400),
+                    inside: screenAt(250, 250),
+                };
+                return page.evaluate(
+                    async ({ data, slide, probes }) => {
+                        const image = new Image();
+                        image.src = `data:image/jpeg;base64,${data}`;
+                        await image.decode();
+                        const canvas = document.createElement('canvas');
+                        canvas.width = image.width;
+                        canvas.height = image.height;
+                        const context = canvas.getContext('2d')!;
+                        context.drawImage(image, 0, 0);
+                        const ratio = image.width / slide.width;
+                        const red = (r: number, g: number, b: number) =>
+                            r > 170 && g < 130 && b < 130;
+                        const near = (point: { x: number; y: number }) => {
+                            const cx = Math.round((point.x - slide.x) * ratio);
+                            const cy = Math.round((point.y - slide.y) * ratio);
+                            const reach = Math.ceil(3 * ratio);
+                            const { data: px } = context.getImageData(
+                                cx - reach,
+                                cy - reach,
+                                2 * reach + 1,
+                                2 * reach + 1
+                            );
+                            for (let i = 0; i < px.length; i += 4) {
+                                if (red(px[i], px[i + 1], px[i + 2])) {
+                                    return true;
+                                }
+                            }
+                            return false;
+                        };
+                        const all = context.getImageData(
+                            0,
+                            0,
+                            canvas.width,
+                            canvas.height
+                        ).data;
+                        let redPixels = 0;
+                        for (let i = 0; i < all.length; i += 4) {
+                            if (red(all[i], all[i + 1], all[i + 2])) {
+                                redPixels += 1;
+                            }
+                        }
+                        return {
+                            right: near(probes.right),
+                            bottom: near(probes.bottom),
+                            inside: near(probes.inside),
+                            redPixels,
+                        };
+                    },
+                    { data, slide, probes }
+                );
+            };
+
+            // The outline lands on the square's edges; inside is the light
+            // fill only.
+            const shown = await download();
+            expect(shown).toMatchObject({
+                right: true,
+                bottom: true,
+                inside: false,
+            });
+            expect(shown.redPixels).toBeGreaterThan(200);
+
+            // With H, the download has no annotations either.
+            await page.keyboard.press('h');
+            await expect(
+                page.getByTestId('annotation-display-button')
+            ).toHaveAttribute('aria-label', 'Display (annotations hidden)');
+            const hidden = await download();
+            expect(hidden.redPixels).toBe(0);
         });
 
         test('opens the toolbar menus over the zoom buttons', async ({

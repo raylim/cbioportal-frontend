@@ -401,6 +401,8 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
                     slide.slide_key
                 ),
             onViewerDestroyed: () => this.annotationController.detachViewer(),
+            drawDownloadOverlay: (context, scale) =>
+                this.annotationController.drawSnapshot(context, scale),
             reportInitialSlideLoadPerformance: metric =>
                 this.reportInitialSlideLoadPerformance(metric),
         };

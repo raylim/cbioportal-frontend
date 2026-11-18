@@ -36,6 +36,11 @@ import {
     loadAnnotorious,
 } from './wsiAnnotoriousLoader';
 import { WsiPointLayer } from './wsiAnnotationPointLayer';
+import {
+    drawAnnotationScene,
+    WsiAnnotationScene,
+    WsiScreenAffine,
+} from './wsiAnnotationSnapshot';
 import { getWsiViewerRuntime } from './wsiViewerConfig';
 import {
     MAX_IMPORT_BYTES,
@@ -3094,19 +3099,83 @@ export class WsiAnnotationController {
      * is affine, so three mapped points give it for any number of shapes.
      */
     private screenTransform(): ((point: WsiXY) => WsiXY) | null {
+        const affine = this.screenAffine();
+        if (!affine) return null;
+        const { a, b, c, d, e, f } = affine;
+        return point => ({
+            x: a * point.x + c * point.y + e,
+            y: b * point.x + d * point.y + f,
+        });
+    }
+
+    /** `screenTransform` as the coefficients of a canvas transform. */
+    private screenAffine(): WsiScreenAffine | null {
         const unit = 1000;
         const origin = this.screenPoint({ x: 0, y: 0 });
         const xAxis = this.screenPoint({ x: unit, y: 0 });
         const yAxis = this.screenPoint({ x: 0, y: unit });
         if (!origin || !xAxis || !yAxis) return null;
-        const ax = (xAxis.x - origin.x) / unit;
-        const ay = (xAxis.y - origin.y) / unit;
-        const bx = (yAxis.x - origin.x) / unit;
-        const by = (yAxis.y - origin.y) / unit;
-        return point => ({
-            x: origin.x + ax * point.x + bx * point.y,
-            y: origin.y + ay * point.x + by * point.y,
-        });
+        return {
+            a: (xAxis.x - origin.x) / unit,
+            b: (xAxis.y - origin.y) / unit,
+            c: (yAxis.x - origin.x) / unit,
+            d: (yAxis.y - origin.y) / unit,
+            e: origin.x,
+            f: origin.y,
+        };
+    }
+
+    /**
+     * The annotations as the slide shows them now, for the downloaded view:
+     * the shown layers (solo and hidden layers, the unreviewed-AI filter),
+     * in their colors with the Display fill, and the labels on the slide
+     * when they are on. Null while nothing shows (hidden, or H). Transient
+     * drawing (the shape being drawn, the selection, the highlight) is left
+     * out.
+     */
+    snapshotScene(): WsiAnnotationScene | null {
+        if (!this.visible || this.hideAll) return null;
+        const affine = this.screenAffine();
+        if (!affine) return null;
+        const scene: WsiAnnotationScene = {
+            affine,
+            shapes: [],
+            points: [],
+            labels: this.slideLabels,
+            fillOpacity: this.outlineOnly ? 0 : this.fillOpacity,
+        };
+        for (const annotation of this.shownAnnotations) {
+            const shape = this.shapeOf(annotation);
+            if (!shape) continue;
+            if (shape.kind === 'point') {
+                scene.points.push({
+                    x: shape.x,
+                    y: shape.y,
+                    color: annotation.color || DEFAULT_COLOR,
+                });
+            } else {
+                scene.shapes.push({
+                    shape,
+                    color: annotation.color || this.activeColor,
+                });
+            }
+        }
+        if (!scene.shapes.length && !scene.points.length) return null;
+        const element = this.osdViewer?.element as HTMLElement | undefined;
+        if (element && typeof getComputedStyle === 'function') {
+            scene.fontFamily =
+                getComputedStyle(element).fontFamily || undefined;
+        }
+        return scene;
+    }
+
+    /**
+     * Draws the annotations shown on the slide onto a snapshot of it whose
+     * pixels are `scale` times the viewer's (see `snapshotScene`).
+     */
+    drawSnapshot(context: CanvasRenderingContext2D, scale: number) {
+        const scene = this.snapshotScene();
+        if (scene) drawAnnotationScene(context, scene, scale);
     }
 
     /** Where `annotation` is on screen now: its box, in pixels. */

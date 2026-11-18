@@ -4,6 +4,7 @@ import {
     buildWsiDownloadFilename,
     buildWsiViewState,
     clampImageCoordinates,
+    composeSnapshot,
     copyCurrentUrlToClipboard,
     hashUrlState,
     downloadCanvasAsJpeg,
@@ -87,6 +88,14 @@ export interface WsiViewerControllerHost {
     onSelectionCleared?(): void;
     onViewerOpened?(viewer: any, openSeadragon: any, slide: Slide): void;
     onViewerDestroyed?(): void;
+    /**
+     * Draws over the downloaded view what shows over the slide (the
+     * annotations); its pixels are `scale` times the viewer's.
+     */
+    drawDownloadOverlay?(
+        context: CanvasRenderingContext2D,
+        scale: number
+    ): void;
 }
 
 type MountTimer =
@@ -649,7 +658,11 @@ export class WsiViewerController {
                 x: Math.round(center.x),
                 y: Math.round(center.y),
             });
-            downloadCanvasAsJpeg(canvas, filename);
+            const overlay = this.host.drawDownloadOverlay;
+            downloadCanvasAsJpeg(
+                overlay ? composeSnapshot(canvas, overlay) : canvas,
+                filename
+            );
         } catch (_) {
             // canvas tainted or not ready
         }

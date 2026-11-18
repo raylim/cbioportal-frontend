@@ -223,6 +223,29 @@ export function buildWsiDownloadFilename({
         'slide'}-x${x}-y${y}.jpg`;
 }
 
+/**
+ * A copy of `canvas` (the slide as drawn) with `draw` drawn over it. The
+ * copy has the canvas's own pixels; `draw` gets how many of them make one
+ * screen pixel of the viewer (the device pixel ratio, as measured).
+ */
+export function composeSnapshot(
+    canvas: HTMLCanvasElement,
+    draw: (context: CanvasRenderingContext2D, scale: number) => void
+): HTMLCanvasElement {
+    const copy = document.createElement('canvas');
+    copy.width = canvas.width;
+    copy.height = canvas.height;
+    const context = copy.getContext('2d');
+    if (!context) return canvas;
+    context.drawImage(canvas, 0, 0);
+    const scale =
+        canvas.clientWidth > 0
+            ? canvas.width / canvas.clientWidth
+            : (typeof window !== 'undefined' && window.devicePixelRatio) || 1;
+    draw(context, scale);
+    return copy;
+}
+
 export function downloadCanvasAsJpeg(
     canvas: HTMLCanvasElement,
     filename: string
