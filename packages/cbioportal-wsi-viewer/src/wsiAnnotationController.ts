@@ -44,6 +44,7 @@ import {
     WsiScreenAffine,
 } from './wsiAnnotationSnapshot';
 import { getWsiViewerRuntime } from './wsiViewerConfig';
+import { WsiSlideNotes, WsiSlideNotesHost } from './wsiSlideNotes';
 import {
     MAX_IMPORT_BYTES,
     parseGeoJsonImport,
@@ -952,7 +953,7 @@ function describeFailures(results: WsiSaveResult[], limit = 3): string {
         : shown;
 }
 
-export class WsiAnnotationController {
+export class WsiAnnotationController implements WsiSlideNotesHost {
     @observable annotations: WsiAnnotation[] = [];
     @observable loading = false;
     /** The last load of the slide's annotations failed; see `retryLoad`. */
@@ -1215,11 +1216,15 @@ export class WsiAnnotationController {
     /** The link messages, e.g. "Link copied." */
     @observable linkMessage: string | null = null;
 
+    /** The open slide's notes and tags. */
+    readonly slideNotes: WsiSlideNotes;
+
     constructor(
         private apiUrl: string | null | undefined,
         private studyId: string | undefined
     ) {
         makeObservable(this);
+        this.slideNotes = new WsiSlideNotes(this);
         const color = this.layerColor(this.activeLayer);
         this.activeColorName = color.name;
         this.activeColor = color.hex;
@@ -2584,6 +2589,7 @@ export class WsiAnnotationController {
         this.loadFailed = false;
         this.loading = Boolean(this.apiUrl);
         this.destroyAnnotorious();
+        this.slideNotes.reset(slideKey);
         if (this.apiUrl) {
             void this.loadAnnotations(slideKey, this.loadGeneration);
         }
@@ -2597,7 +2603,8 @@ export class WsiAnnotationController {
     @action.bound
     setContext(apiUrl: string | null | undefined, studyId: string | undefined) {
         const leftUnsaved = this.flushPointsDetached();
-        if (apiUrl !== this.apiUrl) {
+        const apiChanged = apiUrl !== this.apiUrl;
+        if (apiChanged) {
             this.reviewRoute = null;
             this.batchRoute = null;
             this.commentRoute = null;
@@ -2618,6 +2625,7 @@ export class WsiAnnotationController {
         this.applyLayerFilter();
         const slideKey = this.slideKey;
         this.loading = Boolean(this.apiUrl && slideKey);
+        this.slideNotes.reset(slideKey, apiChanged);
         if (this.apiUrl && slideKey) {
             void this.loadAnnotations(slideKey, this.loadGeneration);
         }
@@ -2808,6 +2816,7 @@ export class WsiAnnotationController {
         this.loadAbortController = null;
         this.slideKey = null;
         this.annotations = [];
+        this.slideNotes.reset(null);
         this.resetFocus();
         this.clearHistory();
         this.error = null;
@@ -4531,6 +4540,40 @@ export class WsiAnnotationController {
             }
         }
         this.applyLayerFilter();
+    }
+
+    // ---- what the slide notes use (WsiSlideNotesHost) ----
+
+    serviceRequest(
+        path: string,
+        init: RequestInit,
+        signal: AbortSignal | undefined
+    ): Promise<Response> {
+        return this.request(path, init, signal);
+    }
+
+    requestContext() {
+        return {
+            generation: this.generation,
+            slideKey: this.slideKey,
+            signal: this.abortController?.signal,
+        };
+    }
+
+    isCurrentContext(context: {
+        generation: number;
+        slideKey: string | null;
+        signal?: AbortSignal;
+    }): boolean {
+        return this.isCurrent(context);
+    }
+
+    refuseServiceAccess(response: Response): boolean {
+        return this.refuseAccess(response);
+    }
+
+    get serviceStudyId(): string | undefined {
+        return this.studyId;
     }
 
     private request(

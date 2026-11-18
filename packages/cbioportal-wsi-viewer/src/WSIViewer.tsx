@@ -53,6 +53,7 @@ import {
     WsiAnnotationOverlay,
 } from './wsiAnnotationOverlay';
 import { WsiAnnotationReviewCard } from './wsiAnnotationReview';
+import { WsiSlideNotesPanel } from './wsiSlideNotesPanel';
 import {
     checkWsiTileServerOrigin,
     normalizeWsiTileServerBase,
@@ -1318,6 +1319,21 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
                                 this.annotationController
                                     .visibleAnnotationCount +
                                 ')'
+                            }
+                            slideNotesPanel={
+                                this.props.annotationApiUrl &&
+                                this.annotationController.visible &&
+                                this.annotationController.slideNotes.route !==
+                                    false ? (
+                                    <WsiSlideNotesPanel
+                                        controller={this.annotationController}
+                                    />
+                                ) : null
+                            }
+                            slideNotesTitle={
+                                this.annotationController.slideNotes.route
+                                    ? `Slide notes (${this.annotationController.slideNotes.notes.length})`
+                                    : 'Slide notes'
                             }
                             clinicalRows={this.selectedClinicalRows}
                             onHide={this.hideMetadata}

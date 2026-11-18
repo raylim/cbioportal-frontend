@@ -276,6 +276,8 @@ function WsiMetaSidebarComponent({
     annotationLayersPanel,
     annotationPanel,
     annotationPanelTitle,
+    slideNotesPanel,
+    slideNotesTitle,
     clinicalRows,
     onHide,
 }: {
@@ -287,6 +289,9 @@ function WsiMetaSidebarComponent({
     annotationLayersPanel?: React.ReactNode;
     annotationPanel?: React.ReactNode;
     annotationPanelTitle?: string;
+    /** The open slide's notes and tags; unset hides the section. */
+    slideNotesPanel?: React.ReactNode;
+    slideNotesTitle?: string;
     /** Patient clinical rows; unset (e.g. still loading) hides the section. */
     clinicalRows?: ReadonlyArray<MetaRow>;
     /** Shows a header button that hides the sidebar. */
@@ -334,6 +339,14 @@ function WsiMetaSidebarComponent({
                     ) : (
                         <EmptyState />
                     )}
+                </SbSection>
+            )}
+            {slideNotesPanel && (
+                <SbSection
+                    id="slideNotes"
+                    title={slideNotesTitle || 'Slide notes'}
+                >
+                    {slideNotesPanel}
                 </SbSection>
             )}
             {annotationLayersPanel && (

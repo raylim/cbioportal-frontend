@@ -107,6 +107,9 @@ annotations: {
 | `GET {apiUrl}/annotations/{id}/comments?studyId=…` | The annotation's comment thread, oldest first |
 | `POST {apiUrl}/annotations/{id}/comments?studyId=…` | Add `{body}` (1–4,000 characters) |
 | `PUT` / `DELETE {apiUrl}/annotations/{id}/comments/{cid}?studyId=…` | Edit `{body}` or delete one's own comment |
+| `GET {apiUrl}/slide-notes?slide_id=…&studyId=…` | The slide's notes the user may see, `{slide_id, notes, tags: [{tag, count}]}` |
+| `POST {apiUrl}/slide-notes?studyId=…` | Add `{slide_id, study_id, text, tags, visible_to}` |
+| `PUT {apiUrl}/slide-notes/{id}?studyId=…` / `DELETE …/slide-notes/{id}?studyId=…&version=…` | Edit or delete one's own note, with its `version` |
 
 The service sits behind a proxy that authorizes each request with the portal session cookie for the study in `studyId`, and forwards the user and study to the service. So every request:
 
@@ -242,6 +245,14 @@ Under each annotation the list shows who created it and when, and **History ▸*
 #### Notes
 
 Each annotation can carry a free-text note, kept in `body.comment` and separate from its label. The list shows it under the annotation, with **+ Note** / **Edit note** for users who can edit (Ctrl/Cmd+Enter saves, Esc cancels); saving sends a `PUT` with the annotation's `version`. The click tooltip shows it too.
+
+#### Slide notes and tags
+
+The sidebar's **Slide notes** section, above Layers, holds notes on the open slide itself rather than on a shape, such as "Recut ordered" or "Margin involved", with tags. Each note shows its text, its tags, its author and time ("(edited)" once changed) and **Private** or **Shared**. Above them, the slide's tags with how many notes carry each, most used first; a tag filters the notes to those carrying it (`aria-pressed`), and pressing it again shows all.
+
+Users who can edit in the study add a note under the list: text (up to 4,000 characters; Ctrl/Cmd+Enter adds it), tags (Enter or a comma adds what was typed, Backspace in the empty field removes the last, × removes one; the field suggests the slide's tags; up to 20 tags of 1–40 letters, digits, spaces or `_ - . : / + #`, starting with a letter or digit, checked before sending, a repeat in another letter case dropped) and who sees it: **Shared with the study** or **Private (only you)**, starting from the ⋯ menu's default for new annotations. A note needs text or a tag. After adding, the text field empties and keeps the focus. Users edit (**Edit**, which focuses the text; Escape cancels and the focus returns to Edit) and delete (**Delete**, after a confirmation) only their own notes, each with its `version`; a 409 or a note gone meanwhile reloads the notes and says so.
+
+The notes load when the section first shows (a collapsed section loads nothing) and again on another slide or study. The section's title gives the count. On a service without slide notes (404 "Not Found" or 405 from `/slide-notes`) the section goes away for the session. The proxy's 401 and 403 give the usual sign-in or read-only state.
 
 #### Comment threads
 
