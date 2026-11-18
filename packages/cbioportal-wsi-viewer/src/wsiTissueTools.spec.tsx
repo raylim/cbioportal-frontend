@@ -353,6 +353,12 @@ describe('Magic wand and smart brush', () => {
                 .getByTestId('annotation-tissue-outline')
                 .getAttribute('data-source')
         ).toBe('screen');
+        // The click in level-0 image pixels.
+        expect(
+            screen
+                .getByTestId('annotation-tissue-outline')
+                .getAttribute('data-seed')
+        ).toBe('800,1000');
         expect(
             screen.getByTestId('annotation-tissue-source').textContent
         ).toMatch(/^\(on-screen pixels, \d+ ms\)$/);

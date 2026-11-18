@@ -8,7 +8,8 @@ const CUT_COLOR = '#d03030';
  * The magic wand's or smart brush's outline over the slide: a dashed
  * even-odd path (red when it will be cut out of the selected regions), and
  * the wand's tolerance next to its last click. It ignores the pointer.
- * `data-ms` holds the time from the click to the first outline.
+ * `data-ms` holds the time from the click to the first outline, and
+ * `data-seed` the last click in level-0 image pixels.
  */
 export const WsiTissueOverlay = observer(
     ({ controller }: { controller: WsiAnnotationController }) => {
@@ -38,6 +39,13 @@ export const WsiTissueOverlay = observer(
                         data-source={view.source || ''}
                         data-ms={view.ms === null ? '' : Math.round(view.ms)}
                         data-busy={view.busy ? 'true' : 'false'}
+                        data-seed={
+                            view.seed
+                                ? `${Math.round(view.seed.x)},${Math.round(
+                                      view.seed.y
+                                  )}`
+                                : ''
+                        }
                     >
                         <path
                             d={outline.d}
