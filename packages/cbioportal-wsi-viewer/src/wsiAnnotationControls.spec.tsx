@@ -6,6 +6,8 @@ import { act, fireEvent, render, screen } from '@testing-library/react';
 import { WsiAnnotationController } from './wsiAnnotationController';
 import { runInAction } from 'mobx';
 import {
+    ANNOTATION_LIST_HEIGHT,
+    ANNOTATION_LIST_MIN_FILL_HEIGHT,
     layerDeleteMessage,
     readableTextColor,
     WsiAnnotationLayersPanel,
@@ -309,9 +311,25 @@ describe('WsiAnnotationPanel', () => {
             .mockReturnValue(true);
         render(<WsiAnnotationPanel controller={controller} />);
 
+        // Counts are collapsed by default; the chips are behind Group by.
+        expect(screen.queryByTestId('annotation-counts')).toBeNull();
+        fireEvent.click(screen.getByTestId('annotation-counts-toggle'));
+        expect(
+            window.localStorage.getItem('wsi.viewer.annotationCounts.expanded')
+        ).toBe('1');
+        expect(screen.queryByTestId('annotation-counts')).toBeNull();
+        fireEvent.change(screen.getByTestId('annotation-group-by'), {
+            target: { value: 'layer' },
+        });
         expect(
             screen.getByTestId('annotation-count-layer-Tumor').textContent
         ).toBe('Tumor 2');
+        expect(
+            screen.queryByTestId('annotation-count-label-Stroma')
+        ).toBeNull();
+        fireEvent.change(screen.getByTestId('annotation-group-by'), {
+            target: { value: 'label' },
+        });
         expect(
             screen.getByTestId('annotation-count-label-Stroma').textContent
         ).toBe('Stroma 1');
@@ -364,6 +382,10 @@ describe('WsiAnnotationPanel', () => {
             apiItem('box', {}),
         ]);
         render(<WsiAnnotationPanel controller={controller} />);
+        expect(
+            screen.getByTestId('annotation-counts-summary').textContent
+        ).toBe('· 3 points');
+        fireEvent.click(screen.getByTestId('annotation-counts-toggle'));
 
         const tally = screen.getByTestId('annotation-point-tally');
         expect(tally.textContent).toContain('Point counts');
@@ -600,6 +622,10 @@ describe('WsiAnnotationPanel', () => {
         ].forEach((label, i) => add(label, i < 3 ? 2 : 1));
         const controller = controllerWith(items);
         render(<WsiAnnotationPanel controller={controller} />);
+        fireEvent.click(screen.getByTestId('annotation-counts-toggle'));
+        fireEvent.change(screen.getByTestId('annotation-group-by'), {
+            target: { value: 'label' },
+        });
         const chips = () =>
             screen
                 .getAllByTestId(/^annotation-count-label-/)
@@ -626,5 +652,29 @@ describe('WsiAnnotationPanel', () => {
             screen.getByLabelText('Show only the 6 Solid region annotations')
         );
         expect(screen.getAllByRole('listitem')).toHaveLength(6);
+    });
+});
+
+describe('WsiAnnotationPanel filling its section', () => {
+    beforeEach(() => window.localStorage.clear());
+
+    it('lets the list fill the height while Annotate is on, else a fixed box', () => {
+        const controller = controllerWith([apiItem('a', {}), apiItem('b', {})]);
+        const { rerender } = render(
+            <WsiAnnotationPanel controller={controller} />
+        );
+        const list = () => screen.getByTestId('annotation-list');
+        expect(list().style.maxHeight).toBe(`${ANNOTATION_LIST_HEIGHT}px`);
+        expect(list().style.flex).toBe('');
+
+        rerender(<WsiAnnotationPanel controller={controller} fill />);
+        expect(
+            screen.getByTestId('wsi-annotation-panel').style.flexDirection
+        ).toBe('column');
+        expect(list().style.flex).toBe('1 1 auto');
+        expect(list().style.maxHeight).toBe('');
+        expect(list().style.minHeight).toBe(
+            `${ANNOTATION_LIST_MIN_FILL_HEIGHT}px`
+        );
     });
 });

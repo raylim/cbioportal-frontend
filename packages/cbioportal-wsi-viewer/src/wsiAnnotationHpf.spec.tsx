@@ -267,6 +267,7 @@ describe('High-power fields and points inside regions', () => {
         ).toBeNull();
 
         render(<WsiAnnotationPanel controller={controller} />);
+        fireEvent.click(screen.getByTestId('annotation-counts-toggle'));
         expect(
             screen.getByTestId('annotation-points-inside-box').textContent
         ).toBe('Points inside: 3 (Mitosis 2, Lymphocyte 1) · 300 per mm²');
@@ -317,6 +318,7 @@ describe('High-power fields and points inside regions', () => {
         ]);
         expect(summary.per10).toBe(25);
         render(<WsiAnnotationPanel controller={controller} />);
+        fireEvent.click(screen.getByTestId('annotation-counts-toggle'));
         const table = screen.getByTestId('annotation-hpf-summary');
         // The caption, then its info icon and the hidden help.
         expect(table.querySelector('caption')!.textContent).toMatch(
@@ -392,6 +394,7 @@ describe('High-power fields and points inside regions', () => {
         expect(mine.areaMm2).toBeLessThan(0.474);
         expect(mine.areaMm2).toBeGreaterThan(0.237);
         render(<WsiAnnotationPanel controller={controller} />);
+        fireEvent.click(screen.getByTestId('annotation-counts-toggle'));
         expect(screen.getByTestId('annotation-hpf-overlap').textContent).toBe(
             '2 fields overlap: a point in an overlap is counted once and the area once, so the rate per 10 HPF is low. Move or delete the overlapping fields.'
         );

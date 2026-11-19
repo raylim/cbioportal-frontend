@@ -405,6 +405,11 @@ if (process.env.PW_SUITE === 'wsi') {
             await expect(
                 page.getByTestId('annotation-tool-select')
             ).toHaveAttribute('aria-pressed', 'true');
+            // The point table is under Counts, collapsed by default.
+            await expect(
+                page.getByTestId('annotation-counts-summary')
+            ).toHaveText('· 3 points');
+            await page.getByTestId('annotation-counts-toggle').click();
             await expect(
                 page.getByTestId('annotation-point-tally-Default-Point')
             ).toContainText('3');
@@ -1363,7 +1368,8 @@ if (process.env.PW_SUITE === 'wsi') {
             ).toHaveText(/^Points inside: 3 \(Mitosis 3\) · [\d,.]+ per mm²$/, {
                 timeout: 15_000,
             });
-            // Count, per 10 HPF, then per mm² of the field.
+            // Count, per 10 HPF, then per mm² of the field, under Counts.
+            await page.getByTestId('annotation-counts-toggle').click();
             await expect(
                 page.getByTestId('annotation-hpf-rate-Mitosis')
             ).toHaveText(/^Mitosis330[\d,.]+$/);

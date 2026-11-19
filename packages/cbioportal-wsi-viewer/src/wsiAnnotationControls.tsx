@@ -31,6 +31,7 @@ import {
     WsiInfo,
 } from './wsiHpfHelp';
 import { WsiRulerLine } from './wsiAnnotationOverlay';
+import { useWsiPanelFlag } from './wsiPanelChrome';
 import { AnnotationThread } from './wsiAnnotationThread';
 
 // Text colors keep at least 4.5:1 contrast on the panel's white.
@@ -586,7 +587,17 @@ const AnnotationError = observer(
 );
 
 export const WsiAnnotationPanel = observer(
-    ({ controller }: { controller: WsiAnnotationController }) => {
+    ({
+        controller,
+        fill = false,
+    }: {
+        controller: WsiAnnotationController;
+        /**
+         * The list fills the height the panel is given (a flex column),
+         * instead of a box of `ANNOTATION_LIST_HEIGHT`.
+         */
+        fill?: boolean;
+    }) => {
         if (!controller || !controller.visible) return null;
         if (controller.loading) {
             return (
@@ -615,7 +626,21 @@ export const WsiAnnotationPanel = observer(
         }
         const listed = controller.listedAnnotations;
         return (
-            <div data-testid="wsi-annotation-panel" style={{ marginTop: 6 }}>
+            <div
+                data-testid="wsi-annotation-panel"
+                data-fill={fill || undefined}
+                style={
+                    fill
+                        ? {
+                              marginTop: 6,
+                              flex: '1 1 auto',
+                              minHeight: 0,
+                              display: 'flex',
+                              flexDirection: 'column',
+                          }
+                        : { marginTop: 6 }
+                }
+            >
                 <AnnotationError controller={controller} />
                 {controller.notice && (
                     <div
@@ -653,11 +678,13 @@ export const WsiAnnotationPanel = observer(
                 </div>
                 <HiddenByFiltersHint controller={controller} />
                 <MeasurementScaleNote controller={controller} />
-                <PointTally controller={controller} />
-                <HpfSummary controller={controller} />
+                <AnnotationCountsSection controller={controller} />
                 <AnnotationListFilters controller={controller} />
-                <AnnotationCounts controller={controller} />
-                <AnnotationList controller={controller} listed={listed} />
+                <AnnotationList
+                    controller={controller}
+                    listed={listed}
+                    fill={fill}
+                />
             </div>
         );
     }
@@ -868,8 +895,153 @@ const HiddenByFiltersHint = observer(
     }
 );
 
+/** Browser-stored: the Annotations section's Counts are open. */
+export const WSI_ANNOTATION_COUNTS_EXPANDED_KEY =
+    'wsi.viewer.annotationCounts.expanded';
+/** Browser-stored: the chip cloud "Group by…" shows ('layer', 'label'). */
+export const WSI_ANNOTATION_GROUP_BY_KEY =
+    'wsi.viewer.annotationCounts.groupBy';
+
+type WsiCountsGroupBy = '' | 'layer' | 'label';
+
+function loadGroupBy(): WsiCountsGroupBy {
+    try {
+        const value = window.localStorage.getItem(WSI_ANNOTATION_GROUP_BY_KEY);
+        return value === 'layer' || value === 'label' ? value : '';
+    } catch (_) {
+        return '';
+    }
+}
+
+function saveGroupBy(value: WsiCountsGroupBy) {
+    try {
+        if (value) {
+            window.localStorage.setItem(WSI_ANNOTATION_GROUP_BY_KEY, value);
+        } else {
+            window.localStorage.removeItem(WSI_ANNOTATION_GROUP_BY_KEY);
+        }
+    } catch (_) {
+        // Blocked storage only loses the remembered choice.
+    }
+}
+
+/**
+ * "Counts": the point counts, the high-power field table and, behind
+ * "Group by…", the listed annotations per layer or per label, in one
+ * disclosure, collapsed by default and remembered. Collapsed, nothing in it
+ * renders, so thousands of annotations cost the list only.
+ */
+const AnnotationCountsSection = observer(
+    ({ controller }: { controller: WsiAnnotationController }) => {
+        const [open, setOpen] = useWsiPanelFlag(
+            WSI_ANNOTATION_COUNTS_EXPANDED_KEY
+        );
+        const [groupBy, setGroupBy] = React.useState<WsiCountsGroupBy>(
+            loadGroupBy
+        );
+        const contentId = useHelpId();
+        const points = controller.pointTally.reduce(
+            (sum, row) => sum + row.count,
+            0
+        );
+        const fields = controller.hpfSummary?.fields || 0;
+        const summary = [
+            points ? `${points} point${points === 1 ? '' : 's'}` : '',
+            fields ? `${fields} HPF` : '',
+        ]
+            .filter(Boolean)
+            .join(' · ');
+        if (!controller.listedAnnotations.length && !points && !fields) {
+            return null;
+        }
+        return (
+            <div
+                data-testid="annotation-counts-section"
+                style={{ marginBottom: 4, flexShrink: 0 }}
+            >
+                <button
+                    type="button"
+                    data-testid="annotation-counts-toggle"
+                    aria-expanded={open}
+                    aria-controls={contentId}
+                    onClick={() => setOpen(!open)}
+                    style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 4,
+                        border: 'none',
+                        background: 'transparent',
+                        padding: 0,
+                        fontSize: 11,
+                        fontWeight: 600,
+                        color: colors.text,
+                        cursor: 'pointer',
+                    }}
+                >
+                    <i
+                        aria-hidden="true"
+                        className={`fa fa-caret-${open ? 'down' : 'right'}`}
+                        style={{ width: 7, color: colors.muted }}
+                    />
+                    Counts
+                    {summary && (
+                        <span
+                            data-testid="annotation-counts-summary"
+                            style={{ fontWeight: 400, color: colors.muted }}
+                        >
+                            · {summary}
+                        </span>
+                    )}
+                </button>
+                {open && (
+                    <div id={contentId} style={{ marginTop: 4 }}>
+                        <PointTally controller={controller} />
+                        <HpfSummary controller={controller} />
+                        <label
+                            style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 4,
+                                fontSize: 11,
+                                color: colors.muted,
+                                fontWeight: 400,
+                                margin: '0 0 3px',
+                            }}
+                        >
+                            <select
+                                data-testid="annotation-group-by"
+                                aria-label="Group the listed annotations by"
+                                value={groupBy}
+                                onChange={event => {
+                                    const value = event.target
+                                        .value as WsiCountsGroupBy;
+                                    setGroupBy(value);
+                                    saveGroupBy(value);
+                                }}
+                                style={filterControlStyle}
+                            >
+                                <option value="">Group by…</option>
+                                <option value="layer">Group by layer</option>
+                                <option value="label">Group by label</option>
+                            </select>
+                        </label>
+                        {groupBy && (
+                            <AnnotationCounts
+                                controller={controller}
+                                by={groupBy}
+                            />
+                        )}
+                    </div>
+                )}
+            </div>
+        );
+    }
+);
+
 /** The annotation list's height, in pixels; it scrolls beyond. */
 export const ANNOTATION_LIST_HEIGHT = 260;
+/** The least height of a list that fills the section. */
+export const ANNOTATION_LIST_MIN_FILL_HEIGHT = 180;
 /** Lists longer than this render only the rows in and near the view. */
 export const VIRTUALIZE_ABOVE = 100;
 /** A row's height until it is measured, in pixels. */
@@ -911,9 +1083,12 @@ const AnnotationList = observer(
     ({
         controller,
         listed,
+        fill = false,
     }: {
         controller: WsiAnnotationController;
         listed: WsiAnnotation[];
+        /** Fill the panel's height (see `WsiAnnotationPanel`). */
+        fill?: boolean;
     }) => {
         const container = React.useRef<HTMLDivElement>(null);
         const heights = React.useRef(new Map<string, number>());
@@ -1136,11 +1311,20 @@ const AnnotationList = observer(
                         setFocusedRow(null);
                     }
                 }}
-                style={{
-                    maxHeight: ANNOTATION_LIST_HEIGHT,
-                    overflowY: 'auto',
-                    position: 'relative',
-                }}
+                style={
+                    fill
+                        ? {
+                              flex: '1 1 auto',
+                              minHeight: ANNOTATION_LIST_MIN_FILL_HEIGHT,
+                              overflowY: 'auto',
+                              position: 'relative',
+                          }
+                        : {
+                              maxHeight: ANNOTATION_LIST_HEIGHT,
+                              overflowY: 'auto',
+                              position: 'relative',
+                          }
+                }
             >
                 <div
                     style={
@@ -1691,18 +1875,30 @@ const AnnotationListFilters = observer(
 export const LABEL_GROUPS_SHOWN = 8;
 
 /**
- * How many listed annotations each layer and label group has. A label chip
- * filters the list to that group; the most common groups show first, and
- * the rest behind "+N more".
+ * How many listed annotations each layer or each label group has. A label
+ * chip filters the list to that group; the most common groups show first,
+ * and the rest behind "+N more".
  */
 const AnnotationCounts = observer(
-    ({ controller }: { controller: WsiAnnotationController }) => {
+    ({
+        controller,
+        by,
+    }: {
+        controller: WsiAnnotationController;
+        by: 'layer' | 'label';
+    }) => {
         const [showAll, setShowAll] = React.useState(false);
-        const layers = Array.from(controller.listedLayerCounts.entries());
-        const labels = Array.from(controller.listedLabelCounts.entries()).sort(
-            (a, b) => b[1] - a[1] || a[0].localeCompare(b[0])
-        );
-        if (!layers.length) return null;
+        const layers =
+            by === 'layer'
+                ? Array.from(controller.listedLayerCounts.entries())
+                : [];
+        const labels =
+            by === 'label'
+                ? Array.from(controller.listedLabelCounts.entries()).sort(
+                      (a, b) => b[1] - a[1] || a[0].localeCompare(b[0])
+                  )
+                : [];
+        if (!layers.length && !labels.length) return null;
         const activeLabel = controller.listFilter.label;
         const shown = showAll ? labels : labels.slice(0, LABEL_GROUPS_SHOWN);
         const hidden = labels.length - shown.length;
@@ -1732,71 +1928,73 @@ const AnnotationCounts = observer(
         };
         return (
             <div data-testid="annotation-counts">
-                {row(
-                    'By layer:',
-                    layers.map(([layer, count]) => (
-                        <span
-                            key={layer}
-                            data-testid={`annotation-count-layer-${layer}`}
-                            style={countChipStyle}
-                        >
-                            {layer} {count}
-                        </span>
-                    ))
-                )}
-                {row(
-                    'By label:',
-                    <>
-                        {shown.map(([label, count]) => {
-                            const active = activeLabel === label;
-                            return (
+                {by === 'layer' &&
+                    row(
+                        'By layer:',
+                        layers.map(([layer, count]) => (
+                            <span
+                                key={layer}
+                                data-testid={`annotation-count-layer-${layer}`}
+                                style={countChipStyle}
+                            >
+                                {layer} {count}
+                            </span>
+                        ))
+                    )}
+                {by === 'label' &&
+                    row(
+                        'By label:',
+                        <>
+                            {shown.map(([label, count]) => {
+                                const active = activeLabel === label;
+                                return (
+                                    <button
+                                        key={label}
+                                        data-testid={`annotation-count-label-${label}`}
+                                        aria-label={`Show only the ${count} ${label} annotation${
+                                            count === 1 ? '' : 's'
+                                        }`}
+                                        aria-pressed={active}
+                                        onClick={() =>
+                                            controller.setListFilter({
+                                                label: active ? '' : label,
+                                            })
+                                        }
+                                        style={{
+                                            ...countChipStyle,
+                                            cursor: 'pointer',
+                                            fontWeight: active ? 700 : 400,
+                                            borderColor: active
+                                                ? colors.text
+                                                : colors.border,
+                                        }}
+                                    >
+                                        {label} {count}
+                                    </button>
+                                );
+                            })}
+                            {hidden > 0 && (
                                 <button
-                                    key={label}
-                                    data-testid={`annotation-count-label-${label}`}
-                                    aria-label={`Show only the ${count} ${label} annotation${
-                                        count === 1 ? '' : 's'
-                                    }`}
-                                    aria-pressed={active}
-                                    onClick={() =>
-                                        controller.setListFilter({
-                                            label: active ? '' : label,
-                                        })
-                                    }
-                                    style={{
-                                        ...countChipStyle,
-                                        cursor: 'pointer',
-                                        fontWeight: active ? 700 : 400,
-                                        borderColor: active
-                                            ? colors.text
-                                            : colors.border,
-                                    }}
+                                    data-testid="annotation-count-label-more"
+                                    aria-expanded={false}
+                                    onClick={() => setShowAll(true)}
+                                    style={moreButtonStyle}
                                 >
-                                    {label} {count}
+                                    +{hidden} more
                                 </button>
-                            );
-                        })}
-                        {hidden > 0 && (
-                            <button
-                                data-testid="annotation-count-label-more"
-                                aria-expanded={false}
-                                onClick={() => setShowAll(true)}
-                                style={moreButtonStyle}
-                            >
-                                +{hidden} more
-                            </button>
-                        )}
-                        {showAll && labels.length > LABEL_GROUPS_SHOWN && (
-                            <button
-                                data-testid="annotation-count-label-more"
-                                aria-expanded={true}
-                                onClick={() => setShowAll(false)}
-                                style={moreButtonStyle}
-                            >
-                                Show fewer
-                            </button>
-                        )}
-                    </>
-                )}
+                            )}
+                            {showAll && labels.length > LABEL_GROUPS_SHOWN && (
+                                <button
+                                    data-testid="annotation-count-label-more"
+                                    aria-expanded={true}
+                                    onClick={() => setShowAll(false)}
+                                    style={moreButtonStyle}
+                                >
+                                    Show fewer
+                                </button>
+                            )}
+                        </>
+                    )}
             </div>
         );
     }

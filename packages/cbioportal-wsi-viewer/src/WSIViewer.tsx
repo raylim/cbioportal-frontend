@@ -1698,6 +1698,7 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
                                     <WsiAnnotationPanel
                                         key={sidePane.side}
                                         controller={sideAnnotations}
+                                        fill={sideAnnotations.annotateOn}
                                     />
                                 ) : null
                             }
@@ -1722,6 +1723,10 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
                                     : 'Slide notes'
                             }
                             clinicalRows={this.selectedClinicalRows}
+                            annotating={
+                                !!this.props.annotationApiUrl &&
+                                sideAnnotations.annotateOn
+                            }
                             onHide={this.hideMetadata}
                         />
                     </>

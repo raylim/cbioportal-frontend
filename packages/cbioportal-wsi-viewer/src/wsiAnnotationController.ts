@@ -3503,6 +3503,11 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
         this.destroyAnnotorious();
     }
 
+    /** Annotate is on and the user may draw: the drawing tools show. */
+    @computed get annotateOn(): boolean {
+        return this.annotating && this.canEdit;
+    }
+
     /** Turns Annotate on or off; off, drawing stops and Select is on. */
     @action.bound
     setAnnotating(annotating: boolean) {
