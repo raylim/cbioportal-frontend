@@ -188,3 +188,77 @@ describe('A long annotation list and a long stroke', () => {
         expect(controller.strokePoints()).toBeNull();
     });
 });
+
+describe('A short annotation list', () => {
+    beforeAll(() => loadAnnotorious());
+    const LIST_TOP = 300;
+
+    it('scrolls to the annotation the slide is pointed at', async () => {
+        // Layout as a browser gives it: the list is position: relative, so
+        // it is the rows' offsetParent and a row's offsetTop is its place
+        // in the list, whatever lies above the list in the panel.
+        const proto = HTMLElement.prototype as any;
+        const saved = {
+            offsetTop: Object.getOwnPropertyDescriptor(proto, 'offsetTop')!,
+            offsetHeight: Object.getOwnPropertyDescriptor(
+                proto,
+                'offsetHeight'
+            )!,
+            clientHeight: Object.getOwnPropertyDescriptor(
+                Element.prototype,
+                'clientHeight'
+            )!,
+        };
+        Object.defineProperty(proto, 'offsetTop', {
+            configurable: true,
+            get(this: HTMLElement) {
+                if (this.getAttribute('data-testid') === 'annotation-list') {
+                    return LIST_TOP;
+                }
+                const id = this.getAttribute('data-annotation-row');
+                return id ? Number(id.slice(1)) * ROW : 0;
+            },
+        });
+        Object.defineProperty(proto, 'offsetHeight', {
+            configurable: true,
+            get(this: HTMLElement) {
+                return this.hasAttribute('data-annotation-row') ? ROW : 0;
+            },
+        });
+        Object.defineProperty(Element.prototype, 'clientHeight', {
+            configurable: true,
+            get(this: HTMLElement) {
+                return this.getAttribute('data-testid') === 'annotation-list'
+                    ? ANNOTATION_LIST_HEIGHT
+                    : 0;
+            },
+        });
+        try {
+            const rows = Array.from({ length: 20 }, (_, i) =>
+                serviceRow(`a${i}`, `${i * 20},0,10,10`, { label: `Cell ${i}` })
+            );
+            const service = new TestAnnotationService(rows).install();
+            const { controller, cleanup } = await attachTestController(service);
+            render(<WsiAnnotationPanel controller={controller} />);
+            const list = screen.getByTestId('annotation-list');
+            expect(list.getAttribute('data-virtual')).toBeNull();
+            act(() => {
+                controller.focusAnnotation('a15');
+            });
+            const top = 15 * ROW;
+            expect(list.scrollTop).toBeLessThanOrEqual(top);
+            expect(
+                list.scrollTop + ANNOTATION_LIST_HEIGHT
+            ).toBeGreaterThanOrEqual(top + ROW);
+            cleanup();
+        } finally {
+            Object.defineProperty(proto, 'offsetTop', saved.offsetTop);
+            Object.defineProperty(proto, 'offsetHeight', saved.offsetHeight);
+            Object.defineProperty(
+                Element.prototype,
+                'clientHeight',
+                saved.clientHeight
+            );
+        }
+    });
+});

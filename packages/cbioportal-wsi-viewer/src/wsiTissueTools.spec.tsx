@@ -391,6 +391,35 @@ describe('Magic wand and smart brush', () => {
         ]);
     });
 
+    it('keeps a smart brush stroke started while the previous one is still being saved', async () => {
+        const harness = await setup();
+        const { controller, service } = harness;
+        controller.setTool('smartBrush');
+        controller.setBrushWidth(50);
+        // Stroke 1: down the purple disk's left edge.
+        harness.pointer('pointerdown', 640 / SCALE, 920 / SCALE);
+        for (let y = 940; y <= 1080; y += 20) {
+            harness.pointer('pointermove', 640 / SCALE, y / SCALE);
+        }
+        harness.pointer('pointerup', 640 / SCALE, 1080 / SCALE);
+        // The tool stays on: stroke 2 starts on the brown disk while stroke
+        // 1 is still being painted, and stroke 1 is saved meanwhile.
+        harness.pointer('pointerdown', 1250 / SCALE, 1300 / SCALE);
+        for (let y = 1310; y <= 1400; y += 15) {
+            harness.pointer('pointermove', 1250 / SCALE, y / SCALE);
+        }
+        await until(() => service.writes().length === 1);
+        expect(controller.drawingInProgress).toBe(true);
+        harness.pointer('pointerup', 1250 / SCALE, 1400 / SCALE);
+        await until(() => service.writes().length === 2);
+        const saved = Array.from(service.rows.values()).map(
+            row => regionBounds(regionOfSelector(row.target.selector.value))!
+        );
+        // One on each disk.
+        expect(saved.some(box => box.maxX < 900)).toBe(true);
+        expect(saved.some(box => box.minX > 1100)).toBe(true);
+    });
+
     it('says when a stroke painted nothing', async () => {
         const harness = await setup();
         const { controller, service } = harness;

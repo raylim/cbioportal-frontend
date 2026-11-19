@@ -197,6 +197,26 @@ describe('Stepping through annotations and links to one', () => {
         expect(controller.focusedAnnotationId).toBeNull();
     });
 
+    it("opens a linked annotation only on the link's slide, once, and tells the host", async () => {
+        const { controller, zoom } = await tracked();
+        const used = jest.fn();
+        // A link to another slide: nothing opens here, nothing is reported.
+        controller.requestAnnotation('b', 'fedcba987654', used);
+        expect(controller.focusedAnnotationId).toBeNull();
+        expect(controller.linkMessage).toBeNull();
+        expect(used).not.toHaveBeenCalled();
+        // On the link's slide it opens, and the host can drop it.
+        controller.requestAnnotation('b', SLIDE_KEY, used);
+        expect(controller.focusedAnnotationId).toBe('b');
+        expect(zoom).toHaveBeenLastCalledWith('b');
+        expect(used).toHaveBeenCalledTimes(1);
+        // Used once: a reload does not open it again.
+        controller.clearFocus();
+        await controller.retryLoad();
+        expect(controller.focusedAnnotationId).toBeNull();
+        expect(used).toHaveBeenCalledTimes(1);
+    });
+
     it('says when a linked annotation is missing, rejected or private', async () => {
         const { controller } = await tracked({ requested: 'gone' });
         expect(controller.focusedAnnotationId).toBeNull();

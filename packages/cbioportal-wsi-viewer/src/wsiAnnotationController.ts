@@ -1172,7 +1172,11 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
         moved: boolean;
     } | null = null;
     /** The smart brush stroke being drawn and whether its session has it. */
-    private smartStroke: { points: WsiXY[]; started: boolean } | null = null;
+    private smartStroke: {
+        points: WsiXY[];
+        started: boolean;
+        handle?: object;
+    } | null = null;
     private tissueHostFactory: (() => WsiTissuePixelHost) | null = null;
     private objectivePowerProvider: () => number | undefined = () => undefined;
     /**
@@ -1343,7 +1347,12 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
         | ((target: WsiAnnotationLinkTarget) => string)
         | null = null;
     /** An annotation a link asked for, shown once the slide has loaded. */
-    private requestedAnnotationId: string | null = null;
+    private requestedAnnotation: {
+        id: string;
+        slideKey: string | null;
+    } | null = null;
+    /** Told once a requested annotation was opened or found missing. */
+    private requestedAnnotationUsed: (() => void) | null = null;
     /** The annotations selected for bulk actions (see `selectedAnnotations`). */
     @observable.ref selectedIds: ReadonlySet<string> = new Set<string>();
     /** A Shift+drag selection box in progress, in image pixels. */
@@ -1464,25 +1473,41 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
      * highlighted. Asked once; a missing one is reported.
      */
     @action.bound
-    requestAnnotation(id: string | null | undefined) {
-        this.requestedAnnotationId = id || null;
+    requestAnnotation(
+        id: string | null | undefined,
+        slideKey?: string | null,
+        onUsed?: () => void
+    ) {
+        this.requestedAnnotation = id
+            ? { id, slideKey: slideKey || null }
+            : null;
+        this.requestedAnnotationUsed = id ? onUsed || null : null;
         this.openRequestedAnnotation();
     }
 
-    /** Opens the requested annotation when its slide is loaded and shown. */
+    /**
+     * Opens the requested annotation when its slide (the link's slide key,
+     * when it names one) is loaded and shown. It is used once: opened, or
+     * reported missing; the host is told, e.g. to drop it from the URL.
+     */
     @action
     private openRequestedAnnotation() {
-        const id = this.requestedAnnotationId;
+        const request = this.requestedAnnotation;
         if (
-            !id ||
+            !request ||
             !this.slideKey ||
+            (request.slideKey && request.slideKey !== this.slideKey) ||
             this.loading ||
             !this.osdViewer?.viewport
         ) {
             return;
         }
-        this.requestedAnnotationId = null;
+        const { id } = request;
+        const used = this.requestedAnnotationUsed;
+        this.requestedAnnotation = null;
+        this.requestedAnnotationUsed = null;
         if (this.loadFailed || this.accessIssue) return;
+        used?.();
         const annotation = this.annotations.find(item => item.id === id);
         if (!annotation) {
             this.linkMessage = WSI_LINKED_ANNOTATION_MISSING;
@@ -2751,39 +2776,7 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
         const points = ids
             .map(id => this.annotations.find(item => item.id === id))
             .filter((item): item is WsiAnnotation => !!item);
-        const deleted: WsiAnnotation[] = [];
-        for (let start = 0; start < points.length; start += BATCH_MAX_ITEMS) {
-            const chunk = points.slice(start, start + BATCH_MAX_ITEMS);
-            if (this.bulkRoutes.delete !== false) {
-                const outcome = await this.sendBulkBatch(
-                    'delete',
-                    chunk.map(annotation => ({ annotation, fields: {} }))
-                );
-                if (outcome.kind === 'saved') {
-                    action(() => {
-                        this.bulkRoutes = { ...this.bulkRoutes, delete: true };
-                    })();
-                    this.removeManyLocally(new Set(chunk.map(item => item.id)));
-                    deleted.push(...chunk);
-                    continue;
-                }
-                if (outcome.kind === 'missing') {
-                    action(() => {
-                        this.bulkRoutes = { ...this.bulkRoutes, delete: false };
-                    })();
-                }
-                if (outcome.kind === 'access') break;
-            }
-            const results = await runLimited(
-                chunk,
-                SINGLE_SAVE_CONCURRENCY,
-                point => this.deleteAnnotation(point.id, false)
-            );
-            chunk.forEach((point, index) => {
-                if (results[index]) deleted.push(point);
-            });
-        }
-        return deleted;
+        return this.deleteMany(points);
     }
 
     /**
@@ -3421,7 +3414,7 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
         const session = await this.ensureTissueSession('smartBrush');
         if (!session || !stroke) return;
         if (this.shapeEditMode === 'split') {
-            session.discard();
+            if (stroke.handle) session.cancelStroke(stroke.handle);
             await this.applyDrawnEdit({
                 path: simplifyPath(
                     points,
@@ -3434,9 +3427,10 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
             this.startSmartStroke(session, stroke);
         }
         const last = points[points.length - 1];
-        if (last) session.strokeAdd(last);
-        const { region } = await session.strokeEnd();
-        session.discard();
+        if (last) session.strokeAdd(last, stroke.handle);
+        // The stroke finishes on its own: a next stroke may already be drawn.
+        const { region } = await session.strokeEnd(stroke.handle);
+        session.clearUnlessDrawing();
         if (!region.length) {
             action(() => {
                 this.tissueMessage =
@@ -3444,30 +3438,43 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
             })();
             return;
         }
-        await this.createRegionShape(region, edit);
+        await this.createRegionShape(region, edit, false);
     }
 
     /** Hands a smart brush stroke's points so far to the session. */
     private startSmartStroke(
         session: WsiTissueSession,
-        stroke: { points: WsiXY[]; started: boolean }
+        stroke: { points: WsiXY[]; started: boolean; handle?: object }
     ) {
         const width =
             this.drawGesture?.strokeImageWidth ??
             this.brushImageWidth(this.imagePixelsPerScreenPixel());
-        session.strokeStart(stroke.points[0], width / 2, this.tissueTolerance);
-        stroke.points.slice(1).forEach(point => session.strokeAdd(point));
+        const handle = session.strokeStart(
+            stroke.points[0],
+            width / 2,
+            this.tissueTolerance
+        );
+        stroke.handle = handle;
+        stroke.points
+            .slice(1)
+            .forEach(point => session.strokeAdd(point, handle));
         stroke.started = true;
     }
 
     /**
      * Saves a region from the magic wand or smart brush: as a new
-     * annotation, or with `edit` as the shape of a cut (or split).
+     * annotation, or with `edit` as the shape of a cut (or split). With
+     * `resetGesture` false (a smart brush stroke, finished while the next
+     * may be drawn) the gesture in progress stays.
      */
-    private async createRegionShape(region: WsiRegion, edit: boolean) {
+    private async createRegionShape(
+        region: WsiRegion,
+        edit: boolean,
+        resetGesture = true
+    ) {
         if (!region.length) return;
         if (edit) {
-            this.resetGesture();
+            if (resetGesture) this.resetGesture();
             await this.applyDrawnEdit({ region });
             return;
         }
@@ -3475,7 +3482,7 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
             regionSelectorSvg(region),
             this.newShapeLabel()
         );
-        this.resetGesture();
+        if (resetGesture) this.resetGesture();
         await this.createAnnotation(annotation);
     }
 
@@ -5424,12 +5431,88 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
         };
     }
 
+    /** The shape operation running now; the next waits for it. */
+    private shapeEditChain: Promise<unknown> = Promise.resolve();
+
     /**
-     * Saves a shape operation as one undo step: new annotations first (in
-     * batch saves; when none is saved nothing else is done), then the new
-     * geometry of the user's own regions (versioned `PUT`s; an AI one keeps
-     * its source and is marked edited), then deletes of the user's own
-     * annotations. Undo deletes what was created, puts the previous
+     * Runs shape operations one after another, so each reads the geometry
+     * and versions the previous one saved (two quick cuts both apply).
+     */
+    private serializeShapeEdit<T>(run: () => Promise<T>): Promise<T> {
+        const next = this.shapeEditChain.then(run, run);
+        this.shapeEditChain = next.catch(() => undefined);
+        return next;
+    }
+
+    /**
+     * Deletes `annotations` without recording undo: with the service's
+     * `batch-delete` in one all-or-none request per 100, else (no route)
+     * one by one. With `atomic`, a refused batch deletes none instead of
+     * trying them one by one. Resolves to those deleted.
+     */
+    private async deleteMany(
+        annotations: WsiAnnotation[],
+        atomic = false
+    ): Promise<WsiAnnotation[]> {
+        const deleted: WsiAnnotation[] = [];
+        for (
+            let start = 0;
+            start < annotations.length;
+            start += BATCH_MAX_ITEMS
+        ) {
+            const chunk = annotations.slice(start, start + BATCH_MAX_ITEMS);
+            if (this.bulkRoutes.delete !== false) {
+                const outcome = await this.sendBulkBatch(
+                    'delete',
+                    chunk.map(annotation => ({ annotation, fields: {} }))
+                );
+                if (outcome.kind === 'saved') {
+                    action(() => {
+                        this.bulkRoutes = { ...this.bulkRoutes, delete: true };
+                    })();
+                    this.removeManyLocally(new Set(chunk.map(item => item.id)));
+                    deleted.push(...chunk);
+                    continue;
+                }
+                if (outcome.kind === 'missing') {
+                    action(() => {
+                        this.bulkRoutes = { ...this.bulkRoutes, delete: false };
+                    })();
+                } else {
+                    if (outcome.kind !== 'access') {
+                        action(() => {
+                            this.error = `Delete refused: ${
+                                outcome.kind === 'conflict'
+                                    ? 'changed elsewhere'
+                                    : outcome.reason
+                            }.`;
+                        })();
+                    }
+                    if (atomic || outcome.kind === 'access') break;
+                }
+            }
+            const results = await runLimited(
+                chunk,
+                SINGLE_SAVE_CONCURRENCY,
+                item => this.deleteAnnotation(item.id, false)
+            );
+            chunk.forEach((item, index) => {
+                if (results[index]) deleted.push(item);
+            });
+        }
+        return deleted;
+    }
+
+    /**
+     * Saves a shape operation as one undo step, all or nothing: new
+     * annotations first (in batch saves), then the new geometry of the
+     * user's own regions (versioned `PUT`s; an AI one keeps its source and
+     * is marked edited), then the deletes of the user's own originals (one
+     * all-or-none `batch-delete` where the service has it). When any part
+     * fails, what was saved is taken back (created ones deleted, changed
+     * ones put back, deleted ones created again), so no overlapping shapes
+     * are left, and `rolledBack` says so; undo then has nothing to do. Undo
+     * of a saved operation deletes what was created, puts the previous
      * geometry back and creates the deleted ones again.
      */
     private async applyShapeEdit(
@@ -5444,57 +5527,79 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
         updated: WsiAnnotation[];
         deleted: WsiAnnotation[];
         failed: number;
+        rolledBack: boolean;
     }> {
         action(() => {
             this.bulkBusy = true;
             this.bulkMessage = null;
             this.error = null;
         })();
-        const created: WsiAnnotation[] = [];
-        const updated: WsiAnnotation[] = [];
-        const deleted: WsiAnnotation[] = [];
-        const befores: WsiAnnotation[] = [];
+        let created: WsiAnnotation[] = [];
+        let updated: WsiAnnotation[] = [];
+        let deleted: WsiAnnotation[] = [];
+        let befores: WsiAnnotation[] = [];
         let failed = 0;
+        let rolledBack = false;
         try {
             if (plan.creates.length) {
                 const results = await this.saveAnnotations(plan.creates);
                 created.push(...this.addSaved(results, plan.creates));
                 failed += plan.creates.length - created.length;
-                if (!created.length) {
-                    return { created, updated, deleted, failed };
-                }
             }
-            for (const { annotation, region } of plan.updates) {
-                const before = this.annotations.find(
-                    item => item.id === annotation.id
-                );
-                if (!before) {
-                    failed += 1;
-                    continue;
-                }
-                const saved = await this.updateAnnotation(
-                    {
-                        ...before,
-                        target: {
-                            ...before.target,
-                            selector: {
-                                type: 'SvgSelector',
-                                value: regionSelectorSvg(region),
+            if (!failed) {
+                for (const { annotation, region } of plan.updates) {
+                    const before = this.annotations.find(
+                        item => item.id === annotation.id
+                    );
+                    if (!before) {
+                        failed += 1;
+                        break;
+                    }
+                    const saved = await this.updateAnnotation(
+                        {
+                            ...before,
+                            target: {
+                                ...before.target,
+                                selector: {
+                                    type: 'SvgSelector',
+                                    value: regionSelectorSvg(region),
+                                },
                             },
+                            provenance: editedProvenance(before.provenance),
                         },
-                        provenance: editedProvenance(before.provenance),
-                    },
-                    false
-                );
-                if (saved) {
-                    updated.push(saved);
-                    befores.push(before);
-                } else failed += 1;
+                        false
+                    );
+                    if (saved) {
+                        updated.push(saved);
+                        befores.push(before);
+                    } else {
+                        failed += 1;
+                        break;
+                    }
+                }
             }
-            for (const annotation of plan.deletes) {
-                if (await this.deleteAnnotation(annotation.id, false)) {
-                    deleted.push(annotation);
-                } else failed += 1;
+            if (!failed && plan.deletes.length) {
+                deleted = await this.deleteMany(plan.deletes, true);
+                failed += plan.deletes.length - deleted.length;
+            }
+            if (
+                failed &&
+                (created.length || updated.length || deleted.length)
+            ) {
+                const left = await this.rollBackShapeEdit(
+                    created,
+                    updated,
+                    befores,
+                    deleted
+                );
+                rolledBack =
+                    !left.created.length &&
+                    !left.updated.length &&
+                    !left.deleted.length;
+                created = left.created;
+                updated = left.updated;
+                befores = left.befores;
+                deleted = left.deleted;
             }
         } finally {
             const entries: WsiUndoEntry[] = [
@@ -5524,7 +5629,68 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
                 }
             })();
         }
-        return { created, updated, deleted, failed };
+        return { created, updated, deleted, failed, rolledBack };
+    }
+
+    /**
+     * Takes back a shape operation that was saved only in part: deletes the
+     * annotations it created, puts the previous geometry back on those it
+     * changed and creates again those it deleted. Resolves to what could
+     * not be taken back (still saved), for undo.
+     */
+    private async rollBackShapeEdit(
+        created: WsiAnnotation[],
+        updated: WsiAnnotation[],
+        befores: WsiAnnotation[],
+        deleted: WsiAnnotation[]
+    ): Promise<{
+        created: WsiAnnotation[];
+        updated: WsiAnnotation[];
+        befores: WsiAnnotation[];
+        deleted: WsiAnnotation[];
+    }> {
+        const reason = this.error;
+        const removed = new Set(
+            (await this.deleteMany(created)).map(item => item.id)
+        );
+        const leftUpdated: WsiAnnotation[] = [];
+        const leftBefores: WsiAnnotation[] = [];
+        for (let i = updated.length - 1; i >= 0; i--) {
+            const current =
+                this.annotations.find(item => item.id === updated[i].id) ||
+                updated[i];
+            const restored = await this.updateAnnotation(
+                { ...befores[i], version: current.version },
+                false
+            );
+            if (!restored) {
+                leftUpdated.push(updated[i]);
+                leftBefores.push(befores[i]);
+            }
+        }
+        let leftDeleted: WsiAnnotation[] = [];
+        if (deleted.length) {
+            const drafts = deleted.map(item => ({
+                ...item,
+                id: `client-undo-${Date.now()}-${Math.random()
+                    .toString(36)
+                    .slice(2)}`,
+            }));
+            const results = await this.saveAnnotations(drafts);
+            this.addSaved(results, drafts);
+            leftDeleted = deleted.filter(
+                (_, index) => !results[index]?.annotation
+            );
+        }
+        action(() => {
+            this.error = reason;
+        })();
+        return {
+            created: created.filter(item => !removed.has(item.id)),
+            updated: leftUpdated,
+            befores: leftBefores,
+            deleted: leftDeleted,
+        };
     }
 
     /**
@@ -5553,9 +5719,15 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
     @action
     private reportShapeEdit(
         done: string,
-        outcome: { failed: number },
+        outcome: { failed: number; rolledBack?: boolean },
         notes: string[] = []
     ) {
+        if (outcome.rolledBack) {
+            this.bulkMessage = `${done.replace(/\.$/, '')}${
+                this.error ? ` (${this.error.replace(/\.$/, '')})` : ''
+            }. What was saved of it was taken back, so nothing changed.`;
+            return;
+        }
         const parts = [done, ...notes];
         if (outcome.failed) {
             parts.push(
@@ -5589,56 +5761,64 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
      */
     @action.bound
     async mergeSelected(): Promise<boolean> {
-        const regions = this.selectedRegions;
-        if (regions.length < 2 || !this.canEdit) return false;
-        const union = unionRegions(
-            regions.map(item => this.regionOf(item)!).filter(Boolean)
-        );
-        if (!union.length) {
-            this.bulkMessage = 'Nothing to merge: the regions have no area.';
-            return false;
-        }
-        const kept = regions.filter(item => !this.canModify(item));
-        const keptAi = regions.filter(
-            item => this.canModify(item) && isAiProvenance(item.provenance)
-        );
-        const deletes = regions.filter(
-            item => this.canModify(item) && !isAiProvenance(item.provenance)
-        );
-        const outcome = await this.applyShapeEdit('merge', {
-            creates: [this.derivedDraft(regions[0], union, 'merge', regions)],
-            updates: [],
-            deletes,
+        return this.serializeShapeEdit(async () => {
+            const regions = this.selectedRegions;
+            if (regions.length < 2 || !this.canEdit) return false;
+            const union = unionRegions(
+                regions.map(item => this.regionOf(item)!).filter(Boolean)
+            );
+            if (!union.length) {
+                this.bulkMessage =
+                    'Nothing to merge: the regions have no area.';
+                return false;
+            }
+            const kept = regions.filter(item => !this.canModify(item));
+            const keptAi = regions.filter(
+                item => this.canModify(item) && isAiProvenance(item.provenance)
+            );
+            const deletes = regions.filter(
+                item => this.canModify(item) && !isAiProvenance(item.provenance)
+            );
+            const outcome = await this.applyShapeEdit('merge', {
+                creates: [
+                    this.derivedDraft(regions[0], union, 'merge', regions),
+                ],
+                updates: [],
+                deletes,
+            });
+            const result = outcome.created[0];
+            if (!result) {
+                this.reportShapeEdit(
+                    'The merged region was not saved.',
+                    outcome
+                );
+                return false;
+            }
+            this.select([result.id], false);
+            this.reportShapeEdit(
+                `Merged ${regions.length} regions into ${this.quoted(result)}.`,
+                outcome,
+                [
+                    ...this.keptNote(kept),
+                    ...(keptAi.length
+                        ? [
+                              `Kept your AI annotation${
+                                  keptAi.length === 1 ? '' : 's'
+                              } ${keptAi
+                                  .map(item => this.quoted(item))
+                                  .join(
+                                      ', '
+                                  )}: only the service's trusted writers can create AI annotations, so undo could not bring ${
+                                  keptAi.length === 1 ? 'it' : 'them'
+                              } back. Reject or delete ${
+                                  keptAi.length === 1 ? 'it' : 'them'
+                              } if no longer needed.`,
+                          ]
+                        : []),
+                ]
+            );
+            return true;
         });
-        const result = outcome.created[0];
-        if (!result) {
-            this.reportShapeEdit('The merged region was not saved.', outcome);
-            return false;
-        }
-        this.select([result.id], false);
-        this.reportShapeEdit(
-            `Merged ${regions.length} regions into ${this.quoted(result)}.`,
-            outcome,
-            [
-                ...this.keptNote(kept),
-                ...(keptAi.length
-                    ? [
-                          `Kept your AI annotation${
-                              keptAi.length === 1 ? '' : 's'
-                          } ${keptAi
-                              .map(item => this.quoted(item))
-                              .join(
-                                  ', '
-                              )}: only the service's trusted writers can create AI annotations, so undo could not bring ${
-                              keptAi.length === 1 ? 'it' : 'them'
-                          } back. Reject or delete ${
-                              keptAi.length === 1 ? 'it' : 'them'
-                          } if no longer needed.`,
-                      ]
-                    : []),
-            ]
-        );
-        return true;
     }
 
     /**
@@ -5648,50 +5828,52 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
      */
     @action.bound
     async subtractSelected(): Promise<boolean> {
-        const regions = this.selectedRegions;
-        if (regions.length < 2 || !this.canEdit) return false;
-        const [subject, ...clips] = regions;
-        const region = this.regionOf(subject)!;
-        const result = subtractRegions(
-            region,
-            clips.map(item => this.regionOf(item)!)
-        );
-        if (!result.length) {
-            this.bulkMessage = `Nothing would be left of ${this.quoted(
-                subject
-            )}; nothing was changed.`;
-            return false;
-        }
-        if (Math.abs(regionArea(result) - regionArea(region)) < 1e-6) {
-            this.bulkMessage = `The other regions do not overlap ${this.quoted(
-                subject
-            )}; nothing was changed.`;
-            return false;
-        }
-        const plan = this.replacementPlan(
-            'subtract',
-            subject,
-            [result],
-            regions
-        );
-        const outcome = await this.applyShapeEdit('subtract', {
-            ...plan,
-            deletes: [],
+        return this.serializeShapeEdit(async () => {
+            const regions = this.selectedRegions;
+            if (regions.length < 2 || !this.canEdit) return false;
+            const [subject, ...clips] = regions;
+            const region = this.regionOf(subject)!;
+            const result = subtractRegions(
+                region,
+                clips.map(item => this.regionOf(item)!)
+            );
+            if (!result.length) {
+                this.bulkMessage = `Nothing would be left of ${this.quoted(
+                    subject
+                )}; nothing was changed.`;
+                return false;
+            }
+            if (Math.abs(regionArea(result) - regionArea(region)) < 1e-6) {
+                this.bulkMessage = `The other regions do not overlap ${this.quoted(
+                    subject
+                )}; nothing was changed.`;
+                return false;
+            }
+            const plan = this.replacementPlan(
+                'subtract',
+                subject,
+                [result],
+                regions
+            );
+            const outcome = await this.applyShapeEdit('subtract', {
+                ...plan,
+                deletes: [],
+            });
+            if (!outcome.created.length && !outcome.updated.length) {
+                this.reportShapeEdit('The subtraction was not saved.', outcome);
+                return false;
+            }
+            this.reportShapeEdit(
+                `Cut ${clips.length} region${
+                    clips.length === 1 ? '' : 's'
+                } out of ${this.quoted(subject)}${
+                    plan.kept.length ? ', as a new annotation of yours' : ''
+                }.`,
+                outcome,
+                this.keptNote(plan.kept)
+            );
+            return true;
         });
-        if (!outcome.created.length && !outcome.updated.length) {
-            this.reportShapeEdit('The subtraction was not saved.', outcome);
-            return false;
-        }
-        this.reportShapeEdit(
-            `Cut ${clips.length} region${
-                clips.length === 1 ? '' : 's'
-            } out of ${this.quoted(subject)}${
-                plan.kept.length ? ', as a new annotation of yours' : ''
-            }.`,
-            outcome,
-            this.keptNote(plan.kept)
-        );
-        return true;
     }
 
     /**
@@ -5700,36 +5882,41 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
      */
     @action.bound
     async intersectSelected(): Promise<boolean> {
-        const regions = this.selectedRegions;
-        if (regions.length < 2 || !this.canEdit) return false;
-        const result = intersectRegions(
-            regions.map(item => this.regionOf(item)!)
-        );
-        if (!result.length) {
-            this.bulkMessage =
-                'The selected regions do not all overlap; nothing was saved.';
-            return false;
-        }
-        const outcome = await this.applyShapeEdit('intersect', {
-            creates: [
-                this.derivedDraft(regions[0], result, 'intersect', regions),
-            ],
-            updates: [],
-            deletes: [],
+        return this.serializeShapeEdit(async () => {
+            const regions = this.selectedRegions;
+            if (regions.length < 2 || !this.canEdit) return false;
+            const result = intersectRegions(
+                regions.map(item => this.regionOf(item)!)
+            );
+            if (!result.length) {
+                this.bulkMessage =
+                    'The selected regions do not all overlap; nothing was saved.';
+                return false;
+            }
+            const outcome = await this.applyShapeEdit('intersect', {
+                creates: [
+                    this.derivedDraft(regions[0], result, 'intersect', regions),
+                ],
+                updates: [],
+                deletes: [],
+            });
+            const created = outcome.created[0];
+            if (!created) {
+                this.reportShapeEdit(
+                    'The intersection was not saved.',
+                    outcome
+                );
+                return false;
+            }
+            this.select([created.id], false);
+            this.reportShapeEdit(
+                `Saved where ${regions.length} regions overlap as ${this.quoted(
+                    created
+                )}.`,
+                outcome
+            );
+            return true;
         });
-        const created = outcome.created[0];
-        if (!created) {
-            this.reportShapeEdit('The intersection was not saved.', outcome);
-            return false;
-        }
-        this.select([created.id], false);
-        this.reportShapeEdit(
-            `Saved where ${regions.length} regions overlap as ${this.quoted(
-                created
-            )}.`,
-            outcome
-        );
-        return true;
     }
 
     /**
@@ -5740,82 +5927,86 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
      * One undo step for all.
      */
     async cutSelected(cutter: WsiRegion): Promise<boolean> {
-        const targets = this.selectedRegions;
-        const bounds = regionBounds(cutter);
-        if (!targets.length || !bounds || !this.canEdit) return false;
-        const creates: WsiAnnotation[] = [];
-        const updates: Array<{
-            annotation: WsiAnnotation;
-            region: WsiRegion;
-        }> = [];
-        const kept: WsiAnnotation[] = [];
-        const whole: WsiAnnotation[] = [];
-        const cut: WsiAnnotation[] = [];
-        targets.forEach(target => {
-            const region = this.regionOf(target)!;
-            const box = regionBounds(region);
-            if (!box || !boundsOverlap(box, bounds)) return;
-            const result = subtractRegions(region, [cutter]);
-            if (Math.abs(regionArea(result) - regionArea(region)) < 1e-6) {
-                return;
-            }
-            if (!result.length) {
-                whole.push(target);
-                return;
-            }
-            const plan = this.replacementPlan(
-                'cut',
-                target,
-                [result],
-                [target]
-            );
-            creates.push(...plan.creates);
-            updates.push(...plan.updates);
-            kept.push(...plan.kept);
-            cut.push(target);
-        });
-        if (!cut.length) {
-            action(() => {
-                this.bulkMessage = whole.length
-                    ? `The shape covers all of ${whole
-                          .map(item => this.quoted(item))
-                          .join(', ')}; nothing was cut.`
-                    : 'The shape does not overlap a selected region; nothing was cut.';
-            })();
-            return false;
-        }
-        const outcome = await this.applyShapeEdit('cut', {
-            creates,
-            updates,
-            deletes: [],
-        });
-        if (!outcome.created.length && !outcome.updated.length) {
-            this.reportShapeEdit('The cut was not saved.', outcome);
-            return false;
-        }
-        this.reportShapeEdit(
-            `Cut the shape out of ${cut
-                .map(item => this.quoted(item))
-                .join(', ')}.`,
-            outcome,
-            [
-                ...(kept.length
-                    ? [
-                          `${kept.map(item => this.quoted(item)).join(', ')} ${
-                              kept.length === 1 ? 'is' : 'are'
-                          } not yours: the cut was saved as a new annotation of yours, and the original stays.`,
-                      ]
-                    : []),
-                ...(whole.length
-                    ? [
-                          `Left ${whole
+        return this.serializeShapeEdit(async () => {
+            const targets = this.selectedRegions;
+            const bounds = regionBounds(cutter);
+            if (!targets.length || !bounds || !this.canEdit) return false;
+            const creates: WsiAnnotation[] = [];
+            const updates: Array<{
+                annotation: WsiAnnotation;
+                region: WsiRegion;
+            }> = [];
+            const kept: WsiAnnotation[] = [];
+            const whole: WsiAnnotation[] = [];
+            const cut: WsiAnnotation[] = [];
+            targets.forEach(target => {
+                const region = this.regionOf(target)!;
+                const box = regionBounds(region);
+                if (!box || !boundsOverlap(box, bounds)) return;
+                const result = subtractRegions(region, [cutter]);
+                if (Math.abs(regionArea(result) - regionArea(region)) < 1e-6) {
+                    return;
+                }
+                if (!result.length) {
+                    whole.push(target);
+                    return;
+                }
+                const plan = this.replacementPlan(
+                    'cut',
+                    target,
+                    [result],
+                    [target]
+                );
+                creates.push(...plan.creates);
+                updates.push(...plan.updates);
+                kept.push(...plan.kept);
+                cut.push(target);
+            });
+            if (!cut.length) {
+                action(() => {
+                    this.bulkMessage = whole.length
+                        ? `The shape covers all of ${whole
                               .map(item => this.quoted(item))
-                              .join(', ')}: the shape covers all of it.`,
-                      ]
-                    : []),
-            ]
-        );
-        return true;
+                              .join(', ')}; nothing was cut.`
+                        : 'The shape does not overlap a selected region; nothing was cut.';
+                })();
+                return false;
+            }
+            const outcome = await this.applyShapeEdit('cut', {
+                creates,
+                updates,
+                deletes: [],
+            });
+            if (!outcome.created.length && !outcome.updated.length) {
+                this.reportShapeEdit('The cut was not saved.', outcome);
+                return false;
+            }
+            this.reportShapeEdit(
+                `Cut the shape out of ${cut
+                    .map(item => this.quoted(item))
+                    .join(', ')}.`,
+                outcome,
+                [
+                    ...(kept.length
+                        ? [
+                              `${kept
+                                  .map(item => this.quoted(item))
+                                  .join(', ')} ${
+                                  kept.length === 1 ? 'is' : 'are'
+                              } not yours: the cut was saved as a new annotation of yours, and the original stays.`,
+                          ]
+                        : []),
+                    ...(whole.length
+                        ? [
+                              `Left ${whole
+                                  .map(item => this.quoted(item))
+                                  .join(', ')}: the shape covers all of it.`,
+                          ]
+                        : []),
+                ]
+            );
+            return true;
+        });
     }
 
     /**
@@ -5826,46 +6017,50 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
      * user's. One undo step. Ends the split, selecting the pieces.
      */
     async splitSelected(path: WsiPoint[]): Promise<boolean> {
-        const target = this.selectedRegions[0];
-        if (!target || !this.canEdit) return false;
-        const pieces = splitRegionByPath(this.regionOf(target)!, path);
-        if (pieces.length < 2) {
+        return this.serializeShapeEdit(async () => {
+            const target = this.selectedRegions[0];
+            if (!target || !this.canEdit) return false;
+            const pieces = splitRegionByPath(this.regionOf(target)!, path);
+            if (pieces.length < 2) {
+                action(() => {
+                    this.bulkMessage = `The line does not cut ${this.quoted(
+                        target
+                    )} in two: draw it across the region, from edge to edge.`;
+                })();
+                return false;
+            }
+            const plan = this.replacementPlan('split', target, pieces, [
+                target,
+            ]);
+            const outcome = await this.applyShapeEdit('split', {
+                ...plan,
+                deletes: [],
+            });
+            if (!outcome.created.length && !outcome.updated.length) {
+                this.reportShapeEdit('The split was not saved.', outcome);
+                return false;
+            }
             action(() => {
-                this.bulkMessage = `The line does not cut ${this.quoted(
-                    target
-                )} in two: draw it across the region, from edge to edge.`;
+                this.shapeEditMode = null;
             })();
-            return false;
-        }
-        const plan = this.replacementPlan('split', target, pieces, [target]);
-        const outcome = await this.applyShapeEdit('split', {
-            ...plan,
-            deletes: [],
+            this.cancelDrawing();
+            this.select(
+                [...outcome.updated, ...outcome.created].map(item => item.id),
+                false
+            );
+            this.reportShapeEdit(
+                `Split ${this.quoted(target)} into ${pieces.length} pieces.`,
+                outcome,
+                plan.kept.length
+                    ? [
+                          `${this.quoted(
+                              target
+                          )} is not yours: the pieces are new annotations of yours, and the original stays.`,
+                      ]
+                    : []
+            );
+            return true;
         });
-        if (!outcome.created.length && !outcome.updated.length) {
-            this.reportShapeEdit('The split was not saved.', outcome);
-            return false;
-        }
-        action(() => {
-            this.shapeEditMode = null;
-        })();
-        this.cancelDrawing();
-        this.select(
-            [...outcome.updated, ...outcome.created].map(item => item.id),
-            false
-        );
-        this.reportShapeEdit(
-            `Split ${this.quoted(target)} into ${pieces.length} pieces.`,
-            outcome,
-            plan.kept.length
-                ? [
-                      `${this.quoted(
-                          target
-                      )} is not yours: the pieces are new annotations of yours, and the original stays.`,
-                  ]
-                : []
-        );
-        return true;
     }
 
     /**
@@ -5875,49 +6070,53 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
      */
     @action.bound
     async separateSelected(): Promise<boolean> {
-        const targets = this.selectedRegions.filter(item => {
-            const shape = this.shapeOf(item);
-            return shape?.kind === 'multipolygon' && shape.polygons.length > 1;
+        return this.serializeShapeEdit(async () => {
+            const targets = this.selectedRegions.filter(item => {
+                const shape = this.shapeOf(item);
+                return (
+                    shape?.kind === 'multipolygon' && shape.polygons.length > 1
+                );
+            });
+            if (!targets.length || !this.canEdit) return false;
+            const creates: WsiAnnotation[] = [];
+            const updates: Array<{
+                annotation: WsiAnnotation;
+                region: WsiRegion;
+            }> = [];
+            const kept: WsiAnnotation[] = [];
+            let parts = 0;
+            targets.forEach(target => {
+                const pieces = regionParts(this.regionOf(target)!);
+                parts += pieces.length;
+                const plan = this.replacementPlan('separate', target, pieces, [
+                    target,
+                ]);
+                creates.push(...plan.creates);
+                updates.push(...plan.updates);
+                kept.push(...plan.kept);
+            });
+            const outcome = await this.applyShapeEdit('separate', {
+                creates,
+                updates,
+                deletes: [],
+            });
+            if (!outcome.created.length && !outcome.updated.length) {
+                this.reportShapeEdit('The parts were not saved.', outcome);
+                return false;
+            }
+            this.select(
+                [...outcome.updated, ...outcome.created].map(item => item.id),
+                false
+            );
+            this.reportShapeEdit(
+                `Separated ${parts} parts of ${targets.length} region${
+                    targets.length === 1 ? '' : 's'
+                }.`,
+                outcome,
+                this.keptNote(kept)
+            );
+            return true;
         });
-        if (!targets.length || !this.canEdit) return false;
-        const creates: WsiAnnotation[] = [];
-        const updates: Array<{
-            annotation: WsiAnnotation;
-            region: WsiRegion;
-        }> = [];
-        const kept: WsiAnnotation[] = [];
-        let parts = 0;
-        targets.forEach(target => {
-            const pieces = regionParts(this.regionOf(target)!);
-            parts += pieces.length;
-            const plan = this.replacementPlan('separate', target, pieces, [
-                target,
-            ]);
-            creates.push(...plan.creates);
-            updates.push(...plan.updates);
-            kept.push(...plan.kept);
-        });
-        const outcome = await this.applyShapeEdit('separate', {
-            creates,
-            updates,
-            deletes: [],
-        });
-        if (!outcome.created.length && !outcome.updated.length) {
-            this.reportShapeEdit('The parts were not saved.', outcome);
-            return false;
-        }
-        this.select(
-            [...outcome.updated, ...outcome.created].map(item => item.id),
-            false
-        );
-        this.reportShapeEdit(
-            `Separated ${parts} parts of ${targets.length} region${
-                targets.length === 1 ? '' : 's'
-            }.`,
-            outcome,
-            this.keptNote(kept)
-        );
-        return true;
     }
 
     // ---- side by side ----
@@ -7472,7 +7671,10 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
                     // Added in place: no copy of the stroke per move.
                     points.push(image!);
                     if (tool === 'smartBrush' && this.smartStroke?.started) {
-                        this.tissueSession?.strokeAdd(image!);
+                        this.tissueSession?.strokeAdd(
+                            image!,
+                            this.smartStroke.handle
+                        );
                     }
                 }
                 this.drawGesture = {

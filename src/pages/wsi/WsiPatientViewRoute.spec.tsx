@@ -68,6 +68,20 @@ describe('WsiPatientViewRoute', () => {
         renderRoute('?studyId=study-1&slideKey=0123456789ab&annotationId=a-7');
         const props = mockEntryPoint.mock.calls[0][0] as any;
         expect(props.requestedAnnotationId).toBe('a-7');
+        // Opened on the link's slide only, and dropped from the address
+        // once used.
+        expect(props.requestedAnnotationSlideKey).toBe('0123456789ab');
+        window.history.replaceState(
+            null,
+            '',
+            '/wsi/patient/P-1?studyId=study-1&slideKey=0123456789ab&annotationId=a-7#wsi:x=1'
+        );
+        props.onRequestedAnnotationUsed();
+        expect(window.location.search).toBe(
+            '?studyId=study-1&slideKey=0123456789ab'
+        );
+        expect(window.location.hash).toBe('#wsi:x=1');
+        window.history.replaceState(null, '', '/');
         const link = new URL(
             props.annotationLink({
                 slideKey: '0123456789ab',

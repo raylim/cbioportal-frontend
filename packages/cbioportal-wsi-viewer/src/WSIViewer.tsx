@@ -168,6 +168,18 @@ export interface WsiViewerProps {
      */
     requestedAnnotationId?: string;
     /**
+     * The slide `requestedAnnotationId` is on (its opaque key, as the link
+     * names it): the annotation opens only on that slide. Unset, it opens
+     * on the first slide shown.
+     */
+    requestedAnnotationSlideKey?: string;
+    /**
+     * Called once the requested annotation was opened or found missing, so
+     * the host can drop it from the URL (a reload or another slide does not
+     * open it again).
+     */
+    onRequestedAnnotationUsed?: () => void;
+    /**
      * Makes a shareable link that opens this viewer at a slide and one
      * annotation (by id; never an image id). Unset, annotations offer no
      * Copy link.
@@ -365,7 +377,9 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
         );
         this.annotationController.setLinkBuilder(props.annotationLink);
         this.annotationController.requestAnnotation(
-            props.requestedAnnotationId
+            props.requestedAnnotationId,
+            props.requestedAnnotationSlideKey,
+            () => this.props.onRequestedAnnotationUsed?.()
         );
         this.annotationController.setCursorReporter((x, y) =>
             this.viewerState.setCursorPos(x, y)
@@ -741,9 +755,15 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
         if (prev.annotationLink !== this.props.annotationLink) {
             this.annotationController.setLinkBuilder(this.props.annotationLink);
         }
-        if (prev.requestedAnnotationId !== this.props.requestedAnnotationId) {
+        if (
+            prev.requestedAnnotationId !== this.props.requestedAnnotationId ||
+            prev.requestedAnnotationSlideKey !==
+                this.props.requestedAnnotationSlideKey
+        ) {
             this.annotationController.requestAnnotation(
-                this.props.requestedAnnotationId
+                this.props.requestedAnnotationId,
+                this.props.requestedAnnotationSlideKey,
+                () => this.props.onRequestedAnnotationUsed?.()
             );
         }
 

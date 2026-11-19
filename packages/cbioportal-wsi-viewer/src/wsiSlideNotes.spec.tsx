@@ -135,6 +135,40 @@ describe('Slide notes', () => {
         expect(screen.getByTestId('slide-note-edit-button-n2')).toBeTruthy();
     });
 
+    it('never adds a note to a slide opened while its answer was read', async () => {
+        const { controller, service } = await setup();
+        await controller.slideNotes.load();
+        // The POST is answered, but its body is read only after another
+        // slide opens.
+        let readBody: () => void = () => undefined;
+        const gate = new Promise<void>(resolve => (readBody = resolve));
+        const serviceFetch = global.fetch;
+        global.fetch = jest.fn(async (input: any, init?: RequestInit) => {
+            const answer: any = await serviceFetch(input, init);
+            if (init?.method !== 'POST') return answer;
+            return {
+                ...answer,
+                clone: () => answer.clone(),
+                json: () => gate.then(() => answer.json()),
+            };
+        }) as any;
+        const created = controller.slideNotes.create({
+            text: 'For the first slide',
+            tags: [],
+            shared: true,
+        });
+        await flush();
+        controller.beginSlide('fedcba987654');
+        await controller.slideNotes.load();
+        readBody();
+        expect(await created).toBe(false);
+        expect(controller.slideNotes.slideKey).toBe('fedcba987654');
+        expect(
+            controller.slideNotes.notes.map(note => note.text)
+        ).not.toContain('For the first slide');
+        expect(controller.slideNotes.busy).toBe(false);
+    });
+
     it('adds a note with tags, edits and deletes the own one', async () => {
         const { controller, service } = await setup();
         render(<WsiSlideNotesPanel controller={controller} />);

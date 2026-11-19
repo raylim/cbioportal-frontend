@@ -319,6 +319,105 @@ describe('Shape editing: holes, merge, subtract, intersect, cut, split', () => {
         expect(controller.undoLabel).toBe('Undo merge');
     });
 
+    it('takes a merge back when the originals cannot be deleted', async () => {
+        const { controller, service } = await setup(
+            [
+                serviceRow('a', squareSvg(0, 0), { label: 'A' }),
+                serviceRow('b', squareSvg(50, 0), { label: 'B' }),
+            ],
+            {
+                override: request =>
+                    request.path.endsWith('/batch-delete') &&
+                    request.body.items.some((item: any) => item.id === 'b')
+                        ? {
+                              status: 403,
+                              body: {
+                                  detail: {
+                                      msg: 'Only the creator can delete',
+                                      index: 1,
+                                      id: 'b',
+                                  },
+                              },
+                          }
+                        : undefined,
+            }
+        );
+        controller.select(['a', 'b']);
+        let merged = true;
+        await act(async () => {
+            merged = await controller.mergeSelected();
+        });
+        expect(merged).toBe(false);
+        // The union was saved, then deleted again: only the originals stay.
+        expect(Array.from(service.rows.keys()).sort()).toEqual(['a', 'b']);
+        expect(
+            controller.annotations.map((item: any) => item.id).sort()
+        ).toEqual(['a', 'b']);
+        expect(controller.bulkMessage).toBe(
+            'The merged region was not saved (Delete refused: Only the creator can delete). What was saved of it was taken back, so nothing changed.'
+        );
+        expect(controller.canUndo).toBe(false);
+    });
+
+    it('takes a split back when the region changed elsewhere meanwhile', async () => {
+        const harness = await setup(
+            [serviceRow('mine', squareSvg(0, 0), { label: 'Tumor' })],
+            {
+                override: request =>
+                    request.method === 'PUT' &&
+                    request.path.endsWith('/annotations/mine')
+                        ? {
+                              status: 409,
+                              body: { detail: 'Version conflict' },
+                          }
+                        : undefined,
+            }
+        );
+        const { controller, service } = harness;
+        controller.select(['mine']);
+        controller.runShapeOp('split');
+        box(harness, [30, -10], [30, 110]);
+        await flush(6);
+        expect(service.writes().map(([method]) => method)).toEqual([
+            'POST',
+            'PUT',
+            'POST',
+        ]);
+        expect(service.writes()[2][1]).toBe('/wsi/annotations/batch-delete');
+        // The new piece is gone again; the region is as stored.
+        expect(Array.from(service.rows.keys())).toEqual(['mine']);
+        expect(area(controller, 'mine')).toBe(10000);
+        expect(controller.bulkMessage).toMatch(
+            /^The split was not saved \(Annotation changed elsewhere; reloaded latest data\)\. What was saved of it was taken back/
+        );
+        expect(controller.canUndo).toBe(false);
+    });
+
+    it('applies two cuts drawn back to back, each on the saved shape', async () => {
+        const harness = await setup([
+            serviceRow('mine', squareSvg(0, 0, 300), { label: 'Tumor' }),
+        ]);
+        const { controller, service } = harness;
+        controller.select(['mine']);
+        controller.runShapeOp('cut');
+        controller.setTool('rectangle');
+        // The first cut's PUT is still in flight when the second is drawn.
+        service.hold = true;
+        box(harness, [40, 40], [60, 60]);
+        await flush();
+        box(harness, [200, 200], [220, 220]);
+        await flush();
+        service.release();
+        await flush(6);
+        expect(service.writes()).toEqual([
+            ['PUT', '/wsi/annotations/mine'],
+            ['PUT', '/wsi/annotations/mine'],
+        ]);
+        expect(controller.error).toBeNull();
+        expect(area(controller, 'mine')).toBe(90000 - 400 - 400);
+        expect(stored(service, 'mine').version).toBe(3);
+    });
+
     it("keeps another user's shared region in a merge, and says so", async () => {
         const { controller, service } = await setup([
             serviceRow('mine', squareSvg(0, 0), { label: 'Mine' }),

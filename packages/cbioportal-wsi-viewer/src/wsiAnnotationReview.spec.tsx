@@ -390,6 +390,33 @@ describe('AI review queue', () => {
         expect(decide).toHaveBeenLastCalledWith('reject');
     });
 
+    it('rejects nothing for a key pressed on another tab of the page', async () => {
+        const { controller, rows } = setup();
+        track(controller);
+        controller.startReview();
+        expect(controller.reviewQueue!.currentId).toBe('first');
+        // Another tab is shown: the host hides the viewer (kept mounted),
+        // and the focus is on that tab's link, outside the viewer.
+        controller.setViewerHidden(true);
+        const elsewhere = document.createElement('a');
+        elsewhere.href = '#summary';
+        document.body.appendChild(elsewhere);
+        elsewhere.focus();
+        act(() => {
+            elsewhere.dispatchEvent(
+                new KeyboardEvent('keydown', {
+                    key: 'r',
+                    bubbles: true,
+                    cancelable: true,
+                })
+            );
+        });
+        await settle();
+        elsewhere.remove();
+        expect(rows.first.body.provenance.review_status).toBeUndefined();
+        expect(controller.reviewQueue!.currentId).toBe('first');
+    });
+
     it('takes A, R, S and the arrows before the tool shortcuts while open', async () => {
         const { controller, press, canvasKey } = setup();
         track(controller);

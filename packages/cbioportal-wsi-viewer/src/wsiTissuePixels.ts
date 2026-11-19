@@ -86,16 +86,25 @@ export interface WsiTissuePixelHost {
     viewKey(): string;
     /**
      * The slide as drawn now, or null (rotated or flipped, no canvas,
-     * tainted, or its tiles still loading).
+     * tainted, or its tiles still loading). A canvas larger than
+     * `TISSUE_RASTER_CAP` a side is read in a window of that size around
+     * `around` (level-0 image pixels), else around its centre.
      */
-    readScreen(): Promise<WsiTissueRaster | null>;
+    readScreen(around?: {
+        x: number;
+        y: number;
+    }): Promise<WsiTissueRaster | null>;
     /** The pyramid's levels the tile server serves. */
     levels(): WsiTileLevel[];
-    /** One tile's pixels, or null when it could not be fetched. */
+    /**
+     * One tile's pixels, or null when it could not be fetched; rejects with
+     * an `AbortError` when `signal` aborts.
+     */
     fetchTile(
         level: number,
         column: number,
-        row: number
+        row: number,
+        signal?: AbortSignal
     ): Promise<WsiRgbaRaster | null>;
 }
 
@@ -198,6 +207,10 @@ export class WsiTileMosaic {
     fetching = 0;
     /** Whether a requested window was cut at the cap. */
     capped = false;
+    /** Set by `abort`: fetches stop and the window is incomplete. */
+    aborted = false;
+    private readonly abortController =
+        typeof AbortController !== 'undefined' ? new AbortController() : null;
 
     constructor(
         private readonly host: WsiTissuePixelHost,
@@ -353,6 +366,16 @@ export class WsiTileMosaic {
         return true;
     }
 
+    /**
+     * Stops fetching: tiles not yet fetched are not requested, and those in
+     * flight are cancelled. The mosaic is not used again.
+     */
+    abort() {
+        if (this.aborted) return;
+        this.aborted = true;
+        this.abortController?.abort();
+    }
+
     private async fetchMissing() {
         const tasks: Array<() => Promise<void>> = [];
         for (let r = this.r0; r <= this.r1; r++) {
@@ -361,18 +384,21 @@ export class WsiTileMosaic {
                 if (this.tiles.has(key)) continue;
                 tasks.push(async () => {
                     let tile: WsiRgbaRaster | null = null;
-                    try {
-                        tile = await this.host.fetchTile(
-                            this.level.level,
-                            c,
-                            r
-                        );
-                    } catch (_) {
-                        tile = null;
+                    if (!this.aborted) {
+                        try {
+                            tile = await this.host.fetchTile(
+                                this.level.level,
+                                c,
+                                r,
+                                this.abortController?.signal
+                            );
+                        } catch (_) {
+                            tile = null;
+                        }
                     }
-                    this.tiles.set(key, tile);
+                    if (!this.aborted) this.tiles.set(key, tile);
                     this.fetching -= 1;
-                    this.onFetching(this.fetching);
+                    if (!this.aborted) this.onFetching(this.fetching);
                 });
             }
         }
@@ -521,7 +547,7 @@ export function createOsdTissueHost(options: {
                 )
                 .join(',');
         },
-        async readScreen() {
+        async readScreen(around) {
             const viewport = viewer?.viewport;
             const rotation = viewport?.getRotation?.(true) ?? 0;
             if (rotation % 360 !== 0 || viewport?.getFlip?.()) return null;
@@ -542,8 +568,20 @@ export function createOsdTissueHost(options: {
             if (!(scale > 0)) return null;
             const width = Math.min(canvas.width, TISSUE_RASTER_CAP);
             const height = Math.min(canvas.height, TISSUE_RASTER_CAP);
-            const x0 = Math.floor((canvas.width - width) / 2);
-            const y0 = Math.floor((canvas.height - height) / 2);
+            // The window around the point (canvas pixels), kept on the canvas.
+            const centreX = around
+                ? (around.x - origin.x) / scale
+                : canvas.width / 2;
+            const centreY = around
+                ? (around.y - origin.y) / scale
+                : canvas.height / 2;
+            const place = (centre: number, size: number, total: number) =>
+                Math.max(
+                    0,
+                    Math.min(total - size, Math.floor(centre - size / 2))
+                );
+            const x0 = place(centreX, width, canvas.width);
+            const y0 = place(centreY, height, canvas.height);
             let data: Uint8ClampedArray;
             try {
                 const context = canvas.getContext(
@@ -604,14 +642,17 @@ export function createOsdTissueHost(options: {
             }
             return levels;
         },
-        async fetchTile(level, column, row) {
+        async fetchTile(level, column, row, signal) {
             const source = tiledImage()?.source;
             const url = source?.getTileUrl?.(level, column, row);
             if (!url) return null;
             // Fetched as blobs, so the pixels can always be read (no canvas
             // taint), with the session cookie as the viewer's own requests.
             const fetchImpl = options.fetchImpl || fetch;
-            const response = await fetchImpl(url, { credentials: 'include' });
+            const response = await fetchImpl(url, {
+                credentials: 'include',
+                signal,
+            });
             if (!response.ok) return null;
             return decodeTile(await response.blob());
         },

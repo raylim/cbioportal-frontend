@@ -89,6 +89,23 @@ interface RasterContext {
     viewKey: string | null;
 }
 
+/** A smart brush stroke, painted while drawn and finished on its own. */
+interface Stroke {
+    points: WsiPoint[];
+    radius: number;
+    tolerance: number;
+    context: Promise<RasterContext | null>;
+    color: [number, number, number] | null;
+    region: WsiRegion;
+    note: string | null;
+    painting: Promise<void> | null;
+    again: boolean;
+    ending: boolean;
+    covering: Promise<void> | null;
+    /** Discarded (Esc, another slide): nothing more is painted or shown. */
+    dropped: boolean;
+}
+
 interface WandStep {
     kind: StepKind;
     seed: WsiPoint;
@@ -204,25 +221,30 @@ export class WsiTissueSession {
     private steps: WandStep[] = [];
     private cut = false;
     private running = false;
-    private wanted: { step: WandStep; tolerance: number } | null = null;
+    /**
+     * The steps waiting to be computed, each at its latest tolerance, in
+     * the order they were asked for: every click is computed once.
+     */
+    private wanted = new Map<WandStep, number>();
     private generation = 0;
+    /** Tiles being fetched for the current selection or stroke. */
     private fetching = 0;
     private startedAt = 0;
     private ms: number | null = null;
     private lastContext: RasterContext | null = null;
-    private stroke: {
-        points: WsiPoint[];
-        radius: number;
-        tolerance: number;
-        context: Promise<RasterContext | null>;
-        color: [number, number, number] | null;
-        region: WsiRegion;
-        note: string | null;
-        painting: Promise<void> | null;
-        again: boolean;
-        ending: boolean;
-        covering: Promise<void> | null;
-    } | null = null;
+    /**
+     * Rasters in the engine. One is dropped only once no step, stroke or
+     * reuse refers to it (`releaseRasters`).
+     */
+    private contexts = new Set<RasterContext>();
+    /** A grown raster replaces the one it grew from. */
+    private replaced = new Map<RasterContext, RasterContext>();
+    /** Mosaics still fetching for the current selection. */
+    private mosaics = new Set<WsiTileMosaic>();
+    /** The stroke being drawn (strokes being finished are held by their caller). */
+    private stroke: Stroke | null = null;
+    /** Strokes being finished, whose rasters must stay. */
+    private ending = new Set<Stroke>();
     private view: WsiTissueView | null = null;
     private busyCount = 0;
     private idleWaiters: Array<() => void> = [];
@@ -309,10 +331,103 @@ export class WsiTissueSession {
         return last ? last.tolerance : null;
     }
 
-    /** Reads a raster for a click at `seed`, reusing the last when it fits. */
-    private async rasterFor(seed: WsiPoint): Promise<RasterContext | null> {
+    /** The raster that now stands for `context` (it may have grown). */
+    private current(context: RasterContext): RasterContext {
+        let at = context;
+        for (
+            let next = this.replaced.get(at);
+            next;
+            next = this.replaced.get(at)
+        ) {
+            at = next;
+        }
+        return at;
+    }
+
+    /** Records a raster in the engine. */
+    private keepRaster(context: RasterContext): RasterContext {
+        this.contexts.add(context);
+        return context;
+    }
+
+    /**
+     * Drops the engine's rasters that nothing refers to any more: no step
+     * of the selection, no stroke being drawn or finished, and not the one
+     * kept for the next click.
+     */
+    private releaseRasters() {
+        const used = new Set<RasterContext>();
+        const use = (context: RasterContext | null | undefined) => {
+            if (context) used.add(this.current(context));
+        };
+        this.steps.forEach(step => use(step.context));
+        use(this.lastContext);
+        const strokes = [this.stroke, ...Array.from(this.ending)];
+        const pending: Array<Promise<RasterContext | null>> = [];
+        strokes.forEach(stroke => stroke && pending.push(stroke.context));
+        const drop = () => {
+            const engine = this.engine;
+            if (!engine) return;
+            this.contexts.forEach(context => {
+                if (used.has(context)) return;
+                this.contexts.delete(context);
+                engine.drop(context.rasterId);
+            });
+            this.replaced.forEach((to, from) => {
+                if (!this.contexts.has(from) && !this.contexts.has(to)) {
+                    this.replaced.delete(from);
+                }
+            });
+        };
+        if (!pending.length) {
+            drop();
+            return;
+        }
+        // A stroke's raster may still be on its way: wait for it.
+        void Promise.all(pending).then(contexts => {
+            contexts.forEach(use);
+            drop();
+        });
+    }
+
+    /** A tile mosaic whose fetching counts for this selection or stroke only. */
+    private newMosaic(level: ReturnType<typeof pickLevel> & object) {
+        const generation = this.generation;
+        const mosaic = new WsiTileMosaic(this.host, level, this.cap, () => {
+            if (generation !== this.generation || mosaic.aborted) return;
+            let fetching = 0;
+            this.mosaics.forEach(item => (fetching += item.fetching));
+            this.fetching = fetching;
+            this.emit();
+        });
+        this.mosaics.add(mosaic);
+        return mosaic;
+    }
+
+    /** Stops the tile fetches of an earlier selection or stroke. */
+    private abortFetches() {
+        this.mosaics.forEach(mosaic => {
+            if (mosaic.fetching > 0) {
+                mosaic.abort();
+                if (this.lastContext?.mosaic === mosaic) {
+                    this.lastContext = null;
+                }
+            }
+        });
+        this.mosaics.clear();
+        this.fetching = 0;
+    }
+
+    /**
+     * Reads a raster for a click at `seed` and gives it to `step` (at once,
+     * so no release can drop it in between), reusing the last when it fits.
+     */
+    private async rasterFor(
+        seed: WsiPoint,
+        step: WandStep
+    ): Promise<RasterContext | null> {
         const engine = await this.getEngine();
-        const last = this.lastContext;
+        const last = this.lastContext ? this.current(this.lastContext) : null;
         const screen = useScreenPixels(this.host);
         if (screen) {
             const key = this.host.viewKey();
@@ -328,34 +443,39 @@ export class WsiTissueSession {
                 seed.y <
                     last.raster.originY + last.raster.height * last.raster.scale
             ) {
-                return last;
+                return (step.context = last);
             }
-            const raster = await this.host.readScreen();
+            const raster = await this.host.readScreen(seed);
             if (raster) {
                 const { data, ...meta } = raster;
                 const rasterId = await engine.setRaster(
                     raster,
                     blurRadius(raster.scale, this.host.mpp())
                 );
-                return (this.lastContext = {
+                const context = this.keepRaster({
                     raster: meta,
                     rasterId,
                     mosaic: null,
                     viewKey: key,
                 });
+                this.lastContext = context;
+                return (step.context = context);
             }
             // Rotated, flipped or tainted: tiles instead.
         }
-        if (last?.mosaic && last.mosaic.contains(seed.x, seed.y)) return last;
+        if (
+            last?.mosaic &&
+            !last.mosaic.aborted &&
+            last.mosaic.contains(seed.x, seed.y)
+        ) {
+            return (step.context = last);
+        }
         const level = pickLevel(
             this.host.levels(),
             targetDownsample(this.host)
         );
         if (!level) return null;
-        const mosaic = new WsiTileMosaic(this.host, level, this.cap, count => {
-            this.fetching = count;
-            this.emit();
-        });
+        const mosaic = this.newMosaic(level);
         const half = (INITIAL_WINDOW / 2) * level.downsample;
         await mosaic.cover({
             minX: seed.x - half,
@@ -363,7 +483,10 @@ export class WsiTissueSession {
             maxX: seed.x + half,
             maxY: seed.y + half,
         });
-        return (this.lastContext = await this.loadMosaic(mosaic));
+        if (mosaic.aborted) return null;
+        const context = await this.loadMosaic(mosaic);
+        this.lastContext = context;
+        return (step.context = context);
     }
 
     private async loadMosaic(mosaic: WsiTileMosaic): Promise<RasterContext> {
@@ -374,7 +497,12 @@ export class WsiTissueSession {
             raster,
             blurRadius(raster.scale, this.host.mpp())
         );
-        return { raster: meta, rasterId, mosaic, viewKey: null };
+        return this.keepRaster({
+            raster: meta,
+            rasterId,
+            mosaic,
+            viewKey: null,
+        });
     }
 
     /**
@@ -399,10 +527,12 @@ export class WsiTissueSession {
     ): Promise<void> {
         if (kind === 'new' || !this.steps.length) {
             this.generation += 1;
+            this.abortFetches();
             this.steps = [];
-            this.wanted = null;
+            this.wanted.clear();
             this.cut = cut;
             kind = 'new';
+            this.releaseRasters();
         }
         const step: WandStep = {
             kind,
@@ -426,24 +556,25 @@ export class WsiTissueSession {
             region: combineSteps(this.steps),
         });
         const generation = this.generation;
-        const context = await this.rasterFor(seed);
+        const context = await this.rasterFor(seed, step);
         if (generation !== this.generation || !this.steps.includes(step)) {
             return;
         }
         if (!context) {
-            this.steps.pop();
+            this.steps.splice(this.steps.indexOf(step), 1);
             this.emit({
-                busy: false,
+                busy: this.wanted.size > 0,
+                steps: this.steps.length,
+                region: combineSteps(this.steps),
                 note: 'No slide pixels to select from here.',
             });
             return;
         }
-        step.context = context;
         this.emit({
             source: context.raster.source,
             scale: context.raster.scale,
         });
-        await this.compute(step, this.wanted?.tolerance ?? step.tolerance);
+        await this.compute(step, step.tolerance);
     }
 
     /** Changes the last step's tolerance; the outline follows. */
@@ -457,24 +588,40 @@ export class WsiTissueSession {
         void this.track(this.compute(step, value));
     }
 
-    /** Runs the wand for `step` at `tolerance`; the latest request wins. */
+    /**
+     * Runs the wand for `step` at `tolerance`. Steps are computed one at a
+     * time in the order asked, each once at its latest tolerance.
+     */
     private async compute(step: WandStep, tolerance: number): Promise<void> {
-        this.wanted = { step, tolerance };
+        // Re-inserted, so a step asked again goes after the others waiting.
+        this.wanted.delete(step);
+        this.wanted.set(step, tolerance);
         if (this.running) return;
         this.running = true;
+        let generation = this.generation;
         try {
-            while (this.wanted) {
-                const { step: target, tolerance: value } = this.wanted;
-                this.wanted = null;
+            while (this.wanted.size) {
+                generation = this.generation;
+                const [target, value] = this.wanted.entries().next().value as [
+                    WandStep,
+                    number
+                ];
+                this.wanted.delete(target);
                 if (!this.steps.includes(target) || !target.context) continue;
                 this.emit({ busy: true });
                 await this.runStep(target, value);
-                if (!this.steps.includes(target)) continue;
+                if (
+                    generation !== this.generation ||
+                    !this.steps.includes(target)
+                ) {
+                    continue;
+                }
                 this.markOutlined(target);
+                const last = this.steps[this.steps.length - 1];
                 this.emit({
-                    busy: !!this.wanted,
+                    busy: this.wanted.size > 0,
                     region: combineSteps(this.steps),
-                    tolerance: value,
+                    tolerance: last.tolerance,
                     note: target.note,
                     ms: this.ms,
                     source: target.context!.raster.source,
@@ -482,13 +629,23 @@ export class WsiTissueSession {
                 });
             }
         } catch (error) {
-            this.emit({
-                busy: false,
-                note: `The selection failed: ${(error as Error)?.message ||
-                    error}`,
-            });
+            if (generation === this.generation) {
+                this.emit({
+                    busy: false,
+                    note: `The selection failed: ${(error as Error)?.message ||
+                        error}`,
+                });
+            }
         } finally {
             this.running = false;
+            // A new selection started while this one ran: compute it now.
+            if (this.wanted.size) {
+                const [next, value] = this.wanted.entries().next().value as [
+                    WandStep,
+                    number
+                ];
+                void this.track(this.compute(next, value));
+            }
         }
     }
 
@@ -496,7 +653,8 @@ export class WsiTissueSession {
         const engine = await this.getEngine();
         const mpp = this.host.mpp();
         for (;;) {
-            const context = step.context!;
+            const context = this.current(step.context!);
+            step.context = context;
             const { raster } = context;
             const result = await engine.run({
                 type: 'wand',
@@ -507,6 +665,7 @@ export class WsiTissueSession {
                 options: outlineOptions(raster.scale, mpp),
                 color: step.color,
             });
+            if (!this.steps.includes(step)) return;
             step.color = result.color;
             const growable = {
                 left: result.touches.left && raster.edges.left === 'more',
@@ -527,13 +686,20 @@ export class WsiTissueSession {
                 this.markOutlined(step);
                 this.emit({ region: combineSteps(this.steps), ms: this.ms });
                 // A newer tolerance or click: stop growing for this one.
-                if (this.wanted || !this.steps.includes(step)) return;
+                if (this.wanted.size || !this.steps.includes(step)) return;
                 if (await context.mosaic.grow(growable)) {
-                    if (!this.steps.includes(step)) return;
+                    if (!this.steps.includes(step) || context.mosaic.aborted) {
+                        return;
+                    }
                     const grown = await this.loadMosaic(context.mosaic);
-                    engine.drop(context.rasterId);
-                    step.context = grown;
+                    // Every step on the old raster moves to the grown one
+                    // (same tiles and more), and the old one goes.
+                    this.replaced.set(context, grown);
+                    this.steps.forEach(other => {
+                        if (other.context === context) other.context = grown;
+                    });
                     if (this.lastContext === context) this.lastContext = grown;
+                    this.releaseRasters();
                     continue;
                 }
             }
@@ -567,8 +733,8 @@ export class WsiTissueSession {
     /** Takes back the last click; false when none is left. */
     undoStep(): boolean {
         if (!this.steps.length) return false;
-        this.steps.pop();
-        this.wanted = null;
+        const removed = this.steps.pop()!;
+        this.wanted.delete(removed);
         if (!this.steps.length) {
             this.discard();
             return false;
@@ -580,31 +746,63 @@ export class WsiTissueSession {
             tolerance: last.tolerance,
             note: last.note,
             seed: last.seed,
-            busy: false,
+            busy: this.wanted.size > 0,
         });
+        this.releaseRasters();
         return true;
     }
 
-    /** Drops the selection or stroke. */
+    /**
+     * Drops the selection or the stroke being drawn; nothing the dropped
+     * work still finishes shows. A stroke already ending is finished.
+     */
     discard() {
         this.generation += 1;
+        this.abortFetches();
         this.steps = [];
-        this.wanted = null;
+        this.wanted.clear();
         this.cut = false;
+        if (this.stroke && !this.stroke.ending) this.stroke.dropped = true;
         this.stroke = null;
+        this.view = null;
+        this.onChange(null);
+        this.releaseRasters();
+    }
+
+    /** Drops one stroke (a split takes its path, not its paint). */
+    cancelStroke(handle: object) {
+        const stroke = handle as Stroke;
+        stroke.dropped = true;
+        if (this.stroke === stroke) {
+            this.stroke = null;
+            this.view = null;
+            this.onChange(null);
+        }
+        this.releaseRasters();
+    }
+
+    /** Hides the outline unless a stroke is being drawn. */
+    clearUnlessDrawing() {
+        if (this.stroke || this.steps.length) return;
         this.view = null;
         this.onChange(null);
     }
 
     // The smart brush.
 
-    /** Starts a stroke at `start`, `radius` image pixels wide each side. */
-    strokeStart(start: WsiPoint, radius: number, tolerance: number) {
+    /**
+     * Starts a stroke at `start`, `radius` image pixels wide each side, and
+     * returns it: `strokeAdd` and `strokeEnd` take it, so a stroke finishes
+     * on its own while the next one is drawn.
+     */
+    strokeStart(start: WsiPoint, radius: number, tolerance: number): object {
+        if (this.stroke && !this.stroke.ending) this.stroke.dropped = true;
         this.generation += 1;
         this.startedAt = now();
         this.ms = null;
+        this.view = null;
         const context = this.strokeContext(start, radius);
-        this.stroke = {
+        const stroke: Stroke = {
             points: [start],
             radius,
             tolerance: clampTolerance(tolerance),
@@ -616,7 +814,9 @@ export class WsiTissueSession {
             again: false,
             ending: false,
             covering: null,
+            dropped: false,
         };
+        this.stroke = stroke;
         this.emit({
             busy: true,
             region: [],
@@ -625,7 +825,8 @@ export class WsiTissueSession {
             note: null,
             steps: 0,
         });
-        void context.then(() => this.schedulePaint());
+        void context.then(() => this.schedulePaint(stroke));
+        return stroke;
     }
 
     private async strokeContext(
@@ -633,7 +834,7 @@ export class WsiTissueSession {
         radius: number
     ): Promise<RasterContext | null> {
         if (useScreenPixels(this.host)) {
-            const raster = await this.host.readScreen();
+            const raster = await this.host.readScreen(start);
             if (raster) {
                 const engine = await this.getEngine();
                 const { data, ...meta } = raster;
@@ -641,7 +842,12 @@ export class WsiTissueSession {
                     raster,
                     blurRadius(raster.scale, this.host.mpp())
                 );
-                return { raster: meta, rasterId, mosaic: null, viewKey: null };
+                return this.keepRaster({
+                    raster: meta,
+                    rasterId,
+                    mosaic: null,
+                    viewKey: null,
+                });
             }
         }
         const level = pickLevel(
@@ -649,10 +855,7 @@ export class WsiTissueSession {
             targetDownsample(this.host)
         );
         if (!level) return null;
-        const mosaic = new WsiTileMosaic(this.host, level, this.cap, count => {
-            this.fetching = count;
-            this.emit();
-        });
+        const mosaic = this.newMosaic(level);
         await mosaic.cover({
             minX: start.x - radius,
             minY: start.y - radius,
@@ -662,20 +865,18 @@ export class WsiTissueSession {
         return this.loadMosaic(mosaic);
     }
 
-    /** Adds a point to the stroke. */
-    strokeAdd(point: WsiPoint) {
-        const stroke = this.stroke;
-        if (!stroke) return;
+    /** Adds a point to the stroke (the one being drawn by default). */
+    strokeAdd(point: WsiPoint, handle?: object) {
+        const stroke = (handle as Stroke | undefined) || this.stroke;
+        if (!stroke || stroke.dropped || stroke.ending) return;
         stroke.points.push(point);
-        this.schedulePaint();
+        this.schedulePaint(stroke);
     }
 
     /** Covers the stroke with tiles (tiles source); restitches when grown. */
-    private async coverStroke(): Promise<void> {
-        const stroke = this.stroke;
-        if (!stroke) return;
+    private async coverStroke(stroke: Stroke): Promise<void> {
         const context = await stroke.context;
-        if (!context?.mosaic || this.stroke !== stroke) return;
+        if (!context?.mosaic || stroke.dropped) return;
         let minX = Infinity;
         let minY = Infinity;
         let maxX = -Infinity;
@@ -693,40 +894,43 @@ export class WsiTissueSession {
             maxX: maxX + r,
             maxY: maxY + r,
         });
-        if (!grew || this.stroke !== stroke) return;
+        if (!grew || stroke.dropped || context.mosaic.aborted) return;
         const grown = await this.loadMosaic(context.mosaic);
-        (await this.getEngine()).drop(context.rasterId);
         stroke.context = Promise.resolve(grown);
+        this.replaced.set(context, grown);
+        this.releaseRasters();
     }
 
-    private schedulePaint() {
-        const stroke = this.stroke;
-        if (!stroke || stroke.ending) return;
+    private schedulePaint(stroke: Stroke) {
+        if (stroke.dropped || stroke.ending) return;
         if (stroke.painting) {
             stroke.again = true;
             return;
         }
         stroke.painting = this.paint(stroke).finally(() => {
             stroke.painting = null;
-            if (stroke.again && !stroke.ending && this.stroke === stroke) {
+            if (stroke.again && !stroke.ending && !stroke.dropped) {
                 stroke.again = false;
-                this.schedulePaint();
+                this.schedulePaint(stroke);
             }
         });
     }
 
-    private async paint(stroke: NonNullable<WsiTissueSession['stroke']>) {
+    private async paint(stroke: Stroke) {
         if (!stroke.covering) {
-            stroke.covering = this.coverStroke().finally(() => {
+            stroke.covering = this.coverStroke(stroke).finally(() => {
                 stroke.covering = null;
             });
         }
         await stroke.covering;
         const context = await stroke.context;
-        if (this.stroke !== stroke) return;
+        if (stroke.dropped) return;
+        // Only the stroke being drawn shows; one being finished does not
+        // replace a newer stroke's outline.
+        const shown = () => this.stroke === stroke;
         if (!context) {
             stroke.note = 'No slide pixels to paint here.';
-            this.emit({ busy: false, note: stroke.note });
+            if (shown()) this.emit({ busy: false, note: stroke.note });
             return;
         }
         const { raster } = context;
@@ -745,7 +949,7 @@ export class WsiTissueSession {
             options: outlineOptions(raster.scale, this.host.mpp()),
             color: stroke.color,
         });
-        if (this.stroke !== stroke) return;
+        if (stroke.dropped) return;
         stroke.color = result.color;
         stroke.region = toImageRegion(result.polygons, raster);
         const outside = path.some(
@@ -760,6 +964,7 @@ export class WsiTissueSession {
                 ? 'Only the part of the stroke in view was painted.'
                 : `Only the part of the stroke within the ${this.cap}-pixel limit was painted.`
             : null;
+        if (!shown()) return;
         if (this.ms === null && stroke.region.length) {
             this.ms = now() - this.startedAt;
         }
@@ -777,28 +982,31 @@ export class WsiTissueSession {
      * Ends the stroke: waits for its tiles and its last paint, and returns
      * the painted region (empty when nothing similar was under it).
      */
-    async strokeEnd(): Promise<{ region: WsiRegion; note: string | null }> {
-        const stroke = this.stroke;
-        if (!stroke) return { region: [], note: null };
+    async strokeEnd(
+        handle?: object
+    ): Promise<{ region: WsiRegion; note: string | null }> {
+        const stroke = (handle as Stroke | undefined) || this.stroke;
+        if (!stroke || stroke.dropped) return { region: [], note: null };
         stroke.ending = true;
         stroke.again = false;
-        while (stroke.painting) await stroke.painting;
-        // One final paint with every point.
-        await this.paint(stroke);
-        const outcome = { region: stroke.region, note: stroke.note };
-        if (this.stroke === stroke) this.stroke = null;
-        return outcome;
+        this.ending.add(stroke);
+        try {
+            while (stroke.painting) await stroke.painting;
+            // One final paint with every point.
+            await this.paint(stroke);
+            return { region: stroke.region, note: stroke.note };
+        } finally {
+            this.ending.delete(stroke);
+            if (this.stroke === stroke) this.stroke = null;
+            this.releaseRasters();
+        }
     }
 
     /** Ends the session; the shared engine stays for the next one. */
     dispose() {
         this.discard();
-        const context = this.lastContext;
         this.lastContext = null;
-        if (context) {
-            void this.enginePromise?.then(engine =>
-                engine.drop(context.rasterId)
-            );
-        }
+        this.ending.clear();
+        this.releaseRasters();
     }
 }

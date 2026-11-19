@@ -111,6 +111,23 @@ describe('PatientWsiSlidesTab', () => {
         );
         const props = mockEntryPoint.mock.calls[0][0] as any;
         expect(props.requestedAnnotationId).toBe('a-7');
+        // Opened on the hash's slide only, and dropped from the address
+        // once used (the hash and the rest of the node stay).
+        expect(props.requestedAnnotationSlideKey).toBe('0123456789ab');
+        window.history.replaceState(
+            null,
+            '',
+            `/patient/wsiHESlides?studyId=study&pathologySlideSettings=${encodeURIComponent(
+                JSON.stringify({ annotationId: 'a-7', stainFilter: 'ihc' })
+            )}#wsi:slide=0123456789ab`
+        );
+        props.onRequestedAnnotationUsed();
+        const address = new URL(window.location.href);
+        expect(
+            JSON.parse(address.searchParams.get('pathologySlideSettings')!)
+        ).toEqual({ stainFilter: 'ihc' });
+        expect(address.searchParams.get('studyId')).toBe('study');
+        expect(address.hash).toBe('#wsi:slide=0123456789ab');
         const link = new URL(
             props.annotationLink({
                 slideKey: '0123456789ab',

@@ -196,9 +196,14 @@ export class WsiSlideNotes {
      * without the route turns notes off; a version conflict or a missing
      * note reloads them.
      */
-    private async refused(response: Response): Promise<boolean> {
+    private async refused(
+        response: Response,
+        context: ReturnType<WsiSlideNotesHost['requestContext']>
+    ): Promise<boolean> {
         if (response.ok) return false;
         const detail = await jsonDetail(response);
+        // Another slide opened meanwhile: the refusal is not about its notes.
+        if (!this.host.isCurrentContext(context)) return true;
         if (
             response.status === 405 ||
             (response.status === 404 && detail === 'Not Found')
@@ -212,6 +217,7 @@ export class WsiSlideNotes {
         }
         if (response.status === 409 || response.status === 404) {
             await this.load();
+            if (!this.host.isCurrentContext(context)) return true;
             action(() => {
                 this.error =
                     response.status === 409
@@ -275,7 +281,7 @@ export class WsiSlideNotes {
                 context.signal
             );
             if (!this.host.isCurrentContext(context)) return;
-            if (await this.refused(response)) return;
+            if (await this.refused(response, context)) return;
             const raw = await response.json();
             if (!this.host.isCurrentContext(context)) return;
             action(() => {
@@ -319,9 +325,12 @@ export class WsiSlideNotes {
                 context.signal
             );
             if (!this.host.isCurrentContext(context)) return undefined;
-            if (await this.refused(response)) return undefined;
+            if (await this.refused(response, context)) return undefined;
             const value =
                 response.status === 204 ? null : await response.json();
+            // The answer came for a slide that is no longer open: it must
+            // not land in the open slide's notes.
+            if (!this.host.isCurrentContext(context)) return undefined;
             action(() => {
                 this.busy = false;
             })();

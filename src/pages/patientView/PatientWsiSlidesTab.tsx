@@ -83,12 +83,45 @@ export function wsiSlidesTabAnnotationLink(
     );
 }
 
+/**
+ * Drops `annotationId` from the `pathologySlideSettings` node of the
+ * address once the viewer used it, so a reload or a copied address does
+ * not open the annotation again (the `#wsi:` hash is kept).
+ */
+export function dropSlidesTabAnnotationId() {
+    if (typeof window === 'undefined') return;
+    const url = new URL(window.location.href);
+    const raw = url.searchParams.get('pathologySlideSettings');
+    if (!raw) return;
+    let settings: Record<string, unknown>;
+    try {
+        settings = JSON.parse(raw);
+    } catch (_) {
+        return;
+    }
+    if (!settings || typeof settings !== 'object' || !settings.annotationId) {
+        return;
+    }
+    delete settings.annotationId;
+    if (Object.keys(settings).length) {
+        url.searchParams.set(
+            'pathologySlideSettings',
+            JSON.stringify(settings)
+        );
+    } else {
+        url.searchParams.delete('pathologySlideSettings');
+    }
+    window.history.replaceState(window.history.state, '', url.toString());
+}
+
 type Props = Omit<
     AppWsiViewerProps,
     | keyof WsiSlidesTabScope
     | 'hostOwnsSampleScope'
     | 'userName'
     | 'requestedAnnotationId'
+    | 'requestedAnnotationSlideKey'
+    | 'onRequestedAnnotationUsed'
     | 'annotationLink'
 > & {
     query: WsiSlidesTabQuery;
@@ -164,6 +197,14 @@ export default function PatientWsiSlidesTab({ query, ...viewerProps }: Props) {
             clearWsiHashFromCurrentUrl();
         }
     }, [linkKey, staleHash]);
+    // A link's annotation is on the slide its `#wsi:slide=` hash names.
+    const annotationSlideKey = React.useMemo(
+        () =>
+            query.annotationId
+                ? readWsiHashState()?.slideId || undefined
+                : undefined,
+        [query.annotationId]
+    );
     // The page's sample filter shows and widens the sample scope, so the
     // slide list neither repeats it as a chip nor widens past it.
     return (
@@ -172,6 +213,8 @@ export default function PatientWsiSlidesTab({ query, ...viewerProps }: Props) {
             {...scope}
             hostOwnsSampleScope
             requestedAnnotationId={query.annotationId || undefined}
+            requestedAnnotationSlideKey={annotationSlideKey}
+            onRequestedAnnotationUsed={dropSlidesTabAnnotationId}
             annotationLink={annotationLink}
         />
     );

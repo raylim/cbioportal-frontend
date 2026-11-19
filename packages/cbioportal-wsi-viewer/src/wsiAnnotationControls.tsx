@@ -794,7 +794,9 @@ const AnnotationList = observer(
             } else {
                 const row = rowElement(element, listed[index].id);
                 if (!row) return;
-                top = row.offsetTop - element.offsetTop;
+                // The list is position: relative, so it is the rows'
+                // offsetParent and offsetTop is the row's place in it.
+                top = row.offsetTop;
                 height = row.offsetHeight;
             }
             const view = element.clientHeight || ANNOTATION_LIST_HEIGHT;

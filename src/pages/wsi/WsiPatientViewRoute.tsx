@@ -26,6 +26,18 @@ export function wsiRouteAnnotationLink(
 }
 
 /**
+ * Drops `annotationId` from the address bar once the viewer used it, so a
+ * reload or a copied address does not open the annotation again.
+ */
+export function dropRouteAnnotationId() {
+    if (typeof window === 'undefined') return;
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has('annotationId')) return;
+    url.searchParams.delete('annotationId');
+    window.history.replaceState(window.history.state, '', url.toString());
+}
+
+/**
  * The signed-in portal user (`AppStore.userName`, the principal the study
  * access check forwards as `X-Auth-Request-User`), when the app has one.
  */
@@ -89,6 +101,8 @@ export default function WsiPatientViewRoute({ match, location }: Props) {
             height={height}
             requestedSlideKey={requestedSlideKey}
             requestedAnnotationId={requestedAnnotationId}
+            requestedAnnotationSlideKey={requestedSlideKey}
+            onRequestedAnnotationUsed={dropRouteAnnotationId}
             annotationLink={annotationLink}
             userName={portalUserName()}
         />
