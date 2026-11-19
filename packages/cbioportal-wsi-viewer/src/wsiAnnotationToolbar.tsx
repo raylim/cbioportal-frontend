@@ -18,7 +18,17 @@ import {
     SoloIcon,
 } from './wsiAnnotationControls';
 import { WsiAnnotationBulkBar } from './wsiAnnotationBulkBar';
-import { HPF_HELP_TEXT, useHpfHelpId, WsiHpfInfo } from './wsiHpfHelp';
+import {
+    HPF_HELP_TEXT,
+    useHelpId,
+    useHpfHelpId,
+    WsiHpfInfo,
+    WsiInfo,
+} from './wsiHpfHelp';
+
+/** What the magic wand's and smart brush's tolerance means. */
+export const TISSUE_TOLERANCE_HELP =
+    'How far a color may be from the clicked color and still be selected (a Lab color distance; lightness counts half). Drag up or down on the slide, or scroll, while an outline waits.';
 import {
     focusables,
     Menu,
@@ -780,23 +790,100 @@ const ToolOptions = observer(
                 {brush && <BrushWidthControl controller={controller} />}
                 {tissue && <TissueToleranceControl controller={controller} />}
                 {tool === 'hpf' && <HpfAreaControl controller={controller} />}
-                {tool === 'point' && (
-                    <span
-                        role="status"
-                        data-testid="annotation-point-count"
-                        aria-live="polite"
-                        style={{
-                            fontWeight: 600,
-                            whiteSpace: 'nowrap',
-                            padding: '0 2px',
-                            fontVariantNumeric: 'tabular-nums',
-                        }}
-                    >
-                        {controller.activePointLabel}:{' '}
-                        {controller.activePointCount}
-                    </span>
-                )}
+                {tool === 'point' && <PointCount controller={controller} />}
             </div>
+        );
+    }
+);
+
+/** Live regions announce a count at most this often while it changes. */
+export const LIVE_COUNT_THROTTLE_MS = 1500;
+
+/** Hidden from sight, read by screen readers. */
+const visuallyHidden: React.CSSProperties = {
+    position: 'absolute',
+    width: 1,
+    height: 1,
+    margin: -1,
+    padding: 0,
+    overflow: 'hidden',
+    clip: 'rect(0 0 0 0)',
+    whiteSpace: 'nowrap',
+    border: 0,
+};
+
+/**
+ * `value`, changed at most once per `ms` while it keeps changing (the last
+ * value always arrives); a change for which `immediate` holds applies at
+ * once. Live regions use it so that counting points, a click a second, is
+ * announced as it settles rather than at every click.
+ */
+export function useThrottled<T>(
+    value: T,
+    ms: number,
+    immediate: (previous: T, next: T) => boolean = () => false
+): T {
+    const [shown, setShown] = React.useState(value);
+    const last = React.useRef(Date.now());
+    const timer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+    React.useEffect(() => {
+        if (Object.is(value, shown)) return;
+        const now = Date.now();
+        const wait = last.current + ms - now;
+        if (wait <= 0 || immediate(shown, value)) {
+            if (timer.current) clearTimeout(timer.current);
+            timer.current = null;
+            last.current = now;
+            setShown(value);
+            return;
+        }
+        if (timer.current) clearTimeout(timer.current);
+        timer.current = setTimeout(() => {
+            timer.current = null;
+            last.current = Date.now();
+            setShown(value);
+        }, wait);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [value, shown]);
+    React.useEffect(
+        () => () => {
+            if (timer.current) clearTimeout(timer.current);
+        },
+        []
+    );
+    return shown;
+}
+
+/**
+ * The Point tool's count: shown at once, announced (a hidden live region)
+ * at most every `LIVE_COUNT_THROTTLE_MS`, so counting a click a second does
+ * not read out every number.
+ */
+const PointCount = observer(
+    ({ controller }: { controller: WsiAnnotationController }) => {
+        const text = `${controller.activePointLabel}: ${controller.activePointCount}`;
+        const announced = useThrottled(text, LIVE_COUNT_THROTTLE_MS);
+        return (
+            <span
+                style={{
+                    fontWeight: 600,
+                    whiteSpace: 'nowrap',
+                    padding: '0 2px',
+                    fontVariantNumeric: 'tabular-nums',
+                    position: 'relative',
+                }}
+            >
+                <span aria-hidden="true" data-testid="annotation-point-count">
+                    {text}
+                </span>
+                <span
+                    role="status"
+                    data-testid="annotation-point-count-status"
+                    style={visuallyHidden}
+                >
+                    {announced}
+                </span>
+            </span>
         );
     }
 );
@@ -809,6 +896,7 @@ export const TissueToleranceControl = observer(
     ({ controller }: { controller: WsiAnnotationController }) => {
         const view = controller.tissueView;
         const value = controller.tissueTolerance;
+        const helpId = useHelpId();
         return (
             <span style={groupStyle}>
                 <label
@@ -818,7 +906,6 @@ export const TissueToleranceControl = observer(
                         gap: 4,
                         fontSize: 11,
                     }}
-                    title="How far a color may be from the clicked color and still be selected (Lab color distance; lightness counts half). Drag up or down on the slide, or scroll, while an outline waits."
                 >
                     Tolerance
                     <input
@@ -826,6 +913,7 @@ export const TissueToleranceControl = observer(
                         data-toolbar-item
                         data-testid="annotation-tissue-tolerance"
                         aria-label="Tolerance"
+                        aria-describedby={helpId}
                         aria-valuetext={String(value)}
                         min={MIN_TISSUE_TOLERANCE}
                         max={MAX_TISSUE_TOLERANCE}
@@ -849,6 +937,13 @@ export const TissueToleranceControl = observer(
                         {value}
                     </span>
                 </label>
+                <WsiInfo
+                    testId="annotation-tissue-tolerance"
+                    describedById={helpId}
+                    label="About the tolerance"
+                    text={TISSUE_TOLERANCE_HELP}
+                    style={{ fontSize: 12 }}
+                />
                 {view?.fetching ? (
                     <span
                         role="status"
@@ -1941,6 +2036,15 @@ export const SaveStatus = observer(
             : status.state === 'unsaved'
             ? `${status.count} not saved`
             : 'Saved';
+        // Shown at once; announced (a hidden live region, always on the
+        // page) as a changing count ("Saving… 3", "Saving… 4") settles while
+        // points are dropped, and at once on a change of state.
+        const announced = useThrottled(
+            text,
+            LIVE_COUNT_THROTTLE_MS,
+            (previous, next) =>
+                previous.replace(/[\d,]+/g, '') !== next.replace(/[\d,]+/g, '')
+        );
         const title =
             status.state === 'saving'
                 ? `${status.count} change${
@@ -1958,7 +2062,13 @@ export const SaveStatus = observer(
             >
                 <span
                     role="status"
-                    aria-live="polite"
+                    data-testid="annotation-save-status-live"
+                    style={visuallyHidden}
+                >
+                    {announced}
+                </span>
+                <span
+                    aria-hidden="true"
                     data-testid="annotation-save-status"
                     data-state={show ? status.state : 'idle'}
                     title={show ? title : undefined}
@@ -2028,6 +2138,55 @@ function annotateUnavailable(controller: WsiAnnotationController) {
 }
 
 /**
+ * The toolbar's controls in order, for the roving tab stop: those that can
+ * take the focus (a disabled-looking control with `aria-disabled` can).
+ */
+function toolbarItems(root: HTMLElement | null): HTMLElement[] {
+    return root
+        ? Array.from(
+              root.querySelectorAll<HTMLElement>('[data-toolbar-item]')
+          ).filter(element => !(element as HTMLButtonElement).disabled)
+        : [];
+}
+
+/**
+ * A roving tab stop: of the toolbar's controls only one is in the Tab
+ * order (the last focused, else the first), so Tab enters and leaves the
+ * toolbar in one step and the arrow keys move within it.
+ */
+function useRovingTabStop(root: React.RefObject<HTMLElement>) {
+    const current = React.useRef<HTMLElement | null>(null);
+    const apply = React.useCallback(() => {
+        const items = toolbarItems(root.current);
+        const stop =
+            current.current && items.includes(current.current)
+                ? current.current
+                : items[0];
+        // Disabled ones too, so one that is enabled later is not a stop.
+        root.current
+            ?.querySelectorAll<HTMLElement>('[data-toolbar-item]')
+            .forEach(item => {
+                const index = item === stop ? 0 : -1;
+                if (item.tabIndex !== index) item.tabIndex = index;
+            });
+    }, [root]);
+    // After every render: controls come and go as tools change.
+    React.useLayoutEffect(apply);
+    const onFocus = React.useCallback(
+        (event: React.FocusEvent) => {
+            const target = (event.target as HTMLElement).closest?.(
+                '[data-toolbar-item]'
+            ) as HTMLElement | null;
+            if (!target || !root.current?.contains(target)) return;
+            current.current = target;
+            apply();
+        },
+        [apply, root]
+    );
+    return onFocus;
+}
+
+/**
  * Moves focus between the toolbar's controls with the arrow keys, Home and
  * End; fields keep their own arrow keys.
  */
@@ -2042,7 +2201,7 @@ function onToolbarKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
     ) {
         return;
     }
-    const items = focusables(event.currentTarget, '[data-toolbar-item]');
+    const items = toolbarItems(event.currentTarget);
     const index = items.indexOf(target);
     if (index < 0) return;
     const next =
@@ -2068,16 +2227,20 @@ function onToolbarKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
 export const WsiAnnotationToolbar = observer(
     ({ controller }: { controller: WsiAnnotationController }) => {
         const fileInput = React.useRef<HTMLInputElement>(null);
+        const bar = React.useRef<HTMLDivElement>(null);
+        const onFocus = useRovingTabStop(bar);
         if (!controller || !controller.visible) return null;
         const unavailable = annotateUnavailable(controller);
         const on = controller.annotating && !unavailable;
         const tool = controller.activeTool;
         return (
             <div
+                ref={bar}
                 role="toolbar"
                 aria-label="Annotation tools"
                 data-testid="wsi-annotation-toolbar"
                 onKeyDown={onToolbarKeyDown}
+                onFocus={onFocus}
                 style={barStyle}
             >
                 <span style={groupStyle}>

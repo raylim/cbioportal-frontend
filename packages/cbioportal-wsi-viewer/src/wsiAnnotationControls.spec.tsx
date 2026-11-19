@@ -80,6 +80,12 @@ describe('WsiAnnotationPanel', () => {
         expect(screen.getByTestId('annotation-ai-badge-ai-1').textContent).toBe(
             'AI · unreviewed'
         );
+        // A badge is an image with its description as its name.
+        const badge = screen.getByTestId('annotation-ai-badge-ai-1');
+        expect(badge.getAttribute('role')).toBe('img');
+        expect(badge.getAttribute('aria-label')).toMatch(
+            /^AI · unreviewed: .*not reviewed yet$/
+        );
         expect(screen.getByTestId('annotation-ai-badge-ai-2').textContent).toBe(
             'AI · accepted'
         );

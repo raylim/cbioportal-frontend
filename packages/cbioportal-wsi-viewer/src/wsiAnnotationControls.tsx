@@ -371,7 +371,7 @@ export const WsiAnnotationLayersPanel = observer(
                                     minWidth: 14,
                                     textAlign: 'right',
                                     color: colors.muted,
-                                    fontSize: 10,
+                                    fontSize: 11,
                                 }}
                             >
                                 {count}
@@ -550,7 +550,7 @@ const MeasurementScaleNote = observer(
                 data-testid="annotation-measurement-scale-note"
                 style={{
                     color: colors.muted,
-                    fontSize: 10,
+                    fontSize: 11,
                     marginBottom: 4,
                 }}
             >
@@ -982,6 +982,11 @@ const AnnotationRow = observer(
             annotation.body?.[0]?.value || ''
         );
         const rawLabel = annotation.body?.[0]?.value || '';
+        const rejectHelpId = `annotation-reject-help-${annotation.id}`;
+        const rejectHelp =
+            controller.reviewRoute === false
+                ? 'Reject: deletes the annotation (asks first)'
+                : 'Reject: hides the annotation for everyone; the service keeps it as a review record (asks first)';
         const layer = annotation.layerName || DEFAULT_LAYER;
         const dotColor = annotation.color || DEFAULT_COLOR;
         const creator = annotation.creator || '';
@@ -1140,7 +1145,7 @@ const AnnotationRow = observer(
                                             borderRadius: 2,
                                             border: '1px solid #a00',
                                             color: '#a00',
-                                            fontSize: 9,
+                                            fontSize: 11,
                                             lineHeight: '12px',
                                         }}
                                     >
@@ -1171,7 +1176,7 @@ const AnnotationRow = observer(
                                     data-testid={`annotation-measurement-${annotation.id}`}
                                     style={{
                                         color: colors.text,
-                                        fontSize: 10,
+                                        fontSize: 11,
                                         marginTop: 1,
                                     }}
                                 >
@@ -1183,7 +1188,7 @@ const AnnotationRow = observer(
                                     data-testid={`annotation-points-inside-${annotation.id}`}
                                     style={{
                                         color: colors.text,
-                                        fontSize: 10,
+                                        fontSize: 11,
                                     }}
                                 >
                                     Points inside: {formatRegionCount(inside)}
@@ -1242,11 +1247,8 @@ const AnnotationRow = observer(
                                     <button
                                         data-testid={`reject-annotation-${annotation.id}`}
                                         aria-label={`Reject AI annotation ${rawLabel}`}
-                                        title={
-                                            controller.reviewRoute === false
-                                                ? 'Reject: deletes the annotation'
-                                                : 'Reject: hides the annotation for everyone; the service keeps it as a review record'
-                                        }
+                                        aria-describedby={rejectHelpId}
+                                        title={rejectHelp}
                                         onClick={() => {
                                             if (
                                                 !window.confirm(
@@ -1270,6 +1272,9 @@ const AnnotationRow = observer(
                                     >
                                         ✕ Reject
                                     </button>
+                                    <span id={rejectHelpId} hidden>
+                                        {rejectHelp}
+                                    </span>
                                 </div>
                             )}
                             <AnnotationHistory
@@ -1471,7 +1476,7 @@ const AnnotationListFilters = observer(
                             border: 'none',
                             background: 'transparent',
                             color: colors.blue,
-                            fontSize: 10,
+                            fontSize: 11,
                             cursor: 'pointer',
                             padding: 0,
                         }}
@@ -1510,7 +1515,7 @@ const AnnotationCounts = observer(
                     flexWrap: 'wrap',
                     alignItems: 'center',
                     gap: 3,
-                    fontSize: 10,
+                    fontSize: 11,
                     color: colors.muted,
                     marginBottom: 3,
                 }}
@@ -1523,7 +1528,7 @@ const AnnotationCounts = observer(
             border: 'none',
             background: 'transparent',
             color: colors.blue,
-            fontSize: 10,
+            fontSize: 11,
             cursor: 'pointer',
             padding: '0 2px',
         };
@@ -1601,7 +1606,7 @@ const AnnotationCounts = observer(
 
 function transferButtonStyle(primary = false): React.CSSProperties {
     return {
-        fontSize: 10,
+        fontSize: 11,
         padding: '1px 6px',
         borderRadius: 3,
         border: `1px solid ${primary ? colors.blue : colors.border}`,
@@ -1835,14 +1840,14 @@ const PointTally = observer(
                 <caption
                     style={{
                         textAlign: 'left',
-                        fontSize: 10,
+                        fontSize: 11,
                         color: colors.muted,
                     }}
                 >
                     Point counts
                 </caption>
                 <thead>
-                    <tr style={{ color: colors.muted, fontSize: 10 }}>
+                    <tr style={{ color: colors.muted, fontSize: 11 }}>
                         <th style={{ textAlign: 'left', fontWeight: 400 }}>
                             Label
                         </th>
@@ -1897,7 +1902,7 @@ const countChipStyle: React.CSSProperties = {
     border: `1px solid ${colors.border}`,
     background: '#f7f7f7',
     color: colors.text,
-    fontSize: 10,
+    fontSize: 11,
     lineHeight: '14px',
 };
 
@@ -1997,7 +2002,7 @@ const AnnotationNote = observer(
                             border: 'none',
                             background: 'transparent',
                             color: colors.blue,
-                            fontSize: 10,
+                            fontSize: 11,
                             padding: 0,
                             cursor: 'pointer',
                         }}
@@ -2050,7 +2055,7 @@ function AnnotationHistory({
                     alignItems: 'center',
                     gap: 4,
                     color: colors.muted,
-                    fontSize: 10,
+                    fontSize: 11,
                 }}
             >
                 <span>
@@ -2070,7 +2075,7 @@ function AnnotationHistory({
                             border: 'none',
                             background: 'transparent',
                             color: colors.blue,
-                            fontSize: 10,
+                            fontSize: 11,
                             padding: 0,
                             cursor: 'pointer',
                         }}
@@ -2083,7 +2088,7 @@ function AnnotationHistory({
                 <div
                     id={id.current}
                     data-testid={`annotation-history-${annotation.id}`}
-                    style={{ fontSize: 10, color: colors.text, marginTop: 1 }}
+                    style={{ fontSize: 11, color: colors.text, marginTop: 1 }}
                 >
                     <ul style={{ margin: 0, paddingLeft: 14 }}>
                         {entries.map(entry => (
@@ -2108,7 +2113,7 @@ function AnnotationHistory({
 
 function reviewButtonStyle(color: string): React.CSSProperties {
     return {
-        fontSize: 10,
+        fontSize: 11,
         padding: '0 6px',
         borderRadius: 3,
         border: `1px solid ${color}`,
@@ -2149,7 +2154,8 @@ function AiBadge({ annotation }: { annotation: WsiAnnotation }) {
     return (
         <span
             data-testid={`annotation-ai-badge-${annotation.id}`}
-            aria-label={description}
+            role="img"
+            aria-label={`${text}: ${description}`}
             title={description}
             style={{
                 padding: '0 4px',
@@ -2157,7 +2163,7 @@ function AiBadge({ annotation }: { annotation: WsiAnnotation }) {
                 border: `1px ${unreviewed ? 'dashed' : 'solid'} ${colors.ai}`,
                 background: unreviewed ? '#fff' : colors.ai,
                 color: unreviewed ? colors.ai : '#fff',
-                fontSize: 9,
+                fontSize: 11,
                 fontWeight: 700,
                 lineHeight: '12px',
             }}
@@ -2201,6 +2207,7 @@ export function TransferBadge({ annotation }: { annotation: WsiAnnotation }) {
     return (
         <span
             data-testid={`annotation-transfer-badge-${annotation.id}`}
+            role="img"
             aria-label={description}
             title={description}
             style={{
@@ -2209,7 +2216,7 @@ export function TransferBadge({ annotation }: { annotation: WsiAnnotation }) {
                 border: `1px ${verified ? 'solid' : 'dashed'} ${color}`,
                 background: verified ? color : '#fff',
                 color: verified ? '#fff' : color,
-                fontSize: 9,
+                fontSize: 11,
                 fontWeight: 700,
                 lineHeight: '12px',
             }}
@@ -2252,7 +2259,7 @@ const VisibilityBadge = observer(
             border: `1px solid ${colors.border}`,
             background: visibility === 'private' ? '#fff7e6' : '#eef6ff',
             color: colors.muted,
-            fontSize: 9,
+            fontSize: 11,
             lineHeight: '12px',
         };
         const content = (
@@ -2314,7 +2321,7 @@ function AnnotationBadge({
                 borderRadius: 2,
                 background,
                 color,
-                fontSize: 9,
+                fontSize: 11,
                 lineHeight: '14px',
             }}
         >
@@ -2382,7 +2389,7 @@ export const WsiAnnotationTooltip = observer(
                     </div>
                 )}
                 {(tooltip.ai || tooltip.aiEdited) && (
-                    <div style={{ marginTop: 2, fontSize: 10 }}>
+                    <div style={{ marginTop: 2, fontSize: 11 }}>
                         {tooltip.aiEdited
                             ? `AI, edited${
                                   tooltip.ai === 'unreviewed'
@@ -2402,7 +2409,7 @@ export const WsiAnnotationTooltip = observer(
                 {transferred && (
                     <div
                         data-testid="annotation-tooltip-transfer"
-                        style={{ marginTop: 2, fontSize: 10 }}
+                        style={{ marginTop: 2, fontSize: 11 }}
                     >
                         {transferred.provenance?.verified === true
                             ? 'Transferred · verified'
@@ -2424,7 +2431,7 @@ export const WsiAnnotationTooltip = observer(
                                     borderRadius: 2,
                                     background: 'transparent',
                                     color: '#fff',
-                                    fontSize: 10,
+                                    fontSize: 11,
                                 }}
                             >
                                 Mark verified
@@ -2433,14 +2440,14 @@ export const WsiAnnotationTooltip = observer(
                     </div>
                 )}
                 {tooltip.layerName && (
-                    <div style={{ marginTop: 2, fontSize: 10, opacity: 0.7 }}>
+                    <div style={{ marginTop: 2, fontSize: 11 }}>
                         Layer: {tooltip.layerName}
                     </div>
                 )}
                 {tooltip.comments && (
                     <div
                         data-testid="annotation-tooltip-comments"
-                        style={{ marginTop: 2, fontSize: 10 }}
+                        style={{ marginTop: 2, fontSize: 11 }}
                     >
                         {tooltip.comments} (in the Annotations list)
                     </div>
@@ -2448,7 +2455,7 @@ export const WsiAnnotationTooltip = observer(
                 {tooltip.history && (
                     <div
                         data-testid="annotation-tooltip-history"
-                        style={{ marginTop: 2, fontSize: 10, opacity: 0.85 }}
+                        style={{ marginTop: 2, fontSize: 11 }}
                     >
                         {tooltip.history}
                     </div>

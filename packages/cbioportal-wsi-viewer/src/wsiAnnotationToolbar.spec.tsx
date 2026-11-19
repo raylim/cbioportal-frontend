@@ -182,7 +182,7 @@ describe('WsiAnnotationToolbar', () => {
         expect(screen.queryByRole('menu')).toBeNull();
     });
 
-    it('moves between controls with the arrow keys, Home and End', () => {
+    it('moves between controls with the arrow keys, Home and End, with one Tab stop', () => {
         const controller = controllerWith();
         controller.setAnnotating(true);
         render(<WsiAnnotationToolbar controller={controller} />);
@@ -204,6 +204,23 @@ describe('WsiAnnotationToolbar', () => {
         label.focus();
         fireEvent.keyDown(label, { key: 'ArrowLeft' });
         expect(document.activeElement).toBe(label);
+        // One Tab stop: the control last focused; the others are -1.
+        const stops = () =>
+            Array.from(
+                bar.querySelectorAll<HTMLElement>('[data-toolbar-item]')
+            ).filter(item => item.tabIndex === 0);
+        expect(stops()).toEqual([label]);
+        act(() => toggle.focus());
+        expect(stops()).toEqual([toggle]);
+        // The tolerance's help is an info icon and the slider's description.
+        act(() => controller.setTool('wand'));
+        const tolerance = byTestId('annotation-tissue-tolerance');
+        expect(
+            document.getElementById(
+                tolerance.getAttribute('aria-describedby')!
+            )!.textContent
+        ).toContain('How far a color may be from the clicked color');
+        expect(byTestId('annotation-tissue-tolerance-info')).toBeTruthy();
         // Every control has an accessible name.
         bar.querySelectorAll('button').forEach(button =>
             expect(

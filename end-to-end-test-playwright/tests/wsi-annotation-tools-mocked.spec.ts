@@ -1337,7 +1337,9 @@ if (process.env.PW_SUITE === 'wsi') {
             const at = await gotoSlide(page);
             await startAnnotating(page);
             const status = page.getByTestId('annotation-save-status');
-            await expect(status).toHaveAttribute('role', 'status');
+            await expect(
+                page.getByTestId('annotation-save-status-live')
+            ).toHaveAttribute('role', 'status');
             service.control.hold = true;
             await page.keyboard.press('r');
             const a = at(0.35, 0.35);
