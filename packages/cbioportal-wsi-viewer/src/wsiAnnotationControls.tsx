@@ -16,7 +16,9 @@ import {
     isAiProvenance,
     isEditedAi,
     isUnreviewedAi,
+    transferSource,
 } from './wsiAnnotationBody';
+import { formatSlideId } from './wsiSlideId';
 import { ReviewQueueButton } from './wsiAnnotationReview';
 import { HPF_RATE_HELP, useHpfHelpId, WsiHpfInfo } from './wsiHpfHelp';
 import { WsiRulerLine } from './wsiAnnotationOverlay';
@@ -1114,6 +1116,7 @@ const AnnotationRow = observer(
                                     </span>
                                 )}
                                 <AiBadge annotation={annotation} />
+                                <TransferBadge annotation={annotation} />
                                 <VisibilityBadge
                                     controller={controller}
                                     annotation={annotation}
@@ -1152,6 +1155,25 @@ const AnnotationRow = observer(
                                     }}
                                 >
                                     Points inside: {formatRegionCount(inside)}
+                                </div>
+                            )}
+                            {controller.canVerifyTransfer(annotation) && (
+                                <div style={{ marginTop: 2 }}>
+                                    <button
+                                        type="button"
+                                        data-testid={`verify-transfer-${annotation.id}`}
+                                        aria-label={`Mark ${rawLabel ||
+                                            'annotation'} verified: its place on this slide is right`}
+                                        title="Mark verified: you checked that the copy lies on the right tissue"
+                                        onClick={() =>
+                                            void controller.markTransferVerified(
+                                                annotation.id
+                                            )
+                                        }
+                                        style={reviewButtonStyle('#2a6a2a')}
+                                    >
+                                        ✓ Mark verified
+                                    </button>
                                 </div>
                             )}
                             <AnnotationNote
@@ -1995,6 +2017,58 @@ function AiBadge({ annotation }: { annotation: WsiAnnotation }) {
     );
 }
 
+/** A transferred annotation's state, with the residual of its alignment. */
+function transferDescription(annotation: WsiAnnotation): string | null {
+    const provenance = annotation.provenance;
+    const from = transferSource(provenance);
+    if (!from) return null;
+    const um = provenance!.transform_residual_um;
+    const px = provenance!.transform_residual_px;
+    const error =
+        typeof um === 'number'
+            ? ` (alignment error ${um} µm)`
+            : typeof px === 'number'
+            ? ` (alignment error ${px} px)`
+            : '';
+    return `Copied from slide ${formatSlideId(
+        from.slide_key
+    )} through an alignment${error}; ${
+        provenance!.verified === true
+            ? 'its place was verified'
+            : 'its place is not verified yet'
+    }`;
+}
+
+/**
+ * "Transferred · unverified" (dashed) or "Transferred · verified", on an
+ * annotation copied from another slide side by side.
+ */
+export function TransferBadge({ annotation }: { annotation: WsiAnnotation }) {
+    const description = transferDescription(annotation);
+    if (!description) return null;
+    const verified = annotation.provenance?.verified === true;
+    const color = verified ? '#2a6a2a' : '#8a5300';
+    return (
+        <span
+            data-testid={`annotation-transfer-badge-${annotation.id}`}
+            aria-label={description}
+            title={description}
+            style={{
+                padding: '0 4px',
+                borderRadius: 2,
+                border: `1px ${verified ? 'solid' : 'dashed'} ${color}`,
+                background: verified ? color : '#fff',
+                color: verified ? '#fff' : color,
+                fontSize: 9,
+                fontWeight: 700,
+                lineHeight: '12px',
+            }}
+        >
+            {verified ? 'Transferred · verified' : 'Transferred · unverified'}
+        </span>
+    );
+}
+
 /**
  * Whether an annotation is private or shared with the study; a button that
  * switches it for a user who can edit.
@@ -2103,6 +2177,11 @@ export const WsiAnnotationTooltip = observer(
     ({ controller }: { controller: WsiAnnotationController }) => {
         const tooltip = controller.annotationTooltip;
         if (!tooltip) return null;
+        const stored = tooltip.id
+            ? controller.annotations.find(item => item.id === tooltip.id)
+            : undefined;
+        const transferred =
+            stored && transferSource(stored.provenance) ? stored : null;
         return (
             <div
                 data-testid="annotation-tooltip"
@@ -2167,6 +2246,39 @@ export const WsiAnnotationTooltip = observer(
                             <div data-testid="annotation-tooltip-ai-origin">
                                 {tooltip.aiOrigin}
                             </div>
+                        )}
+                    </div>
+                )}
+                {transferred && (
+                    <div
+                        data-testid="annotation-tooltip-transfer"
+                        style={{ marginTop: 2, fontSize: 10 }}
+                    >
+                        {transferred.provenance?.verified === true
+                            ? 'Transferred · verified'
+                            : 'Transferred · unverified'}
+                        {controller.canVerifyTransfer(transferred) && (
+                            <button
+                                type="button"
+                                data-testid="annotation-tooltip-verify"
+                                onClick={event => {
+                                    event.stopPropagation();
+                                    void controller.markTransferVerified(
+                                        transferred.id
+                                    );
+                                }}
+                                style={{
+                                    marginLeft: 6,
+                                    padding: '0 4px',
+                                    border: '1px solid #fff',
+                                    borderRadius: 2,
+                                    background: 'transparent',
+                                    color: '#fff',
+                                    fontSize: 10,
+                                }}
+                            >
+                                Mark verified
+                            </button>
                         )}
                     </div>
                 )}

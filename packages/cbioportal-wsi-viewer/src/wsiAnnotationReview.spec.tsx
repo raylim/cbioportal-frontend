@@ -367,6 +367,29 @@ describe('AI review queue', () => {
         );
     });
 
+    it('takes no key while the host hides the viewer (another tab)', async () => {
+        const { controller, press } = setup();
+        track(controller);
+        controller.setAnnotating(true);
+        const decide = jest
+            .spyOn(controller, 'reviewDecide')
+            .mockResolvedValue(true);
+        controller.startReview();
+        controller.setViewerHidden(true);
+        press('r');
+        press('a');
+        press('s');
+        press('z', { ctrlKey: true });
+        press('h');
+        expect(decide).not.toHaveBeenCalled();
+        expect(controller.reviewQueue!.currentId).toBe('first');
+        expect(controller.hideAll).toBe(false);
+        expect(controller.toolShortcutsActive).toBe(false);
+        controller.setViewerHidden(false);
+        press('r');
+        expect(decide).toHaveBeenLastCalledWith('reject');
+    });
+
     it('takes A, R, S and the arrows before the tool shortcuts while open', async () => {
         const { controller, press, canvasKey } = setup();
         track(controller);

@@ -98,6 +98,11 @@ export interface WsiViewerControllerHost {
         context: CanvasRenderingContext2D,
         scale: number
     ): void;
+    /**
+     * Whether this viewer keeps its slide and view in the page's `#wsi:`
+     * hash (default true). The second slide shown side by side does not.
+     */
+    ownsUrlState?: boolean;
 }
 
 type MountTimer =
@@ -232,6 +237,10 @@ export class WsiViewerController {
         this.finishInitialSlideLoad(outcome);
     }
 
+    private get ownsUrlState(): boolean {
+        return this.host.ownsUrlState !== false;
+    }
+
     dispose() {
         this.resetMount();
         this.clearTimer('writeHashTimer');
@@ -239,7 +248,7 @@ export class WsiViewerController {
         this.hierarchyAbortController = null;
         this.cancelNavigatorSchedule();
         this.destroyViewer();
-        hashUrlState.clear();
+        if (this.ownsUrlState) hashUrlState.clear();
     }
 
     private cancelNavigatorSchedule() {
@@ -270,6 +279,7 @@ export class WsiViewerController {
     }
 
     private writeHashState() {
+        if (!this.ownsUrlState) return;
         // A viewport measured in a container with no size is not a view to share or restore.
         if (!hasLaidOutContainer(this.mountedViewer)) return;
         this.writeHashTimer = scheduleHashStateWrite({
@@ -585,7 +595,9 @@ export class WsiViewerController {
     ): Promise<void> {
         this.cancelActiveMount();
         this.state.beginSlideSelection(slide, sample);
-        writeSelectedSlideState(hashUrlState, slide.slide_key);
+        if (this.ownsUrlState) {
+            writeSelectedSlideState(hashUrlState, slide.slide_key);
+        }
         if (notifyHost) this.host.onSlideSelectionStarted?.(slide);
         this.loadingStart = Date.now();
         const seq = this.mountSeq;
@@ -616,7 +628,7 @@ export class WsiViewerController {
         this.destroyViewer();
         this.state.clearSelection();
         this.host.onSelectionCleared?.();
-        hashUrlState.clear();
+        if (this.ownsUrlState) hashUrlState.clear();
     }
 
     goToCoordinates() {
@@ -781,7 +793,10 @@ export class WsiViewerController {
         if (seq !== this.mountSeq) return;
         this.clearTimer('osdOpenTimer');
         this.clearTimer('selectionTimeoutTimer');
-        const hashState = restoreHashViewport ? hashUrlState.read() : null;
+        const hashState =
+            restoreHashViewport && this.ownsUrlState
+                ? hashUrlState.read()
+                : null;
         const applyInitialView = () => {
             try {
                 restoreOrHomeViewport({

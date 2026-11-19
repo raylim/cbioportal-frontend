@@ -189,6 +189,27 @@ export const SHORTCUT_HELP: ShortcutSection[] = [
         ],
     },
     {
+        title: 'Side by side',
+        when:
+            'With Compare open; the active slide (blue header) takes the tools and keys',
+        keys: [
+            [['F6'], 'Move the focus to the other slide'],
+            [
+                ['Click'],
+                'With Place points on: a point on this slide, then the same feature on the other (a drag still pans)',
+            ],
+            [
+                ['Arrows', 'Shift+arrows'],
+                'With a numbered point focused: move it by 1 or 10 screen pixels',
+            ],
+            [['Delete'], 'With a numbered point focused: delete its pair'],
+            [
+                ['← →'],
+                'With the divider focused: make the left slide narrower or wider',
+            ],
+        ],
+    },
+    {
         title: 'Reviewing AI annotations',
         when:
             'While the review card is open; these keys come first, so R rejects instead of picking Shape',

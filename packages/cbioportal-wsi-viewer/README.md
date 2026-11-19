@@ -60,7 +60,26 @@ The cBioPortal app does both in `src/shared/components/wsiViewer/wsiAppConfig.ts
 | `navCollapsed` / `metadataCollapsed` (+ change callbacks) | Control the hideable slide list and details sidebar. Unset, the viewer remembers the user's choice in `localStorage` |
 | `showDownload`, `renderLoading` | Show the download-view control; a custom loading indicator |
 | `requestedAnnotationId`, `annotationLink` | An annotation to open once its slide loads, and how to make a link to one (see Stepping through annotations, and links to one) |
-| `hidden` | The host hides the viewer without unmounting it, e.g. in an inactive tab. The panel shortcuts are off and OpenSeadragon ignores the collapsed container's size meanwhile |
+| `hidden` | The host hides the viewer without unmounting it, e.g. in an inactive tab. The panel and annotation shortcuts are off (so R on another tab never rejects the AI annotation under review) and OpenSeadragon ignores the collapsed container's size meanwhile |
+
+### Side by side (Compare)
+
+**Compare** in the main slide's status bar opens a second viewer next to the slide, split by a draggable divider (`role="separator"`; the arrow keys move it by 5%, Home and End to the limits; each slide keeps at least 20% of the width). It is disabled, saying why, when the patient has no other slide. The bar above the slides holds **Lock views**, how the views follow each other, **Set anchor** / **Clear anchor**, **Align and copy** and close (×).
+
+- **Panes**: each is a labelled region ("Left slide: H&E · WSI-0123-4567-89ab") with a header: the stain (dot and name), a slide picker and the Slide ID. The left pane is the main slide (the slide list and the `#wsi:` link follow it); the right pane keeps no URL state and has no copy-link button. Each pane shows its own slide's annotations, status bar and zoom buttons.
+- **Active pane**: a press or the focus in a pane makes it active (blue header line). Only the active pane shows the annotation toolbar and takes the annotation keys (tools, undo, H, `]`/`[`, the review keys); the other pane's drawing stops. The details sidebar (image properties, pathology, clinical, slide notes, layers, annotations) shows the active pane's slide. **F6** moves the focus to the other slide's view.
+- **Pairing**: the picker lists the patient's servable slides relative to the other pane's slide, in option groups: **Same block**, then **Same part** (other blocks), then the rest by sample and part (the other slide's sample first, unmatched slides last). Within a group the counterpart stain comes first: IHC next to H&E, H&E next to IHC or anything else. Compare opens the first one, so an H&E opens with the same block's IHC and an IHC with the same block's H&E. The groups come from the hierarchy the viewer already has (sample → part → block), and the stain from `stain_kind`.
+- **Sync** (Lock views, on by default): pan, zoom and rotation of the pane last pressed, scrolled or typed in move the other, through its target view, so both animate together. The map used:
+  - **Aligned**, with 3 or more point pairs: the other view's centre is the fitted map of this one's, its zoom this one's divided by the map's scale (the square root of its area ratio), its rotation turned by the map's. A mirrored section (the fit includes a reflection) keeps the leader's orientation, mirrored left to right; the view itself is not mirrored, since OpenSeadragon maps screen points without its flip and annotations would be drawn in the wrong place;
+  - **Anchor**: after **Set anchor** with both slides centred on the same tissue, the views follow by distance in µm from the two centres (per-axis mpp; pixels when a slide has no scale), at the same µm per screen pixel;
+  - **Same relative position** otherwise: the same place relative to each image's size, and the same share of the image width on screen.
+  Unlocked, the views move separately; locking again moves the other pane to the active one.
+- **Align and copy** opens a panel above the slides (fixed height, so the slides do not move as points come and go). **Place points** (on at first while there is no alignment): a click (not a drag, which still pans) on a tissue feature of either slide, then on the same feature of the other, makes a numbered pair; clicks go to points then, not to shapes. The markers are numbered buttons: drag one to move it, or focus it and use the arrow keys (1 screen pixel, 10 with Shift); Delete removes its pair, as does the × on its chip. A complete pair shows a dashed ring where the fit puts the other slide's point, with a line to it.
+  - **Fit**: **Similarity** (rotation, one scale and shift; least squares in closed form; a mirrored fit is taken only when it has under half the squared error of the plain one) or **Affine** (also shear and a scale per axis; least squares). Either needs 3 complete pairs; points on one line give no affine fit.
+  - **Error**: each pair's residual, the distance between its point on the right slide and where the fit puts its left point, in µm of the right slide (pixels without a scale); the panel shows the RMS and the largest, and each chip its pair's. With exactly 3 pairs an affine map fits exactly, and the panel says to add a fourth to measure the error.
+  - **Reset** puts the points, model and anchor back as they were when the panel opened; **Clear points** removes them all (Reset brings them back).
+  - **Kept** per slide pair in this browser's `localStorage` (`wsi-compare-alignment:v1:<key>:<key>`, the two slide keys sorted, so it is found with either slide on the left; points in level-0 pixels of each slide), with try/catch; an empty alignment is removed. A server-side store needs a service change and is not built.
+- **Copying annotations** (needs an alignment and annotating on the other slide): **Selected (N)** copies the active pane's selection and **Layer … (N)** one of its layers to the other slide, through the fit (its inverse from right to left). See Transferred annotations.
 
 ## Portal contract
 
@@ -194,6 +213,13 @@ Keys do nothing while the focus is in a text field (a slider, such as the tolera
 | S or → | Skip it | Review card open |
 | ← | The previous one still unreviewed | Review card open |
 | Esc | Close the review card | Review card open |
+| F6 | Move the focus to the other slide | Side by side |
+| Click | A point on this slide, then the same feature on the other (a drag still pans) | Side by side, Place points on |
+| Arrows; Shift+arrows | Move the focused numbered point by 1 or 10 screen pixels | Side by side, a point focused |
+| Delete | Delete the focused point's pair | Side by side, a point focused |
+| ← and → | Make the left slide narrower or wider | Side by side, the divider focused |
+
+Side by side, the annotation keys go to the active slide only (see Side by side). Nothing acts while the host hides the viewer (`hidden`).
 
 #### Annotation body
 
@@ -206,9 +232,17 @@ The viewer writes the service's `AnnotationBody` fields as follows:
 | `layer_name` | The layer the annotation is drawn on |
 | `type` | The named color, as `name|#hex` |
 | `color` | The color as `#hex` |
-| `provenance` | Kept as stored; the viewer never drops it on an update. Shape editing adds `edited: true` to an AI annotation whose shape a person changed, and gives annotations it makes `source: "manual"`, `operation`, `derived_from` and, from AI annotations, `derived_from_ai: true` (see Editing shapes) |
+| `provenance` | Kept as stored; the viewer never drops it on an update. Shape editing adds `edited: true` to an AI annotation whose shape a person changed, and gives annotations it makes `source: "manual"`, `operation`, `derived_from` and, from AI annotations, `derived_from_ai: true` (see Editing shapes). A copy made side by side gets `source: "manual"`, `operation: "transfer"`, `transferred_from: {slide_key, annotation_id}`, `transform_model`, `transform_residual_um` (or `transform_residual_px`), `verified: false` and, from an AI annotation, `derived_from_ai: true`; Mark verified sets `verified: true`, `verified_by` and `verified_at` (see Transferred annotations) |
 
 Rows written before the viewer used `layer_name` kept the layer in `comment` and sent no `layer_name`, `color` or `provenance`, so the service stored its defaults (`Default`, `#2f80ed`). The viewer reads `comment` as the layer only for such rows: when `provenance` is missing or null, `layer_name` is missing or `Default`, `color` is missing or exactly `#2f80ed`, and `comment` is one line of at most 100 characters. Other writers (the assistant, scripts, loaders) set `provenance`, so their one-line comment stays a note. The viewer always writes `color`, and writes `#2f80ed` as `#2F80ED` (the service keeps the letter case), so a note on a row it wrote is never read as a layer. Saving an edit to a legacy row writes its layer to `layer_name` and sends its stored `comment` back unchanged until the user edits the note, so no note is lost. A `comment` that only repeats `layer_name`, as the service writes for a saved assistant proposal, is not shown as a note. `wsiAnnotationBody.ts` holds the rules.
+
+#### Transferred annotations
+
+A copy made side by side (see Side by side) is an independent annotation on the other slide, owned by the user: a new annotation with the source's label, layer, color and note, its geometry moved through the alignment, and the default sharing. Rectangles and ellipses become polygons (a turned or sheared box is no longer axis-aligned); polygons keep every ring, so holes and parts stay holes and parts; points, lines and polylines keep their kind. The copies are saved with batch saves (`POST /annotations/batch`) and undo as one step ("Undo transfer of 3 annotations") on the target slide, whose pane becomes active so its Undo is at hand; redo saves them again with the same provenance.
+
+Its `provenance` is `source: "manual"`, so the service's trusted-writer rule (only trusted writers create machine-made annotations) accepts it, plus `operation: "transfer"`, `transferred_from: {slide_key, annotation_id}`, `transform_model` and the alignment's RMS error (`transform_residual_um`, or `transform_residual_px` without a scale), and `verified: false`. A copy of an AI annotation (or of one made from AI annotations) keeps `derived_from_ai: true`, so it shows **AI, edited** and counts as the user's, not as an AI annotation to review.
+
+The list row and the tooltip show **Transferred · unverified** (dashed amber) or **Transferred · verified** (solid green), with the slide it came from and the error in the badge's tooltip. **Mark verified** (row and tooltip; the creator only) saves `verified: true`, `verified_by` and `verified_at` with a versioned `PUT`; like reviews it is not on the undo history. History says "Created (copied from slide WSI-… through an alignment)" and "Place verified".
 
 #### Private and shared annotations
 

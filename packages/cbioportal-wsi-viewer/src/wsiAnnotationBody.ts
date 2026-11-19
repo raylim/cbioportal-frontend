@@ -1,3 +1,5 @@
+import { formatSlideId } from './wsiSlideId';
+
 /**
  * The annotation service's `body` (its `AnnotationBody`): `label`, `comment`,
  * `type`, `layer_name`, `color` and `provenance`. The service fills a missing
@@ -236,6 +238,92 @@ export function derivedProvenance(
     };
 }
 
+/** Where a transferred annotation was copied from. */
+export interface WsiTransferSource {
+    slide_key: string;
+    annotation_id: string;
+}
+
+/**
+ * The slide and annotation an annotation was copied from, side by side
+ * through an alignment (`provenance.transferred_from`); null otherwise.
+ */
+export function transferSource(
+    provenance: Record<string, unknown> | null | undefined
+): WsiTransferSource | null {
+    const from = provenance?.transferred_from as
+        | Partial<WsiTransferSource>
+        | null
+        | undefined;
+    return from &&
+        typeof from === 'object' &&
+        typeof from.slide_key === 'string' &&
+        typeof from.annotation_id === 'string'
+        ? { slide_key: from.slide_key, annotation_id: from.annotation_id }
+        : null;
+}
+
+/** Whether a person has checked a transferred annotation's place. */
+export function isTransferVerified(
+    provenance: Record<string, unknown> | null | undefined
+): boolean {
+    return !!transferSource(provenance) && provenance!.verified === true;
+}
+
+/**
+ * The provenance of an annotation copied onto another slide through an
+ * alignment: a new annotation of the user's (`source: "manual"`, as the
+ * service lets only trusted writers create machine-made ones), naming the
+ * annotation and slide it came from, the alignment's model and error
+ * (`transform_residual_um`, or `transform_residual_px` without a scale), and
+ * `verified: false` until a person checks it. A copy of an AI annotation,
+ * or of one made from AI annotations, keeps `derived_from_ai: true` ("AI,
+ * edited").
+ */
+export function transferredProvenance(
+    source: { id: string; provenance?: Record<string, unknown> | null },
+    from: {
+        slideKey: string;
+        model: string;
+        residual: number | null;
+        unit: 'um' | 'px';
+    }
+): Record<string, unknown> {
+    const fromAi =
+        isAiProvenance(source.provenance) ||
+        source.provenance?.derived_from_ai === true;
+    const residual =
+        from.residual === null ? null : Math.round(from.residual * 100) / 100;
+    return {
+        source: 'manual',
+        operation: 'transfer',
+        transferred_from: {
+            slide_key: from.slideKey,
+            annotation_id: source.id,
+        },
+        transform_model: from.model,
+        [from.unit === 'um'
+            ? 'transform_residual_um'
+            : 'transform_residual_px']: residual,
+        verified: false,
+        ...(fromAi ? { derived_from_ai: true } : {}),
+    };
+}
+
+/** A transferred annotation's provenance once `user` checked its place. */
+export function verifiedProvenance(
+    provenance: Record<string, unknown> | null | undefined,
+    user: string | null,
+    now: Date = new Date()
+): Record<string, unknown> {
+    return {
+        ...(provenance || {}),
+        verified: true,
+        ...(user ? { verified_by: user } : {}),
+        verified_at: now.toISOString(),
+    };
+}
+
 /**
  * The provenance of an accepted AI annotation: the stored one, marked
  * `review_status: "accepted"` with the time of review.
@@ -287,15 +375,35 @@ export function annotationHistory(annotation: {
                   derivedFrom === 1 ? '' : 's'
               }${provenance.derived_from_ai === true ? ', from AI' : ''}`
             : null;
+    const transferred = transferSource(provenance);
     entries.push({
         what: origin
             ? `Created (${origin.replace(/^Made by /, 'by ')})`
             : operation
             ? `Created (${operation})`
+            : transferred
+            ? `Created (copied from slide ${formatSlideId(
+                  transferred.slide_key
+              )} through an alignment${
+                  provenance!.derived_from_ai === true ? ', from AI' : ''
+              })`
             : 'Created',
         who: annotation.creator,
         when: annotation.created,
     });
+    if (transferred && provenance!.verified === true) {
+        entries.push({
+            what: 'Place verified',
+            who:
+                typeof provenance!.verified_by === 'string'
+                    ? provenance!.verified_by
+                    : undefined,
+            when:
+                typeof provenance!.verified_at === 'string'
+                    ? provenance!.verified_at
+                    : undefined,
+        });
+    }
     if (origin && provenance?.edited === true) {
         entries.push({ what: 'Shape edited by a person (AI, edited)' });
     }

@@ -44,6 +44,9 @@ import {
     isUnreviewedAi,
     readLayerAndNote,
     serviceColor,
+    transferredProvenance,
+    transferSource,
+    verifiedProvenance,
     WsiAnnotationApiBody,
     WsiShapeOperation,
 } from './wsiAnnotationBody';
@@ -1220,6 +1223,8 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
     /** Whether new annotations are shared with the study (else private). */
     @observable defaultShared = loadDefaultShared();
     @observable annotationTooltip: {
+        /** The annotation it describes. */
+        id?: string;
         x: number;
         y: number;
         text: string;
@@ -3066,6 +3071,9 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
         this.applyLayerFilter();
         this.refreshStyle();
         this.installCustomDrawingHandlers();
+        if (this.pointerSuspended) {
+            this.setAnnotoriousOverlayPointerEvents(false);
+        }
         this.openRequestedAnnotation();
         if (typeof document !== 'undefined') {
             document.addEventListener('keydown', this.handleKeyDown);
@@ -3161,7 +3169,12 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
      */
     @computed get toolShortcutsActive(): boolean {
         return (
-            this.annotating && this.canEdit && this.visible && !this.reviewQueue
+            this.annotating &&
+            this.canEdit &&
+            this.visible &&
+            !this.reviewQueue &&
+            this.paneActive &&
+            !this.viewerHidden
         );
     }
 
@@ -5907,6 +5920,170 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
         return true;
     }
 
+    // ---- side by side ----
+
+    /** The open slide's key, for side-by-side transfers. */
+    get currentSlideKey(): string | null {
+        return this.slideKey;
+    }
+
+    /**
+     * Copies of annotations of another slide, mapped onto this one through
+     * an alignment (`svg` is each one's mapped selector), saved as new
+     * annotations of the user's in batch saves, as one undo step ("Undo
+     * transfer of 3 annotations"). Each keeps its source's label, layer,
+     * color and note, takes the default sharing, and is marked transferred
+     * and unverified (see `transferredProvenance`).
+     */
+    async addTransferred(
+        items: Array<{ source: WsiAnnotation; svg: string }>,
+        from: {
+            slideKey: string;
+            model: string;
+            residual: number | null;
+            unit: 'um' | 'px';
+        }
+    ): Promise<{ created: WsiAnnotation[]; failed: number }> {
+        if (!this.canEdit || !this.slideKey || !items.length) {
+            return { created: [], failed: items.length };
+        }
+        const drafts = items.map(({ source, svg }) => {
+            const draft = this.draftAnnotation(
+                svg,
+                source.body?.[0]?.value || this.newShapeLabel()
+            );
+            return {
+                ...draft,
+                color: source.color || draft.color,
+                colorName: source.colorName ?? draft.colorName,
+                layerName: source.layerName || draft.layerName,
+                note: source.note || undefined,
+                provenance: transferredProvenance(source, from),
+            };
+        });
+        const generation = this.generation;
+        const slideKey = this.slideKey;
+        action(() => {
+            this.bulkBusy = true;
+            this.error = null;
+        })();
+        let created: WsiAnnotation[] = [];
+        try {
+            const results = await this.saveAnnotations(drafts);
+            if (generation !== this.generation || slideKey !== this.slideKey) {
+                return { created: [], failed: drafts.length };
+            }
+            created = this.addSaved(results, drafts);
+            const failed = drafts.length - created.length;
+            action(() => {
+                if (created.length) {
+                    this.pushUndo({
+                        kind: 'group',
+                        label: `transfer of ${created.length} annotation${
+                            created.length === 1 ? '' : 's'
+                        }`,
+                        entries: [
+                            {
+                                kind: 'create',
+                                ids: created.map(item => item.id),
+                            },
+                        ],
+                    });
+                }
+                if (failed && this.accessIssue === null) {
+                    this.error = `Copied ${created.length} of ${
+                        drafts.length
+                    } annotations; ${failed} could not be saved (${describeFailures(
+                        results
+                    )}).`;
+                }
+            })();
+            return { created, failed };
+        } finally {
+            action(() => {
+                this.bulkBusy = false;
+            })();
+        }
+    }
+
+    /** Whether the user may mark a transferred annotation verified. */
+    canVerifyTransfer(annotation: WsiAnnotation): boolean {
+        return (
+            !!transferSource(annotation.provenance) &&
+            annotation.provenance?.verified !== true &&
+            !annotation.unsaved &&
+            this.canModify(annotation)
+        );
+    }
+
+    /**
+     * Marks a transferred annotation verified: its place was checked by a
+     * person (versioned `PUT`, creator only; not on the undo history, like
+     * reviews).
+     */
+    async markTransferVerified(id: string): Promise<boolean> {
+        const annotation = this.annotations.find(item => item.id === id);
+        if (!annotation || !this.canVerifyTransfer(annotation)) return false;
+        const saved = await this.updateAnnotation(
+            {
+                ...annotation,
+                provenance: verifiedProvenance(
+                    annotation.provenance,
+                    this.currentUser
+                ),
+            },
+            false
+        );
+        return !!saved;
+    }
+
+    /**
+     * Whether this viewer takes keys and drawing tools. Side by side, only
+     * the active pane's does; the other still shows its annotations.
+     */
+    @observable paneActive = true;
+
+    @action.bound
+    setPaneActive(active: boolean) {
+        if (this.paneActive === active) return;
+        if (!active) {
+            this.cancelDrawing();
+            this.annotationTooltip = null;
+        }
+        this.paneActive = active;
+    }
+
+    /**
+     * The host hides the viewer (e.g. an inactive tab that stays mounted):
+     * no shortcut acts then.
+     */
+    @observable viewerHidden = false;
+
+    @action.bound
+    setViewerHidden(hidden: boolean) {
+        this.viewerHidden = hidden;
+    }
+
+    /** Clicks go to side-by-side point placing, not to shapes. */
+    private pointerSuspended = false;
+
+    /**
+     * Stops clicks from selecting or editing shapes (and drawing), e.g.
+     * while alignment points are placed on the slide; false gives them back.
+     */
+    @action.bound
+    setPointerSuspended(suspended: boolean) {
+        if (this.pointerSuspended === suspended) return;
+        this.pointerSuspended = suspended;
+        if (suspended) {
+            this.cancelDrawing();
+            this.annotationTooltip = null;
+        }
+        this.setAnnotoriousOverlayPointerEvents(
+            !suspended && !isPointerAnnotationTool(this.activeTool)
+        );
+    }
+
     // ---- comment threads ----
 
     /** Whether annotations offer comment threads here. */
@@ -7571,6 +7748,9 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
     }
 
     private readonly handleKeyDown = (event: KeyboardEvent) => {
+        // A hidden viewer takes no keys, and side by side the other pane's
+        // viewer takes them.
+        if (!this.paneActive || this.viewerHidden) return;
         const typing = isTypingTarget(event.target);
         if (this.handleReviewKey(event, typing)) return;
         if (!typing && this.tissueSession?.pending) {
@@ -8132,6 +8312,7 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
         const note = (stored || annotation).note || '';
         if (!text && !measurement && !note) return;
         this.annotationTooltip = {
+            id: annotation.id,
             x: event.clientX,
             y: event.clientY,
             text,
@@ -8236,7 +8417,14 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
 
     /** A click on a point marker shows its tooltip. */
     private readonly handleCanvasClick = (event: any) => {
-        if (this.activeTool || !event?.quick || !event.position) return;
+        if (
+            this.activeTool ||
+            this.pointerSuspended ||
+            !event?.quick ||
+            !event.position
+        ) {
+            return;
+        }
         const marker = this.pointLayer?.hitTest(event.position);
         const annotation =
             marker && this.annotations.find(item => item.id === marker.id);

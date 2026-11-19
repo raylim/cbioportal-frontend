@@ -83,6 +83,8 @@ const ReviewCard = observer(
 
         React.useEffect(() => {
             const opener = document.activeElement as HTMLElement | null;
+            // This viewer's list, not another viewer's on the page.
+            const root = ref.current?.closest('[data-wsi-viewer-root]');
             ref.current
                 ?.querySelector<HTMLElement>('[data-review-primary]')
                 ?.focus();
@@ -93,7 +95,7 @@ const ReviewCard = observer(
                 if (active && active !== document.body) return;
                 const target = opener?.isConnected
                     ? opener
-                    : document.querySelector<HTMLElement>(
+                    : root?.querySelector<HTMLElement>(
                           '[data-testid="annotation-list"]'
                       );
                 target?.focus();
