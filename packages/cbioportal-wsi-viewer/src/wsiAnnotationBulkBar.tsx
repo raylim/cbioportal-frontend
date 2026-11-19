@@ -134,8 +134,9 @@ function ActionItem({
  * many they apply to and whether Ctrl+Z undoes them: Relabel… (a field
  * in the bar), Move to layer ▸, Sharing ▸ and Edit shapes ▸ (submenus),
  * Accept, Reject… and Delete… (both ask first), and Clear selection.
- * Relabel, move, sharing, shape edits and delete undo as one step;
- * reviews cannot be undone. What was done and skipped is a status.
+ * Relabel, move, sharing, shape edits, delete and a review undo as one
+ * step (a review only where the service can reset reviews). What was done
+ * and skipped is a status.
  */
 export const WsiAnnotationBulkBar = observer(
     ({ controller }: { controller: WsiAnnotationController }) => {
@@ -209,7 +210,8 @@ export const WsiAnnotationBulkBar = observer(
                             reviewable === 1 ? '' : 's'
                         }`,
                         reviewable,
-                        controller.reviewRoute === false
+                        controller.reviewRoute === false,
+                        controller.reviewsUndoable
                     )
                 )
             ) {
@@ -399,7 +401,11 @@ export const WsiAnnotationBulkBar = observer(
                                         color={colors.accept}
                                         disabled={!reviewable}
                                         title={reviewTitle('Accept')}
-                                        note={FINAL}
+                                        note={
+                                            controller.reviewsUndoable
+                                                ? UNDOABLE
+                                                : FINAL
+                                        }
                                         onPick={pick(
                                             () =>
                                                 void controller.bulkReview(
@@ -418,7 +424,11 @@ export const WsiAnnotationBulkBar = observer(
                                         title={`${reviewTitle(
                                             'Reject'
                                         )} (asks first)`}
-                                        note={FINAL}
+                                        note={
+                                            controller.reviewsUndoable
+                                                ? UNDOABLE
+                                                : FINAL
+                                        }
                                         onPick={pick(reject)}
                                     />
                                 )}

@@ -5,7 +5,10 @@ import * as React from 'react';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { loadAnnotorious } from './wsiAnnotoriousLoader';
 import { WsiAnnotationBulkBar } from './wsiAnnotationBulkBar';
-import { WSI_REVIEW_UNDO_NOTICE } from './wsiAnnotationController';
+import {
+    WSI_REVIEW_RESET_UNSUPPORTED,
+    WSI_REVIEW_UNDO_NOTICE,
+} from './wsiAnnotationController';
 import {
     attachTestController,
     flush,
@@ -83,8 +86,16 @@ describe('Bulk actions over the batch routes', () => {
         expect(controller.undoStack).toHaveLength(0);
     });
 
-    it('deletes in one batch, as one undo step', async () => {
+    it('deletes in one batch, as one undo step that restores them in one batch', async () => {
         const { controller, service } = await setup(mine(3));
+        service.comments.set('m1', [
+            {
+                id: 'c1',
+                annotation_id: 'm1',
+                author: 'other',
+                body: 'Look here',
+            },
+        ]);
         controller.selectAllListed();
         await act(async () => {
             await controller.bulkDelete();
@@ -103,15 +114,62 @@ describe('Bulk actions over the batch routes', () => {
         await act(async () => {
             await controller.undo();
         });
+        // One batch restore, with the versions they were deleted at.
+        expect(batches(service, 'restore').map(call => call.body)).toEqual([
+            {
+                items: [
+                    { id: 'm0', version: 1 },
+                    { id: 'm1', version: 1 },
+                    { id: 'm2', version: 1 },
+                ],
+            },
+        ]);
+        expect(Array.from(service.rows.keys()).sort()).toEqual([
+            'm0',
+            'm1',
+            'm2',
+        ]);
+        expect(
+            controller.annotations.map(item => [item.id, item.version]).sort()
+        ).toEqual([
+            ['m0', 2],
+            ['m1', 2],
+            ['m2', 2],
+        ]);
+        expect(
+            controller.commentCountOf(
+                controller.annotations.find(item => item.id === 'm1')!
+            )
+        ).toBe(1);
+        expect(controller.notice).toBeNull();
+        // Redo deletes them again, in one batch, at their new versions.
+        expect(controller.redoLabel).toBe('Redo delete of 3 annotations');
+        await act(async () => {
+            await controller.redo();
+        });
+        expect(batches(service, 'delete')[1].body.items).toEqual([
+            { id: 'm0', version: 2 },
+            { id: 'm1', version: 2 },
+            { id: 'm2', version: 2 },
+        ]);
+        expect(service.rows.size).toBe(0);
+        await act(async () => {
+            await controller.undo();
+        });
         expect(service.rows.size).toBe(3);
+        expect(service.comments.get('m1')).toHaveLength(1);
     });
 
-    it('accepts and rejects in batches, off the undo history', async () => {
-        const ai = (id: string) =>
-            serviceRow(id, '0,0,5,5', {
-                creator: 'loader',
-                provenance: { source: 'model' },
-            });
+    const ai = (id: string, label = `Label ${id}`) =>
+        serviceRow(id, '0,0,5,5', {
+            label,
+            creator: 'loader',
+            provenance: { source: 'model' },
+        });
+    const reviewOf = (service: TestAnnotationService, id: string) =>
+        (service.rows.get(id) || {}).body?.provenance?.review_status;
+
+    it('accepts and rejects in batches, each one undo step that resets the reviews', async () => {
         const { controller, service } = await setup([
             ai('ai1'),
             ai('ai2'),
@@ -133,6 +191,8 @@ describe('Bulk actions over the batch routes', () => {
         expect(controller.bulkMessage).toBe(
             'Accepted 2 annotations; skipped 1 that is not unreviewed AI annotations you can review.'
         );
+        expect(controller.bulkUndo).toBe('undoable');
+        expect(controller.undoLabel).toBe('Undo accept of 2 AI annotations');
         controller.select(['ai3'], false);
         await act(async () => {
             await controller.bulkReview('reject');
@@ -140,31 +200,69 @@ describe('Bulk actions over the batch routes', () => {
         expect(controller.annotations.map(item => item.id)).not.toContain(
             'ai3'
         );
+        expect(controller.undoLabel).toBe('Undo reject');
+
+        // Undo of the reject: one reset, and ai3 is back, unreviewed.
+        await act(async () => {
+            expect(await controller.undo()).toBe(true);
+        });
+        const reset = service.calls.filter(
+            call => call.path === '/wsi/annotations/ai3/review'
+        );
+        expect(reset.map(call => call.body)).toEqual([
+            { decision: 'reset', version: 2 },
+        ]);
+        expect(reviewOf(service, 'ai3')).toBeUndefined();
+        expect(controller.annotations.map(item => item.id)).toContain('ai3');
+        expect(controller.unreviewedAiCount).toBe(1);
+        expect(controller.redoLabel).toBe('Redo reject');
+
+        // Undo of the bulk accept: one batch reset of both.
+        await act(async () => {
+            expect(await controller.undo()).toBe(true);
+        });
+        expect(batches(service, 'review')[2].body.items).toEqual([
+            { id: 'ai1', version: 2, decision: 'reset' },
+            { id: 'ai2', version: 2, decision: 'reset' },
+        ]);
+        expect(reviewOf(service, 'ai1')).toBeUndefined();
+        expect(reviewOf(service, 'ai2')).toBeUndefined();
+        expect(controller.unreviewedAiCount).toBe(3);
         expect(controller.canUndo).toBe(false);
+        expect(controller.redoLabel).toBe('Redo accept of 2 AI annotations');
+
+        // Redo applies the accept again, in one batch, and undo resets it.
+        await act(async () => {
+            expect(await controller.redo()).toBe(true);
+        });
+        expect(batches(service, 'review')[3].body.items).toEqual([
+            { id: 'ai1', version: 3, decision: 'accept' },
+            { id: 'ai2', version: 3, decision: 'accept' },
+        ]);
+        expect(reviewOf(service, 'ai1')).toBe('accepted');
+        expect(controller.unreviewedAiCount).toBe(1);
+        await act(async () => {
+            expect(await controller.redo()).toBe(true);
+        });
+        expect(reviewOf(service, 'ai3')).toBe('rejected');
+        expect(controller.annotations.map(item => item.id)).not.toContain(
+            'ai3'
+        );
+        expect(controller.undoLabel).toBe('Undo reject');
     });
 
-    it('asks before a bulk reject, and Undo after a review leaves earlier edits', async () => {
-        const ai = (id: string) =>
-            serviceRow(id, '0,0,5,5', {
-                creator: 'loader',
-                provenance: { source: 'model' },
-            });
-        const { controller, service } = await setup([
-            ai('ai1'),
-            ai('ai2'),
-            ...mine(1),
-        ]);
-        // An earlier edit of the user's, on the undo history.
-        await act(async () => {
-            await controller.renameAnnotation('m0', 'Renamed');
-        });
+    it('asks before a bulk reject, saying Undo can take it back', async () => {
+        const { controller, service } = await setup([ai('ai1'), ai('ai2')]);
         controller.select(['ai1', 'ai2']);
         render(<WsiAnnotationBulkBar controller={controller} />);
         const confirm = jest.spyOn(window, 'confirm').mockReturnValue(false);
         fireEvent.click(screen.getByTestId('annotation-bulk-actions'));
+        expect(screen.getByTestId('annotation-bulk-reject').textContent).toBe(
+            'Reject 2…Ctrl+Z undoes'
+        );
         fireEvent.click(screen.getByTestId('annotation-bulk-reject'));
         expect(confirm).toHaveBeenCalledWith(
-            "Reject 2 AI annotations? They are hidden for everyone; the service keeps them as a review record. Reviews can't be undone."
+            'Reject 2 AI annotations? They are hidden for everyone; the service keeps them as a review record. Undo (Ctrl+Z) can take the reject back.'
         );
         expect(batches(service, 'review')).toHaveLength(0);
         confirm.mockReturnValue(true);
@@ -172,22 +270,164 @@ describe('Bulk actions over the batch routes', () => {
         fireEvent.click(screen.getByTestId('annotation-bulk-reject'));
         await flush();
         expect(batches(service, 'review')).toHaveLength(1);
-        // The bar says a review cannot be undone.
+        expect(
+            screen.getByTestId('annotation-bulk-undo-note').textContent
+        ).toBe(
+            "Undo reject of 2 AI annotations with Ctrl+Z or the toolbar's Undo."
+        );
+    });
+
+    it("says why a review can't be undone once another user reviewed it since", async () => {
+        const { controller, service } = await setup([ai('ai1', 'Tumor bud')]);
+        await act(async () => {
+            await controller.acceptAnnotation('ai1');
+        });
+        // Another user reviews it again, and the slide reloads.
+        const row = service.rows.get('ai1');
+        service.rows.set('ai1', {
+            ...row,
+            body: {
+                ...row.body,
+                provenance: { ...row.body.provenance, reviewed_by: 'bob' },
+            },
+            version: row.version + 1,
+        });
+        await act(async () => {
+            await (controller as any).reloadCurrentSlide(null);
+        });
+        await act(async () => {
+            expect(await controller.undo()).toBe(false);
+        });
+        expect(
+            service.calls.filter(
+                call => call.path === '/wsi/annotations/ai1/review'
+            )[1].body
+        ).toEqual({ decision: 'reset', version: 3 });
+        expect(controller.error).toBe(
+            'Could not undo the accept of "Tumor bud": bob reviewed it since, and only the latest reviewer can undo a review.'
+        );
+        expect(controller.accessIssue).toBeNull();
+        expect(controller.canEdit).toBe(true);
+        expect(reviewOf(service, 'ai1')).toBe('accepted');
+        expect(controller.canUndo).toBe(false);
+        expect(controller.canRedo).toBe(false);
+    });
+
+    it("falls back on a service that cannot reset reviews: Undo says reviews can't be undone and leaves earlier edits", async () => {
+        const { controller, service } = await setup(
+            [ai('ai1'), ai('ai2'), ai('ai3'), ...mine(1)],
+            { missing: ['reset'] }
+        );
+        // An earlier edit of the user's, on the undo history.
+        await act(async () => {
+            await controller.renameAnnotation('m0', 'Renamed');
+        });
+        controller.select(['ai1', 'ai2']);
+        render(<WsiAnnotationBulkBar controller={controller} />);
+        jest.spyOn(window, 'confirm').mockReturnValue(true);
+        fireEvent.click(screen.getByTestId('annotation-bulk-actions'));
+        fireEvent.click(screen.getByTestId('annotation-bulk-reject'));
+        await flush();
+        expect(batches(service, 'review')).toHaveLength(1);
+        // The first undo finds that the service cannot reset reviews.
+        await act(async () => {
+            expect(await controller.undo()).toBe(false);
+        });
+        expect(batches(service, 'review')[1].body.items).toEqual([
+            { id: 'ai1', version: 2, decision: 'reset' },
+            { id: 'ai2', version: 2, decision: 'reset' },
+        ]);
+        expect(controller.resetRoute).toBe(false);
+        expect(controller.reviewsUndoable).toBe(false);
+        expect(controller.notice).toBe(WSI_REVIEW_RESET_UNSUPPORTED);
+        expect(reviewOf(service, 'ai1')).toBe('rejected');
+        expect(service.rows.get('m0')!.body.label).toBe('Renamed');
+
+        // From then on reviews are off the history, and say so.
+        controller.select(['ai3']);
+        const confirm = jest.spyOn(window, 'confirm').mockReturnValue(false);
+        fireEvent.click(screen.getByTestId('annotation-bulk-actions'));
+        expect(screen.getByTestId('annotation-bulk-reject').textContent).toBe(
+            "Reject 1…Can't be undone"
+        );
+        fireEvent.click(screen.getByTestId('annotation-bulk-reject'));
+        expect(confirm).toHaveBeenCalledWith(
+            "Reject 1 AI annotation? It is hidden for everyone; the service keeps it as a review record. Reviews can't be undone."
+        );
+        confirm.mockReturnValue(true);
+        fireEvent.click(screen.getByTestId('annotation-bulk-actions'));
+        fireEvent.click(screen.getByTestId('annotation-bulk-reject'));
+        await flush();
         expect(
             screen.getByTestId('annotation-bulk-undo-note').textContent
         ).toBe("Reviews can't be undone.");
-        // Undo says reviews cannot be undone instead of renaming m0 back.
-        expect(controller.canUndo).toBe(true);
         await act(async () => {
             expect(await controller.undo()).toBe(false);
         });
         expect(controller.notice).toBe(WSI_REVIEW_UNDO_NOTICE);
-        expect(service.rows.get('m0')!.body.label).toBe('Renamed');
+        expect(batches(service, 'review')).toHaveLength(3);
         // Pressed again, it undoes the earlier edit.
         await act(async () => {
             expect(await controller.undo()).toBe(true);
         });
         expect(service.rows.get('m0')!.body.label).toBe('Cell 0');
+    });
+
+    it('undoes a layer delete in one step, restoring its annotations under their ids', async () => {
+        const { controller, service } = await setup([
+            serviceRow('t1', '0,0,5,5', { label: 'T1', layer: 'Tumor' }),
+            serviceRow('t2', '10,0,5,5', { label: 'T2', layer: 'Tumor' }),
+            serviceRow('theirs', '20,0,5,5', {
+                layer: 'Tumor',
+                creator: 'other',
+            }),
+            serviceRow('s1', '30,0,5,5', { label: 'S1', layer: 'Stroma' }),
+        ]);
+        service.comments.set('t2', [
+            { id: 'c1', annotation_id: 't2', author: 'other', body: 'Hmm' },
+        ]);
+        await act(async () => {
+            await controller.deleteLayer('Tumor');
+        });
+        expect(Array.from(service.rows.keys()).sort()).toEqual([
+            's1',
+            'theirs',
+        ]);
+        expect(controller.undoLabel).toBe('Undo delete of 2 annotations');
+        await act(async () => {
+            await controller.undo();
+        });
+        expect(batches(service, 'restore').map(call => call.body)).toEqual([
+            {
+                items: [
+                    { id: 't1', version: 1 },
+                    { id: 't2', version: 1 },
+                ],
+            },
+        ]);
+        expect(Array.from(service.rows.keys()).sort()).toEqual([
+            's1',
+            't1',
+            't2',
+            'theirs',
+        ]);
+        expect(
+            controller.annotations
+                .filter(item => item.layerName === 'Tumor')
+                .map(item => item.id)
+                .sort()
+        ).toEqual(['t1', 't2', 'theirs']);
+        expect(service.comments.get('t2')).toHaveLength(1);
+        expect(controller.notice).toBeNull();
+        // Redo deletes the layer's annotations again, in one step.
+        await act(async () => {
+            await controller.redo();
+        });
+        expect(Array.from(service.rows.keys()).sort()).toEqual([
+            's1',
+            'theirs',
+        ]);
+        expect(controller.undoLabel).toBe('Undo delete of 2 annotations');
     });
 
     it('reports conflicts, reloads those rows and saves the rest', async () => {

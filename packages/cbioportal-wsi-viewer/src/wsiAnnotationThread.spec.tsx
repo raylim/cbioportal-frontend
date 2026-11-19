@@ -143,7 +143,7 @@ describe('Comment threads', () => {
         expect(controller.annotationTooltip?.comments).toBe('2 comments');
     });
 
-    it('warns before a delete loses comments, and says undo cannot bring them back', async () => {
+    it('warns before deleting an annotation with comments, and Undo restores it under its id with its thread', async () => {
         const { controller, service } = await setup();
         const confirm = jest.spyOn(window, 'confirm').mockReturnValue(false);
         // The thread is not loaded yet: the delete loads it to tell whose
@@ -152,7 +152,7 @@ describe('Comment threads', () => {
             fireEvent.click(screen.getByTestId('delete-annotation-a1'));
         });
         expect(confirm).toHaveBeenCalledWith(
-            'Delete annotation "Tumor"? "Tumor" has 2 comments, 1 by other users. Deleting deletes its comment thread, and Undo cannot bring the comments back.'
+            'Delete annotation "Tumor"? "Tumor" has 2 comments, 1 by other users. Undo (Ctrl+Z) brings it back with its comments; otherwise the service removes deleted annotations and their comments for good after 30 days (its default).'
         );
         expect(service.rows.has('a1')).toBe(true);
         confirm.mockReturnValue(true);
@@ -161,11 +161,71 @@ describe('Comment threads', () => {
         });
         await flush();
         expect(service.rows.has('a1')).toBe(false);
+        expect(service.deleted.has('a1')).toBe(true);
         await act(async () => {
             await controller.undo();
         });
+        // Restored under the same id, with the version it was deleted at.
+        expect(
+            service.calls
+                .filter(call => call.path === '/wsi/annotations/a1/restore')
+                .map(call => call.body)
+        ).toEqual([{ version: 1 }]);
+        expect(service.rows.get('a1').version).toBe(2);
+        expect(controller.annotations.map(item => item.id)).toEqual(['a1']);
+        expect(controller.notice).toBeNull();
+        expect(controller.restoreRoute).toBe(true);
+        expect(controller.commentCountOf(controller.annotations[0])).toBe(2);
+        await act(async () => {
+            await controller.loadComments('a1');
+        });
+        expect(
+            controller.threads.get('a1')!.comments.map(item => item.body)
+        ).toEqual(['Is this the margin?', 'Yes, deep margin.']);
+        // Redo deletes it again, at its new version.
+        await act(async () => {
+            await controller.redo();
+        });
+        expect(service.rows.has('a1')).toBe(false);
+        await act(async () => {
+            await controller.undo();
+        });
+        expect(service.rows.get('a1').version).toBe(3);
+        expect(service.comments.get('a1')).toHaveLength(2);
+    });
+
+    it('on a service without restores, warns that comments go and creates the annotation again with a new id', async () => {
+        const { controller, service } = await setup({ missing: ['restore'] });
+        // The first undo of a delete finds the route missing.
+        const confirm = jest.spyOn(window, 'confirm').mockReturnValue(true);
+        await act(async () => {
+            fireEvent.click(screen.getByTestId('delete-annotation-a1'));
+        });
+        await flush();
+        expect(confirm).toHaveBeenCalledWith(
+            'Delete annotation "Tumor"? "Tumor" has 2 comments, 1 by other users. Undo (Ctrl+Z) brings it back with its comments; otherwise the service removes deleted annotations and their comments for good after 30 days (its default).'
+        );
+        expect(service.rows.has('a1')).toBe(false);
+        await act(async () => {
+            await controller.undo();
+        });
+        expect(controller.restoreRoute).toBe(false);
         expect(controller.notice).toBe(
             '"Tumor" was created again as a new annotation; its 2 comments could not be restored.'
+        );
+        const [again] = controller.annotations;
+        expect(again.id).not.toBe('a1');
+        expect(service.rows.has(again.id)).toBe(true);
+        // Once known, the warning says the comments go with it.
+        let warning = '';
+        await act(async () => {
+            warning = await controller.threadLossWarning(
+                [{ ...again, commentCount: 1 }],
+                'Deleting'
+            );
+        });
+        expect(warning).toMatch(
+            /Deleting deletes its comment thread, and Undo cannot bring the comments back\.$/
         );
     });
 

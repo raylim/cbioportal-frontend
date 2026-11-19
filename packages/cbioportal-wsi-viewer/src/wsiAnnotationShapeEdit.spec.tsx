@@ -276,7 +276,7 @@ describe('Shape editing: holes, merge, subtract, intersect, cut, split', () => {
         expect(service.writes()).toEqual([]);
     });
 
-    it("merges the user's regions into a new one, deleting the originals; undo brings them back", async () => {
+    it("merges the user's regions into a new one, deleting the originals; undo restores them under their ids", async () => {
         const { controller, service } = await setup([
             serviceRow('a', squareSvg(0, 0), { label: 'A', layer: 'L1' }),
             serviceRow('b', squareSvg(50, 0), { label: 'B' }),
@@ -308,10 +308,21 @@ describe('Shape editing: holes, merge, subtract, intersect, cut, split', () => {
             await controller.undo();
         });
         const restored = Array.from(service.rows.values());
+        expect(restored.map(row => row.id).sort()).toEqual(['a', 'b']);
         expect(restored.map(row => row.body.label).sort()).toEqual(['A', 'B']);
         expect(restored.map(row => row.target.selector.value).sort()).toEqual(
             [squareSvg(0, 0), squareSvg(50, 0)].sort()
         );
+        expect(
+            service.calls
+                .filter(call => call.path === '/wsi/annotations/batch-restore')
+                .map(call => call.body.items)
+        ).toEqual([
+            [
+                { id: 'a', version: 1 },
+                { id: 'b', version: 1 },
+            ],
+        ]);
         expect(controller.redoLabel).toBe('Redo merge');
         await act(async () => {
             await controller.redo();
@@ -347,7 +358,7 @@ describe('Shape editing: holes, merge, subtract, intersect, cut, split', () => {
         });
         await flush();
         expect(confirm).toHaveBeenCalledWith(
-            'Merge the selected regions? Your originals are deleted: "A" has 1 comment, all by other users. Merging deletes its comment thread, and Undo cannot bring the comments back.'
+            'Merge the selected regions? Your originals are deleted: "A" has 1 comment, all by other users. Undo (Ctrl+Z) brings it back with its comments; otherwise the service removes deleted annotations and their comments for good after 30 days (its default).'
         );
         expect(service.writes()).toEqual([]);
     });
@@ -389,6 +400,87 @@ describe('Shape editing: holes, merge, subtract, intersect, cut, split', () => {
         expect(controller.bulkMessage).toBe(
             'The merged region was not saved (Delete refused: Only the creator can delete). What was saved of it was taken back, so nothing changed.'
         );
+        expect(controller.canUndo).toBe(false);
+    });
+
+    it('takes a merge back by restoring the originals already deleted, under their ids', async () => {
+        // Deleted one by one (no batch-delete): "a" goes, "b" is refused.
+        const { controller, service } = await setup(
+            [
+                serviceRow('a', squareSvg(0, 0), { label: 'A' }),
+                serviceRow('b', squareSvg(50, 0), { label: 'B' }),
+            ],
+            {
+                missing: ['batchDelete'],
+                override: request =>
+                    request.method === 'DELETE' &&
+                    request.path.endsWith('/annotations/b')
+                        ? {
+                              status: 409,
+                              body: { detail: 'Version conflict' },
+                          }
+                        : undefined,
+            }
+        );
+        service.comments.set('a', [
+            {
+                id: 'c1',
+                annotation_id: 'a',
+                author: 'other',
+                body: 'Check this',
+                created_at: '2026-11-18T10:00:00Z',
+            },
+        ]);
+        controller.select(['a', 'b']);
+        let merged = true;
+        await act(async () => {
+            merged = await controller.mergeSelected();
+        });
+        expect(merged).toBe(false);
+        // "a" came back under its id, with its comment; the union is gone.
+        expect(
+            service.calls
+                .filter(call => call.path === '/wsi/annotations/a/restore')
+                .map(call => call.body)
+        ).toEqual([{ version: 1 }]);
+        expect(Array.from(service.rows.keys()).sort()).toEqual(['a', 'b']);
+        expect(service.rows.get('a').version).toBe(2);
+        expect(service.comments.get('a')).toHaveLength(1);
+        expect(
+            controller.annotations.map((item: any) => item.id).sort()
+        ).toEqual(['a', 'b']);
+        expect(controller.bulkMessage).toMatch(
+            /What was saved of it was taken back, so nothing changed\.$/
+        );
+        expect(controller.canUndo).toBe(false);
+    });
+
+    it('takes a merge back on a service without restores by creating the originals again', async () => {
+        const { controller, service } = await setup(
+            [
+                serviceRow('a', squareSvg(0, 0), { label: 'A' }),
+                serviceRow('b', squareSvg(50, 0), { label: 'B' }),
+            ],
+            {
+                missing: ['batchDelete', 'restore'],
+                override: request =>
+                    request.method === 'DELETE' &&
+                    request.path.endsWith('/annotations/b')
+                        ? {
+                              status: 409,
+                              body: { detail: 'Version conflict' },
+                          }
+                        : undefined,
+            }
+        );
+        controller.select(['a', 'b']);
+        await act(async () => {
+            await controller.mergeSelected();
+        });
+        const rows = Array.from(service.rows.values());
+        expect(rows.map(row => row.body.label).sort()).toEqual(['A', 'B']);
+        expect(rows.map(row => row.id)).not.toContain('a');
+        expect(controller.restoreRoute).toBe(false);
         expect(controller.canUndo).toBe(false);
     });
 

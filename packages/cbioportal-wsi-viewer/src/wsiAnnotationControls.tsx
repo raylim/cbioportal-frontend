@@ -1660,7 +1660,8 @@ const AnnotationRow = observer(
                                                         `"${rawLabel}"`,
                                                         1,
                                                         controller.reviewRoute ===
-                                                            false
+                                                            false,
+                                                        controller.reviewsUndoable
                                                     )
                                                 )
                                             ) {
@@ -1739,9 +1740,8 @@ const AnnotationRow = observer(
                         aria-label={`Delete annotation ${name}`}
                         onClick={() =>
                             void (async () => {
-                                // Asks only when comments would be lost
-                                // (Undo brings the annotation back, not
-                                // its thread).
+                                // Asks only when it has comments: what
+                                // becomes of them (see threadLossWarning).
                                 const warning = await controller.threadLossWarning(
                                     [annotation],
                                     'Deleting'

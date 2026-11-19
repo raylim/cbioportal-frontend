@@ -1385,8 +1385,12 @@ describe('WsiAnnotationController', () => {
             'mine',
         ]);
         expect(controller.error).toBeNull();
-        // Reviews are not on the undo history.
-        expect(controller.canUndo).toBe(false);
+        // Each review is one undo step (Undo resets it).
+        expect(controller.undoStack.map(entry => entry.kind)).toEqual([
+            'review',
+            'review',
+        ]);
+        expect(controller.undoLabel).toBe('Undo reject');
     });
 
     it('falls back to the creator-only update and delete without a review route', async () => {
@@ -3352,19 +3356,31 @@ describe('WsiAnnotationController', () => {
     });
 
     describe('undo', () => {
-        /** A service that stores annotations and checks versions. */
+        /**
+         * A service that stores annotations and checks versions, without
+         * restores or batch routes, as an older service: Undo of a delete
+         * creates the annotation again.
+         */
         function fakeService() {
             const rows = new Map<string, any>();
             let next = 0;
             jest.spyOn(global, 'fetch').mockImplementation(
                 async (url, init) => {
                     const method = init?.method || 'GET';
-                    const id = decodeURIComponent(
-                        new URL(String(url)).pathname.split('/')[2] || ''
-                    );
+                    const path = new URL(String(url)).pathname.split('/');
+                    const id = decodeURIComponent(path[2] || '');
                     const sent = init?.body
                         ? JSON.parse(init.body as string)
                         : null;
+                    if (path[3] || id.startsWith('batch-')) {
+                        const missing = {
+                            ok: false,
+                            status: 404,
+                            json: async () => ({ detail: 'Not Found' }),
+                            clone: () => missing,
+                        } as any;
+                        return missing as Response;
+                    }
                     if (method === 'POST') {
                         const row = {
                             ...sent,

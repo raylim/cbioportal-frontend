@@ -55,6 +55,14 @@ function row(
 
 /** Reviewed by the in-memory service: the next version, with the decision. */
 function reviewed(item: any, decision: string) {
+    if (decision === 'reset') {
+        const { review_status, ...provenance } = item.body.provenance;
+        return {
+            ...item,
+            version: item.version + 1,
+            body: { ...item.body, provenance },
+        };
+    }
     return {
         ...item,
         version: item.version + 1,
@@ -252,8 +260,30 @@ describe('AI review queue', () => {
         expect(controller.reviewQueue!.currentId).toBeNull();
         expect(controller.focusedAnnotationId).toBeNull();
         expect(controller.reviewProgress).toEqual({ reviewed: 3, total: 3 });
-        // Reviews are not on the undo history.
-        expect(controller.undoStack).toEqual([]);
+        // Each review is an undo step.
+        expect(controller.undoLabel).toBe('Undo accept');
+
+        // Undo of the reject brings "mid" back, unreviewed, and shows it.
+        await controller.undo();
+        await controller.undo();
+        const resets = calls
+            .filter(([, init]) => init.method === 'POST')
+            .map(([url, init]) => [
+                new URL(url).pathname,
+                JSON.parse(init.body as string),
+            ]);
+        expect(resets.slice(3)).toEqual([
+            ['/annotations/far/review', { decision: 'reset', version: 2 }],
+            ['/annotations/mid/review', { decision: 'reset', version: 2 }],
+        ]);
+        expect(rows.mid.body.provenance.review_status).toBeUndefined();
+        expect(controller.annotations.map(item => item.id)).toContain('mid');
+        expect(controller.reviewQueue!.currentId).toBe('mid');
+        expect(controller.reviewQueue!.message).toBe(
+            'Took back the reject of "Label mid".'
+        );
+        expect(controller.reviewProgress).toEqual({ reviewed: 1, total: 3 });
+        expect(controller.reviewRemaining).toEqual(['mid', 'far']);
 
         controller.exitReview();
         expect(controller.reviewQueue).toBeNull();
@@ -619,7 +649,7 @@ describe('AI review card', () => {
         const help = screen.getByTestId('annotation-review-reject-help');
         expect(help.getAttribute('role')).toBe('alert');
         expect(help.textContent).toBe(
-            'Reject "Label first"? It is hidden for everyone (the service keeps it as a review record); this cannot be undone. Press X or Enter to confirm, Esc to cancel.'
+            'Reject "Label first"? It is hidden for everyone (the service keeps it as a review record); Ctrl+Z can take it back. Press X or Enter to confirm, Esc to cancel.'
         );
         expect(reject.getAttribute('aria-describedby')).toBe(help.id);
         fireEvent.click(screen.getByTestId('annotation-review-reject-cancel'));

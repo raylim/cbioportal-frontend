@@ -359,7 +359,7 @@ describe('Selecting annotations and bulk actions', () => {
         );
     });
 
-    it('accepts or rejects only unreviewed AI ones, not on the undo history', async () => {
+    it('accepts or rejects only unreviewed AI ones, as one undo step', async () => {
         const { controller, writes } = attached();
         controller.selectAllListed();
         await act(async () => {
@@ -373,7 +373,7 @@ describe('Selecting annotations and bulk actions', () => {
             'Rejected 1 annotation; skipped 3 that are not unreviewed AI annotations you can review.'
         );
         expect(controller.annotations.map(item => item.id)).not.toContain('ai');
-        expect(controller.canUndo).toBe(false);
+        expect(controller.undoLabel).toBe('Undo reject');
     });
 
     it('deletes as one undo step, a few requests at a time', async () => {
@@ -449,10 +449,10 @@ describe('Selecting annotations and bulk actions', () => {
             'Relabel 1 of 3 selected (2 not yours are skipped)'
         );
         expect(screen.getByTestId('annotation-bulk-accept').textContent).toBe(
-            "Accept 1Can't be undone"
+            'Accept 1Ctrl+Z undoes'
         );
         expect(screen.getByTestId('annotation-bulk-reject').textContent).toBe(
-            "Reject 1…Can't be undone"
+            'Reject 1…Ctrl+Z undoes'
         );
         // The submenus open beside their item, with their own keys.
         const layer = screen.getByTestId('annotation-bulk-layer');

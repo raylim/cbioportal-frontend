@@ -80,11 +80,52 @@ describe('Point drops undo together', () => {
             await controller.redo();
         });
         expect(service.rows.size).toBe(3);
-        expect(controller.annotations).toHaveLength(3);
+        // Redo restores the points under their ids, in one batch restore.
+        expect(controller.annotations.map(item => item.id).sort()).toEqual(
+            [...ids].sort()
+        );
+        const restores = service.calls.filter(
+            call => call.path === '/wsi/annotations/batch-restore'
+        );
+        expect(restores).toHaveLength(1);
+        expect(restores[0].body.items.map((item: any) => item.id)).toEqual(ids);
         expect(
             service.calls.filter(call => call.path === '/wsi/annotations/batch')
-        ).toHaveLength(3);
+        ).toHaveLength(2);
         expect(controller.undoLabel).toBe('Undo create of 3 points');
+        await act(async () => {
+            await controller.undo();
+        });
+        expect(service.rows.size).toBe(0);
+    });
+
+    it('creates a run again with new ids on a service without restores', async () => {
+        const { controller, service, drop, flushPoints } = await setup({
+            missing: ['restore'],
+        });
+        drop(10);
+        drop(20);
+        await flushPoints();
+        const ids = controller.annotations.map(item => item.id);
+        await act(async () => {
+            await controller.undo();
+        });
+        await act(async () => {
+            await controller.redo();
+        });
+        expect(service.rows.size).toBe(2);
+        expect(
+            service.calls.filter(
+                call => call.path === '/wsi/annotations/batch-restore'
+            )
+        ).toHaveLength(1);
+        expect(
+            service.calls.filter(call => call.path === '/wsi/annotations/batch')
+        ).toHaveLength(2);
+        const again = controller.annotations.map(item => item.id);
+        expect(again.some(id => ids.includes(id))).toBe(false);
+        expect(controller.restoreRoute).toBe(false);
+        expect(controller.bulkRoutes.restore).toBe(false);
         // The history follows the new ids.
         await act(async () => {
             await controller.undo();

@@ -83,6 +83,8 @@ const ReviewCard = observer(
         const rejectConsequence =
             controller.reviewRoute === false
                 ? 'It is deleted'
+                : controller.reviewsUndoable
+                ? 'It is hidden for everyone (the service keeps it as a review record); Ctrl+Z can take it back'
                 : 'It is hidden for everyone (the service keeps it as a review record); this cannot be undone';
         const queue = controller.reviewQueue!;
         const current = controller.reviewCurrent;

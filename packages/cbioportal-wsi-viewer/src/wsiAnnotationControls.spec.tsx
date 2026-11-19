@@ -100,7 +100,7 @@ describe('WsiAnnotationPanel', () => {
         const confirm = jest.spyOn(window, 'confirm').mockReturnValue(false);
         fireEvent.click(screen.getByLabelText('Reject AI annotation ai-1'));
         expect(confirm).toHaveBeenCalledWith(
-            'Reject "ai-1"? It is hidden for everyone; the service keeps it as a review record. Reviews can\'t be undone.'
+            'Reject "ai-1"? It is hidden for everyone; the service keeps it as a review record. Undo (Ctrl+Z) can take the reject back.'
         );
         expect(reject).not.toHaveBeenCalled();
         confirm.mockReturnValue(true);

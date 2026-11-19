@@ -317,10 +317,15 @@ export const COMMENT_MAX_LENGTH = 4000;
 
 /**
  * A bulk action's batch route: `POST /annotations/batch-update`,
- * `-delete` or `-review`; `review-fallback` is a review without the
- * review route, which always goes one by one.
+ * `-delete`, `-review` or `-restore`; `review-fallback` is a review
+ * without the review route, which always goes one by one.
  */
-export type WsiBulkKind = 'update' | 'delete' | 'review' | 'review-fallback';
+export type WsiBulkKind =
+    | 'update'
+    | 'delete'
+    | 'review'
+    | 'restore'
+    | 'review-fallback';
 
 /** Steps to the next / previous annotation listed, Annotate on or off. */
 export const WSI_NEXT_ANNOTATION_KEY = ']';
@@ -796,15 +801,36 @@ export function pointSelectorSvg(point: { x: number; y: number }): string {
     )}" r="0" /></svg>`;
 }
 
+/** An AI annotation a review was recorded on, for undo and redo. */
+export interface WsiReviewedItem {
+    id: string;
+    /** Its version after the review (or the reset). */
+    version: number;
+    label: string;
+}
+
 /**
  * A change undo can reverse: annotations created (deleted on undo), an edit
- * (its previous version saved again) or annotations deleted (created again).
+ * (its previous version saved again), annotations deleted (restored under
+ * their ids, or created again where the service cannot restore), AI
+ * annotations reviewed (the review reset) or reviews reset (reviewed
+ * again).
  */
 export type WsiUndoEntry =
     /** `pointRun` marks a run of dropped points (see `POINT_UNDO_GROUP_MS`). */
     | { kind: 'create'; ids: string[]; pointRun?: number }
     | { kind: 'update'; before: WsiAnnotation }
     | { kind: 'delete'; before: WsiAnnotation[]; pointRun?: number }
+    | {
+          kind: 'review';
+          decision: 'accept' | 'reject';
+          items: WsiReviewedItem[];
+      }
+    | {
+          kind: 'reset';
+          decision: 'accept' | 'reject';
+          items: WsiReviewedItem[];
+      }
     /**
      * Changes made together, e.g. a bulk relabel, or a shape operation
      * (`label`, e.g. "merge") that created, edited and deleted annotations.
@@ -831,6 +857,11 @@ function describeChange(entry: WsiUndoEntry, redo = false): string {
         if (entry.label) return entry.label;
         const n = entry.entries.length;
         return `edit${n > 1 ? ` of ${n} annotations` : ''}`;
+    }
+    if (entry.kind === 'review' || entry.kind === 'reset') {
+        // Undo resets a review and redo applies it again: both name it.
+        const n = entry.items.length;
+        return `${entry.decision}${n > 1 ? ` of ${n} AI annotations` : ''}`;
     }
     const n =
         entry.kind === 'create'
@@ -902,12 +933,14 @@ export const WSI_REVIEW_KEYS: Record<
 
 /**
  * The confirmation asked before rejecting `what` ("Tumor 1" in quotes, or
- * "3 AI annotations"): what a reject does, and that it cannot be undone.
+ * "3 AI annotations"): what a reject does, and whether Undo can take it
+ * back (`undoable`: the service can reset a review).
  */
 export function rejectConfirmation(
     what: string,
     count: number,
-    deletes: boolean
+    deletes: boolean,
+    undoable = false
 ): string {
     const it = count === 1 ? 'It is' : 'They are';
     return `Reject ${what}? ${
@@ -916,12 +949,29 @@ export function rejectConfirmation(
             : `${it} hidden for everyone; the service keeps ${
                   count === 1 ? 'it' : 'them'
               } as a review record.`
-    } Reviews can't be undone.`;
+    } ${
+        undoable && !deletes
+            ? 'Undo (Ctrl+Z) can take the reject back.'
+            : "Reviews can't be undone."
+    }`;
 }
 
-/** Said when Undo follows a review: reviews are not on the undo history. */
+/**
+ * Said when Undo follows a review the service cannot reset: such reviews
+ * are not on the undo history.
+ */
 export const WSI_REVIEW_UNDO_NOTICE =
     "Reviews can't be undone. Press Undo again to undo your last edit before it.";
+
+/** Said when an Undo finds that the service cannot reset a review. */
+export const WSI_REVIEW_RESET_UNSUPPORTED =
+    "This annotation service cannot undo reviews, so reviews can't be undone. Press Undo again to undo your last edit before it.";
+
+/**
+ * How long the service keeps a deleted annotation, with its comments, for
+ * a restore, by default (`ANNOTATION_DELETED_RETENTION_DAYS`).
+ */
+export const WSI_DELETED_RETENTION_DAYS = 30;
 
 /**
  * The area two circles share (µm² from µm), 0 when they do not overlap: the
@@ -1032,6 +1082,30 @@ interface WsiCreatePayload {
 export type WsiSaveResult =
     | { annotation: WsiAnnotation; reason?: undefined }
     | { annotation?: undefined; reason: string };
+
+/**
+ * How one undo or redo write went: the saved row, the service unable to do
+ * it (`unsupported`), or refused with a status and reason.
+ */
+type WsiItemOutcome =
+    | { row: any }
+    | { unsupported: true }
+    | { status: number; reason: string };
+
+/**
+ * Whether a 422's `detail` refuses the request's `decision` as a value it
+ * does not know: a service whose review route cannot reset reviews.
+ */
+export function isUnknownDecision(detail: unknown): boolean {
+    return (
+        Array.isArray(detail) &&
+        detail.some(
+            error =>
+                Array.isArray(error?.loc) &&
+                error.loc[error.loc.length - 1] === 'decision'
+        )
+    );
+}
 
 /**
  * Splits items, given each one's serialized size, into consecutive groups
@@ -1359,19 +1433,34 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
      */
     @observable reviewRoute: boolean | null = null;
     /**
+     * Whether the review route takes `decision: "reset"` (undoing a
+     * review): false once a reset is refused as an unknown decision (a 422
+     * on `decision`) or its route is missing; unknown until the first undo
+     * of a review.
+     */
+    @observable resetRoute: boolean | null = null;
+    /**
+     * Whether the service restores deleted annotations under their ids
+     * (`POST /annotations/{id}/restore`), with their comments: false once
+     * the route is missing (a 404 "Not Found" or a 405); unknown until the
+     * first undo of a delete.
+     */
+    @observable restoreRoute: boolean | null = null;
+    /**
      * Whether the service has the batch route (`POST /annotations/batch`):
      * unknown until the first batch save.
      */
     @observable batchRoute: boolean | null = null;
     /**
      * Whether the service has the bulk batch routes (`batch-update`,
-     * `batch-delete`, `batch-review`): unknown until the first bulk action
-     * of the kind.
+     * `batch-delete`, `batch-review`, `batch-restore`): unknown until the
+     * first bulk action (or undo) of the kind.
      */
     @observable.ref bulkRoutes: Record<WsiBulkKind, boolean | null> = {
         update: null,
         delete: null,
         review: null,
+        restore: null,
         'review-fallback': false,
     };
     /**
@@ -2858,6 +2947,22 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
         return this.canEdit && !this.undoing && this.redoStack.length > 0;
     }
 
+    /**
+     * Whether Undo can take a review back: the service records reviews
+     * and has not refused a reset (assumed until it does).
+     */
+    @computed get reviewsUndoable(): boolean {
+        return this.reviewRoute !== false && this.resetRoute !== false;
+    }
+
+    /**
+     * Whether Undo of a delete restores the annotation under its id with
+     * its comments (assumed until the service shows it cannot).
+     */
+    @computed get restoresDeleted(): boolean {
+        return this.restoreRoute !== false;
+    }
+
     /** What undo would reverse, e.g. "Undo delete". */
     @computed get undoLabel(): string | null {
         const entry = this.undoStack[this.undoStack.length - 1];
@@ -2871,9 +2976,9 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
     }
 
     /**
-     * Whether the user's last change was a review (not on the undo
-     * history): the next Undo says so instead of silently undoing an
-     * earlier edit.
+     * Whether the user's last change was a review left off the undo
+     * history (the service cannot reset reviews): the next Undo says so
+     * instead of silently undoing an earlier edit.
      */
     private lastChangeWasReview = false;
 
@@ -2922,6 +3027,8 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
         const rename = (entry: WsiUndoEntry): WsiUndoEntry =>
             entry.kind === 'group'
                 ? { ...entry, entries: entry.entries.map(rename) }
+                : entry.kind === 'review' || entry.kind === 'reset'
+                ? entry
                 : entry.kind === 'create'
                 ? {
                       ...entry,
@@ -2942,11 +3049,12 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
     }
 
     /**
-     * Reverses this session's last create, edit or delete on the slide: a
-     * created annotation is deleted, an edit is undone by saving the previous
-     * version over the current one (with the current `version`), and a
-     * deleted annotation is created again, with a new id. Redo can apply the
-     * change again.
+     * Reverses this session's last change on the slide: a created
+     * annotation is deleted, an edit is undone by saving the previous
+     * version over the current one (with the current `version`), a deleted
+     * annotation is restored under its id with its comments (created again
+     * with a new id where the service cannot restore), and a review is
+     * reset to unreviewed. Redo can apply the change again.
      */
     @action.bound
     async undo(): Promise<boolean> {
@@ -3033,13 +3141,15 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
                 : null;
         }
         if (entry.kind === 'create') {
-            if (entry.pointRun && entry.ids.length > 1) {
-                const deleted = await this.deletePointRun(entry.ids);
+            if (entry.ids.length > 1) {
+                const deleted = await this.deleteCreated(entry.ids);
                 return deleted.length
                     ? {
                           kind: 'delete',
                           before: deleted,
-                          pointRun: entry.pointRun,
+                          ...(entry.pointRun
+                              ? { pointRun: entry.pointRun }
+                              : {}),
                       }
                     : null;
             }
@@ -3069,48 +3179,35 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
             );
             return saved ? { kind: 'update', before: current } : null;
         }
-        if (entry.pointRun && entry.before.length > 1) {
-            const created = await this.createPointRun(entry.before);
-            return created.length
-                ? { kind: 'create', ids: created, pointRun: entry.pointRun }
-                : null;
+        if (entry.kind === 'review' || entry.kind === 'reset') {
+            return this.applyReviewEntry(entry);
         }
-        const created: string[] = [];
-        const lostThreads = entry.before.filter(
-            before =>
+        const outcome = await this.restoreDeleted(
+            entry.before,
+            !!entry.pointRun
+        );
+        if (!outcome) return null;
+        const { restored, recreated } = outcome;
+        const lostThreads = recreated.filter(
+            ([before]) =>
                 (this.commentCounts.get(before.id) ??
                     before.commentCount ??
                     0) > 0
         );
-        for (const before of entry.before) {
-            const saved = await this.createAnnotation(
-                {
-                    ...before,
-                    id: `client-undo-${Date.now()}-${Math.random()
-                        .toString(36)
-                        .slice(2)}`,
-                },
-                false
-            );
-            if (saved) {
-                this.renameInHistory(before.id, saved.id);
-                created.push(saved.id);
-            }
-        }
-        if (created.length && lostThreads.length) {
+        if (lostThreads.length) {
             const comments = lostThreads.reduce(
-                (sum, before) =>
+                (sum, [before]) =>
                     sum +
                     (this.commentCounts.get(before.id) ??
                         before.commentCount ??
                         0),
                 0
             );
+            const first = lostThreads[0][0];
             action(() => {
                 this.notice = `${
                     lostThreads.length === 1
-                        ? `"${lostThreads[0].body?.[0]?.value ||
-                              '(unlabeled)'}" was`
+                        ? `"${first.body?.[0]?.value || '(unlabeled)'}" was`
                         : `${lostThreads.length} annotations were`
                 } created again as ${
                     lostThreads.length === 1
@@ -3125,15 +3222,549 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
                 } could not be restored.`;
             })();
         }
-        return created.length ? { kind: 'create', ids: created } : null;
+        const ids = [
+            ...restored.map(item => item.id),
+            ...recreated.map(([, saved]) => saved.id),
+        ];
+        return ids.length
+            ? {
+                  kind: 'create',
+                  ids,
+                  ...(entry.pointRun ? { pointRun: entry.pointRun } : {}),
+              }
+            : null;
     }
 
     /**
-     * Deletes a run of points for undo: with `batch-delete` in requests of
-     * up to 100 when the service has it, else (or for a request it
-     * refuses) one by one. Resolves to the points deleted.
+     * Brings deleted annotations back: restored under their ids, with
+     * their comments, by `POST /annotations/{id}/restore` (one) or
+     * `batch-restore` (several, up to 100 a request), with the version
+     * each had when deleted. Where the service cannot restore (no route) or
+     * no longer holds one (purged, or deleted before soft deletes), it is
+     * created again with a new id (in batch saves for `points`), and the
+     * history follows the new id. Others refused are reported (a conflict
+     * reloads the slide). Null when another slide opened meanwhile.
      */
-    private async deletePointRun(ids: string[]): Promise<WsiAnnotation[]> {
+    private async restoreDeleted(
+        before: WsiAnnotation[],
+        points = false
+    ): Promise<{
+        restored: WsiAnnotation[];
+        recreated: Array<[WsiAnnotation, WsiAnnotation]>;
+        failed: WsiAnnotation[];
+    } | null> {
+        const context = {
+            generation: this.generation,
+            slideKey: this.slideKey,
+            signal: this.abortController?.signal,
+        };
+        const outcomes = await this.sendItems(
+            'restore',
+            before.map(item => ({ annotation: item, fields: {} })),
+            entry => this.restoreOne(entry.annotation)
+        );
+        if (!this.isCurrent(context)) return null;
+        const rows: any[] = [];
+        const again: WsiAnnotation[] = [];
+        const failed: Array<[WsiAnnotation, WsiItemOutcome]> = [];
+        outcomes.forEach((outcome, index) => {
+            if ('row' in outcome) rows.push(outcome.row);
+            else if ('unsupported' in outcome || outcome.status === 404) {
+                again.push(before[index]);
+            } else failed.push([before[index], outcome]);
+        });
+        const restored = this.addSaved(
+            rows.map(row => ({
+                annotation: this.fromApi(row, this.slideKey || ''),
+            }))
+        );
+        action(() => {
+            restored.forEach(item => {
+                if (typeof item.commentCount === 'number') {
+                    this.commentCounts.set(item.id, item.commentCount);
+                }
+            });
+        })();
+        const recreated: Array<[WsiAnnotation, WsiAnnotation]> = [];
+        if (again.length && points && again.length > 1) {
+            recreated.push(...(await this.createPointRun(again)));
+        } else {
+            for (const item of again) {
+                const saved = await this.createAnnotation(
+                    {
+                        ...item,
+                        id: `client-undo-${Date.now()}-${Math.random()
+                            .toString(36)
+                            .slice(2)}`,
+                    },
+                    false
+                );
+                if (saved) {
+                    this.renameInHistory(item.id, saved.id);
+                    recreated.push([item, saved]);
+                }
+            }
+        }
+        if (failed.length && this.accessIssue === null) {
+            const reasons = failed
+                .slice(0, 3)
+                .map(
+                    ([item, outcome]) =>
+                        `"${item.body?.[0]?.value || '(unlabeled)'}": ${
+                            'reason' in outcome ? outcome.reason : 'refused'
+                        }`
+                );
+            const message = `${failed.length} of ${before.length} annotation${
+                before.length === 1 ? '' : 's'
+            } could not be restored (${reasons.join('; ')}${
+                failed.length > reasons.length ? '; …' : ''
+            }).`;
+            if (
+                failed.some(
+                    ([, outcome]) =>
+                        'status' in outcome && outcome.status === 409
+                )
+            ) {
+                await this.reloadCurrentSlide(message);
+            } else {
+                action(() => {
+                    this.error = message;
+                })();
+            }
+        }
+        return {
+            restored,
+            recreated,
+            failed: failed.map(([item]) => item),
+        };
+    }
+
+    /**
+     * Restores one deleted annotation with `POST
+     * /annotations/{id}/restore` and the version it had when deleted. A 405
+     * or a 404 "Not Found" means the service has no such route: it and
+     * later restores answer `unsupported` for the session.
+     */
+    private async restoreOne(annotation: {
+        id: string;
+        version?: number;
+    }): Promise<WsiItemOutcome> {
+        if (this.restoreRoute === false) return { unsupported: true };
+        let response: Response;
+        try {
+            response = await this.request(
+                `/annotations/${encodeURIComponent(annotation.id)}/restore`,
+                {
+                    method: 'POST',
+                    body: JSON.stringify({ version: annotation.version || 1 }),
+                }
+            );
+        } catch (_) {
+            return { status: 0, reason: 'network error' };
+        }
+        const outcome = await this.itemOutcome(response);
+        if ('unsupported' in outcome) {
+            action(() => {
+                this.restoreRoute = false;
+            })();
+        } else if ('row' in outcome) {
+            action(() => {
+                this.restoreRoute = true;
+            })();
+        }
+        return outcome;
+    }
+
+    /**
+     * What one write's response says for an undo or redo item: the saved
+     * row; `unsupported` for a missing route (a 405, a 404 "Not Found") or
+     * a decision the service does not know (a 422 on `decision`); else the
+     * status and the service's reason. A 401, or a 403 that is not the
+     * service's own refusal, also turns editing off (see `refuseAccess`).
+     */
+    private async itemOutcome(response: Response): Promise<WsiItemOutcome> {
+        if (response.ok) {
+            try {
+                return { row: await response.json() };
+            } catch (_) {
+                return {
+                    status: response.status,
+                    reason: 'unexpected response',
+                };
+            }
+        }
+        const detail = await this.errorDetail(response);
+        if (
+            response.status === 405 ||
+            (response.status === 404 && detail === 'Not Found') ||
+            (response.status === 422 && isUnknownDecision(detail))
+        ) {
+            return { unsupported: true };
+        }
+        const own = typeof detail === 'string' && /^only /i.test(detail);
+        if (response.status === 401 || (response.status === 403 && !own)) {
+            this.refuseAccess(response);
+            return {
+                status: response.status,
+                reason: this.accessMessage || 'no access',
+            };
+        }
+        return {
+            status: response.status,
+            reason:
+                typeof detail === 'string'
+                    ? detail
+                    : `not saved (${response.status})`,
+        };
+    }
+
+    /**
+     * Sends undo or redo writes of one kind (`restore`, `review`): one item
+     * with its single route (`single`); several with the batch route
+     * (`batch-<kind>`), up to 100 a request, all or none. A batch that is
+     * refused for one item (403, 404, 422) reports it and sends the rest
+     * again; stale items (409) are reported and the rest sent again; a
+     * missing batch route sends each with `single` from then on; a decision
+     * the service does not know marks all `unsupported`. Resolves to one
+     * outcome per item, in order.
+     */
+    private async sendItems(
+        kind: 'restore' | 'review',
+        items: Array<{
+            annotation: { id: string; version?: number };
+            fields: Record<string, unknown>;
+        }>,
+        single: (item: {
+            annotation: { id: string; version?: number };
+            fields: Record<string, unknown>;
+        }) => Promise<WsiItemOutcome>
+    ): Promise<WsiItemOutcome[]> {
+        const out: WsiItemOutcome[] = items.map(() => ({
+            status: 0,
+            reason: 'not sent',
+        }));
+        const singles = async (indexes: number[]) => {
+            const results = await runLimited(
+                indexes,
+                SINGLE_SAVE_CONCURRENCY,
+                index => single(items[index])
+            );
+            indexes.forEach((index, at) => {
+                out[index] = results[at];
+            });
+        };
+        const all = items.map((_, index) => index);
+        if (items.length === 1 || this.bulkRoutes[kind] === false) {
+            await singles(all);
+            return out;
+        }
+        let stop: WsiItemOutcome | null = null;
+        for (let start = 0; start < all.length; start += BATCH_MAX_ITEMS) {
+            let pending = all.slice(start, start + BATCH_MAX_ITEMS);
+            while (pending.length) {
+                if (stop) {
+                    pending.forEach(index => {
+                        out[index] = stop!;
+                    });
+                    break;
+                }
+                if (this.bulkRoutes[kind] === false) {
+                    await singles(pending);
+                    break;
+                }
+                const sent = pending;
+                const outcome = await this.sendBulkBatch(
+                    kind,
+                    sent.map(index => items[index])
+                );
+                pending = [];
+                if (outcome.kind === 'saved') {
+                    action(() => {
+                        this.bulkRoutes = { ...this.bulkRoutes, [kind]: true };
+                    })();
+                    sent.forEach((index, at) => {
+                        out[index] = { row: outcome.rows[at] };
+                    });
+                } else if (outcome.kind === 'missing') {
+                    action(() => {
+                        this.bulkRoutes = { ...this.bulkRoutes, [kind]: false };
+                    })();
+                    pending = sent;
+                } else if (outcome.kind === 'unsupported') {
+                    stop = { unsupported: true };
+                    pending = sent;
+                } else if (outcome.kind === 'conflict') {
+                    const stale = new Set(outcome.ids);
+                    sent.forEach(index => {
+                        if (stale.has(items[index].annotation.id)) {
+                            out[index] = {
+                                status: 409,
+                                reason: 'changed elsewhere',
+                            };
+                        }
+                    });
+                    pending = sent.filter(
+                        index => !stale.has(items[index].annotation.id)
+                    );
+                } else if (outcome.kind === 'refused') {
+                    out[sent[outcome.index]] = {
+                        status: outcome.status,
+                        reason: outcome.reason,
+                    };
+                    pending = sent.filter((_, at) => at !== outcome.index);
+                } else {
+                    // Access refused, or the request failed: none saved.
+                    stop = {
+                        status: outcome.kind === 'access' ? 403 : 0,
+                        reason: outcome.reason,
+                    };
+                    pending = sent;
+                }
+            }
+        }
+        return out;
+    }
+
+    /**
+     * Applies a review entry: `review` (undo) resets the reviews, `reset`
+     * (redo) reviews them again with the decision, each with its current
+     * version. A service that cannot reset turns review undo off for the
+     * session, and the next Undo goes on to the edit before. A reset
+     * refused because another user reviewed it since (only the latest
+     * reviewer may reset) says so. Resolves to the entry that reverses what
+     * was applied.
+     */
+    private async applyReviewEntry(
+        entry: Extract<WsiUndoEntry, { kind: 'review' | 'reset' }>
+    ): Promise<WsiUndoEntry | null> {
+        const decision = entry.kind === 'review' ? 'reset' : entry.decision;
+        const context = {
+            generation: this.generation,
+            slideKey: this.slideKey,
+            signal: this.abortController?.signal,
+        };
+        const current = (id: string) =>
+            this.annotations.find(item => item.id === id);
+        const outcomes = await this.sendItems(
+            'review',
+            entry.items.map(item => ({
+                annotation: {
+                    id: item.id,
+                    version: current(item.id)?.version ?? item.version,
+                },
+                fields: { decision },
+            })),
+            item => this.reviewOne(item.annotation, decision)
+        );
+        if (!this.isCurrent(context)) return null;
+        const done: WsiReviewedItem[] = [];
+        const rows: any[] = [];
+        const failed: Array<[
+            WsiReviewedItem,
+            { status: number; reason: string }
+        ]> = [];
+        let unsupported = false;
+        outcomes.forEach((outcome, index) => {
+            const item = entry.items[index];
+            if ('row' in outcome) {
+                rows.push(outcome.row);
+                done.push({
+                    ...item,
+                    version: outcome.row?.version ?? item.version,
+                });
+            } else if ('unsupported' in outcome) {
+                unsupported = true;
+            } else {
+                failed.push([item, outcome]);
+            }
+        });
+        const reviewers = new Map(
+            failed.map(([item]) => [
+                item.id,
+                current(item.id)?.provenance?.reviewed_by,
+            ])
+        );
+        this.applyReviewedRows(rows);
+        if (unsupported) {
+            action(() => {
+                this.resetRoute = false;
+                // Reviews are not undone from now on: drop them from the history.
+                this.undoStack = this.undoStack.filter(
+                    item => item.kind !== 'review'
+                );
+                this.redoStack = this.redoStack.filter(
+                    item => item.kind !== 'reset'
+                );
+                this.notice = WSI_REVIEW_RESET_UNSUPPORTED;
+                if (this.reviewQueue) {
+                    this.reviewQueue = {
+                        ...this.reviewQueue,
+                        message: WSI_REVIEW_RESET_UNSUPPORTED,
+                    };
+                }
+            })();
+        } else if (decision === 'reset' && rows.length) {
+            action(() => {
+                this.resetRoute = true;
+            })();
+        }
+        if (failed.length && this.accessIssue === null) {
+            const what =
+                decision === 'reset'
+                    ? `undo the ${entry.decision} of`
+                    : `${entry.decision} again`;
+            const reasons = failed.slice(0, 3).map(([item, outcome]) => {
+                const label = `"${item.label || '(unlabeled)'}"`;
+                if (
+                    outcome.status === 403 &&
+                    /reviewer/i.test(outcome.reason)
+                ) {
+                    const who = reviewers.get(item.id);
+                    return `${label}: ${
+                        typeof who === 'string' && who ? who : 'another user'
+                    } reviewed it since, and only the latest reviewer can undo a review`;
+                }
+                if (outcome.status === 422 && decision === 'reset') {
+                    return `${label}: it is no longer reviewed`;
+                }
+                if (outcome.status === 404) {
+                    return `${label}: it was deleted or is no longer shared with you`;
+                }
+                return `${label}: ${outcome.reason}`;
+            });
+            const message = `Could not ${what} ${
+                failed.length === 1
+                    ? reasons[0]
+                    : `${failed.length} AI annotations (${reasons.join('; ')}${
+                          failed.length > reasons.length ? '; …' : ''
+                      })`
+            }.`;
+            if (
+                failed.some(
+                    ([, outcome]) =>
+                        outcome.status === 409 || outcome.status === 404
+                )
+            ) {
+                await this.reloadCurrentSlide(message);
+            } else {
+                action(() => {
+                    this.error = message;
+                })();
+            }
+        }
+        if (decision === 'reset' && done.length && this.reviewQueue) {
+            const back = done.find(item =>
+                this.reviewQueue!.ids.includes(item.id)
+            );
+            if (back) {
+                action(() => {
+                    this.reviewQueue = {
+                        ...this.reviewQueue!,
+                        message: `Took back the ${
+                            entry.decision
+                        } of "${back.label || '(unlabeled)'}".`,
+                    };
+                    this.showReviewItem(back.id);
+                })();
+            }
+        }
+        if (!done.length) return null;
+        return {
+            kind: entry.kind === 'review' ? 'reset' : 'review',
+            decision: entry.decision,
+            items: done,
+        };
+    }
+
+    /**
+     * Sends one review (`accept`, `reject` or `reset`) with `POST
+     * /annotations/{id}/review` for undo or redo.
+     */
+    private async reviewOne(
+        annotation: { id: string; version?: number },
+        decision: 'accept' | 'reject' | 'reset'
+    ): Promise<WsiItemOutcome> {
+        try {
+            const response = await this.request(
+                `/annotations/${encodeURIComponent(annotation.id)}/review`,
+                {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        decision,
+                        version: annotation.version || 1,
+                    }),
+                }
+            );
+            return await this.itemOutcome(response);
+        } catch (_) {
+            return { status: 0, reason: 'network error' };
+        }
+    }
+
+    /**
+     * Puts reviewed (or reset) rows in place: a rejected one leaves the
+     * slide, the others replace their annotation or, back from a reject,
+     * return to it.
+     */
+    private applyReviewedRows(rows: any[]) {
+        if (!rows.length) return;
+        const annotations = rows.map(row =>
+            this.fromApi(row, this.slideKey || '')
+        );
+        const rejected = new Set(
+            annotations
+                .filter(item => isRejectedAi(item.provenance))
+                .map(item => item.id)
+        );
+        if (rejected.size) this.removeManyLocally(rejected);
+        const shown = new Set(this.annotations.map(item => item.id));
+        const replaced = rows.filter(
+            (_, index) =>
+                !rejected.has(annotations[index].id) &&
+                shown.has(annotations[index].id)
+        );
+        if (replaced.length) this.replaceSaved(replaced);
+        const back = annotations.filter(
+            item => !rejected.has(item.id) && !shown.has(item.id)
+        );
+        if (back.length) {
+            this.addSaved(back.map(annotation => ({ annotation })));
+        }
+    }
+
+    /**
+     * Records reviews saved with the review route: one undo step when the
+     * service can reset reviews (assumed until it shows otherwise), else
+     * off the history, so the next Undo says reviews cannot be undone.
+     */
+    @action
+    private recordReview(
+        decision: 'accept' | 'reject',
+        reviewed: WsiAnnotation[]
+    ) {
+        if (!reviewed.length) return;
+        if (this.resetRoute === false) {
+            this.lastChangeWasReview = true;
+            return;
+        }
+        this.pushUndo({
+            kind: 'review',
+            decision,
+            items: reviewed.map(item => ({
+                id: item.id,
+                version: item.version || 1,
+                label: item.body?.[0]?.value || '',
+            })),
+        });
+    }
+
+    /**
+     * Deletes created annotations for undo (or restored ones for redo):
+     * with `batch-delete` in requests of up to 100 when the service has
+     * it, else (or for a request it refuses) one by one. Resolves to those
+     * deleted.
+     */
+    private async deleteCreated(ids: string[]): Promise<WsiAnnotation[]> {
         const points = ids
             .map(id => this.annotations.find(item => item.id === id))
             .filter((item): item is WsiAnnotation => !!item);
@@ -3141,10 +3772,13 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
     }
 
     /**
-     * Creates a run of points again for redo, in batch saves; the history
-     * follows their new ids. Resolves to the new ids.
+     * Creates a run of points again, in batch saves, where the service
+     * cannot restore them; the history follows their new ids. Resolves to
+     * the points created, each with its new one.
      */
-    private async createPointRun(before: WsiAnnotation[]): Promise<string[]> {
+    private async createPointRun(
+        before: WsiAnnotation[]
+    ): Promise<Array<[WsiAnnotation, WsiAnnotation]>> {
         const drafts = before.map(point => ({
             ...point,
             id: `client-undo-${Date.now()}-${Math.random()
@@ -3153,11 +3787,11 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
         }));
         const results = await this.saveAnnotations(drafts);
         const saved = this.addSaved(results);
-        const created: string[] = [];
+        const created: Array<[WsiAnnotation, WsiAnnotation]> = [];
         results.forEach((result, index) => {
             if (result.annotation) {
                 this.renameInHistory(before[index].id, result.annotation.id);
-                created.push(result.annotation.id);
+                created.push([before[index], result.annotation]);
             }
         });
         if (saved.length < before.length && this.accessIssue === null) {
@@ -3303,12 +3937,15 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
         const apiChanged = apiUrl !== this.apiUrl;
         if (apiChanged) {
             this.reviewRoute = null;
+            this.resetRoute = null;
+            this.restoreRoute = null;
             this.batchRoute = null;
             this.commentRoute = null;
             this.bulkRoutes = {
                 update: null,
                 delete: null,
                 review: null,
+                restore: null,
                 'review-fallback': false,
             };
         }
@@ -4339,10 +4976,12 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
      * Records a review of an unreviewed AI annotation with the service's
      * review route, which any user of the study may use: accepted, it stays
      * and shows as accepted; rejected, the service keeps it for its audit
-     * trail and the viewer stops showing it. Reviews are not undone by Undo.
+     * trail and the viewer stops showing it. Undo resets the review to
+     * unreviewed (`decision: "reset"`, see `applyReviewEntry`) where the
+     * service can.
      *
      * A service without the route falls back to the creator-only update
-     * (accept) and delete (reject). The route is missing on a 405, or on a
+     * (accept) and delete (reject), neither undoable. The route is missing on a 405, or on a
      * 404 whose JSON `detail` is the framework's "Not Found"; any other 404
      * (a proxy's page, or the annotation gone) does not decide it.
      */
@@ -4351,10 +4990,29 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
         id: string,
         decision: 'accept' | 'reject'
     ): Promise<boolean> {
+        const reviewed = await this.submitReview(id, decision);
+        if (reviewed && reviewed !== 'fallback') {
+            this.recordReview(decision, [reviewed]);
+        }
+        return !!reviewed;
+    }
+
+    /**
+     * Sends one review (see `reviewAnnotation`) without recording it for
+     * undo: resolves to the reviewed annotation, `fallback` when the
+     * service without the review route recorded it otherwise, or null when
+     * it was not saved.
+     */
+    private async submitReview(
+        id: string,
+        decision: 'accept' | 'reject'
+    ): Promise<WsiAnnotation | 'fallback' | null> {
         const annotation = this.annotations.find(item => item.id === id);
-        if (!annotation || !this.canReview(annotation)) return false;
+        if (!annotation || !this.canReview(annotation)) return null;
         if (this.reviewRoute === false) {
-            return this.reviewWithoutRoute(annotation, decision);
+            return (await this.reviewWithoutRoute(annotation, decision))
+                ? 'fallback'
+                : null;
         }
         const context = {
             generation: this.generation,
@@ -4373,7 +5031,7 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
                 },
                 context.signal
             );
-            if (!this.isCurrent(context)) return false;
+            if (!this.isCurrent(context)) return null;
             const detail =
                 response.status === 404
                     ? await this.errorDetail(response)
@@ -4385,23 +5043,25 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
                 action(() => {
                     this.reviewRoute = false;
                 })();
-                return this.reviewWithoutRoute(annotation, decision);
+                return (await this.reviewWithoutRoute(annotation, decision))
+                    ? 'fallback'
+                    : null;
             }
-            if (await this.refuseNonCreator(response)) return false;
-            if (this.refuseAccess(response)) return false;
+            if (await this.refuseNonCreator(response)) return null;
+            if (this.refuseAccess(response)) return null;
             if (response.status === 404) {
                 await this.reloadCurrentSlide(
                     typeof detail === 'string' && /annotation/i.test(detail)
                         ? 'The annotation was deleted elsewhere; reloaded latest data.'
                         : 'Unable to save the review.'
                 );
-                return false;
+                return null;
             }
             if (response.status === 409) {
                 await this.reloadCurrentSlide(
                     'Annotation changed elsewhere; reloaded latest data.'
                 );
-                return false;
+                return null;
             }
             if (!response.ok) {
                 throw new Error(
@@ -4412,21 +5072,20 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
                 await response.json(),
                 this.slideKey || ''
             );
-            if (!this.isCurrent(context)) return false;
+            if (!this.isCurrent(context)) return null;
             action(() => {
                 this.reviewRoute = true;
-                this.lastChangeWasReview = true;
                 if (isRejectedAi(saved.provenance)) {
                     this.removeAnnotationLocally(id);
                 } else {
                     this.replaceAnnotation(id, saved);
                 }
             })();
-            return true;
+            return saved;
         } catch (_) {
-            if (!this.isCurrent(context)) return false;
+            if (!this.isCurrent(context)) return null;
             await this.reloadCurrentSlide('Unable to save the review.');
-            return false;
+            return null;
         }
     }
 
@@ -4631,7 +5290,7 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
     /**
      * Rejects the annotation under review in two steps: the first press
      * (X or Reject) asks, the second (X, Enter or Confirm reject) rejects.
-     * A reject hides it for everyone and cannot be undone.
+     * A reject hides it for everyone; Undo resets it where the service can.
      */
     @action.bound
     reviewReject(): Promise<boolean> {
@@ -5393,7 +6052,8 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
                 this.bulkMessage = `${parts.join('; ')}.`;
                 this.bulkUndo = !done
                     ? null
-                    : kind === 'review' || kind === 'review-fallback'
+                    : kind === 'review-fallback' ||
+                      (kind === 'review' && !this.reviewsUndoable)
                     ? 'final'
                     : 'undoable';
             })();
@@ -5405,12 +6065,13 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
      * Sends one bulk batch request (see `runBulk`) and says how it went:
      * saved (with the rows in order), a conflict (the stale ids), one item
      * refused (its position and the service's reason), the route missing,
-     * access refused, or failed.
+     * a `decision` the service does not know (`unsupported`), access
+     * refused, or failed.
      */
     private async sendBulkBatch(
         kind: WsiBulkKind,
         batch: Array<{
-            annotation: WsiAnnotation;
+            annotation: { id: string; version?: number };
             fields: Record<string, unknown>;
         }>
     ): Promise<
@@ -5418,6 +6079,7 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
         | { kind: 'conflict'; ids: string[] }
         | { kind: 'refused'; index: number; reason: string; status: number }
         | { kind: 'missing' }
+        | { kind: 'unsupported'; reason: string }
         | { kind: 'access'; reason: string }
         | { kind: 'failed'; reason: string }
     > {
@@ -5456,6 +6118,12 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
             (response.status === 404 && detail === 'Not Found')
         ) {
             return { kind: 'missing' };
+        }
+        if (response.status === 422 && isUnknownDecision(detail)) {
+            return {
+                kind: 'unsupported',
+                reason: 'the service does not take this decision',
+            };
         }
         if (response.status === 409) {
             const conflicts = (detail as any)?.conflicts;
@@ -5675,37 +6343,36 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
 
     /**
      * Accepts or rejects the selected unreviewed AI annotations with the
-     * review routes (`batch-review`, else one review each); reviews are not
-     * on the undo history.
+     * review routes (`batch-review`, else one review each), as one undo
+     * step where the service can reset reviews (see `recordReview`).
      */
     @action.bound
-    bulkReview(decision: 'accept' | 'reject') {
-        return this.runBulk(
+    async bulkReview(decision: 'accept' | 'reject') {
+        const reviewed: WsiAnnotation[] = [];
+        const result = await this.runBulk(
             // Without the review route, reviews fall back one by one.
             this.reviewRoute === false ? 'review-fallback' : 'review',
             decision === 'accept' ? 'Accepted' : 'Rejected',
             annotation => this.canReview(annotation),
             'not unreviewed AI annotations you can review',
             () => ({ decision }),
-            annotation => this.reviewAnnotation(annotation.id, decision),
+            async annotation => {
+                const saved = await this.submitReview(annotation.id, decision);
+                if (saved && saved !== 'fallback') reviewed.push(saved);
+                return !!saved;
+            },
             pairs => {
                 action(() => {
                     this.reviewRoute = true;
-                    this.lastChangeWasReview = true;
                 })();
-                const rejected = new Set<string>();
-                const kept: any[] = [];
-                pairs.forEach(([annotation, row]) => {
-                    if (isRejectedAi(this.fromApi(row, '').provenance)) {
-                        rejected.add(annotation.id);
-                    } else {
-                        kept.push(row);
-                    }
-                });
-                if (kept.length) this.replaceSaved(kept);
-                if (rejected.size) this.removeManyLocally(rejected);
+                pairs.forEach(([, row]) =>
+                    reviewed.push(this.fromApi(row, this.slideKey || ''))
+                );
+                this.applyReviewedRows(pairs.map(([, row]) => row));
             }
         );
+        this.recordReview(decision, reviewed);
+        return result;
     }
 
     /** Deletes the selected annotations the user may modify, as one undo step. */
@@ -6094,10 +6761,10 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
      * is marked edited), then the deletes of the user's own originals (one
      * all-or-none `batch-delete` where the service has it). When any part
      * fails, what was saved is taken back (created ones deleted, changed
-     * ones put back, deleted ones created again), so no overlapping shapes
-     * are left, and `rolledBack` says so; undo then has nothing to do. Undo
-     * of a saved operation deletes what was created, puts the previous
-     * geometry back and creates the deleted ones again.
+     * ones put back, deleted ones restored), so no overlapping shapes are
+     * left, and `rolledBack` says so; undo then has nothing to do. Undo of
+     * a saved operation deletes what was created, puts the previous
+     * geometry back and restores the deleted ones (see `restoreDeleted`).
      */
     private async applyShapeEdit(
         operation: WsiShapeOperation,
@@ -6220,8 +6887,9 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
     /**
      * Takes back a shape operation that was saved only in part: deletes the
      * annotations it created, puts the previous geometry back on those it
-     * changed and creates again those it deleted. Resolves to what could
-     * not be taken back (still saved), for undo.
+     * changed and restores those it deleted under their ids (created again
+     * where the service cannot restore; see `restoreDeleted`). Resolves to
+     * what could not be taken back (still saved), for undo.
      */
     private async rollBackShapeEdit(
         created: WsiAnnotation[],
@@ -6255,17 +6923,12 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
         }
         let leftDeleted: WsiAnnotation[] = [];
         if (deleted.length) {
-            const drafts = deleted.map(item => ({
-                ...item,
-                id: `client-undo-${Date.now()}-${Math.random()
-                    .toString(36)
-                    .slice(2)}`,
-            }));
-            const results = await this.saveAnnotations(drafts);
-            this.addSaved(results, drafts);
-            leftDeleted = deleted.filter(
-                (_, index) => !results[index]?.annotation
-            );
+            const back = await this.restoreDeleted(deleted);
+            const returned = new Set([
+                ...(back?.restored || []).map(item => item.id),
+                ...(back?.recreated || []).map(([before]) => before.id),
+            ]);
+            leftDeleted = deleted.filter(item => !returned.has(item.id));
         }
         action(() => {
             this.error = reason;
@@ -6818,8 +7481,7 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
 
     /**
      * Marks a transferred annotation verified: its place was checked by a
-     * person (versioned `PUT`, creator only; not on the undo history, like
-     * reviews).
+     * person (versioned `PUT`, creator only; not on the undo history).
      */
     async markTransferVerified(id: string): Promise<boolean> {
         const annotation = this.annotations.find(item => item.id === id);
@@ -6901,9 +7563,9 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
     }
 
     /**
-     * What deleting `annotations` would take with them: their comment
-     * threads (the service deletes an annotation's thread with it, and a
-     * re-created annotation is a new one). Loads the threads not loaded yet
+     * The comment threads that deleting `annotations` concerns: kept with
+     * a deleted annotation for a restore where the service restores (see
+     * `restoresDeleted`), else gone with it. Loads the threads not loaded yet
      * (up to `THREAD_CHECK_LIMIT` annotations) to tell whose comments they
      * are; `byOthers` is null when not all could be checked. Null when none
      * has comments.
@@ -6953,7 +7615,10 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
     /**
      * The warning for deleting (or merging away) `annotations` with
      * comments, or '' when none has any: how many comments, whether other
-     * users wrote some, and that Undo cannot bring them back.
+     * users wrote some, and what becomes of them: where the service
+     * restores deleted annotations, Undo brings them back with their
+     * comments until the service purges them (after
+     * `WSI_DELETED_RETENTION_DAYS` by default); else they are gone.
      */
     async threadLossWarning(
         annotations: WsiAnnotation[],
@@ -6974,9 +7639,17 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
                 ? `"${loss.annotations[0].body?.[0]?.value ||
                       '(unlabeled)'}" has`
                 : `${n} of them have`;
-        return `${holder} ${comments} comment${
+        const counted = `${holder} ${comments} comment${
             comments === 1 ? '' : 's'
-        }${whose}. ${verb} deletes ${
+        }${whose}.`;
+        if (this.restoresDeleted) {
+            return `${counted} Undo (Ctrl+Z) brings ${
+                n === 1 ? 'it' : 'them'
+            } back with ${
+                n === 1 ? 'its comments' : 'their comments'
+            }; otherwise the service removes deleted annotations and their comments for good after ${WSI_DELETED_RETENTION_DAYS} days (its default).`;
+        }
+        return `${counted} ${verb} deletes ${
             n === 1 ? 'its comment thread' : 'their comment threads'
         }, and Undo cannot bring the comments back.`;
     }

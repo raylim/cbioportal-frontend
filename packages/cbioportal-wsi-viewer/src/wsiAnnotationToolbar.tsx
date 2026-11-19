@@ -245,7 +245,7 @@ export const SHORTCUT_HELP: ShortcutSection[] = [
             [['A', 'Enter'], 'Accept, then the next one'],
             [
                 ['X'],
-                'Reject: asks first; X or Enter again rejects, then the next one, Esc cancels (reviews cannot be undone)',
+                'Reject: asks first; X or Enter again rejects, then the next one, Esc cancels (Ctrl+Z takes a review back where the service can)',
             ],
             [['S', '→'], 'Skip'],
             [['←'], 'Previous'],

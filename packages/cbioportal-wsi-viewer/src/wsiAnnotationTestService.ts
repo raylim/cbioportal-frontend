@@ -84,13 +84,21 @@ export type TestRoute =
     | 'batchUpdate'
     | 'batchDelete'
     | 'batchReview'
+    | 'batchRestore'
     | 'review'
+    /** `decision: "reset"` on the review routes (refused as unknown). */
+    | 'reset'
+    /** `POST /annotations/{id}/restore` (and soft deletes). */
+    | 'restore'
     | 'comments'
     | 'slideNotes';
 
 export interface TestServiceOptions {
     user?: string;
-    /** Routes the service lacks, as an older service would. */
+    /**
+     * Routes the service lacks, as an older service would (`restore`: no
+     * soft deletes or restores; `reset`: no review reset).
+     */
     missing?: TestRoute[];
     /** Whether list rows carry `comment_count` (a service with comments). */
     commentCounts?: boolean;
@@ -137,12 +145,19 @@ export interface TestResponse {
 /**
  * An in-memory annotation service following the tile server's rules:
  * creator-only updates and deletes with versions, reviews of machine-made
- * annotations by anyone, all-or-nothing batches (403/404 name the first
- * failing item, 409 lists every stale one), comment threads and slide
- * notes. Install it with `install()`, which replaces `global.fetch`.
+ * annotations by anyone and their reset by the reviewer only, soft deletes
+ * that keep the row and its comments for a restore under the same id by
+ * the creator, all-or-nothing batches (403/404 name the first failing
+ * item, 409 lists every stale one), comment threads and slide notes.
+ * Without the `restore` route, a delete removes the row and its comments
+ * for good, as an older service does. Install it with `install()`, which
+ * replaces `global.fetch`.
  */
 export class TestAnnotationService {
+    /** The live annotations. */
     rows = new Map<string, any>();
+    /** Soft-deleted annotations, restorable, with their comments kept. */
+    deleted = new Map<string, any>();
     comments = new Map<string, any[]>();
     notes = new Map<string, any>();
     calls: TestRequest[] = [];
@@ -201,7 +216,12 @@ export class TestAnnotationService {
     }
 
     private missing(route: TestRoute) {
-        return (this.options.missing || []).includes(route);
+        const missing = this.options.missing || [];
+        // A service without restores has no batch restore either.
+        return (
+            missing.includes(route) ||
+            (route === 'batchRestore' && missing.includes('restore'))
+        );
     }
 
     private create(item: any): any {
@@ -238,6 +258,16 @@ export class TestAnnotationService {
     }
 
     private reviewed(row: any, decision: string) {
+        if (decision === 'reset') {
+            const { review_status, reviewed_by, reviewed_at, ...provenance } =
+                row.body.provenance || {};
+            return {
+                ...row,
+                body: { ...row.body, provenance },
+                version: row.version + 1,
+                updated_at: new Date().toISOString(),
+            };
+        }
         return {
             ...row,
             body: {
@@ -253,6 +283,55 @@ export class TestAnnotationService {
             version: row.version + 1,
             updated_at: new Date().toISOString(),
         };
+    }
+
+    /**
+     * Why the user may not review `row` with `decision` (after the version
+     * check), as the service answers it; undefined when they may.
+     */
+    private reviewRefusal(
+        row: any,
+        decision: string
+    ): { status: number; detail: string } | undefined {
+        if (decision !== 'reset') return undefined;
+        const provenance = row.body?.provenance || {};
+        if (
+            !('review_status' in provenance) &&
+            !('reviewed_by' in provenance) &&
+            !('reviewed_at' in provenance)
+        ) {
+            return {
+                status: 422,
+                detail: 'The annotation has no review to reset',
+            };
+        }
+        if (provenance.reviewed_by !== this.user) {
+            return {
+                status: 403,
+                detail: 'Only the reviewer may reset this review',
+            };
+        }
+        return undefined;
+    }
+
+    /** Deletes a row: kept for a restore, or gone with an older service. */
+    private remove(id: string) {
+        const row = this.rows.get(id);
+        this.rows.delete(id);
+        if (this.missing('restore')) this.comments.delete(id);
+        else this.deleted.set(id, row);
+    }
+
+    /** The restored row: live again under its id, `version` bumped. */
+    private restored(id: string) {
+        const row = {
+            ...this.deleted.get(id),
+            version: this.deleted.get(id).version + 1,
+            updated_at: new Date().toISOString(),
+        };
+        this.deleted.delete(id);
+        this.rows.set(id, row);
+        return row;
     }
 
     private updated(row: any, item: any) {
@@ -334,6 +413,7 @@ export class TestAnnotationService {
             'batch-update': 'batchUpdate',
             'batch-delete': 'batchDelete',
             'batch-review': 'batchReview',
+            'batch-restore': 'batchRestore',
         } as Record<string, TestRoute>)[id];
         if (batchKind && method === 'POST') {
             if (this.missing(batchKind)) {
@@ -347,12 +427,60 @@ export class TestAnnotationService {
             }
             return this.thread(request, id, cid);
         }
+        if (method === 'POST' && sub === 'restore') {
+            if (this.missing('restore')) {
+                return { status: 404, body: { detail: 'Not Found' } };
+            }
+            const gone = this.deleted.get(id);
+            if (!gone) {
+                return {
+                    status: 404,
+                    body: { detail: 'Deleted annotation not found' },
+                };
+            }
+            if (gone.created_by !== this.user) {
+                return {
+                    status: 403,
+                    body: {
+                        detail: 'Only the creator may restore this annotation',
+                    },
+                };
+            }
+            if (body?.version === undefined) {
+                return {
+                    status: 422,
+                    body: {
+                        detail: [
+                            { loc: ['body', 'version'], msg: 'Field required' },
+                        ],
+                    },
+                };
+            }
+            if (body.version !== gone.version) {
+                return { status: 409, body: { detail: 'Version conflict' } };
+            }
+            return { status: 200, body: this.listed(this.restored(id)) };
+        }
         const row = this.rows.get(id);
         if (!row)
             return { status: 404, body: { detail: 'Annotation not found' } };
         if (method === 'POST' && sub === 'review') {
             if (this.missing('review')) {
                 return { status: 404, body: { detail: 'Not Found' } };
+            }
+            if (body.decision === 'reset' && this.missing('reset')) {
+                return {
+                    status: 422,
+                    body: {
+                        detail: [
+                            {
+                                loc: ['body', 'decision'],
+                                msg: "Input should be 'accept' or 'reject'",
+                                type: 'literal_error',
+                            },
+                        ],
+                    },
+                };
             }
             if (!this.isMachine(row)) {
                 return {
@@ -364,6 +492,13 @@ export class TestAnnotationService {
             }
             if (body.version !== row.version) {
                 return { status: 409, body: { detail: 'Version conflict' } };
+            }
+            const refusal = this.reviewRefusal(row, body.decision);
+            if (refusal) {
+                return {
+                    status: refusal.status,
+                    body: { detail: refusal.detail },
+                };
             }
             const reviewed = this.reviewed(row, body.decision);
             this.rows.set(id, reviewed);
@@ -398,8 +533,7 @@ export class TestAnnotationService {
             return { status: 200, body: this.listed(updated) };
         }
         if (method === 'DELETE') {
-            this.rows.delete(id);
-            this.comments.delete(id);
+            this.remove(id);
             return { status: 204 };
         }
         return undefined;
@@ -415,7 +549,10 @@ export class TestAnnotationService {
         const conflicts: any[] = [];
         for (let index = 0; index < items.length; index++) {
             const item = items[index];
-            const row = this.rows.get(item.id);
+            const row =
+                kind === 'batchRestore'
+                    ? this.deleted.get(item.id)
+                    : this.rows.get(item.id);
             const fail = (status: number, msg: string): TestResponse => ({
                 status,
                 body: {
@@ -427,7 +564,30 @@ export class TestAnnotationService {
                     },
                 },
             });
-            if (!row) return fail(404, 'Annotation not found');
+            if (kind === 'batchReview' && item.decision === 'reset') {
+                if (this.missing('reset')) {
+                    return {
+                        status: 422,
+                        body: {
+                            detail: [
+                                {
+                                    loc: ['body', 'items', index, 'decision'],
+                                    msg: "Input should be 'accept' or 'reject'",
+                                    type: 'literal_error',
+                                },
+                            ],
+                        },
+                    };
+                }
+            }
+            if (!row) {
+                return fail(
+                    404,
+                    kind === 'batchRestore'
+                        ? 'Deleted annotation not found'
+                        : 'Annotation not found'
+                );
+            }
             if (kind === 'batchReview') {
                 if (!this.isMachine(row)) {
                     return fail(
@@ -446,7 +606,28 @@ export class TestAnnotationService {
                     version: item.version,
                     current_version: row.version,
                 });
+                continue;
             }
+            const refusal =
+                kind === 'batchReview'
+                    ? this.reviewRefusal(row, item.decision)
+                    : undefined;
+            if (refusal?.status === 422) {
+                return {
+                    status: 422,
+                    body: {
+                        detail: [
+                            {
+                                loc: ['body', 'items', index],
+                                msg: refusal.detail,
+                                type: 'value_error',
+                                id: item.id,
+                            },
+                        ],
+                    },
+                };
+            }
+            if (refusal) return fail(refusal.status, refusal.detail);
         }
         if (conflicts.length) {
             return {
@@ -455,10 +636,12 @@ export class TestAnnotationService {
             };
         }
         const out = items.map(item => {
+            if (kind === 'batchRestore') {
+                return this.listed(this.restored(item.id));
+            }
             const row = this.rows.get(item.id);
             if (kind === 'batchDelete') {
-                this.rows.delete(item.id);
-                this.comments.delete(item.id);
+                this.remove(item.id);
                 return this.listed(row);
             }
             const next =
