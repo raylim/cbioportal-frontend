@@ -178,8 +178,15 @@ async function gotoTissueView(page: Page, cx: number, cy: number, z: number) {
     });
 }
 
-/** Picks a shape operation from the selection bar's Edit shapes… menu. */
+/** Runs an item of the selection bar's Actions menu. */
+async function bulkAction(page: Page, item: string) {
+    await page.getByTestId('annotation-bulk-actions').click();
+    await page.getByTestId(item).click();
+}
+
+/** Picks a shape operation from Actions ▸ Edit shapes. */
 async function pickShapeOp(page: Page, operation: string) {
+    await page.getByTestId('annotation-bulk-actions').click();
     await page.getByTestId('annotation-bulk-shape').click();
     await page.getByTestId(`annotation-shape-op-${operation}`).click();
 }
@@ -867,17 +874,24 @@ if (process.env.PW_SUITE === 'wsi') {
                 page.getByTestId('annotation-selection-frame-theirs')
             ).toBeVisible();
 
-            await page
-                .getByLabel('New label for the selected annotations')
-                .fill('Tumor');
+            // Actions ▾ › Relabel… opens a field in the bar.
+            await bulkAction(page, 'annotation-bulk-relabel-start');
+            const field = page.getByLabel(
+                'New label for the selected annotations'
+            );
+            await expect(field).toBeFocused();
+            await field.fill('Tumor');
             const relabel = page.getByTestId('annotation-bulk-relabel');
-            await expect(relabel).toHaveText('Relabel (2)');
+            await expect(relabel).toHaveText('Relabel 2');
             await relabel.click();
             await expect(
                 page.getByTestId('annotation-bulk-message')
             ).toHaveText(
                 'Relabelled 2 annotations; skipped 1 that is not yours.'
             );
+            await expect(
+                page.getByTestId('annotation-bulk-undo-note')
+            ).toHaveText(/with Ctrl\+Z or the toolbar's Undo\.$/);
             // One all-or-nothing batch with both, each with its version.
             expect(
                 service.writes.map(write => [write.method, write.path])
@@ -907,7 +921,7 @@ if (process.env.PW_SUITE === 'wsi') {
                 .toBe('Unsure');
             expect(service.rows.get('mine-2').body.label).toBe('Unsure');
 
-            await page.getByTestId('annotation-bulk-clear').click();
+            await bulkAction(page, 'annotation-bulk-clear');
             await expect(page.getByTestId('annotation-bulk-bar')).toHaveCount(
                 0
             );
@@ -1522,8 +1536,9 @@ if (process.env.PW_SUITE === 'wsi') {
                 timeout: 15_000,
             });
             await page.getByTestId('annotation-select-ai-2').check();
+            await page.getByTestId('annotation-bulk-actions').click();
             const accept = page.getByTestId('annotation-bulk-accept');
-            await expect(accept).toHaveText(/\(2\)/);
+            await expect(accept).toHaveText("Accept 2Can't be undone");
             await accept.click();
             await expect(
                 page.getByTestId('annotation-bulk-message')

@@ -1555,6 +1555,11 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
     /** What the last bulk action did, and what it skipped. */
     @observable bulkMessage: string | null = null;
     /**
+     * Whether the last bulk action can be undone (`undoable`: Ctrl+Z takes
+     * it back) or not (`final`: reviews); null when it changed nothing.
+     */
+    @observable bulkUndo: 'undoable' | 'final' | null = null;
+    /**
      * A shape edit waiting for a shape to be drawn: `cut` cuts the next
      * closed shape out of the selected regions, `split` splits the selected
      * region along the next line.
@@ -4707,6 +4712,7 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
         this.linkMessage = null;
         this.selection.clear();
         this.selectionDrag = null;
+        this.bulkUndo = null;
         this.bulkMessage = null;
         this.shapeEditMode = null;
     }
@@ -5069,6 +5075,7 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
         ids.forEach(id => {
             if (!this.selection.has(id)) this.selection.set(id, true);
         });
+        this.bulkUndo = null;
         this.bulkMessage = null;
         if (this.shapeEditMode && !this.shapeEditTargets().length) {
             this.shapeEditMode = null;
@@ -5215,6 +5222,7 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
         const skipped = selected.length - targets.length;
         action(() => {
             this.bulkBusy = true;
+            this.bulkUndo = null;
             this.bulkMessage = null;
             this.error = null;
         })();
@@ -5383,6 +5391,11 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
             action(() => {
                 this.bulkBusy = false;
                 this.bulkMessage = `${parts.join('; ')}.`;
+                this.bulkUndo = !done
+                    ? null
+                    : kind === 'review' || kind === 'review-fallback'
+                    ? 'final'
+                    : 'undoable';
             })();
         }
         return { done, skipped, failed };
@@ -5611,6 +5624,7 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
             .trim()
             .slice(0, 200);
         if (!value || !this.isAllowedLabel(value)) {
+            this.bulkUndo = null;
             this.bulkMessage = value
                 ? `"${value}" is not one of the allowed labels.`
                 : 'Type a label first.';
@@ -5722,6 +5736,7 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
 
     @action.bound
     dismissBulkMessage() {
+        this.bulkUndo = null;
         this.bulkMessage = null;
     }
 
@@ -5891,6 +5906,7 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
             this.setTool('line');
         }
         this.shapeEditMode = mode;
+        this.bulkUndo = null;
         this.bulkMessage = null;
     }
 
@@ -6099,6 +6115,7 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
     }> {
         action(() => {
             this.bulkBusy = true;
+            this.bulkUndo = null;
             this.bulkMessage = null;
             this.error = null;
         })();
@@ -6290,7 +6307,9 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
         outcome: { failed: number; rolledBack?: boolean },
         notes: string[] = []
     ) {
+        this.bulkUndo = outcome.rolledBack ? null : 'undoable';
         if (outcome.rolledBack) {
+            this.bulkUndo = null;
             this.bulkMessage = `${done.replace(/\.$/, '')}${
                 this.error ? ` (${this.error.replace(/\.$/, '')})` : ''
             }. What was saved of it was taken back, so nothing changed.`;
@@ -6410,12 +6429,14 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
                 clips.map(item => this.regionOf(item)!)
             );
             if (!result.length) {
+                this.bulkUndo = null;
                 this.bulkMessage = `Nothing would be left of ${this.quoted(
                     subject
                 )}; nothing was changed.`;
                 return false;
             }
             if (Math.abs(regionArea(result) - regionArea(region)) < 1e-6) {
+                this.bulkUndo = null;
                 this.bulkMessage = `The other regions do not overlap ${this.quoted(
                     subject
                 )}; nothing was changed.`;
@@ -6540,6 +6561,7 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
             });
             if (!cut.length) {
                 action(() => {
+                    this.bulkUndo = null;
                     this.bulkMessage = whole.length
                         ? `The shape covers all of ${whole
                               .map(item => this.quoted(item))
@@ -6601,6 +6623,7 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
             const pieces = ops.splitRegionByPath(this.regionOf(target)!, path);
             if (pieces.length < 2) {
                 action(() => {
+                    this.bulkUndo = null;
                     this.bulkMessage = `The line does not cut ${this.quoted(
                         target
                     )} in two: draw it across the region, from edge to edge.`;

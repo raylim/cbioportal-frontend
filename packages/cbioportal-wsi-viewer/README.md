@@ -377,7 +377,7 @@ While Annotate is on, clicking a rectangle, ellipse, line or polygon (including 
 
 #### Editing shapes: holes, merge, split
 
-Regions can have holes and several parts. With regions selected (Shift+click, Shift+drag or the list's checkboxes; the order of selection counts), the selection bar's **Edit shapes…** menu offers, each with the count it applies to and disabled with the reason when the selection does not allow it:
+Regions can have holes and several parts. With regions selected (Shift+click, Shift+drag or the list's checkboxes; the order of selection counts), the selection bar's **Actions ▾ › Edit shapes ▸** offers, each with the count it applies to and disabled with the reason when the selection does not allow it:
 
 | Operation | Result |
 | --- | --- |
@@ -437,12 +437,20 @@ With Select (no drawing tool on), Annotate on or off:
 - Each list row has a checkbox. **Ctrl+A** (⌘A) selects every annotation the list shows (what shows on the slide, and the list's filters) when the focus is in the viewer, or nowhere while Annotate is on; elsewhere it selects the page's text as usual.
 - **Esc** clears the selection. Selected shapes are drawn with a thicker outline and a dashed blue frame.
 
-While any are selected, a bar under the toolbar says "N selected" and offers, each button naming how many it applies to:
+While any are selected, a bar under the toolbar says "N selected" and has one **Actions ▾** menu button (the toolbar's `role="menu"`; it opens with Enter, Space or the down arrow, and acts only on a pick, never while the arrow keys move through it). Each item names how many it applies to and, at its end, whether Ctrl+Z undoes it:
 
-- **Relabel**, **Move to layer…** and **Sharing…** (shared or private): for the user's own annotations; a layer move keeps their colors. Move to layer…, Sharing… and Edit shapes… are menu buttons (the toolbar's `role="menu"`): they act on a pick (click, Enter or Space), never while the arrow keys move through them.
-- **Accept** and **Reject**: for the unreviewed AI annotations the user may review, anyone's, with the review route as above (without the route, only the user's own). Reject asks first, with the count.
-- **Edit shapes…**, while regions are selected: merge, subtract, intersect, cut a hole, split, separate parts (see Editing shapes).
-- **Delete**: the user's own, after a confirmation.
+| Item | Applies to | Undo |
+| --- | --- | --- |
+| **Relabel N…** | The user's own: opens a label field in the bar (Enter or **Relabel N** applies, Esc or **Cancel** closes it) | Ctrl+Z undoes |
+| **Move N to layer ▸** | The user's own; a layer move keeps their colors | Ctrl+Z undoes |
+| **Sharing of N ▸** | The user's own: Shared with the study, or Private | Ctrl+Z undoes |
+| **Edit shapes ▸** | The selected regions: merge, subtract, intersect, cut a hole, split, separate parts (see Editing shapes); disabled, saying why, without regions | Ctrl+Z undoes |
+| **Accept N** | The unreviewed AI annotations the user may review, anyone's, with the review route as above (without the route, only the user's own) | Can't be undone |
+| **Reject N…** | The same; asks first, with the count and what a reject does | Can't be undone |
+| **Delete N…** | The user's own; asks first, naming any comments that would go and that Undo can bring them back | Ctrl+Z undoes |
+| **Clear selection** | Esc does the same | |
+
+The items with ▸ open a submenu beside them (`aria-haspopup`, `aria-expanded`): Enter, Space, a click or → opens it and focuses its first item; ↑, ↓, Home and End move within it, and ← or Escape close it and give the focus back to the item. One submenu is open at a time. The rules are the same everywhere: Delete and Reject ask first; everything Ctrl+Z can undo says so in the menu and, once done, under the status ("Undo edit of 2 annotations with Ctrl+Z or the toolbar's Undo."); reviews are not on the undo history and the status says "Reviews can't be undone."
 
 Others are skipped, and a status says what was done and skipped, e.g. "Relabelled 2 annotations; skipped 1 that is not yours.", and how many could not be saved. Relabel, move and sharing undo and redo as one step, as does a delete; reviews are not on the history. The selection is cleared when another slide opens.
 

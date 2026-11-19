@@ -6,7 +6,13 @@ import {
 } from './wsiAnnotationController';
 import { WsiShapeOperation } from './wsiAnnotationBody';
 import { AnnotationLabelField } from './wsiAnnotationControls';
-import { Menu, menuItemStyle } from './wsiMenu';
+import {
+    Menu,
+    MenuNote,
+    menuItemStyle,
+    MenuSeparator,
+    SubMenu,
+} from './wsiMenu';
 
 // Text keeps at least 4.5:1 contrast on the bar's near-white.
 const colors = {
@@ -72,115 +78,83 @@ async function confirmMerge(
     );
 }
 
-/** One action of a selection-bar menu. */
-interface BulkMenuItem {
-    key: string;
-    label: string;
+/** What the Actions menu says of undo, item by item. */
+const UNDOABLE = 'Ctrl+Z undoes';
+const FINAL = "Can't be undone";
+
+/** One item of the Actions menu or of one of its submenus. */
+function ActionItem({
+    testId,
+    label,
+    disabled,
+    title,
+    note,
+    color,
+    onPick,
+    onFocus,
+}: {
     testId: string;
+    label: React.ReactNode;
     disabled?: boolean;
     title?: string;
-    run: () => void;
-}
-
-/**
- * A menu button of the selection bar ("Move to layer…", "Sharing…", "Edit
- * shapes…"): it acts only on a pick, never while the arrow keys move
- * through it (unlike a select that acts on change). The menu opens with
- * Enter, Space or the down arrow, as the toolbar's menus do.
- */
-function BulkMenu({
-    label,
-    ariaLabel,
-    title,
-    testId,
-    disabled,
-    items,
-}: {
-    label: string;
-    ariaLabel: string;
-    title: string;
-    testId: string;
-    disabled?: boolean;
-    items: BulkMenuItem[];
+    note?: string;
+    color?: string;
+    onPick: () => void;
+    onFocus?: () => void;
 }) {
-    const [open, setOpen] = React.useState(false);
-    const button = React.useRef<HTMLButtonElement>(null);
-    const anchor = React.useRef<HTMLSpanElement>(null);
-    const close = React.useCallback((returnFocus: boolean) => {
-        setOpen(false);
-        if (returnFocus) button.current?.focus();
-    }, []);
     return (
-        <span ref={anchor} style={{ position: 'relative' }}>
-            <button
-                type="button"
-                ref={button}
-                data-testid={testId}
-                aria-label={ariaLabel}
-                aria-haspopup="menu"
-                aria-expanded={open}
-                title={title}
-                disabled={disabled}
-                onClick={() => setOpen(!open)}
-                onKeyDown={event => {
-                    if (event.key === 'ArrowDown') {
-                        event.preventDefault();
-                        setOpen(true);
-                    }
-                }}
-                style={buttonStyle()}
-            >
-                {label} <span aria-hidden="true">▾</span>
-            </button>
-            <Menu
-                open={open && !disabled}
-                label={ariaLabel}
-                testId={`${testId}-menu`}
-                anchor={anchor}
-                onClose={close}
-            >
-                {items.map(item => (
-                    <button
-                        key={item.key}
-                        type="button"
-                        role="menuitem"
-                        tabIndex={-1}
-                        data-testid={item.testId}
-                        disabled={item.disabled}
-                        aria-disabled={item.disabled || undefined}
-                        title={item.title}
-                        onClick={() => {
-                            if (item.disabled) return;
-                            close(true);
-                            item.run();
-                        }}
-                        style={{
-                            ...menuItemStyle(),
-                            opacity: item.disabled ? 0.55 : 1,
-                            cursor: item.disabled ? 'default' : 'pointer',
-                        }}
-                    >
-                        {item.label}
-                    </button>
-                ))}
-            </Menu>
-        </span>
+        <button
+            type="button"
+            role="menuitem"
+            tabIndex={-1}
+            data-testid={testId}
+            disabled={disabled}
+            aria-disabled={disabled || undefined}
+            title={title}
+            onFocus={onFocus}
+            onClick={() => {
+                if (!disabled) onPick();
+            }}
+            style={{
+                ...menuItemStyle(),
+                color: color || menuItemStyle().color,
+                opacity: disabled ? 0.55 : 1,
+                cursor: disabled ? 'default' : 'pointer',
+            }}
+        >
+            <span style={{ flex: 1 }}>{label}</span>
+            {note && <MenuNote>{note}</MenuNote>}
+        </button>
     );
 }
 
 /**
  * Bulk actions on the selected annotations, under the toolbar while any are
- * selected: relabel, move to a layer and sharing for the user's own
- * annotations, shape edits of the selected regions (merge, subtract,
- * intersect, cut a hole, split, separate parts), accept and reject for
- * unreviewed AI ones, and delete. Each names how many it applies to; what
- * was done and skipped is a status.
+ * selected: "N selected" and one **Actions ▾** menu, whose items name how
+ * many they apply to and whether Ctrl+Z undoes them: Relabel… (a field
+ * in the bar), Move to layer ▸, Sharing ▸ and Edit shapes ▸ (submenus),
+ * Accept, Reject… and Delete… (both ask first), and Clear selection.
+ * Relabel, move, sharing, shape edits and delete undo as one step;
+ * reviews cannot be undone. What was done and skipped is a status.
  */
 export const WsiAnnotationBulkBar = observer(
     ({ controller }: { controller: WsiAnnotationController }) => {
         const [label, setLabel] = React.useState('');
+        const [relabeling, setRelabeling] = React.useState(false);
+        const [open, setOpen] = React.useState(false);
+        const [sub, setSub] = React.useState<string | null>(null);
+        const button = React.useRef<HTMLButtonElement>(null);
+        const anchor = React.useRef<HTMLSpanElement>(null);
+        const close = React.useCallback((returnFocus: boolean) => {
+            setOpen(false);
+            setSub(null);
+            if (returnFocus) button.current?.focus();
+        }, []);
         const selected = controller.selectedAnnotations;
         const message = controller.bulkMessage;
+        React.useEffect(() => {
+            if (!selected.length) setRelabeling(false);
+        }, [selected.length]);
         if (!selected.length && !message) return null;
         const n = selected.length;
         const { modifiable, reviewable, ai } = controller.bulkCounts;
@@ -198,10 +172,67 @@ export const WsiAnnotationBulkBar = observer(
             modifiable
                 ? `${what} ${applies(modifiable, n)} selected${notYours}`
                 : 'None of the selected annotations are yours';
+        const reviewTitle = (what: string) =>
+            reviewable
+                ? `${what} ${applies(
+                      reviewable,
+                      n
+                  )} selected unreviewed AI annotations`
+                : 'None of the selected are unreviewed AI annotations you can review';
         const relabel = () => {
             void controller.bulkRelabel(label).then(result => {
-                if (result) setLabel('');
+                if (result) {
+                    setLabel('');
+                    setRelabeling(false);
+                }
             });
+        };
+        /** Runs a pick: the menu closes first, focus back on Actions. */
+        const pick = (run: () => void) => () => {
+            close(true);
+            run();
+        };
+        const subProps = (key: string) => ({
+            open: sub === key,
+            onOpen: (show: boolean) => setSub(show ? key : null),
+            onItemFocus: () => {
+                if (sub !== key) setSub(null);
+            },
+        });
+        // Moving to another item of the top menu closes an open submenu.
+        const closeSub = () => setSub(null);
+        const reject = () => {
+            if (
+                window.confirm(
+                    rejectConfirmation(
+                        `${reviewable} AI annotation${
+                            reviewable === 1 ? '' : 's'
+                        }`,
+                        reviewable,
+                        controller.reviewRoute === false
+                    )
+                )
+            ) {
+                void controller.bulkReview('reject');
+            }
+        };
+        const remove = async () => {
+            const warning = await controller.threadLossWarning(
+                selected.filter(item => controller.canModify(item)),
+                'Deleting'
+            );
+            if (
+                window.confirm(
+                    `Delete ${modifiable} annotation${
+                        modifiable === 1 ? '' : 's'
+                    }?${notYours} ${warning ||
+                        `Undo (Ctrl+Z) can bring ${
+                            modifiable === 1 ? 'it' : 'them'
+                        } back.`}`
+                )
+            ) {
+                await controller.bulkDelete();
+            }
         };
         return (
             <div
@@ -228,210 +259,245 @@ export const WsiAnnotationBulkBar = observer(
                         >
                             {n} selected
                         </strong>
-                        <span
-                            style={{
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                gap: 3,
-                            }}
-                        >
-                            <AnnotationLabelField
-                                controller={controller}
-                                value={label}
-                                onChange={setLabel}
-                                ariaLabel="New label for the selected annotations"
-                                testId="annotation-bulk-label"
-                                placeholder="New label"
-                                allowEmpty
-                                onKeyDown={event => {
-                                    if (event.key === 'Enter') relabel();
-                                }}
-                                style={fieldStyle}
-                            />
+                        <span ref={anchor} style={{ position: 'relative' }}>
                             <button
                                 type="button"
-                                data-testid="annotation-bulk-relabel"
-                                disabled={busy || !modifiable || !label.trim()}
-                                title={editTitle('Relabel')}
-                                onClick={relabel}
-                                style={buttonStyle()}
-                            >
-                                Relabel ({modifiable})
-                            </button>
-                        </span>
-                        <BulkMenu
-                            label="Move to layer…"
-                            testId="annotation-bulk-layer"
-                            ariaLabel="Move the selected annotations to a layer"
-                            title={editTitle('Move')}
-                            disabled={busy || !modifiable}
-                            items={controller.layerNames.map(layer => ({
-                                key: layer,
-                                label: layer,
-                                testId: `annotation-bulk-layer-${layer}`,
-                                run: () =>
-                                    void controller.bulkMoveToLayer(layer),
-                            }))}
-                        />
-                        <BulkMenu
-                            label="Sharing…"
-                            testId="annotation-bulk-sharing"
-                            ariaLabel="Share the selected annotations or make them private"
-                            title={editTitle('Set the sharing of')}
-                            disabled={busy || !modifiable}
-                            items={[
-                                {
-                                    key: 'shared',
-                                    label: 'Shared with the study',
-                                    testId: 'annotation-bulk-sharing-shared',
-                                    run: () =>
-                                        void controller.bulkSetShared(true),
-                                },
-                                {
-                                    key: 'private',
-                                    label: 'Private',
-                                    testId: 'annotation-bulk-sharing-private',
-                                    run: () =>
-                                        void controller.bulkSetShared(false),
-                                },
-                            ]}
-                        />
-                        {regions > 0 && (
-                            <BulkMenu
-                                label="Edit shapes…"
-                                testId="annotation-bulk-shape"
-                                ariaLabel="Edit the shapes of the selected regions"
-                                title="Merge, subtract, intersect, cut a hole, split or separate the selected regions; the results are yours"
+                                ref={button}
+                                data-testid="annotation-bulk-actions"
+                                aria-haspopup="menu"
+                                aria-expanded={open}
+                                title="Relabel, move, share, edit the shapes of, review or delete the selected annotations"
                                 disabled={busy}
-                                items={SHAPE_OPERATIONS.map(operation => ({
-                                    key: operation,
-                                    label: shapeOps[operation].text,
-                                    testId: `annotation-shape-op-${operation}`,
-                                    disabled: !shapeOps[operation].enabled,
-                                    title: shapeOps[operation].title,
-                                    run: () =>
-                                        void (async () => {
-                                            if (
-                                                operation === 'merge' &&
-                                                !(await confirmMerge(
-                                                    controller
-                                                ))
-                                            ) {
-                                                return;
-                                            }
-                                            await controller.runShapeOp(
-                                                operation
-                                            );
-                                        })(),
-                                }))}
-                            />
-                        )}
-                        {ai > 0 && (
-                            <>
-                                <button
-                                    type="button"
-                                    data-testid="annotation-bulk-accept"
-                                    disabled={busy || !reviewable}
-                                    title={
-                                        reviewable
-                                            ? `Accept ${applies(
-                                                  reviewable,
-                                                  n
-                                              )} selected unreviewed AI annotations`
-                                            : 'None of the selected are unreviewed AI annotations you can review'
+                                onClick={() => {
+                                    setSub(null);
+                                    setOpen(!open);
+                                }}
+                                onKeyDown={event => {
+                                    if (event.key === 'ArrowDown') {
+                                        event.preventDefault();
+                                        setOpen(true);
                                     }
-                                    onClick={() =>
-                                        void controller.bulkReview('accept')
-                                    }
-                                    style={buttonStyle(colors.accept)}
+                                }}
+                                style={buttonStyle(colors.primary)}
+                            >
+                                Actions <span aria-hidden="true">▾</span>
+                            </button>
+                            <Menu
+                                open={open && !busy}
+                                label="Actions on the selected annotations"
+                                testId="annotation-bulk-actions-menu"
+                                anchor={anchor}
+                                onClose={close}
+                            >
+                                <ActionItem
+                                    testId="annotation-bulk-relabel-start"
+                                    onFocus={closeSub}
+                                    label={`Relabel ${modifiable}…`}
+                                    disabled={!modifiable}
+                                    title={editTitle('Relabel')}
+                                    note={UNDOABLE}
+                                    onPick={pick(() => setRelabeling(true))}
+                                />
+                                <SubMenu
+                                    testId="annotation-bulk-layer"
+                                    label={`Move ${modifiable} to layer`}
+                                    disabled={!modifiable}
+                                    title={editTitle('Move')}
+                                    note={UNDOABLE}
+                                    {...subProps('layer')}
                                 >
-                                    Accept ({reviewable})
-                                </button>
-                                <button
-                                    type="button"
-                                    data-testid="annotation-bulk-reject"
-                                    disabled={busy || !reviewable}
-                                    title={
-                                        reviewable
-                                            ? `Reject ${applies(
-                                                  reviewable,
-                                                  n
-                                              )} selected unreviewed AI annotations`
-                                            : 'None of the selected are unreviewed AI annotations you can review'
-                                    }
-                                    onClick={() => {
-                                        if (
-                                            window.confirm(
-                                                rejectConfirmation(
-                                                    `${reviewable} AI annotation${
-                                                        reviewable === 1
-                                                            ? ''
-                                                            : 's'
-                                                    }`,
-                                                    reviewable,
-                                                    controller.reviewRoute ===
-                                                        false
+                                    {controller.layerNames.map(layer => (
+                                        <ActionItem
+                                            key={layer}
+                                            testId={`annotation-bulk-layer-${layer}`}
+                                            label={layer}
+                                            onPick={pick(
+                                                () =>
+                                                    void controller.bulkMoveToLayer(
+                                                        layer
+                                                    )
+                                            )}
+                                        />
+                                    ))}
+                                </SubMenu>
+                                <SubMenu
+                                    testId="annotation-bulk-sharing"
+                                    label={`Sharing of ${modifiable}`}
+                                    disabled={!modifiable}
+                                    title={editTitle('Set the sharing of')}
+                                    note={UNDOABLE}
+                                    {...subProps('sharing')}
+                                >
+                                    <ActionItem
+                                        testId="annotation-bulk-sharing-shared"
+                                        label="Shared with the study"
+                                        onPick={pick(
+                                            () =>
+                                                void controller.bulkSetShared(
+                                                    true
                                                 )
-                                            )
-                                        ) {
-                                            void controller.bulkReview(
-                                                'reject'
-                                            );
+                                        )}
+                                    />
+                                    <ActionItem
+                                        testId="annotation-bulk-sharing-private"
+                                        label="Private"
+                                        onPick={pick(
+                                            () =>
+                                                void controller.bulkSetShared(
+                                                    false
+                                                )
+                                        )}
+                                    />
+                                </SubMenu>
+                                <SubMenu
+                                    testId="annotation-bulk-shape"
+                                    label="Edit shapes"
+                                    disabled={!regions}
+                                    title={
+                                        regions
+                                            ? 'Merge, subtract, intersect, cut a hole, split or separate the selected regions; the results are yours'
+                                            : 'Select regions (rectangles, ellipses, circles or polygons) to edit their shapes'
+                                    }
+                                    note={UNDOABLE}
+                                    {...subProps('shape')}
+                                >
+                                    {SHAPE_OPERATIONS.map(operation => (
+                                        <ActionItem
+                                            key={operation}
+                                            testId={`annotation-shape-op-${operation}`}
+                                            label={shapeOps[operation].text}
+                                            disabled={
+                                                !shapeOps[operation].enabled
+                                            }
+                                            title={shapeOps[operation].title}
+                                            onPick={pick(
+                                                () =>
+                                                    void (async () => {
+                                                        if (
+                                                            operation ===
+                                                                'merge' &&
+                                                            !(await confirmMerge(
+                                                                controller
+                                                            ))
+                                                        ) {
+                                                            return;
+                                                        }
+                                                        await controller.runShapeOp(
+                                                            operation
+                                                        );
+                                                    })()
+                                            )}
+                                        />
+                                    ))}
+                                </SubMenu>
+                                {ai > 0 && <MenuSeparator />}
+                                {ai > 0 && (
+                                    <ActionItem
+                                        testId="annotation-bulk-accept"
+                                        onFocus={closeSub}
+                                        label={`Accept ${reviewable}`}
+                                        color={colors.accept}
+                                        disabled={!reviewable}
+                                        title={reviewTitle('Accept')}
+                                        note={FINAL}
+                                        onPick={pick(
+                                            () =>
+                                                void controller.bulkReview(
+                                                    'accept'
+                                                )
+                                        )}
+                                    />
+                                )}
+                                {ai > 0 && (
+                                    <ActionItem
+                                        testId="annotation-bulk-reject"
+                                        onFocus={closeSub}
+                                        label={`Reject ${reviewable}…`}
+                                        color={colors.reject}
+                                        disabled={!reviewable}
+                                        title={`${reviewTitle(
+                                            'Reject'
+                                        )} (asks first)`}
+                                        note={FINAL}
+                                        onPick={pick(reject)}
+                                    />
+                                )}
+                                <MenuSeparator />
+                                <ActionItem
+                                    testId="annotation-bulk-delete"
+                                    onFocus={closeSub}
+                                    label={`Delete ${modifiable}…`}
+                                    color={colors.reject}
+                                    disabled={!modifiable}
+                                    title={`${editTitle(
+                                        'Delete'
+                                    )} (asks first)`}
+                                    note={UNDOABLE}
+                                    onPick={pick(() => void remove())}
+                                />
+                                <ActionItem
+                                    testId="annotation-bulk-clear"
+                                    onFocus={closeSub}
+                                    label="Clear selection"
+                                    note="Esc"
+                                    onPick={pick(controller.clearSelection)}
+                                />
+                            </Menu>
+                        </span>
+                        {relabeling && (
+                            <span
+                                role="group"
+                                aria-label="Relabel the selected annotations"
+                                style={{
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: 3,
+                                }}
+                            >
+                                <AnnotationLabelField
+                                    controller={controller}
+                                    value={label}
+                                    onChange={setLabel}
+                                    ariaLabel="New label for the selected annotations"
+                                    testId="annotation-bulk-label"
+                                    placeholder="New label"
+                                    allowEmpty
+                                    autoFocus
+                                    onKeyDown={event => {
+                                        if (event.key === 'Enter') relabel();
+                                        if (event.key === 'Escape') {
+                                            event.preventDefault();
+                                            setRelabeling(false);
+                                            button.current?.focus();
                                         }
                                     }}
-                                    style={buttonStyle(colors.reject)}
-                                >
-                                    Reject ({reviewable})
-                                </button>
-                            </>
-                        )}
-                        <button
-                            type="button"
-                            data-testid="annotation-bulk-delete"
-                            disabled={busy || !modifiable}
-                            title={editTitle('Delete')}
-                            onClick={() =>
-                                void (async () => {
-                                    const warning = await controller.threadLossWarning(
-                                        selected.filter(item =>
-                                            controller.canModify(item)
-                                        ),
-                                        'Deleting'
-                                    );
-                                    if (
-                                        window.confirm(
-                                            `Delete ${modifiable} annotation${
-                                                modifiable === 1 ? '' : 's'
-                                            }?${notYours} ${warning ||
-                                                `Undo can bring ${
-                                                    modifiable === 1
-                                                        ? 'it'
-                                                        : 'them'
-                                                } back.`}`
-                                        )
-                                    ) {
-                                        await controller.bulkDelete();
+                                    style={fieldStyle}
+                                />
+                                <button
+                                    type="button"
+                                    data-testid="annotation-bulk-relabel"
+                                    disabled={
+                                        busy || !modifiable || !label.trim()
                                     }
-                                })()
-                            }
-                            style={buttonStyle(colors.reject)}
-                        >
-                            Delete ({modifiable})
-                        </button>
-                        <button
-                            type="button"
-                            data-testid="annotation-bulk-clear"
-                            aria-label="Clear the selection (Esc)"
-                            title="Clear the selection (Esc)"
-                            onClick={controller.clearSelection}
-                            style={{
-                                ...buttonStyle(colors.muted),
-                                border: 'none',
-                                fontSize: 14,
-                            }}
-                        >
-                            ×
-                        </button>
+                                    title={editTitle('Relabel')}
+                                    onClick={relabel}
+                                    style={buttonStyle()}
+                                >
+                                    Relabel {modifiable}
+                                </button>
+                                <button
+                                    type="button"
+                                    data-testid="annotation-bulk-relabel-cancel"
+                                    onClick={() => setRelabeling(false)}
+                                    style={{
+                                        ...buttonStyle(colors.muted),
+                                        border: 'none',
+                                    }}
+                                >
+                                    Cancel
+                                </button>
+                            </span>
+                        )}
                     </>
                 )}
                 {hint && (
@@ -474,6 +540,17 @@ export const WsiAnnotationBulkBar = observer(
                 >
                     {controller.bulkBusy ? 'Saving…' : message}
                 </span>
+                {!controller.bulkBusy && message && controller.bulkUndo && (
+                    <span
+                        data-testid="annotation-bulk-undo-note"
+                        style={{ color: colors.muted, flexBasis: '100%' }}
+                    >
+                        {controller.bulkUndo === 'undoable'
+                            ? `${controller.undoLabel ||
+                                  'Undo'} with Ctrl+Z or the toolbar's Undo.`
+                            : "Reviews can't be undone."}
+                    </span>
+                )}
             </div>
         );
     }

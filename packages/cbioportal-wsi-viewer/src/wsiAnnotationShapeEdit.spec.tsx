@@ -340,6 +340,7 @@ describe('Shape editing: holes, merge, subtract, intersect, cut, split', () => {
         controller.select(['a', 'b']);
         render(<WsiAnnotationBulkBar controller={controller} />);
         const confirm = jest.spyOn(window, 'confirm').mockReturnValue(false);
+        fireEvent.click(screen.getByTestId('annotation-bulk-actions'));
         fireEvent.click(screen.getByTestId('annotation-bulk-shape'));
         await act(async () => {
             fireEvent.click(screen.getByTestId('annotation-shape-op-merge'));
@@ -644,7 +645,8 @@ describe('Shape editing: holes, merge, subtract, intersect, cut, split', () => {
         ]);
         controller.select(['a', 'p']);
         render(<WsiAnnotationBulkBar controller={controller} />);
-        // A menu button: it acts on a pick, not while arrowing through.
+        // A submenu of Actions: it acts on a pick, not while arrowing.
+        fireEvent.click(screen.getByTestId('annotation-bulk-actions'));
         const menu = screen.getByTestId('annotation-bulk-shape');
         expect(menu.getAttribute('aria-haspopup')).toBe('menu');
         fireEvent.click(menu);
@@ -668,6 +670,7 @@ describe('Shape editing: holes, merge, subtract, intersect, cut, split', () => {
         });
         expect(controller.shapeEditMode).toBe('cut');
         expect(screen.queryByTestId('annotation-bulk-shape-menu')).toBeNull();
+        expect(screen.queryByTestId('annotation-bulk-actions-menu')).toBeNull();
         expect(
             screen.getByTestId('annotation-shape-edit-hint').textContent
         ).toContain('Cut a hole: draw a shape inside the 2 selected regions');

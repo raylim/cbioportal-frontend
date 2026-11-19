@@ -161,15 +161,21 @@ describe('Bulk actions over the batch routes', () => {
         controller.select(['ai1', 'ai2']);
         render(<WsiAnnotationBulkBar controller={controller} />);
         const confirm = jest.spyOn(window, 'confirm').mockReturnValue(false);
+        fireEvent.click(screen.getByTestId('annotation-bulk-actions'));
         fireEvent.click(screen.getByTestId('annotation-bulk-reject'));
         expect(confirm).toHaveBeenCalledWith(
             "Reject 2 AI annotations? They are hidden for everyone; the service keeps them as a review record. Reviews can't be undone."
         );
         expect(batches(service, 'review')).toHaveLength(0);
         confirm.mockReturnValue(true);
+        fireEvent.click(screen.getByTestId('annotation-bulk-actions'));
         fireEvent.click(screen.getByTestId('annotation-bulk-reject'));
         await flush();
         expect(batches(service, 'review')).toHaveLength(1);
+        // The bar says a review cannot be undone.
+        expect(
+            screen.getByTestId('annotation-bulk-undo-note').textContent
+        ).toBe("Reviews can't be undone.");
         // Undo says reviews cannot be undone instead of renaming m0 back.
         expect(controller.canUndo).toBe(true);
         await act(async () => {

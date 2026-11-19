@@ -421,16 +421,57 @@ describe('Selecting annotations and bulk actions', () => {
         expect(screen.getByTestId('annotation-bulk-count').textContent).toBe(
             '3 selected'
         );
-        const relabel = screen.getByTestId(
-            'annotation-bulk-relabel'
-        ) as HTMLButtonElement;
-        expect(relabel.textContent).toBe('Relabel (1)');
-        expect(relabel.title).toBe(
+        // One Actions menu; each item names its count and its undo.
+        const actions = screen.getByTestId('annotation-bulk-actions');
+        expect(actions.getAttribute('aria-haspopup')).toBe('menu');
+        const openActions = () => fireEvent.click(actions);
+        openActions();
+        const menu = screen.getByTestId('annotation-bulk-actions-menu');
+        expect(
+            Array.from(
+                menu.querySelectorAll(
+                    ':scope > [role="menuitem"], :scope > div > [role="menuitem"]'
+                )
+            ).map(item => item.getAttribute('data-testid'))
+        ).toEqual([
+            'annotation-bulk-relabel-start',
+            'annotation-bulk-layer',
+            'annotation-bulk-sharing',
+            'annotation-bulk-shape',
+            'annotation-bulk-accept',
+            'annotation-bulk-reject',
+            'annotation-bulk-delete',
+            'annotation-bulk-clear',
+        ]);
+        const start = screen.getByTestId('annotation-bulk-relabel-start');
+        expect(start.textContent).toBe('Relabel 1…Ctrl+Z undoes');
+        expect(start.title).toBe(
             'Relabel 1 of 3 selected (2 not yours are skipped)'
         );
         expect(screen.getByTestId('annotation-bulk-accept').textContent).toBe(
-            'Accept (1)'
+            "Accept 1Can't be undone"
         );
+        expect(screen.getByTestId('annotation-bulk-reject').textContent).toBe(
+            "Reject 1…Can't be undone"
+        );
+        // The submenus open beside their item, with their own keys.
+        const layer = screen.getByTestId('annotation-bulk-layer');
+        expect(layer.getAttribute('aria-haspopup')).toBe('menu');
+        fireEvent.keyDown(layer, { key: 'ArrowRight' });
+        expect(layer.getAttribute('aria-expanded')).toBe('true');
+        const sub = screen.getByTestId('annotation-bulk-layer-menu');
+        expect(document.activeElement).toBe(
+            sub.querySelector('[role="menuitem"]')
+        );
+        fireEvent.keyDown(document.activeElement!, { key: 'ArrowLeft' });
+        expect(screen.queryByTestId('annotation-bulk-layer-menu')).toBeNull();
+        expect(document.activeElement).toBe(layer);
+        fireEvent.click(start);
+        expect(screen.queryByTestId('annotation-bulk-actions-menu')).toBeNull();
+        const relabel = screen.getByTestId(
+            'annotation-bulk-relabel'
+        ) as HTMLButtonElement;
+        expect(relabel.textContent).toBe('Relabel 1');
         expect(
             screen.getByTestId('annotation-selection-frame-mine1')
         ).toBeTruthy();
@@ -448,14 +489,16 @@ describe('Selecting annotations and bulk actions', () => {
 
         const confirm = jest.spyOn(window, 'confirm').mockReturnValue(false);
         const bulkDelete = jest.spyOn(controller, 'bulkDelete');
+        openActions();
         await act(async () => {
             fireEvent.click(screen.getByTestId('annotation-bulk-delete'));
         });
         expect(confirm).toHaveBeenCalledWith(
-            'Delete 1 annotation? (2 not yours are skipped) Undo can bring it back.'
+            'Delete 1 annotation? (2 not yours are skipped) Undo (Ctrl+Z) can bring it back.'
         );
         expect(bulkDelete).not.toHaveBeenCalled();
 
+        openActions();
         fireEvent.click(screen.getByTestId('annotation-bulk-clear'));
         expect(screen.queryByTestId('annotation-bulk-bar')).toBeNull();
         expect(screen.queryByTestId('annotation-selection-frames')).toBeNull();
