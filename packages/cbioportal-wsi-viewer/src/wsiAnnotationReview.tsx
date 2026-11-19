@@ -65,8 +65,8 @@ function doneMessage(controller: WsiAnnotationController): string {
  * The AI review queue's card: the annotation under review (label, origin,
  * size, note and layer), Accept, Reject, Skip and Previous, and the
  * progress. It takes the focus when it opens and gives it back on closing.
- * While it is open its keys (A, R, S or →, ←, Esc) take priority over the
- * tool shortcuts; see `WSI_REVIEW_KEYS`.
+ * While it is open its keys (A, X, S or →, ←, Esc) take priority over the
+ * tool shortcuts; see `WSI_REVIEW_KEYS`. Reject asks first.
  */
 const ReviewCard = observer(
     ({ controller }: { controller: WsiAnnotationController }) => {
@@ -76,6 +76,14 @@ const ReviewCard = observer(
             idRef.current = `wsi-review-card-${++reviewCardCount}`;
         }
         const titleId = `${idRef.current}-title`;
+        const rejectHelpId = `${idRef.current}-reject-help`;
+        const armed =
+            !!controller.rejectArmed &&
+            controller.rejectArmed === controller.reviewCurrent?.id;
+        const rejectConsequence =
+            controller.reviewRoute === false
+                ? 'It is deleted'
+                : 'It is hidden for everyone (the service keeps it as a review record); this cannot be undone';
         const queue = controller.reviewQueue!;
         const current = controller.reviewCurrent;
         const busy = queue.busy;
@@ -248,20 +256,37 @@ const ReviewCard = observer(
                             <button
                                 type="button"
                                 data-testid="annotation-review-reject"
-                                aria-keyshortcuts="R"
+                                aria-keyshortcuts={armed ? 'X Enter' : 'X'}
                                 aria-disabled={busy}
-                                title={
-                                    controller.reviewRoute === false
-                                        ? 'Reject: deletes the annotation'
-                                        : 'Reject: hides it for everyone; the service keeps it as a review record'
+                                aria-describedby={rejectHelpId}
+                                onClick={run(() => controller.reviewReject())}
+                                style={
+                                    armed
+                                        ? {
+                                              ...buttonStyle(
+                                                  colors.reject,
+                                                  busy
+                                              ),
+                                              background: colors.reject,
+                                              color: '#fff',
+                                          }
+                                        : buttonStyle(colors.reject, busy)
                                 }
-                                onClick={run(() =>
-                                    controller.reviewDecide('reject')
-                                )}
-                                style={buttonStyle(colors.reject, busy)}
                             >
-                                Reject<kbd style={kbdStyle}>R</kbd>
+                                {armed ? 'Confirm reject' : 'Reject'}
+                                <kbd style={kbdStyle}>X</kbd>
                             </button>
+                            {armed && (
+                                <button
+                                    type="button"
+                                    data-testid="annotation-review-reject-cancel"
+                                    aria-keyshortcuts="Escape"
+                                    onClick={controller.cancelReject}
+                                    style={buttonStyle(colors.text, busy)}
+                                >
+                                    Cancel
+                                </button>
+                            )}
                             <button
                                 type="button"
                                 data-testid="annotation-review-skip"
@@ -285,6 +310,20 @@ const ReviewCard = observer(
                             >
                                 ←
                             </button>
+                        </div>
+                        <div
+                            id={rejectHelpId}
+                            data-testid="annotation-review-reject-help"
+                            role={armed ? 'alert' : undefined}
+                            style={{
+                                marginTop: 4,
+                                fontSize: 12,
+                                color: armed ? colors.reject : colors.muted,
+                            }}
+                        >
+                            {armed
+                                ? `Reject "${label}"? ${rejectConsequence}. Press X or Enter to confirm, Esc to cancel.`
+                                : `Reject asks first: ${rejectConsequence.toLowerCase()}.`}
                         </div>
                     </>
                 ) : (
@@ -321,9 +360,9 @@ const ReviewCard = observer(
                     data-testid="annotation-review-keys"
                     style={{ marginTop: 6, color: colors.muted, fontSize: 11 }}
                 >
-                    Keys while reviewing: A accept, R reject, S or → skip, ←
-                    previous, Esc exit. They replace the tool shortcuts (R is
-                    not Shape) until you exit.
+                    Keys while reviewing: A accept, X reject (X again to
+                    confirm), S or → skip, ← previous, Esc exit. They come
+                    before the tool shortcuts until you exit.
                 </div>
             </div>
         );
@@ -358,7 +397,7 @@ export const ReviewQueueButton = observer(
                 aria-pressed={open}
                 title={
                     unavailable ||
-                    'Step through the unreviewed AI annotations: A accepts, R rejects, S skips'
+                    'Step through the unreviewed AI annotations: A accepts, X rejects (asks first), S skips'
                 }
                 onClick={() => {
                     if (!unavailable && !open) controller.startReview();

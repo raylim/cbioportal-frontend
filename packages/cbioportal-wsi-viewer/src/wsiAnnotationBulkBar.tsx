@@ -1,8 +1,12 @@
 import * as React from 'react';
 import { observer } from 'mobx-react';
-import { WsiAnnotationController } from './wsiAnnotationController';
+import {
+    rejectConfirmation,
+    WsiAnnotationController,
+} from './wsiAnnotationController';
 import { WsiShapeOperation } from './wsiAnnotationBody';
 import { AnnotationLabelField } from './wsiAnnotationControls';
+import { Menu, menuItemStyle } from './wsiMenu';
 
 // Text keeps at least 4.5:1 contrast on the bar's near-white.
 const colors = {
@@ -48,6 +52,121 @@ const SHAPE_OPERATIONS: WsiShapeOperation[] = [
     'split',
     'separate',
 ];
+
+/**
+ * Asks before a merge would delete originals with comments; resolves to
+ * whether to go on (at once when none has comments).
+ */
+async function confirmMerge(
+    controller: WsiAnnotationController
+): Promise<boolean> {
+    const warning = await controller.threadLossWarning(
+        controller.mergeDeletes,
+        'Merging'
+    );
+    return (
+        !warning ||
+        window.confirm(
+            `Merge the selected regions? Your originals are deleted: ${warning}`
+        )
+    );
+}
+
+/** One action of a selection-bar menu. */
+interface BulkMenuItem {
+    key: string;
+    label: string;
+    testId: string;
+    disabled?: boolean;
+    title?: string;
+    run: () => void;
+}
+
+/**
+ * A menu button of the selection bar ("Move to layer…", "Sharing…", "Edit
+ * shapes…"): it acts only on a pick, never while the arrow keys move
+ * through it (unlike a select that acts on change). The menu opens with
+ * Enter, Space or the down arrow, as the toolbar's menus do.
+ */
+function BulkMenu({
+    label,
+    ariaLabel,
+    title,
+    testId,
+    disabled,
+    items,
+}: {
+    label: string;
+    ariaLabel: string;
+    title: string;
+    testId: string;
+    disabled?: boolean;
+    items: BulkMenuItem[];
+}) {
+    const [open, setOpen] = React.useState(false);
+    const button = React.useRef<HTMLButtonElement>(null);
+    const anchor = React.useRef<HTMLSpanElement>(null);
+    const close = React.useCallback((returnFocus: boolean) => {
+        setOpen(false);
+        if (returnFocus) button.current?.focus();
+    }, []);
+    return (
+        <span ref={anchor} style={{ position: 'relative' }}>
+            <button
+                type="button"
+                ref={button}
+                data-testid={testId}
+                aria-label={ariaLabel}
+                aria-haspopup="menu"
+                aria-expanded={open}
+                title={title}
+                disabled={disabled}
+                onClick={() => setOpen(!open)}
+                onKeyDown={event => {
+                    if (event.key === 'ArrowDown') {
+                        event.preventDefault();
+                        setOpen(true);
+                    }
+                }}
+                style={buttonStyle()}
+            >
+                {label} <span aria-hidden="true">▾</span>
+            </button>
+            <Menu
+                open={open && !disabled}
+                label={ariaLabel}
+                testId={`${testId}-menu`}
+                anchor={anchor}
+                onClose={close}
+            >
+                {items.map(item => (
+                    <button
+                        key={item.key}
+                        type="button"
+                        role="menuitem"
+                        tabIndex={-1}
+                        data-testid={item.testId}
+                        disabled={item.disabled}
+                        aria-disabled={item.disabled || undefined}
+                        title={item.title}
+                        onClick={() => {
+                            if (item.disabled) return;
+                            close(true);
+                            item.run();
+                        }}
+                        style={{
+                            ...menuItemStyle(),
+                            opacity: item.disabled ? 0.55 : 1,
+                            cursor: item.disabled ? 'default' : 'pointer',
+                        }}
+                    >
+                        {item.label}
+                    </button>
+                ))}
+            </Menu>
+        </span>
+    );
+}
 
 /**
  * Bulk actions on the selected annotations, under the toolbar while any are
@@ -140,78 +259,72 @@ export const WsiAnnotationBulkBar = observer(
                                 Relabel ({modifiable})
                             </button>
                         </span>
-                        <select
-                            data-testid="annotation-bulk-layer"
-                            aria-label="Move the selected annotations to a layer"
+                        <BulkMenu
+                            label="Move to layer…"
+                            testId="annotation-bulk-layer"
+                            ariaLabel="Move the selected annotations to a layer"
                             title={editTitle('Move')}
                             disabled={busy || !modifiable}
-                            value=""
-                            onChange={event => {
-                                if (event.target.value) {
-                                    void controller.bulkMoveToLayer(
-                                        event.target.value
-                                    );
-                                }
-                            }}
-                            style={fieldStyle}
-                        >
-                            <option value="">Move to layer…</option>
-                            {controller.layerNames.map(layer => (
-                                <option key={layer} value={layer}>
-                                    {layer}
-                                </option>
-                            ))}
-                        </select>
-                        <select
-                            data-testid="annotation-bulk-sharing"
-                            aria-label="Share the selected annotations or make them private"
+                            items={controller.layerNames.map(layer => ({
+                                key: layer,
+                                label: layer,
+                                testId: `annotation-bulk-layer-${layer}`,
+                                run: () =>
+                                    void controller.bulkMoveToLayer(layer),
+                            }))}
+                        />
+                        <BulkMenu
+                            label="Sharing…"
+                            testId="annotation-bulk-sharing"
+                            ariaLabel="Share the selected annotations or make them private"
                             title={editTitle('Set the sharing of')}
                             disabled={busy || !modifiable}
-                            value=""
-                            onChange={event => {
-                                if (event.target.value) {
-                                    void controller.bulkSetShared(
-                                        event.target.value === 'shared'
-                                    );
-                                }
-                            }}
-                            style={fieldStyle}
-                        >
-                            <option value="">Sharing…</option>
-                            <option value="shared">
-                                Shared with the study
-                            </option>
-                            <option value="private">Private</option>
-                        </select>
+                            items={[
+                                {
+                                    key: 'shared',
+                                    label: 'Shared with the study',
+                                    testId: 'annotation-bulk-sharing-shared',
+                                    run: () =>
+                                        void controller.bulkSetShared(true),
+                                },
+                                {
+                                    key: 'private',
+                                    label: 'Private',
+                                    testId: 'annotation-bulk-sharing-private',
+                                    run: () =>
+                                        void controller.bulkSetShared(false),
+                                },
+                            ]}
+                        />
                         {regions > 0 && (
-                            <select
-                                data-testid="annotation-bulk-shape"
-                                aria-label="Edit the shapes of the selected regions"
+                            <BulkMenu
+                                label="Edit shapes…"
+                                testId="annotation-bulk-shape"
+                                ariaLabel="Edit the shapes of the selected regions"
                                 title="Merge, subtract, intersect, cut a hole, split or separate the selected regions; the results are yours"
                                 disabled={busy}
-                                value=""
-                                onChange={event => {
-                                    const operation = event.target
-                                        .value as WsiShapeOperation;
-                                    if (operation) {
-                                        void controller.runShapeOp(operation);
-                                    }
-                                }}
-                                style={fieldStyle}
-                            >
-                                <option value="">Edit shapes…</option>
-                                {SHAPE_OPERATIONS.map(operation => (
-                                    <option
-                                        key={operation}
-                                        value={operation}
-                                        disabled={!shapeOps[operation].enabled}
-                                        title={shapeOps[operation].title}
-                                        data-testid={`annotation-shape-op-${operation}`}
-                                    >
-                                        {shapeOps[operation].text}
-                                    </option>
-                                ))}
-                            </select>
+                                items={SHAPE_OPERATIONS.map(operation => ({
+                                    key: operation,
+                                    label: shapeOps[operation].text,
+                                    testId: `annotation-shape-op-${operation}`,
+                                    disabled: !shapeOps[operation].enabled,
+                                    title: shapeOps[operation].title,
+                                    run: () =>
+                                        void (async () => {
+                                            if (
+                                                operation === 'merge' &&
+                                                !(await confirmMerge(
+                                                    controller
+                                                ))
+                                            ) {
+                                                return;
+                                            }
+                                            await controller.runShapeOp(
+                                                operation
+                                            );
+                                        })(),
+                                }))}
+                            />
                         )}
                         {ai > 0 && (
                             <>
@@ -246,9 +359,26 @@ export const WsiAnnotationBulkBar = observer(
                                               )} selected unreviewed AI annotations`
                                             : 'None of the selected are unreviewed AI annotations you can review'
                                     }
-                                    onClick={() =>
-                                        void controller.bulkReview('reject')
-                                    }
+                                    onClick={() => {
+                                        if (
+                                            window.confirm(
+                                                rejectConfirmation(
+                                                    `${reviewable} AI annotation${
+                                                        reviewable === 1
+                                                            ? ''
+                                                            : 's'
+                                                    }`,
+                                                    reviewable,
+                                                    controller.reviewRoute ===
+                                                        false
+                                                )
+                                            )
+                                        ) {
+                                            void controller.bulkReview(
+                                                'reject'
+                                            );
+                                        }
+                                    }}
                                     style={buttonStyle(colors.reject)}
                                 >
                                     Reject ({reviewable})
@@ -260,19 +390,30 @@ export const WsiAnnotationBulkBar = observer(
                             data-testid="annotation-bulk-delete"
                             disabled={busy || !modifiable}
                             title={editTitle('Delete')}
-                            onClick={() => {
-                                if (
-                                    window.confirm(
-                                        `Delete ${modifiable} annotation${
-                                            modifiable === 1 ? '' : 's'
-                                        }?${notYours} Undo can bring ${
-                                            modifiable === 1 ? 'it' : 'them'
-                                        } back.`
-                                    )
-                                ) {
-                                    void controller.bulkDelete();
-                                }
-                            }}
+                            onClick={() =>
+                                void (async () => {
+                                    const warning = await controller.threadLossWarning(
+                                        selected.filter(item =>
+                                            controller.canModify(item)
+                                        ),
+                                        'Deleting'
+                                    );
+                                    if (
+                                        window.confirm(
+                                            `Delete ${modifiable} annotation${
+                                                modifiable === 1 ? '' : 's'
+                                            }?${notYours} ${warning ||
+                                                `Undo can bring ${
+                                                    modifiable === 1
+                                                        ? 'it'
+                                                        : 'them'
+                                                } back.`}`
+                                        )
+                                    ) {
+                                        await controller.bulkDelete();
+                                    }
+                                })()
+                            }
                             style={buttonStyle(colors.reject)}
                         >
                             Delete ({modifiable})

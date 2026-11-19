@@ -323,9 +323,30 @@ describe('High-power fields and points inside regions', () => {
             /^2 high-power fields \(0\.474 mm²\) HPF \(high-power field\)/
         );
         // Per 10 HPF and per mm² of the fields' area (4 / 0.474 mm²).
+        const headers = Array.from(table.querySelectorAll('th'));
+        expect(headers.map(th => th.firstChild!.textContent!.trim())).toEqual([
+            'Points',
+            'In fields',
+            'Per 10 HPF',
+            'Per mm²',
+        ]);
+        // Each rate column is described by its help (an info icon, not a
+        // title only).
         expect(
-            Array.from(table.querySelectorAll('th')).map(th => th.textContent)
-        ).toEqual(['Points', 'In fields', 'Per 10 HPF', 'Per mm²']);
+            document.getElementById(
+                headers[2].getAttribute('aria-describedby')!
+            )!.textContent
+        ).toBe(HPF_RATE_HELP[0].text);
+        expect(screen.getByTestId('annotation-hpf-per-mm2-info')).toBeTruthy();
+        // Two fields: the rate per 10 HPF is provisional, not bold.
+        expect(screen.getByTestId('annotation-hpf-notes').textContent).toBe(
+            'Provisional: based on 2 fields; a rate per 10 HPF needs at least 10.'
+        );
+        expect(
+            (screen
+                .getByTestId('annotation-hpf-rate-Mitosis')
+                .querySelectorAll('td')[2] as HTMLElement).style.fontWeight
+        ).toBe('400');
         expect(
             screen.getByTestId('annotation-hpf-rate-Mitosis').textContent
         ).toMatch(/^Mitosis4208\.4$/);
@@ -341,5 +362,45 @@ describe('High-power fields and points inside regions', () => {
             expect(help).toContain(`${item.label}: ${item.text}`)
         );
         expect(screen.getByTestId('annotation-hpf-summary-info')).toBeTruthy();
+    });
+
+    it("counts a point in overlapping fields once, the overlap once, and the user's own by default", async () => {
+        // Two fields of radius 1098.6 px (0.237 mm² at 0.25 µm), centres
+        // 1000 px apart: they overlap.
+        const field = (id: string, cx: number, creator = 'me') =>
+            serviceRow(
+                id,
+                `<svg><ellipse cx="${cx}" cy="1000" rx="1098.6" ry="1098.6" /></svg>`,
+                { label: `HPF ${id.slice(1)}`, creator }
+            );
+        const { controller } = await setup([
+            field('f1', 1000),
+            field('f2', 2000),
+            field('f3', 9000, 'other'),
+            pointRow('both', 1500, 1000, 'Mitosis'),
+            pointRow('one', 600, 1000, 'Mitosis'),
+            pointRow('theirs', 1400, 1000, 'Mitosis', { creator: 'other' }),
+            pointRow('theirs2', 9000, 1000, 'Mitosis', { creator: 'other' }),
+        ]);
+        const mine = controller.hpfSummary!;
+        expect(mine.scope).toBe('mine');
+        expect(mine.fields).toBe(2);
+        // "both" lies in both fields and counts once; "theirs" is not mine.
+        expect(mine.total).toBe(2);
+        expect(mine.overlapping).toBe(2);
+        // Less than the two fields' 0.474 mm²: the lens counts once.
+        expect(mine.areaMm2).toBeLessThan(0.474);
+        expect(mine.areaMm2).toBeGreaterThan(0.237);
+        render(<WsiAnnotationPanel controller={controller} />);
+        expect(screen.getByTestId('annotation-hpf-overlap').textContent).toBe(
+            '2 fields overlap: a point in an overlap is counted once and the area once, so the rate per 10 HPF is low. Move or delete the overlapping fields.'
+        );
+        // All users: their field and points too.
+        fireEvent.change(screen.getByTestId('annotation-hpf-scope'), {
+            target: { value: 'all' },
+        });
+        const all = controller.hpfSummary!;
+        expect(all.fields).toBe(3);
+        expect(all.total).toBe(4);
     });
 });

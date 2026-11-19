@@ -5,8 +5,11 @@ import {
     DEFAULT_COLOR,
     DEFAULT_LAYER,
     formatRegionCount,
+    HPF_MIN_FIELDS,
+    rejectConfirmation,
     WsiAnnotationAiFilter,
     WsiAnnotationController,
+    WsiHpfScope,
 } from './wsiAnnotationController';
 import { WsiAnnotation } from './wsiViewerTypes';
 import { formatMeasurement, WsiPoint } from './wsiAnnotationGeometryUtils';
@@ -20,7 +23,13 @@ import {
 } from './wsiAnnotationBody';
 import { formatSlideId } from './wsiSlideId';
 import { ReviewQueueButton } from './wsiAnnotationReview';
-import { HPF_RATE_HELP, useHpfHelpId, WsiHpfInfo } from './wsiHpfHelp';
+import {
+    HPF_RATE_HELP,
+    useHelpId,
+    useHpfHelpId,
+    WsiHpfInfo,
+    WsiInfo,
+} from './wsiHpfHelp';
 import { WsiRulerLine } from './wsiAnnotationOverlay';
 import { AnnotationThread } from './wsiAnnotationThread';
 
@@ -29,6 +38,7 @@ const colors = {
     ai: '#7c3aed',
     blue: '#1f6fbf',
     border: '#ddd',
+    error: '#a00',
     muted: '#737373',
     text: '#333',
 } as const;
@@ -371,19 +381,39 @@ export const WsiAnnotationLayersPanel = observer(
                                     data-testid={`delete-layer-${layer}`}
                                     title={`Delete layer "${layer}"`}
                                     aria-label={`Delete layer ${layer}`}
-                                    onClick={() => {
-                                        const message = layerDeleteMessage(
-                                            layer,
-                                            controller.layerDeleteCounts(layer)
-                                        );
-                                        if (
-                                            message &&
-                                            !window.confirm(message)
-                                        ) {
-                                            return;
-                                        }
-                                        void controller.deleteLayer(layer);
-                                    }}
+                                    onClick={() =>
+                                        void (async () => {
+                                            const base = layerDeleteMessage(
+                                                layer,
+                                                controller.layerDeleteCounts(
+                                                    layer
+                                                )
+                                            );
+                                            const warning = await controller.threadLossWarning(
+                                                controller.annotations.filter(
+                                                    item =>
+                                                        (item.layerName ||
+                                                            DEFAULT_LAYER) ===
+                                                            layer &&
+                                                        controller.canModify(
+                                                            item
+                                                        )
+                                                ),
+                                                'Deleting'
+                                            );
+                                            const message = warning
+                                                ? `${base ||
+                                                      `Delete layer "${layer}"?`} ${warning}`
+                                                : base;
+                                            if (
+                                                message &&
+                                                !window.confirm(message)
+                                            ) {
+                                                return;
+                                            }
+                                            await controller.deleteLayer(layer);
+                                        })()
+                                    }
                                     style={{
                                         border: 'none',
                                         background: 'transparent',
@@ -1217,13 +1247,25 @@ const AnnotationRow = observer(
                                                 ? 'Reject: deletes the annotation'
                                                 : 'Reject: hides the annotation for everyone; the service keeps it as a review record'
                                         }
-                                        onClick={() =>
+                                        onClick={() => {
+                                            if (
+                                                !window.confirm(
+                                                    rejectConfirmation(
+                                                        `"${rawLabel}"`,
+                                                        1,
+                                                        controller.reviewRoute ===
+                                                            false
+                                                    )
+                                                )
+                                            ) {
+                                                return;
+                                            }
                                             thenFocus(() =>
                                                 controller.rejectAnnotation(
                                                     annotation.id
                                                 )
-                                            )
-                                        }
+                                            );
+                                        }}
                                         style={reviewButtonStyle('#c0392b')}
                                     >
                                         ✕ Reject
@@ -1287,9 +1329,26 @@ const AnnotationRow = observer(
                         title="Delete annotation"
                         aria-label={`Delete annotation ${name}`}
                         onClick={() =>
-                            thenFocus(() =>
-                                controller.removeAnnotation(annotation.id)
-                            )
+                            void (async () => {
+                                // Asks only when comments would be lost
+                                // (Undo brings the annotation back, not
+                                // its thread).
+                                const warning = await controller.threadLossWarning(
+                                    [annotation],
+                                    'Deleting'
+                                );
+                                if (
+                                    warning &&
+                                    !window.confirm(
+                                        `Delete annotation "${name}"? ${warning}`
+                                    )
+                                ) {
+                                    return;
+                                }
+                                thenFocus(() =>
+                                    controller.removeAnnotation(annotation.id)
+                                );
+                            })()
                         }
                         style={{
                             border: 'none',
@@ -1560,7 +1619,57 @@ const HpfSummary = observer(
     ({ controller }: { controller: WsiAnnotationController }) => {
         const summary = controller.hpfSummary;
         const helpId = useHpfHelpId();
-        if (!summary) return null;
+        const per10HelpId = useHelpId();
+        const perMm2HelpId = useHelpId();
+        const scopeId = useHelpId();
+        const scope = controller.hpfScopeNow;
+        const picker = (
+            <label
+                htmlFor={scopeId}
+                style={{ display: 'block', fontSize: 12, marginBottom: 2 }}
+            >
+                Count fields and points of{' '}
+                <select
+                    id={scopeId}
+                    data-testid="annotation-hpf-scope"
+                    value={scope}
+                    onChange={event =>
+                        controller.setHpfScope(
+                            event.target.value as WsiHpfScope
+                        )
+                    }
+                    style={{ fontSize: 12 }}
+                >
+                    {controller.currentUser && (
+                        <option value="mine">You</option>
+                    )}
+                    <option value="layer">
+                        Layer "{controller.activeLayer}"
+                    </option>
+                    <option value="all">All users</option>
+                </select>
+            </label>
+        );
+        if (!summary) {
+            // Fields of others may be on the slide: say how to see them.
+            const any = controller.annotations.some(item =>
+                controller.isHpf(item)
+            );
+            return any ? (
+                <div data-testid="annotation-hpf-summary-empty">
+                    {picker}
+                    <div style={{ fontSize: 12, color: colors.muted }}>
+                        No high-power fields
+                        {scope === 'mine'
+                            ? ' of yours'
+                            : scope === 'layer'
+                            ? ' on this layer'
+                            : ''}{' '}
+                        on this slide.
+                    </div>
+                </div>
+            ) : null;
+        }
         const per10 = (value: number) =>
             value.toLocaleString('en-US', { maximumFractionDigits: 1 });
         const perMm2 = (count: number) =>
@@ -1569,102 +1678,141 @@ const HpfSummary = observer(
                       maximumFractionDigits: 1,
                   })
                 : '–';
+        // Fewer than 10 fields: a rate per 10 HPF is an extrapolation.
+        const rateStyle: React.CSSProperties = {
+            textAlign: 'right',
+            fontWeight: summary.provisional ? 400 : 600,
+            fontStyle: summary.provisional ? 'italic' : undefined,
+        };
         return (
-            <table
-                data-testid="annotation-hpf-summary"
-                aria-describedby={helpId}
-                style={{
-                    width: '100%',
-                    fontSize: 11,
-                    borderCollapse: 'collapse',
-                    marginBottom: 6,
-                }}
-            >
-                <caption
+            <div data-testid="annotation-hpf-block">
+                {picker}
+                <table
+                    data-testid="annotation-hpf-summary"
+                    aria-describedby={helpId}
                     style={{
-                        textAlign: 'left',
-                        fontSize: 10,
-                        color: colors.muted,
+                        width: '100%',
+                        fontSize: 12,
+                        borderCollapse: 'collapse',
+                        marginBottom: 6,
                     }}
                 >
-                    {summary.fields} high-power field
-                    {summary.fields === 1 ? '' : 's'}
-                    {summary.areaMm2 > 0
-                        ? ` (${summary.areaMm2.toLocaleString('en-US', {
-                              maximumFractionDigits: 3,
-                          })} mm²)`
-                        : ''}{' '}
-                    <WsiHpfInfo
-                        testId="annotation-hpf-summary"
-                        describedById={helpId}
-                        rates
-                        style={{ fontSize: 11 }}
-                    />
-                </caption>
-                <thead>
-                    <tr style={{ color: colors.muted, fontSize: 10 }}>
-                        <th style={{ textAlign: 'left', fontWeight: 400 }}>
-                            Points
-                        </th>
-                        <th style={{ textAlign: 'right', fontWeight: 400 }}>
-                            In fields
-                        </th>
-                        <th
-                            style={{ textAlign: 'right', fontWeight: 400 }}
-                            title={HPF_RATE_HELP[0].text}
-                        >
-                            Per 10 HPF
-                        </th>
-                        <th
-                            style={{ textAlign: 'right', fontWeight: 400 }}
-                            title={HPF_RATE_HELP[1].text}
-                        >
-                            Per mm²
-                        </th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {summary.byLabel.map(item => (
-                        <tr
-                            key={item.label}
-                            data-testid={`annotation-hpf-rate-${item.label}`}
-                        >
-                            <td>{item.label}</td>
-                            <td style={{ textAlign: 'right' }}>{item.count}</td>
-                            <td
-                                style={{
-                                    textAlign: 'right',
-                                    fontWeight: 600,
-                                }}
+                    <caption
+                        style={{
+                            textAlign: 'left',
+                            fontSize: 12,
+                            color: colors.muted,
+                        }}
+                    >
+                        {summary.fields} high-power field
+                        {summary.fields === 1 ? '' : 's'}
+                        {summary.areaMm2 > 0
+                            ? ` (${summary.areaMm2.toLocaleString('en-US', {
+                                  maximumFractionDigits: 3,
+                              })} mm²)`
+                            : ''}{' '}
+                        <WsiHpfInfo
+                            testId="annotation-hpf-summary"
+                            describedById={helpId}
+                            rates
+                            style={{ fontSize: 12 }}
+                        />
+                    </caption>
+                    <thead>
+                        <tr style={{ color: colors.muted, fontSize: 11 }}>
+                            <th style={{ textAlign: 'left', fontWeight: 400 }}>
+                                Points
+                            </th>
+                            <th style={{ textAlign: 'right', fontWeight: 400 }}>
+                                In fields
+                            </th>
+                            <th
+                                style={{ textAlign: 'right', fontWeight: 400 }}
+                                aria-describedby={per10HelpId}
                             >
-                                {per10(item.per10)}
-                            </td>
-                            <td style={{ textAlign: 'right' }}>
-                                {perMm2(item.count)}
-                            </td>
-                        </tr>
-                    ))}
-                    {summary.byLabel.length !== 1 && (
-                        <tr data-testid="annotation-hpf-rate-total">
-                            <td>All points</td>
-                            <td style={{ textAlign: 'right' }}>
-                                {summary.total}
-                            </td>
-                            <td
-                                style={{
-                                    textAlign: 'right',
-                                    fontWeight: 600,
-                                }}
+                                Per 10 HPF{' '}
+                                <WsiInfo
+                                    testId="annotation-hpf-per10"
+                                    describedById={per10HelpId}
+                                    label="About Per 10 HPF"
+                                    text={HPF_RATE_HELP[0].text}
+                                    style={{ fontSize: 11 }}
+                                />
+                            </th>
+                            <th
+                                style={{ textAlign: 'right', fontWeight: 400 }}
+                                aria-describedby={perMm2HelpId}
                             >
-                                {per10(summary.per10)}
-                            </td>
-                            <td style={{ textAlign: 'right' }}>
-                                {perMm2(summary.total)}
-                            </td>
+                                Per mm²{' '}
+                                <WsiInfo
+                                    testId="annotation-hpf-per-mm2"
+                                    describedById={perMm2HelpId}
+                                    label="About Per mm²"
+                                    text={HPF_RATE_HELP[1].text}
+                                    style={{ fontSize: 11 }}
+                                />
+                            </th>
                         </tr>
+                    </thead>
+                    <tbody>
+                        {summary.byLabel.map(item => (
+                            <tr
+                                key={item.label}
+                                data-testid={`annotation-hpf-rate-${item.label}`}
+                            >
+                                <td>{item.label}</td>
+                                <td style={{ textAlign: 'right' }}>
+                                    {item.count}
+                                </td>
+                                <td style={rateStyle}>{per10(item.per10)}</td>
+                                <td style={{ textAlign: 'right' }}>
+                                    {perMm2(item.count)}
+                                </td>
+                            </tr>
+                        ))}
+                        {summary.byLabel.length !== 1 && (
+                            <tr data-testid="annotation-hpf-rate-total">
+                                <td>All points</td>
+                                <td style={{ textAlign: 'right' }}>
+                                    {summary.total}
+                                </td>
+                                <td style={rateStyle}>
+                                    {per10(summary.per10)}
+                                </td>
+                                <td style={{ textAlign: 'right' }}>
+                                    {perMm2(summary.total)}
+                                </td>
+                            </tr>
+                        )}
+                    </tbody>
+                </table>
+                <div
+                    data-testid="annotation-hpf-notes"
+                    style={{
+                        fontSize: 12,
+                        color: colors.muted,
+                        marginBottom: 6,
+                    }}
+                >
+                    {summary.provisional
+                        ? `Provisional: based on ${summary.fields} field${
+                              summary.fields === 1 ? '' : 's'
+                          }; a rate per 10 HPF needs at least ${HPF_MIN_FIELDS}.`
+                        : `Based on ${summary.fields} fields.`}
+                    {summary.overlapping > 0 && (
+                        <span
+                            role="note"
+                            data-testid="annotation-hpf-overlap"
+                            style={{ display: 'block', color: colors.error }}
+                        >
+                            {summary.overlapping} fields overlap: a point in an
+                            overlap is counted once and the area once, so the
+                            rate per 10 HPF is low. Move or delete the
+                            overlapping fields.
+                        </span>
                     )}
-                </tbody>
-            </table>
+                </div>
+            </div>
         );
     }
 );

@@ -87,8 +87,16 @@ describe('WsiAnnotationPanel', () => {
         expect(screen.queryByTestId('accept-annotation-ai-2')).toBeNull();
 
         fireEvent.click(screen.getByLabelText('Accept AI annotation ai-1'));
-        fireEvent.click(screen.getByLabelText('Reject AI annotation ai-1'));
         expect(accept).toHaveBeenCalledWith('ai-1');
+        // Reject asks first, saying what it does.
+        const confirm = jest.spyOn(window, 'confirm').mockReturnValue(false);
+        fireEvent.click(screen.getByLabelText('Reject AI annotation ai-1'));
+        expect(confirm).toHaveBeenCalledWith(
+            'Reject "ai-1"? It is hidden for everyone; the service keeps it as a review record. Reviews can\'t be undone.'
+        );
+        expect(reject).not.toHaveBeenCalled();
+        confirm.mockReturnValue(true);
+        fireEvent.click(screen.getByLabelText('Reject AI annotation ai-1'));
         expect(reject).toHaveBeenCalledWith('ai-1');
 
         fireEvent.click(screen.getByTestId('annotation-hide-unreviewed-ai'));
@@ -432,7 +440,7 @@ describe('WsiAnnotationPanel', () => {
         });
     });
 
-    it('says how much a layer delete removes, and that others keep the layer', () => {
+    it('says how much a layer delete removes, and that others keep the layer', async () => {
         expect(layerDeleteMessage('Tumor', { own: 0, others: 0 })).toBeNull();
         expect(layerDeleteMessage('Tumor', { own: 2, others: 0 })).toBe(
             'Delete layer "Tumor" and your 2 annotations in it?'
@@ -454,7 +462,9 @@ describe('WsiAnnotationPanel', () => {
         controller.setCurrentUser('me');
         const confirm = jest.spyOn(window, 'confirm').mockReturnValue(false);
         render(<WsiAnnotationLayersPanel controller={controller} />);
-        fireEvent.click(screen.getByLabelText('Delete layer Tumor'));
+        await act(async () => {
+            fireEvent.click(screen.getByLabelText('Delete layer Tumor'));
+        });
         expect(confirm).toHaveBeenCalledWith(
             'Delete layer "Tumor" and your 1 annotation in it? The layer stays on the slide while 1 annotation by other users is in it.'
         );

@@ -190,15 +190,31 @@ export interface WsiRegionPointCount {
     densityPerMm2?: number;
 }
 
+/**
+ * Whose high-power fields and points the HPF table counts: the user's own
+ * (the default, so one reader's count is not mixed with another's), those
+ * on the drawing layer, or all.
+ */
+export type WsiHpfScope = 'mine' | 'layer' | 'all';
+
+/** A rate per 10 HPF from fewer fields than this is provisional. */
+export const HPF_MIN_FIELDS = 10;
+
 /** The high-power fields on the slide and the points counted in them. */
 export interface WsiHpfSummary {
     fields: number;
-    /** The fields' total area, in mm². */
+    /** The fields' area, overlaps counted once, in mm². */
     areaMm2: number;
     total: number;
     /** Points per 10 fields (the count over the fields, times 10). */
     per10: number;
     byLabel: Array<{ label: string; count: number; per10: number }>;
+    /** Fewer than `HPF_MIN_FIELDS` fields: the rate per 10 HPF is provisional. */
+    provisional: boolean;
+    /** Fields that overlap another; a point in an overlap counts once. */
+    overlapping: number;
+    /** Whose fields and points were counted. */
+    scope: WsiHpfScope;
 }
 
 /** "12 (Mitosis 7, Lymphocyte 5) · 51 per mm²"; "0" with none inside. */
@@ -806,19 +822,73 @@ export interface WsiReviewQueue {
 
 /**
  * The review queue's keys. While it is open they take priority over the
- * toolbar's tool shortcuts (R rejects instead of picking the Shape tool).
+ * toolbar's tool shortcuts. X asks to reject and X (or Enter) again
+ * confirms, so one stray key never rejects an annotation for everyone.
  */
 export const WSI_REVIEW_KEYS: Record<
     string,
     'accept' | 'reject' | 'next' | 'previous' | 'exit'
 > = {
     a: 'accept',
-    r: 'reject',
+    x: 'reject',
     s: 'next',
     arrowright: 'next',
     arrowleft: 'previous',
     escape: 'exit',
 };
+
+/**
+ * The confirmation asked before rejecting `what` ("Tumor 1" in quotes, or
+ * "3 AI annotations"): what a reject does, and that it cannot be undone.
+ */
+export function rejectConfirmation(
+    what: string,
+    count: number,
+    deletes: boolean
+): string {
+    const it = count === 1 ? 'It is' : 'They are';
+    return `Reject ${what}? ${
+        deletes
+            ? `${it} deleted.`
+            : `${it} hidden for everyone; the service keeps ${
+                  count === 1 ? 'it' : 'them'
+              } as a review record.`
+    } Reviews can't be undone.`;
+}
+
+/** Said when Undo follows a review: reviews are not on the undo history. */
+export const WSI_REVIEW_UNDO_NOTICE =
+    "Reviews can't be undone. Press Undo again to undo your last edit before it.";
+
+/**
+ * The area two circles share (µm² from µm), 0 when they do not overlap: the
+ * lens of two high-power fields.
+ */
+export function circleOverlap(
+    a: { x: number; y: number; r: number },
+    b: { x: number; y: number; r: number }
+): number {
+    const d = Math.hypot(a.x - b.x, a.y - b.y);
+    if (d >= a.r + b.r - 1e-9) return 0;
+    const small = Math.min(a.r, b.r);
+    if (d <= Math.abs(a.r - b.r)) return Math.PI * small * small;
+    const part = (r: number, other: number) =>
+        r * r * Math.acos((d * d + r * r - other * other) / (2 * d * r));
+    return (
+        part(a.r, b.r) +
+        part(b.r, a.r) -
+        0.5 *
+            Math.sqrt(
+                (-d + a.r + b.r) *
+                    (d + a.r - b.r) *
+                    (d - a.r + b.r) *
+                    (d + a.r + b.r)
+            )
+    );
+}
+
+/** Threads loaded at most to check whose comments a delete would remove. */
+const THREAD_CHECK_LIMIT = 20;
 
 /** The most selection frames drawn on the slide at once. */
 const SELECTION_FRAME_LIMIT = 500;
@@ -1774,7 +1844,12 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
     private pointIndexKey: [WsiAnnotation[], NamedColor[]] | null = null;
     private pointIndexValue: {
         xs: number[];
-        points: Array<{ x: number; y: number; label: string }>;
+        points: Array<{
+            x: number;
+            y: number;
+            label: string;
+            annotation: WsiAnnotation;
+        }>;
         counts: WeakMap<WsiAnnotation, WsiRegionPointCount>;
     } | null = null;
 
@@ -1793,7 +1868,12 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
             key[0] !== annotations ||
             key[1] !== palette
         ) {
-            const points: Array<{ x: number; y: number; label: string }> = [];
+            const points: Array<{
+                x: number;
+                y: number;
+                label: string;
+                annotation: WsiAnnotation;
+            }> = [];
             annotations.forEach(annotation => {
                 const shape = this.shapeOf(annotation);
                 if (shape?.kind !== 'point') return;
@@ -1803,6 +1883,7 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
                     label: this.labelTerm(
                         annotation.body?.[0]?.value || 'Point'
                     ),
+                    annotation,
                 });
             });
             points.sort((a, b) => a.x - b.x);
@@ -1886,33 +1967,111 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
      * The high-power fields on the slide and the points inside them: per
      * label term, and per 10 fields (the mitotic count's usual unit).
      */
+    /** Whose fields and points the HPF table counts. */
+    @observable hpfScope: WsiHpfScope = 'mine';
+
+    @action.bound
+    setHpfScope(scope: WsiHpfScope) {
+        this.hpfScope = scope;
+    }
+
+    /**
+     * The scope the HPF table counts in: the user's own needs the user, so
+     * without one every annotation counts.
+     */
+    @computed get hpfScopeNow(): WsiHpfScope {
+        return this.hpfScope === 'mine' && !this.currentUser
+            ? 'all'
+            : this.hpfScope;
+    }
+
+    /** Whether `annotation` is in the HPF table's scope. */
+    private inHpfScope(annotation: WsiAnnotation): boolean {
+        switch (this.hpfScopeNow) {
+            case 'mine':
+                return (
+                    !annotation.creator ||
+                    annotation.creator === this.currentUser
+                );
+            case 'layer':
+                return (
+                    (annotation.layerName || DEFAULT_LAYER) === this.activeLayer
+                );
+            default:
+                return true;
+        }
+    }
+
+    /**
+     * The high-power fields in scope (`hpfScope`) and the points in them:
+     * each point counted once, also where fields overlap; the area with
+     * overlaps counted once (fields are circles of tissue, so their pairwise
+     * overlaps are exact unless three overlap). Null without fields.
+     */
     @computed get hpfSummary(): WsiHpfSummary | null {
-        const fields = this.annotations.filter(annotation =>
-            this.isHpf(annotation)
+        const fields = this.annotations.filter(
+            annotation => this.isHpf(annotation) && this.inHpfScope(annotation)
         );
         if (!fields.length) return null;
-        const byLabel = new Map<string, number>();
-        let total = 0;
-        let areaMm2 = 0;
+        const index = this.pointIndex;
+        const inside = new Set<number>();
+        const circles: Array<{ x: number; y: number; r: number }> = [];
+        let areaUm2 = 0;
         fields.forEach(field => {
-            const count = this.pointsInside(field);
-            const shape = this.shapeOf(field);
-            const measurement = shape && measureShape(shape, this.mpp);
-            if (measurement?.area && measurement.unit === 'um') {
-                areaMm2 += measurement.area / 1e6;
+            const shape = this.shapeOf(field)!;
+            const bounds = shapeBounds(shape);
+            let low = 0;
+            let high = index.xs.length;
+            while (low < high) {
+                const middle = (low + high) >> 1;
+                if (index.xs[middle] < bounds.minX) low = middle + 1;
+                else high = middle;
             }
-            count?.byLabel.forEach(item =>
-                byLabel.set(
-                    item.label,
-                    (byLabel.get(item.label) || 0) + item.count
-                )
-            );
-            total += count?.total || 0;
+            for (let i = low; i < index.points.length; i++) {
+                const point = index.points[i];
+                if (point.x > bounds.maxX) break;
+                if (point.y < bounds.minY || point.y > bounds.maxY) continue;
+                if (inside.has(i) || !this.inHpfScope(point.annotation)) {
+                    continue;
+                }
+                if (shapeContainsPoint(shape, point, 0)) inside.add(i);
+            }
+            const measurement = measureShape(shape, this.mpp);
+            if (
+                shape.kind === 'ellipse' &&
+                measurement?.area &&
+                measurement.unit === 'um' &&
+                this.mpp
+            ) {
+                areaUm2 += measurement.area;
+                circles.push({
+                    x: shape.cx * this.mpp.x,
+                    y: shape.cy * this.mpp.y,
+                    r: Math.sqrt(measurement.area / Math.PI),
+                });
+            }
         });
+        const overlapping = new Set<number>();
+        for (let a = 0; a < circles.length; a++) {
+            for (let b = a + 1; b < circles.length; b++) {
+                const lens = circleOverlap(circles[a], circles[b]);
+                if (lens > 0) {
+                    areaUm2 -= lens;
+                    overlapping.add(a);
+                    overlapping.add(b);
+                }
+            }
+        }
+        const byLabel = new Map<string, number>();
+        inside.forEach(i => {
+            const label = index.points[i].label;
+            byLabel.set(label, (byLabel.get(label) || 0) + 1);
+        });
+        const total = inside.size;
         const per10 = (n: number) => (n / fields.length) * 10;
         return {
             fields: fields.length,
-            areaMm2,
+            areaMm2: Math.max(0, areaUm2) / 1e6,
             total,
             per10: per10(total),
             byLabel: Array.from(byLabel.entries())
@@ -1925,6 +2084,9 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
                     (a, b) =>
                         b.count - a.count || a.label.localeCompare(b.label)
                 ),
+            provisional: fields.length < HPF_MIN_FIELDS,
+            overlapping: overlapping.size,
+            scope: this.hpfScopeNow,
         };
     }
 
@@ -2562,9 +2724,17 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
         return entry ? `Redo ${describeChange(entry, true)}` : null;
     }
 
+    /**
+     * Whether the user's last change was a review (not on the undo
+     * history): the next Undo says so instead of silently undoing an
+     * earlier edit.
+     */
+    private lastChangeWasReview = false;
+
     /** Records a new change: it can be undone, and nothing can be redone. */
     @action
     private pushUndo(entry: WsiUndoEntry) {
+        this.lastChangeWasReview = false;
         // Any other change ends a run of point drops.
         if (entry.kind !== 'create' || !entry.pointRun) this.pointRun = null;
         this.undoStack = [...this.undoStack, entry].slice(-MAX_UNDO);
@@ -2634,6 +2804,17 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
      */
     @action.bound
     async undo(): Promise<boolean> {
+        if (this.lastChangeWasReview) {
+            this.lastChangeWasReview = false;
+            this.notice = WSI_REVIEW_UNDO_NOTICE;
+            if (this.reviewQueue) {
+                this.reviewQueue = {
+                    ...this.reviewQueue,
+                    message: WSI_REVIEW_UNDO_NOTICE,
+                };
+            }
+            return false;
+        }
         await this.flushPoints();
         this.pointRun = null;
         if (!this.canUndo) return false;
@@ -2749,6 +2930,12 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
                 : null;
         }
         const created: string[] = [];
+        const lostThreads = entry.before.filter(
+            before =>
+                (this.commentCounts.get(before.id) ??
+                    before.commentCount ??
+                    0) > 0
+        );
         for (const before of entry.before) {
             const saved = await this.createAnnotation(
                 {
@@ -2763,6 +2950,34 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
                 this.renameInHistory(before.id, saved.id);
                 created.push(saved.id);
             }
+        }
+        if (created.length && lostThreads.length) {
+            const comments = lostThreads.reduce(
+                (sum, before) =>
+                    sum +
+                    (this.commentCounts.get(before.id) ??
+                        before.commentCount ??
+                        0),
+                0
+            );
+            action(() => {
+                this.notice = `${
+                    lostThreads.length === 1
+                        ? `"${lostThreads[0].body?.[0]?.value ||
+                              '(unlabeled)'}" was`
+                        : `${lostThreads.length} annotations were`
+                } created again as ${
+                    lostThreads.length === 1
+                        ? 'a new annotation'
+                        : 'new annotations'
+                }; ${
+                    lostThreads.length === 1
+                        ? comments === 1
+                            ? 'its comment'
+                            : `its ${comments} comments`
+                        : `their ${comments} comments`
+                } could not be restored.`;
+            })();
         }
         return created.length ? { kind: 'create', ids: created } : null;
     }
@@ -4011,6 +4226,7 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
             if (!this.isCurrent(context)) return false;
             action(() => {
                 this.reviewRoute = true;
+                this.lastChangeWasReview = true;
                 if (isRejectedAi(saved.provenance)) {
                     this.removeAnnotationLocally(id);
                 } else {
@@ -4062,6 +4278,7 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
                 : await this.deleteAnnotation(annotation.id, false);
         if (done) {
             action(() => {
+                this.lastChangeWasReview = true;
                 this.notice = WSI_REVIEW_FALLBACK_NOTICE[decision];
             })();
         }
@@ -4182,6 +4399,7 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
     @action
     private showReviewItem(id: string | null) {
         if (!this.reviewQueue) return;
+        this.rejectArmed = null;
         this.reviewQueue = { ...this.reviewQueue, currentId: id };
         this.focusedAnnotationId = id;
         this.annotorious?.cancelSelected?.();
@@ -4214,6 +4432,37 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
         if (!queue || queue.busy) return;
         this.reviewQueue = { ...queue, message: null };
         this.showReviewItem(this.nextReviewId(direction));
+    }
+
+    /**
+     * The annotation under review whose reject waits for confirmation (X or
+     * Reject pressed once), or null.
+     */
+    @observable rejectArmed: string | null = null;
+
+    /**
+     * Rejects the annotation under review in two steps: the first press
+     * (X or Reject) asks, the second (X, Enter or Confirm reject) rejects.
+     * A reject hides it for everyone and cannot be undone.
+     */
+    @action.bound
+    reviewReject(): Promise<boolean> {
+        const current = this.reviewCurrent;
+        if (!current || !this.reviewQueue || this.reviewQueue.busy) {
+            return Promise.resolve(false);
+        }
+        if (this.rejectArmed !== current.id) {
+            this.rejectArmed = current.id;
+            return Promise.resolve(false);
+        }
+        this.rejectArmed = null;
+        return this.reviewDecide('reject');
+    }
+
+    /** Takes back a reject waiting for confirmation. */
+    @action.bound
+    cancelReject() {
+        this.rejectArmed = null;
     }
 
     /**
@@ -4257,6 +4506,7 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
     @action.bound
     exitReview() {
         if (!this.reviewQueue) return;
+        this.rejectArmed = null;
         this.reviewQueue = null;
         this.focusedAnnotationId = null;
         this.applyLayerFilter();
@@ -4269,6 +4519,7 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
         this.savedOnSlide = false;
         this.ruler = null;
         this.reviewQueue = null;
+        this.rejectArmed = null;
         this.focusedAnnotationId = null;
         this.linkMessage = null;
         this.selectedIds = new Set<string>();
@@ -4293,12 +4544,22 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
         ) {
             return false;
         }
+        const armed = !!this.rejectArmed;
+        // A reject waiting for confirmation: Enter confirms, Esc cancels.
+        if (armed && (event.key === 'Enter' || event.key === 'Escape')) {
+            event.preventDefault();
+            if (event.key === 'Enter') void this.reviewReject();
+            else this.cancelReject();
+            return true;
+        }
         const key = WSI_REVIEW_KEYS[event.key.toLowerCase()];
         if (!key) return false;
         event.preventDefault();
+        if (key !== 'reject') this.cancelReject();
         if (key === 'exit') this.exitReview();
         else if (key === 'next') this.reviewStep(1);
         else if (key === 'previous') this.reviewStep(-1);
+        else if (key === 'reject') void this.reviewReject();
         else void this.reviewDecide(key);
         return true;
     }
@@ -5136,6 +5397,7 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
             pairs => {
                 action(() => {
                     this.reviewRoute = true;
+                    this.lastChangeWasReview = true;
                 })();
                 const rejected = new Set<string>();
                 const kept: any[] = [];
@@ -5293,6 +5555,16 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
                 'None of the selected regions has more than one part'
             ),
         };
+    }
+
+    /**
+     * The originals a merge of the selection would delete: the user's own,
+     * except AI ones (see `mergeSelected`).
+     */
+    get mergeDeletes(): WsiAnnotation[] {
+        return this.selectedRegions.filter(
+            item => this.canModify(item) && !isAiProvenance(item.provenance)
+        );
     }
 
     /** Runs the shape operation picked in the selection bar. */
@@ -6297,6 +6569,87 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
             annotation.commentCount ??
             0
         );
+    }
+
+    /**
+     * What deleting `annotations` would take with them: their comment
+     * threads (the service deletes an annotation's thread with it, and a
+     * re-created annotation is a new one). Loads the threads not loaded yet
+     * (up to `THREAD_CHECK_LIMIT` annotations) to tell whose comments they
+     * are; `byOthers` is null when not all could be checked. Null when none
+     * has comments.
+     */
+    async threadLoss(
+        annotations: WsiAnnotation[]
+    ): Promise<{
+        annotations: WsiAnnotation[];
+        comments: number;
+        byOthers: number | null;
+    } | null> {
+        const commented = annotations.filter(
+            item => this.commentCountOf(item) > 0
+        );
+        if (!commented.length) return null;
+        const unloaded = commented.filter(
+            item => !this.threads.get(item.id)?.comments.length
+        );
+        if (this.commentsAvailable) {
+            await runLimited(
+                unloaded.slice(0, THREAD_CHECK_LIMIT),
+                SINGLE_SAVE_CONCURRENCY,
+                item => this.loadComments(item.id)
+            );
+        }
+        let comments = 0;
+        let byOthers: number | null = 0;
+        commented.forEach(item => {
+            const thread = this.threads.get(item.id);
+            const count = this.commentCountOf(item);
+            comments += count;
+            if (
+                !thread ||
+                thread.comments.length < count ||
+                !this.currentUser
+            ) {
+                byOthers = null;
+            } else if (byOthers !== null) {
+                byOthers += thread.comments.filter(
+                    comment => comment.author !== this.currentUser
+                ).length;
+            }
+        });
+        return { annotations: commented, comments, byOthers };
+    }
+
+    /**
+     * The warning for deleting (or merging away) `annotations` with
+     * comments, or '' when none has any: how many comments, whether other
+     * users wrote some, and that Undo cannot bring them back.
+     */
+    async threadLossWarning(
+        annotations: WsiAnnotation[],
+        verb: 'Deleting' | 'Merging'
+    ): Promise<string> {
+        const loss = await this.threadLoss(annotations);
+        if (!loss) return '';
+        const { comments, byOthers } = loss;
+        const n = loss.annotations.length;
+        const whose =
+            byOthers === null
+                ? ', possibly some by other users'
+                : byOthers > 0
+                ? `, ${byOthers === comments ? 'all' : byOthers} by other users`
+                : ', all yours';
+        const holder =
+            n === 1
+                ? `"${loss.annotations[0].body?.[0]?.value ||
+                      '(unlabeled)'}" has`
+                : `${n} of them have`;
+        return `${holder} ${comments} comment${
+            comments === 1 ? '' : 's'
+        }${whose}. ${verb} deletes ${
+            n === 1 ? 'its comment thread' : 'their comment threads'
+        }, and Undo cannot bring the comments back.`;
     }
 
     /** Whether the user may change `comment`: its author (the service checks). */

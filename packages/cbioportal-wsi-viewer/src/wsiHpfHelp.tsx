@@ -28,6 +28,69 @@ export function useHpfHelpId(): string {
     return id.current;
 }
 
+/** A stable id for a help text, unique on the page. */
+export const useHelpId = useHpfHelpId;
+
+/**
+ * An info icon whose tooltip (on hover and on focus) shows `children`;
+ * `describedById` names a hidden element with `text`, for controls to
+ * point `aria-describedby` at. Help that would otherwise live only in a
+ * `title` (which keyboard and screen-reader users do not get) uses this.
+ */
+export function WsiInfo({
+    testId,
+    describedById,
+    label,
+    text,
+    children,
+    style,
+}: {
+    testId: string;
+    describedById: string;
+    /** The icon's name, e.g. "About the tolerance". */
+    label: string;
+    /** The description as plain text. */
+    text: string;
+    /** The tooltip's content; `text` when unset. */
+    children?: React.ReactNode;
+    style?: React.CSSProperties;
+}) {
+    return (
+        <>
+            <DefaultTooltip
+                trigger={['hover', 'focus']}
+                placement="bottom"
+                overlay={
+                    <div
+                        data-testid={`${testId}-help`}
+                        style={{ maxWidth: 320 }}
+                    >
+                        {children || text}
+                    </div>
+                }
+            >
+                <i
+                    className="fa fa-info-circle"
+                    role="img"
+                    tabIndex={0}
+                    aria-label={label}
+                    aria-describedby={describedById}
+                    data-testid={`${testId}-info`}
+                    style={{
+                        color: '#595959',
+                        cursor: 'help',
+                        fontSize: 12,
+                        ...style,
+                    }}
+                />
+            </DefaultTooltip>
+            <span id={describedById} hidden data-testid={`${testId}-text`}>
+                {text}
+            </span>
+        </>
+    );
+}
+
 /**
  * An info icon whose tooltip (on hover and on focus) explains high-power
  * fields; `describedById` names a hidden element with the same text, for
@@ -52,43 +115,20 @@ export function WsiHpfInfo({
           ).join(' ')}`
         : HPF_HELP_TEXT;
     return (
-        <>
-            <DefaultTooltip
-                trigger={['hover', 'focus']}
-                placement="bottom"
-                overlay={
-                    <div
-                        data-testid={`${testId}-help`}
-                        style={{ maxWidth: 320 }}
-                    >
-                        <div>{HPF_HELP_TEXT}</div>
-                        {rates &&
-                            HPF_RATE_HELP.map(item => (
-                                <div key={item.label} style={{ marginTop: 4 }}>
-                                    <b>{item.label}:</b> {item.text}
-                                </div>
-                            ))}
+        <WsiInfo
+            testId={testId}
+            describedById={describedById}
+            label="What a high-power field (HPF) is"
+            text={text}
+            style={style}
+        >
+            <div>{HPF_HELP_TEXT}</div>
+            {rates &&
+                HPF_RATE_HELP.map(item => (
+                    <div key={item.label} style={{ marginTop: 4 }}>
+                        <b>{item.label}:</b> {item.text}
                     </div>
-                }
-            >
-                <i
-                    className="fa fa-info-circle"
-                    role="img"
-                    tabIndex={0}
-                    aria-label="What a high-power field (HPF) is"
-                    aria-describedby={describedById}
-                    data-testid={`${testId}-info`}
-                    style={{
-                        color: '#595959',
-                        cursor: 'help',
-                        fontSize: 12,
-                        ...style,
-                    }}
-                />
-            </DefaultTooltip>
-            <span id={describedById} hidden data-testid={`${testId}-text`}>
-                {text}
-            </span>
-        </>
+                ))}
+        </WsiInfo>
     );
 }

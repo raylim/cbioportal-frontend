@@ -319,6 +319,37 @@ describe('Shape editing: holes, merge, subtract, intersect, cut, split', () => {
         expect(controller.undoLabel).toBe('Undo merge');
     });
 
+    it('asks before a merge deletes originals with comments', async () => {
+        const { controller, service } = await setup([
+            serviceRow('a', squareSvg(0, 0), { label: 'A' }),
+            serviceRow('b', squareSvg(50, 0), { label: 'B' }),
+        ]);
+        service.comments.set('a', [
+            {
+                id: 'c1',
+                annotation_id: 'a',
+                author: 'other',
+                body: 'Check this',
+                created_at: '2026-11-18T10:00:00Z',
+            },
+        ]);
+        await act(async () => {
+            await controller.retryLoad();
+        });
+        controller.select(['a', 'b']);
+        render(<WsiAnnotationBulkBar controller={controller} />);
+        const confirm = jest.spyOn(window, 'confirm').mockReturnValue(false);
+        fireEvent.click(screen.getByTestId('annotation-bulk-shape'));
+        await act(async () => {
+            fireEvent.click(screen.getByTestId('annotation-shape-op-merge'));
+        });
+        await flush();
+        expect(confirm).toHaveBeenCalledWith(
+            'Merge the selected regions? Your originals are deleted: "A" has 1 comment, all by other users. Merging deletes its comment thread, and Undo cannot bring the comments back.'
+        );
+        expect(service.writes()).toEqual([]);
+    });
+
     it('takes a merge back when the originals cannot be deleted', async () => {
         const { controller, service } = await setup(
             [
@@ -582,10 +613,15 @@ describe('Shape editing: holes, merge, subtract, intersect, cut, split', () => {
         ]);
         controller.select(['a', 'p']);
         render(<WsiAnnotationBulkBar controller={controller} />);
+        // A menu button: it acts on a pick, not while arrowing through.
+        const menu = screen.getByTestId('annotation-bulk-shape');
+        expect(menu.getAttribute('aria-haspopup')).toBe('menu');
+        fireEvent.click(menu);
         const option = (operation: string) =>
             screen.getByTestId(
                 `annotation-shape-op-${operation}`
-            ) as HTMLOptionElement;
+            ) as HTMLButtonElement;
+        expect(option('merge').getAttribute('role')).toBe('menuitem');
         expect(option('merge').disabled).toBe(true);
         expect(option('cut').disabled).toBe(false);
         expect(option('split').textContent).toBe('Split "A" by a line…');
@@ -593,10 +629,14 @@ describe('Shape editing: holes, merge, subtract, intersect, cut, split', () => {
         expect(option('merge').disabled).toBe(false);
         expect(option('merge').textContent).toBe('Merge 2 regions');
         expect(option('split').disabled).toBe(true);
-        fireEvent.change(screen.getByTestId('annotation-bulk-shape'), {
-            target: { value: 'cut' },
+        // Arrowing through the items does nothing; a pick runs it.
+        fireEvent.keyDown(option('cut'), { key: 'ArrowDown' });
+        expect(controller.shapeEditMode).toBeNull();
+        await act(async () => {
+            fireEvent.click(option('cut'));
         });
         expect(controller.shapeEditMode).toBe('cut');
+        expect(screen.queryByTestId('annotation-bulk-shape-menu')).toBeNull();
         expect(
             screen.getByTestId('annotation-shape-edit-hint').textContent
         ).toContain('Cut a hole: draw a shape inside the 2 selected regions');

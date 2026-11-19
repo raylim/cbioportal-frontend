@@ -448,7 +448,9 @@ describe('Selecting annotations and bulk actions', () => {
 
         const confirm = jest.spyOn(window, 'confirm').mockReturnValue(false);
         const bulkDelete = jest.spyOn(controller, 'bulkDelete');
-        fireEvent.click(screen.getByTestId('annotation-bulk-delete'));
+        await act(async () => {
+            fireEvent.click(screen.getByTestId('annotation-bulk-delete'));
+        });
         expect(confirm).toHaveBeenCalledWith(
             'Delete 1 annotation? (2 not yours are skipped) Undo can bring it back.'
         );

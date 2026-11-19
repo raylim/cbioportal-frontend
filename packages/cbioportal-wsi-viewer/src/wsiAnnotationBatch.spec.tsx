@@ -1,8 +1,11 @@
 /**
  * @jest-environment jsdom
  */
-import { act } from '@testing-library/react';
+import * as React from 'react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { loadAnnotorious } from './wsiAnnotoriousLoader';
+import { WsiAnnotationBulkBar } from './wsiAnnotationBulkBar';
+import { WSI_REVIEW_UNDO_NOTICE } from './wsiAnnotationController';
 import {
     attachTestController,
     flush,
@@ -138,6 +141,47 @@ describe('Bulk actions over the batch routes', () => {
             'ai3'
         );
         expect(controller.canUndo).toBe(false);
+    });
+
+    it('asks before a bulk reject, and Undo after a review leaves earlier edits', async () => {
+        const ai = (id: string) =>
+            serviceRow(id, '0,0,5,5', {
+                creator: 'loader',
+                provenance: { source: 'model' },
+            });
+        const { controller, service } = await setup([
+            ai('ai1'),
+            ai('ai2'),
+            ...mine(1),
+        ]);
+        // An earlier edit of the user's, on the undo history.
+        await act(async () => {
+            await controller.renameAnnotation('m0', 'Renamed');
+        });
+        controller.select(['ai1', 'ai2']);
+        render(<WsiAnnotationBulkBar controller={controller} />);
+        const confirm = jest.spyOn(window, 'confirm').mockReturnValue(false);
+        fireEvent.click(screen.getByTestId('annotation-bulk-reject'));
+        expect(confirm).toHaveBeenCalledWith(
+            "Reject 2 AI annotations? They are hidden for everyone; the service keeps them as a review record. Reviews can't be undone."
+        );
+        expect(batches(service, 'review')).toHaveLength(0);
+        confirm.mockReturnValue(true);
+        fireEvent.click(screen.getByTestId('annotation-bulk-reject'));
+        await flush();
+        expect(batches(service, 'review')).toHaveLength(1);
+        // Undo says reviews cannot be undone instead of renaming m0 back.
+        expect(controller.canUndo).toBe(true);
+        await act(async () => {
+            expect(await controller.undo()).toBe(false);
+        });
+        expect(controller.notice).toBe(WSI_REVIEW_UNDO_NOTICE);
+        expect(service.rows.get('m0')!.body.label).toBe('Renamed');
+        // Pressed again, it undoes the earlier edit.
+        await act(async () => {
+            expect(await controller.undo()).toBe(true);
+        });
+        expect(service.rows.get('m0')!.body.label).toBe('Cell 0');
     });
 
     it('reports conflicts, reloads those rows and saves the rest', async () => {

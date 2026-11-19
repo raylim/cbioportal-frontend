@@ -143,6 +143,32 @@ describe('Comment threads', () => {
         expect(controller.annotationTooltip?.comments).toBe('2 comments');
     });
 
+    it('warns before a delete loses comments, and says undo cannot bring them back', async () => {
+        const { controller, service } = await setup();
+        const confirm = jest.spyOn(window, 'confirm').mockReturnValue(false);
+        // The thread is not loaded yet: the delete loads it to tell whose
+        // comments they are.
+        await act(async () => {
+            fireEvent.click(screen.getByTestId('delete-annotation-a1'));
+        });
+        expect(confirm).toHaveBeenCalledWith(
+            'Delete annotation "Tumor"? "Tumor" has 2 comments, 1 by other users. Deleting deletes its comment thread, and Undo cannot bring the comments back.'
+        );
+        expect(service.rows.has('a1')).toBe(true);
+        confirm.mockReturnValue(true);
+        await act(async () => {
+            fireEvent.click(screen.getByTestId('delete-annotation-a1'));
+        });
+        await flush();
+        expect(service.rows.has('a1')).toBe(false);
+        await act(async () => {
+            await controller.undo();
+        });
+        expect(controller.notice).toBe(
+            '"Tumor" was created again as a new annotation; its 2 comments could not be restored.'
+        );
+    });
+
     it("reports another user's comment refused, and a deleted annotation", async () => {
         const { controller, service } = await setup();
         await open();

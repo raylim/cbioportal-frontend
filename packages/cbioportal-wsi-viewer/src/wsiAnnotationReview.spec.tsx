@@ -376,7 +376,8 @@ describe('AI review queue', () => {
             .mockResolvedValue(true);
         controller.startReview();
         controller.setViewerHidden(true);
-        press('r');
+        press('x');
+        press('x');
         press('a');
         press('s');
         press('z', { ctrlKey: true });
@@ -386,7 +387,8 @@ describe('AI review queue', () => {
         expect(controller.hideAll).toBe(false);
         expect(controller.toolShortcutsActive).toBe(false);
         controller.setViewerHidden(false);
-        press('r');
+        press('x');
+        press('x');
         expect(decide).toHaveBeenLastCalledWith('reject');
     });
 
@@ -405,7 +407,14 @@ describe('AI review queue', () => {
         act(() => {
             elsewhere.dispatchEvent(
                 new KeyboardEvent('keydown', {
-                    key: 'r',
+                    key: 'x',
+                    bubbles: true,
+                    cancelable: true,
+                })
+            );
+            elsewhere.dispatchEvent(
+                new KeyboardEvent('keydown', {
+                    key: 'x',
                     bubbles: true,
                     cancelable: true,
                 })
@@ -417,7 +426,7 @@ describe('AI review queue', () => {
         expect(controller.reviewQueue!.currentId).toBe('first');
     });
 
-    it('takes A, R, S and the arrows before the tool shortcuts while open', async () => {
+    it('takes A, X, S and the arrows before the tool shortcuts while open; X asks first', async () => {
         const { controller, press, canvasKey } = setup();
         track(controller);
         controller.setAnnotating(true);
@@ -426,9 +435,21 @@ describe('AI review queue', () => {
             .mockResolvedValue(true);
         controller.startReview();
 
-        press('r');
+        // One X only asks; Esc takes it back; X then Enter (or X) rejects.
+        press('x');
+        expect(decide).not.toHaveBeenCalled();
+        expect(controller.rejectArmed).toBe('first');
+        press('Escape');
+        expect(controller.rejectArmed).toBeNull();
+        expect(controller.reviewQueue).not.toBeNull();
+        press('x');
+        press('Enter');
         expect(decide).toHaveBeenLastCalledWith('reject');
         expect(controller.activeTool).toBeNull();
+        // R is not a review key: it never rejects.
+        press('r');
+        expect(decide).toHaveBeenCalledTimes(1);
+        expect(controller.rejectArmed).toBeNull();
         press('A');
         expect(decide).toHaveBeenLastCalledWith('accept');
         press('s');
@@ -443,7 +464,7 @@ describe('AI review queue', () => {
         // OpenSeadragon does not pan or rotate with the review keys.
         expect(canvasKey('a')).toBe(true);
         expect(canvasKey('ArrowLeft')).toBe(true);
-        expect(canvasKey('r')).toBe(true);
+        expect(canvasKey('x')).toBe(true);
 
         // Not while typing, and not for a key a control already took.
         const input = document.createElement('input');
@@ -574,12 +595,27 @@ describe('AI review card', () => {
         const progress = screen.getByTestId('annotation-review-progress');
         expect(progress.getAttribute('role')).toBe('status');
         expect(progress.textContent).toBe('0 of 2 reviewed');
-        expect(card.textContent).toContain('R is not Shape');
+        expect(card.textContent).toContain('X reject (X again to confirm)');
 
         const decide = jest
             .spyOn(controller, 'reviewDecide')
             .mockResolvedValue(true);
-        fireEvent.click(screen.getByTestId('annotation-review-reject'));
+        // Reject asks first: the button becomes Confirm reject, with Cancel
+        // and what a reject does.
+        const reject = screen.getByTestId('annotation-review-reject');
+        fireEvent.click(reject);
+        expect(decide).not.toHaveBeenCalled();
+        expect(reject.textContent).toBe('Confirm rejectX');
+        const help = screen.getByTestId('annotation-review-reject-help');
+        expect(help.getAttribute('role')).toBe('alert');
+        expect(help.textContent).toBe(
+            'Reject "Label first"? It is hidden for everyone (the service keeps it as a review record); this cannot be undone. Press X or Enter to confirm, Esc to cancel.'
+        );
+        expect(reject.getAttribute('aria-describedby')).toBe(help.id);
+        fireEvent.click(screen.getByTestId('annotation-review-reject-cancel'));
+        expect(controller.rejectArmed).toBeNull();
+        fireEvent.click(reject);
+        fireEvent.click(reject);
         expect(decide).toHaveBeenCalledWith('reject');
         fireEvent.click(screen.getByTestId('annotation-review-skip'));
         expect(screen.getByTestId('annotation-review-label').textContent).toBe(
@@ -667,8 +703,6 @@ describe('AI review card', () => {
         fireEvent.click(screen.getByTestId('annotation-shortcuts'));
         const help = screen.getByRole('dialog', { name: 'Keyboard shortcuts' });
         expect(help.textContent).toContain('Reviewing AI annotations');
-        expect(help.textContent).toContain(
-            'R rejects instead of picking Shape'
-        );
+        expect(help.textContent).toContain('X or Enter again rejects');
     });
 });
