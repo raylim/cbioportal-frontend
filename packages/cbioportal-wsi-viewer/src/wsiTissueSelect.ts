@@ -1,5 +1,5 @@
 import { WsiPoint, WsiRegion } from './wsiAnnotationGeometryUtils';
-import { subtractRegions, unionRegions } from './wsiAnnotationShapeOps';
+import { loadShapeOps, WsiShapeOpsModule } from './wsiShapeOpsLoader';
 import {
     MAX_TISSUE_TOLERANCE,
     MIN_TISSUE_TOLERANCE,
@@ -146,22 +146,34 @@ export function toImageRegion(
     );
 }
 
-/** Combines the wand's steps: the first, then each added or subtracted. */
+/**
+ * Combines the wand's steps: the first, then each added or subtracted. A
+ * step still without a region changes nothing. `ops` (the shape
+ * operations, loaded with the session) are needed once two steps have
+ * regions.
+ */
 export function combineSteps(
-    steps: ReadonlyArray<{ kind: StepKind; region: WsiRegion }>
+    steps: ReadonlyArray<{ kind: StepKind; region: WsiRegion }>,
+    ops: Pick<WsiShapeOpsModule, 'unionRegions' | 'subtractRegions'> | null
 ): WsiRegion {
     let region: WsiRegion = [];
     steps.forEach(step => {
         if (step.kind === 'new') region = step.region;
+        else if (!step.region.length) return;
         else if (step.kind === 'add') {
             region = region.length
-                ? unionRegions([region, step.region])
+                ? need(ops).unionRegions([region, step.region])
                 : step.region;
-        } else if (region.length && step.region.length) {
-            region = subtractRegions(region, [step.region]);
+        } else if (region.length) {
+            region = need(ops).subtractRegions(region, [step.region]);
         }
     });
     return region;
+}
+
+function need<T>(ops: T | null): T {
+    if (!ops) throw new Error('The shape operations are not loaded.');
+    return ops;
 }
 
 /** Outline options for a raster of `scale` image pixels per pixel. */
@@ -246,6 +258,9 @@ export class WsiTissueSession {
     /** Strokes being finished, whose rasters must stay. */
     private ending = new Set<Stroke>();
     private view: WsiTissueView | null = null;
+    /** The shape operations, for Shift+ and Alt+clicks (their own chunk). */
+    private ops: WsiShapeOpsModule | null = null;
+    private readonly opsReady: Promise<WsiShapeOpsModule | null>;
     private busyCount = 0;
     private idleWaiters: Array<() => void> = [];
 
@@ -261,6 +276,10 @@ export class WsiTissueSession {
             this.engine = engine;
             return engine;
         });
+        this.opsReady = loadShapeOps().then(
+            ops => (this.ops = ops),
+            () => null
+        );
     }
 
     /** Runs `work`, counting it until it settles (see `whenIdle`). */
@@ -318,7 +337,7 @@ export class WsiTissueSession {
     }
 
     get region(): WsiRegion {
-        return combineSteps(this.steps);
+        return combineSteps(this.steps, this.ops);
     }
 
     get isCut(): boolean {
@@ -553,7 +572,7 @@ export class WsiTissueSession {
             steps: this.steps.length,
             seed,
             note: null,
-            region: combineSteps(this.steps),
+            region: combineSteps(this.steps, this.ops),
         });
         const generation = this.generation;
         const context = await this.rasterFor(seed, step);
@@ -565,7 +584,7 @@ export class WsiTissueSession {
             this.emit({
                 busy: this.wanted.size > 0,
                 steps: this.steps.length,
-                region: combineSteps(this.steps),
+                region: combineSteps(this.steps, this.ops),
                 note: 'No slide pixels to select from here.',
             });
             return;
@@ -609,6 +628,11 @@ export class WsiTissueSession {
                 this.wanted.delete(target);
                 if (!this.steps.includes(target) || !target.context) continue;
                 this.emit({ busy: true });
+                if (!this.ops && this.steps.length > 1) {
+                    if (!(await this.opsReady)) {
+                        throw new Error('the shape operations did not load');
+                    }
+                }
                 await this.runStep(target, value);
                 if (
                     generation !== this.generation ||
@@ -620,7 +644,7 @@ export class WsiTissueSession {
                 const last = this.steps[this.steps.length - 1];
                 this.emit({
                     busy: this.wanted.size > 0,
-                    region: combineSteps(this.steps),
+                    region: combineSteps(this.steps, this.ops),
                     tolerance: last.tolerance,
                     note: target.note,
                     ms: this.ms,
@@ -684,7 +708,10 @@ export class WsiTissueSession {
                 // outline is the time to this first one.
                 step.region = toImageRegion(result.polygons, raster);
                 this.markOutlined(step);
-                this.emit({ region: combineSteps(this.steps), ms: this.ms });
+                this.emit({
+                    region: combineSteps(this.steps, this.ops),
+                    ms: this.ms,
+                });
                 // A newer tolerance or click: stop growing for this one.
                 if (this.wanted.size || !this.steps.includes(step)) return;
                 if (await context.mosaic.grow(growable)) {
@@ -741,7 +768,7 @@ export class WsiTissueSession {
         }
         const last = this.steps[this.steps.length - 1];
         this.emit({
-            region: combineSteps(this.steps),
+            region: combineSteps(this.steps, this.ops),
             steps: this.steps.length,
             tolerance: last.tolerance,
             note: last.note,

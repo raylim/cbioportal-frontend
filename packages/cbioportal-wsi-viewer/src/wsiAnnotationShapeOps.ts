@@ -1,15 +1,21 @@
 import polygonClipping, { MultiPolygon, Ring } from 'polygon-clipping';
-import {
-    polygonArea,
-    WsiBounds,
-    WsiPoint,
-    WsiRegion,
-} from './wsiAnnotationGeometryUtils';
+import { WsiPoint, WsiRegion } from './wsiAnnotationGeometryUtils';
+import { polygonPartArea, regionArea, regionParts } from './wsiRegionUtils';
+
+export {
+    boundsOverlap,
+    polygonPartArea,
+    regionArea,
+    regionBounds,
+    regionParts,
+} from './wsiRegionUtils';
 
 /**
  * Boolean operations on regions (image pixels), with polygon-clipping
  * (Martinez–Rueda–Feito sweep line, MIT): union, difference, intersection,
- * and splitting a region by a line. Results are regions: each polygon its
+ * and splitting a region by a line. The viewer loads this module (and
+ * polygon-clipping) as its own async chunk, `wsi-shapeops`, when a shape
+ * operation first runs (`wsiShapeOpsLoader.ts`). Results are regions: each polygon its
  * outer ring then its holes, rings without a repeated last point. Pieces
  * smaller than `MIN_PIECE_AREA` square image pixels (slivers left by
  * rounding) are dropped.
@@ -37,19 +43,6 @@ function toClip(region: WsiRegion): MultiPolygon {
             return pairs;
         })
     );
-}
-
-/** The area of one polygon of a region: its outer ring less its holes. */
-export function polygonPartArea(rings: WsiPoint[][]): number {
-    return rings.reduce(
-        (sum, ring, index) => sum + (index ? -1 : 1) * polygonArea(ring),
-        0
-    );
-}
-
-/** A region's area in square image pixels: outer rings less holes. */
-export function regionArea(region: WsiRegion): number {
-    return region.reduce((sum, rings) => sum + polygonPartArea(rings), 0);
 }
 
 function fromClip(result: MultiPolygon): WsiRegion {
@@ -97,38 +90,6 @@ export function intersectRegions(regions: WsiRegion[]): WsiRegion {
     if (regions.length < 2) return regions[0] || [];
     const [first, ...rest] = regions.map(toClip);
     return fromClip(polygonClipping.intersection(first, ...rest));
-}
-
-/** A region's parts, each a region of one polygon with its holes. */
-export function regionParts(region: WsiRegion): WsiRegion[] {
-    return region.map(rings => [rings]);
-}
-
-/** The bounding box of a region's outer rings. */
-export function regionBounds(region: WsiRegion): WsiBounds | null {
-    let minX = Infinity;
-    let minY = Infinity;
-    let maxX = -Infinity;
-    let maxY = -Infinity;
-    region.forEach(rings =>
-        (rings[0] || []).forEach(point => {
-            minX = Math.min(minX, point.x);
-            minY = Math.min(minY, point.y);
-            maxX = Math.max(maxX, point.x);
-            maxY = Math.max(maxY, point.y);
-        })
-    );
-    return minX <= maxX ? { minX, minY, maxX, maxY } : null;
-}
-
-/** Whether two boxes overlap. */
-export function boundsOverlap(a: WsiBounds, b: WsiBounds): boolean {
-    return (
-        a.minX <= b.maxX &&
-        b.minX <= a.maxX &&
-        a.minY <= b.maxY &&
-        b.minY <= a.maxY
-    );
 }
 
 /**

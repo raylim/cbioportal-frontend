@@ -758,8 +758,41 @@ const AnnotationList = observer(
             );
         }
         const total = offsets[offsets.length - 1];
-        const viewHeight =
-            container.current?.clientHeight || ANNOTATION_LIST_HEIGHT;
+        // Measured once mounted and on resize, not read during render (a
+        // read here would force a layout on every render).
+        const [viewHeight, setViewHeight] = React.useState(
+            ANNOTATION_LIST_HEIGHT
+        );
+        React.useLayoutEffect(() => {
+            const element = container.current;
+            if (!element) return;
+            const update = () =>
+                setViewHeight(element.clientHeight || ANNOTATION_LIST_HEIGHT);
+            update();
+            if (typeof ResizeObserver === 'undefined') return;
+            const observer = new ResizeObserver(update);
+            observer.observe(element);
+            return () => observer.disconnect();
+        }, []);
+        // A scroll position is applied once per frame.
+        const scrollFrame = React.useRef<number | null>(null);
+        React.useEffect(
+            () => () => {
+                if (scrollFrame.current !== null) {
+                    cancelAnimationFrame(scrollFrame.current);
+                }
+            },
+            []
+        );
+        const onScroll = () => {
+            if (scrollFrame.current !== null) return;
+            scrollFrame.current = requestAnimationFrame(() => {
+                scrollFrame.current = null;
+                if (container.current) {
+                    setScrollTop(container.current.scrollTop);
+                }
+            });
+        };
         let rendered: number[];
         if (virtual) {
             const first = rowAt(offsets, Math.max(0, scrollTop - OVERSCAN));
@@ -781,13 +814,17 @@ const AnnotationList = observer(
         // row that grows on its own (a note or thread opened) is measured
         // again through the ResizeObserver.
         const resizes = React.useRef<ResizeObserver | null>(null);
-        const measure = React.useCallback(() => {
+        // `all` false: only rows not measured yet (rows already measured
+        // report their changes through the ResizeObserver), so a render
+        // forces no layout for rows that did not change.
+        const measure = React.useCallback((all: boolean = true) => {
             if (!container.current) return;
             let changed = false;
             container.current
                 .querySelectorAll<HTMLElement>('[data-annotation-row]')
                 .forEach(row => {
                     const id = row.getAttribute('data-annotation-row')!;
+                    if (!all && heights.current.has(id)) return;
                     const height = row.offsetHeight;
                     if (height > 0 && heights.current.get(id) !== height) {
                         heights.current.set(id, height);
@@ -798,7 +835,7 @@ const AnnotationList = observer(
         }, []);
         React.useEffect(() => {
             if (!virtual || typeof ResizeObserver === 'undefined') return;
-            resizes.current = new ResizeObserver(measure);
+            resizes.current = new ResizeObserver(() => measure());
             return () => {
                 resizes.current?.disconnect();
                 resizes.current = null;
@@ -809,7 +846,7 @@ const AnnotationList = observer(
             container.current
                 .querySelectorAll<HTMLElement>('[data-annotation-row]')
                 .forEach(row => resizes.current?.observe(row));
-            measure();
+            measure(false);
         });
 
         /** Scrolls the list so that row `index` shows. */
@@ -897,9 +934,7 @@ const AnnotationList = observer(
                 data-testid="annotation-list"
                 data-virtual={virtual || undefined}
                 tabIndex={-1}
-                onScroll={event =>
-                    setScrollTop((event.target as HTMLElement).scrollTop)
-                }
+                onScroll={onScroll}
                 onKeyDown={onKeyDown}
                 onFocus={event => {
                     const id = (event.target as HTMLElement)

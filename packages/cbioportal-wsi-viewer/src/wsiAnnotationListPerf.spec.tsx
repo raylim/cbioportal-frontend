@@ -21,6 +21,12 @@ jest.mock('@annotorious/openseadragon', () => ({
 }));
 
 const MANY = 5000;
+/** The list applies a scroll position once per frame. */
+const nextFrame = () =>
+    act(
+        () =>
+            new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+    );
 /** The estimated row height the list uses before measuring (jsdom has no layout). */
 const ROW = 64;
 
@@ -80,6 +86,7 @@ describe('A long annotation list and a long stroke', () => {
             list.scrollTop = 2500 * ROW;
             fireEvent.scroll(list);
         });
+        await nextFrame();
         const row = screen.getByTestId('annotation-row-a2500');
         expect(row.style.top).toBe(`${2500 * ROW}px`);
         expect(screen.queryByTestId('annotation-row-a0')).toBeNull();
@@ -112,6 +119,7 @@ describe('A long annotation list and a long stroke', () => {
             list.scrollTop = 0;
             fireEvent.scroll(list);
         });
+        await nextFrame();
         expect(screen.getByTestId('annotation-row-a0')).toBeTruthy();
         expect(document.activeElement).toBe(label(`a${MANY - 1}`));
         fireEvent.keyDown(label(`a${MANY - 1}`), { key: 'Home' });

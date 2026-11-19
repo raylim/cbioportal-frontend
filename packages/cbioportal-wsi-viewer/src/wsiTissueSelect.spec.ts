@@ -1,4 +1,5 @@
 import { WsiRegion } from './wsiAnnotationGeometryUtils';
+import * as shapeOps from './wsiAnnotationShapeOps';
 import {
     regionArea,
     regionBounds,
@@ -316,20 +317,28 @@ describe('tissue sessions', () => {
         const hole = square(20, 20, 10);
         expect(
             regionArea(
-                combineSteps([
-                    { kind: 'new', region: a },
-                    { kind: 'add', region: b },
-                ])
+                combineSteps(
+                    [
+                        { kind: 'new', region: a },
+                        { kind: 'add', region: b },
+                    ],
+                    shapeOps
+                )
             )
         ).toBe(15000);
-        const holed = combineSteps([
-            { kind: 'new', region: a },
-            { kind: 'subtract', region: hole },
-        ]);
+        const holed = combineSteps(
+            [
+                { kind: 'new', region: a },
+                { kind: 'subtract', region: hole },
+            ],
+            shapeOps
+        );
         expect(holed[0]).toHaveLength(2);
         expect(regionArea(holed)).toBe(9900);
         // Subtracting from nothing leaves nothing.
-        expect(combineSteps([{ kind: 'subtract', region: a }])).toEqual([]);
+        expect(
+            combineSteps([{ kind: 'subtract', region: a }], shapeOps)
+        ).toEqual([]);
     });
 
     it('sets hole filling and simplification in µm', () => {

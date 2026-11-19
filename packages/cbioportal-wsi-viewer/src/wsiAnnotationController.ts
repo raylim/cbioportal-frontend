@@ -25,14 +25,11 @@ import {
 } from './wsiAnnotationGeometryUtils';
 import {
     boundsOverlap,
-    intersectRegions,
     regionArea,
     regionBounds,
     regionParts,
-    splitRegionByPath,
-    subtractRegions,
-    unionRegions,
-} from './wsiAnnotationShapeOps';
+} from './wsiRegionUtils';
+import { loadShapeOps, WsiShapeOpsModule } from './wsiShapeOpsLoader';
 import {
     acceptedProvenance,
     aiOriginDescription,
@@ -88,6 +85,7 @@ import {
 import {
     boundsInside,
     placeSlideLabels,
+    SLIDE_LABEL_MIN_SHAPE,
     runLimited,
     shapeContainsPoint,
     spatialOrder,
@@ -1141,7 +1139,12 @@ function describeFailures(results: WsiSaveResult[], limit = 3): string {
 }
 
 export class WsiAnnotationController implements WsiSlideNotesHost {
-    @observable annotations: WsiAnnotation[] = [];
+    /**
+     * The slide's annotations. A reference: the array is replaced on every
+     * change and its items are plain objects, so nothing deep is observed
+     * (thousands of annotations would otherwise be wrapped in proxies).
+     */
+    @observable.ref annotations: WsiAnnotation[] = [];
     @observable loading = false;
     /** The last load of the slide's annotations failed; see `retryLoad`. */
     @observable loadFailed = false;
@@ -1297,13 +1300,20 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
      * (the framework's "Not Found") or 405; unknown until then.
      */
     @observable commentRoute: boolean | null = null;
-    /** The comment threads opened on this slide, by annotation id. */
-    @observable.ref threads: ReadonlyMap<string, WsiCommentThread> = new Map();
-    /** Comment counts changed on this slide since the annotations loaded. */
-    @observable.ref private commentCounts: ReadonlyMap<
-        string,
-        number
-    > = new Map();
+    /**
+     * The comment threads opened on this slide, by annotation id. An
+     * observable map: a row reads its own key, so a thread changing
+     * re-renders only its row.
+     */
+    readonly threads = observable.map<string, WsiCommentThread>(
+        {},
+        { deep: false }
+    );
+    /** Comment counts changed on this slide since it loaded, by id. */
+    private readonly commentCounts = observable.map<string, number>(
+        {},
+        { deep: false }
+    );
     /**
      * Dropped points not saved on the slide or study last closed, because
      * the service refused them; reported once the next one opens.
@@ -1439,7 +1449,20 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
     /** Told once a requested annotation was opened or found missing. */
     private requestedAnnotationUsed: (() => void) | null = null;
     /** The annotations selected for bulk actions (see `selectedAnnotations`). */
-    @observable.ref selectedIds: ReadonlySet<string> = new Set<string>();
+    /**
+     * The selected annotations' ids. An observable map read per key
+     * (`isSelected`), so a selection change re-renders only the rows it
+     * changes; `selectedIds` gives them all.
+     */
+    private readonly selection = observable.map<string, true>(
+        {},
+        { deep: false }
+    );
+
+    /** The selected annotations' ids, in the order they were selected. */
+    @computed get selectedIds(): ReadonlySet<string> {
+        return new Set(this.selection.keys());
+    }
     /** A Shift+drag selection box in progress, in image pixels. */
     @observable.ref selectionDrag: {
         pointerId: number | undefined;
@@ -4529,15 +4552,15 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
 
     /** Forgets the review queue and the focused annotation. */
     private resetFocus() {
-        this.threads = new Map();
-        this.commentCounts = new Map();
+        this.threads.clear();
+        this.commentCounts.clear();
         this.savedOnSlide = false;
         this.ruler = null;
         this.reviewQueue = null;
         this.rejectArmed = null;
         this.focusedAnnotationId = null;
         this.linkMessage = null;
-        this.selectedIds = new Set<string>();
+        this.selection.clear();
         this.selectionDrag = null;
         this.bulkMessage = null;
         this.shapeEditMode = null;
@@ -4730,32 +4753,112 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
      * overlapping (see `placeSlideLabels`). They follow the slide as it
      * moves, and are part of no export.
      */
+    /**
+     * The shapes that can carry a slide label, with their bounds in image
+     * pixels: computed once per change of the shown annotations, not per
+     * frame as the slide moves.
+     */
+    @computed private get labelShapes(): Array<{
+        id: string;
+        text: string;
+        bounds: WsiBounds;
+    }> {
+        const shapes: Array<{ id: string; text: string; bounds: WsiBounds }> = [];
+        this.shownAnnotations.forEach(annotation => {
+            const text = annotation.body?.[0]?.value || '';
+            if (!text.trim() || this.isPoint(annotation)) return;
+            const shape = this.shapeOf(annotation);
+            if (shape) {
+                shapes.push({ id: annotation.id, text, bounds: shapeBounds(shape) });
+            }
+        });
+        return shapes;
+    }
+
     @computed get slideLabels(): WsiPlacedLabel[] {
         if (!this.showSlideLabels || this.hideAll || !this.visible) return [];
         void this.viewportRevision;
-        const transform = this.screenTransform();
-        if (!transform) return [];
+        const affine = this.screenAffine();
+        if (!affine) return [];
+        const { a, b, c, d, e, f } = affine;
+        const transform = (point: WsiXY) => ({
+            x: a * point.x + c * point.y + e,
+            y: b * point.x + d * point.y + f,
+        });
         const element = this.osdViewer?.element as HTMLElement | undefined;
         const view =
             element && element.clientWidth > 0 && element.clientHeight > 0
                 ? { width: element.clientWidth, height: element.clientHeight }
                 : null;
-        const candidates = this.shownAnnotations
-            .filter(annotation => !this.isPoint(annotation))
-            .map(annotation => ({
-                id: annotation.id,
-                text: annotation.body?.[0]?.value || '',
-                box: this.screenBox(annotation, transform),
-            }))
-            .filter(
-                (
-                    candidate
-                ): candidate is {
-                    id: string;
-                    text: string;
-                    box: WsiScreenBox;
-                } => !!candidate.box
-            );
+        // Cull in image pixels before mapping, sorting and placing: the view
+        // as a box of the image (its corners mapped back), and a shape too
+        // small on screen for a label.
+        const det = a * d - b * c;
+        let visible: WsiBounds | null = null;
+        if (view && det) {
+            const back = (x: number, y: number) => ({
+                x: (d * (x - e) - c * (y - f)) / det,
+                y: (-b * (x - e) + a * (y - f)) / det,
+            });
+            const corners = [
+                back(0, 0),
+                back(view.width, 0),
+                back(0, view.height),
+                back(view.width, view.height),
+            ];
+            visible = {
+                minX: Math.min(...corners.map(p => p.x)),
+                minY: Math.min(...corners.map(p => p.y)),
+                maxX: Math.max(...corners.map(p => p.x)),
+                maxY: Math.max(...corners.map(p => p.y)),
+            };
+        }
+        // Screen pixels per image pixel (the larger axis, so no label is
+        // culled that would show).
+        const scale = Math.max(Math.hypot(a, b), Math.hypot(c, d));
+        const candidates: Array<{
+            id: string;
+            text: string;
+            box: WsiScreenBox;
+        }> = [];
+        this.labelShapes.forEach(({ id, text, bounds }) => {
+            if (
+                visible &&
+                (bounds.maxX < visible.minX ||
+                    bounds.minX > visible.maxX ||
+                    bounds.maxY < visible.minY ||
+                    bounds.minY > visible.maxY)
+            ) {
+                return;
+            }
+            // Its box on screen is at most (width + height) × scale on a
+            // side, whatever the rotation.
+            if (
+                (bounds.maxX - bounds.minX + bounds.maxY - bounds.minY) *
+                    scale <
+                SLIDE_LABEL_MIN_SHAPE
+            ) {
+                return;
+            }
+            const points = [
+                { x: bounds.minX, y: bounds.minY },
+                { x: bounds.maxX, y: bounds.minY },
+                { x: bounds.minX, y: bounds.maxY },
+                { x: bounds.maxX, y: bounds.maxY },
+            ].map(transform);
+            const x = Math.min(...points.map(p => p.x));
+            const y = Math.min(...points.map(p => p.y));
+            candidates.push({
+                id,
+                text,
+                box: {
+                    x,
+                    y,
+                    width: Math.max(...points.map(p => p.x)) - x,
+                    height: Math.max(...points.map(p => p.y)) - y,
+                },
+            });
+        });
         return placeSlideLabels(candidates, view);
     }
 
@@ -4768,7 +4871,7 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
     }
 
     isSelected(id: string): boolean {
-        return this.selectedIds.has(id);
+        return this.selection.has(id);
     }
 
     @action.bound
@@ -4803,7 +4906,13 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
 
     @action
     private setSelection(ids: Set<string>) {
-        this.selectedIds = ids;
+        // Only the ids that change: each row observes its own.
+        Array.from(this.selection.keys()).forEach(id => {
+            if (!ids.has(id)) this.selection.delete(id);
+        });
+        ids.forEach(id => {
+            if (!this.selection.has(id)) this.selection.set(id, true);
+        });
         this.bulkMessage = null;
         if (this.shapeEditMode && !this.shapeEditTargets().length) {
             this.shapeEditMode = null;
@@ -5732,6 +5841,22 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
     }
 
     /**
+     * The shape operations' module (with polygon-clipping), loaded as its
+     * own chunk on first use; null, saying so, when it cannot be loaded.
+     */
+    private async shapeOpsModule(): Promise<WsiShapeOpsModule | null> {
+        try {
+            return await loadShapeOps();
+        } catch (_) {
+            action(() => {
+                this.bulkMessage =
+                    'The shape operations could not be loaded. Try again.';
+            })();
+            return null;
+        }
+    }
+
+    /**
      * Deletes `annotations` without recording undo: with the service's
      * `batch-delete` in one all-or-none request per 100, else (no route)
      * one by one. With `atomic`, a refused batch deletes none instead of
@@ -6051,7 +6176,9 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
         return this.serializeShapeEdit(async () => {
             const regions = this.selectedRegions;
             if (regions.length < 2 || !this.canEdit) return false;
-            const union = unionRegions(
+            const ops = await this.shapeOpsModule();
+            if (!ops) return false;
+            const union = ops.unionRegions(
                 regions.map(item => this.regionOf(item)!).filter(Boolean)
             );
             if (!union.length) {
@@ -6120,7 +6247,9 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
             if (regions.length < 2 || !this.canEdit) return false;
             const [subject, ...clips] = regions;
             const region = this.regionOf(subject)!;
-            const result = subtractRegions(
+            const ops = await this.shapeOpsModule();
+            if (!ops) return false;
+            const result = ops.subtractRegions(
                 region,
                 clips.map(item => this.regionOf(item)!)
             );
@@ -6172,7 +6301,9 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
         return this.serializeShapeEdit(async () => {
             const regions = this.selectedRegions;
             if (regions.length < 2 || !this.canEdit) return false;
-            const result = intersectRegions(
+            const ops = await this.shapeOpsModule();
+            if (!ops) return false;
+            const result = ops.intersectRegions(
                 regions.map(item => this.regionOf(item)!)
             );
             if (!result.length) {
@@ -6218,6 +6349,8 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
             const targets = this.selectedRegions;
             const bounds = regionBounds(cutter);
             if (!targets.length || !bounds || !this.canEdit) return false;
+            const ops = await this.shapeOpsModule();
+            if (!ops) return false;
             const creates: WsiAnnotation[] = [];
             const updates: Array<{
                 annotation: WsiAnnotation;
@@ -6230,7 +6363,7 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
                 const region = this.regionOf(target)!;
                 const box = regionBounds(region);
                 if (!box || !boundsOverlap(box, bounds)) return;
-                const result = subtractRegions(region, [cutter]);
+                const result = ops.subtractRegions(region, [cutter]);
                 if (Math.abs(regionArea(result) - regionArea(region)) < 1e-6) {
                     return;
                 }
@@ -6307,7 +6440,9 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
         return this.serializeShapeEdit(async () => {
             const target = this.selectedRegions[0];
             if (!target || !this.canEdit) return false;
-            const pieces = splitRegionByPath(this.regionOf(target)!, path);
+            const ops = await this.shapeOpsModule();
+            if (!ops) return false;
+            const pieces = ops.splitRegionByPath(this.regionOf(target)!, path);
             if (pieces.length < 2) {
                 action(() => {
                     this.bulkMessage = `The line does not cut ${this.quoted(
@@ -6677,23 +6812,19 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
 
     @action
     private setThread(id: string, patch: Partial<WsiCommentThread>) {
-        const threads = new Map(this.threads);
-        threads.set(id, {
+        this.threads.set(id, {
             loading: false,
             busy: false,
             comments: [],
             error: null,
-            ...threads.get(id),
+            ...this.threads.get(id),
             ...patch,
         });
-        this.threads = threads;
     }
 
     @action
     private setCommentCount(id: string, count: number) {
-        const counts = new Map(this.commentCounts);
-        counts.set(id, Math.max(0, count));
-        this.commentCounts = counts;
+        this.commentCounts.set(id, Math.max(0, count));
     }
 
     private toComment(item: any): WsiComment {
@@ -7141,7 +7272,7 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
                 ) {
                     this.commentRoute = true;
                 }
-                this.commentCounts = new Map();
+                this.commentCounts.clear();
                 this.annotations = annotations;
                 this.loading = false;
                 this.loadFailed = false;
