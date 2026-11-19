@@ -434,8 +434,10 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
                 getViewerContainerElement: () => containerRef.current,
                 chooseInitialServableSlide: () => undefined,
                 reportInitialSlideLoadPerformance: () => undefined,
-                onSlideSelectionStarted: slide =>
-                    annotations.beginSlide(slide.slide_key),
+                onSlideSelectionStarted: slide => {
+                    this.compare.beginSlide('right');
+                    annotations.beginSlide(slide.slide_key);
+                },
                 onViewerOpened: (viewer, openSeadragon, slide) => {
                     annotations.attachViewer(
                         viewer,
@@ -568,8 +570,10 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
             getViewerContainerElement: () => this.viewerContainerRef.current,
             chooseInitialServableSlide: allSlides =>
                 this.chooseInitialServableSlide(allSlides),
-            onSlideSelectionStarted: slide =>
-                this.annotationController.beginSlide(slide.slide_key),
+            onSlideSelectionStarted: slide => {
+                this.compare.beginSlide('left');
+                this.annotationController.beginSlide(slide.slide_key);
+            },
             onViewerOpened: (viewer, openSeadragon, slide) => {
                 this.annotationController.attachViewer(
                     viewer,

@@ -16,6 +16,7 @@ import {
     defaultPairCandidate,
     groupPairCandidates,
     pairingCandidates,
+    slideSpecimenLabel,
     slideStainLabel,
 } from './wsiComparePairing';
 import {
@@ -409,6 +410,15 @@ describe('pairing by match level', () => {
             'S-1 · Part 2',
             'Unmatched slides',
         ]);
+    });
+
+    it('names where a slide was cut from, without a doubled "Block"', () => {
+        expect(slideSpecimenLabel(otherPart)).toBe('Part 2 · Block A1');
+        expect(
+            slideSpecimenLabel(
+                makeSlide({ part_number: '5', block_label: 'Block 1' })
+            )
+        ).toBe('Part 5 · Block 1');
     });
 
     it('names stains as the slide list does', () => {

@@ -194,6 +194,22 @@ describe('Side by side: sync, alignment and pane activity', () => {
         expect(rightViewer.center()).toEqual({ x: 1000, y: 1000 });
     });
 
+    it('lets a pane opening another slide follow, not lead', () => {
+        const { compare, leftViewer, rightViewer } = setup();
+        leftViewer.viewport.panTo(new Point(0.25, 0.25), true);
+        expect(rightViewer.center()).toEqual({ x: 500, y: 500 });
+        // A slide picked on the right: its home view must not move the left.
+        compare.noteInteraction('right');
+        compare.beginSlide('right');
+        rightViewer.viewport.panTo(new Point(0.5, 0.5), true);
+        expect(leftViewer.center()).toEqual({ x: 1000, y: 1000 });
+        // Once open, it follows the left, then leads again.
+        compare.attachViewer('right', rightViewer, OSD);
+        expect(rightViewer.center()).toEqual({ x: 500, y: 500 });
+        rightViewer.viewport.panTo(new Point(0.75, 0.75), true);
+        expect(leftViewer.center()).toEqual({ x: 3000, y: 3000 });
+    });
+
     it('follows by µm from an anchor', () => {
         const { compare, leftViewer, rightViewer } = setup(4000, 4000);
         leftViewer.viewport.panTo(new Point(0.25, 0.25), true);

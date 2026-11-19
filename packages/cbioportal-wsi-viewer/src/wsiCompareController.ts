@@ -96,6 +96,14 @@ export class WsiCompareController {
     /** The pane whose view the other follows: the last one used. */
     leader: WsiPaneSide = 'left';
     private applying = false;
+    /**
+     * A pane opening a slide: its first view (home, or a link's) must not
+     * lead, or picking a slide would move the other pane.
+     */
+    private readonly opening: Record<WsiPaneSide, boolean> = {
+        left: false,
+        right: false,
+    };
     private baseline: WsiStoredAlignment | null = null;
     private nextPairNumber = 1;
     private readonly viewers: Record<WsiPaneSide, BoundViewer | null> = {
@@ -248,7 +256,13 @@ export class WsiCompareController {
             bound?.cleanup();
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const onRequest = (event: any) => {
-                if (this.leader !== side || this.applying) return;
+                if (
+                    this.leader !== side ||
+                    this.applying ||
+                    this.opening[side]
+                ) {
+                    return;
+                }
                 this.syncFrom(side, !!event?.immediately);
             };
             const onUpdate = () => this.scheduleRevision(side);
@@ -282,11 +296,21 @@ export class WsiCompareController {
         } else {
             bound.openSeadragon = openSeadragon;
         }
+        this.opening[side] = false;
         this.bumpRevision(side);
         this.syncFrom(otherSide(side), true);
     }
 
+    /**
+     * `side`'s pane starts opening another slide: until it is open, its
+     * view follows and does not lead.
+     */
+    beginSlide(side: WsiPaneSide) {
+        this.opening[side] = true;
+    }
+
     detachViewer(side: WsiPaneSide) {
+        this.opening[side] = false;
         this.viewers[side]?.cleanup();
         this.viewers[side] = null;
         const frame = this.revisionFrame[side];

@@ -12,7 +12,7 @@ import {
     normalizeBlockLabel,
     stainQualifier,
 } from './wsiNavUtils';
-import { partDisplayName } from './wsiSpecimenUtils';
+import { blockName, partDisplayName } from './wsiSpecimenUtils';
 
 /**
  * How close a slide is to another in the patient's specimens: cut from the
@@ -62,7 +62,10 @@ export function slideStainLabel(slide: Slide): string {
 
 /** "Part 1 · Block A1", for where a slide was cut from. */
 export function slideSpecimenLabel(slide: Slide): string {
-    const block = normalizeBlockLabel(slide.block_label, slide.block_number);
+    // Some sources already write "Block 1".
+    const block = blockName(
+        normalizeBlockLabel(slide.block_label, slide.block_number)
+    );
     return [partDisplayName(slide), block ? `Block ${block}` : null]
         .filter(Boolean)
         .join(' · ');
