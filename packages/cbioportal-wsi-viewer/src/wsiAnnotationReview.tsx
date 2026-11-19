@@ -240,7 +240,7 @@ const ReviewCard = observer(
                                 type="button"
                                 data-review-primary
                                 data-testid="annotation-review-accept"
-                                aria-keyshortcuts="A"
+                                aria-keyshortcuts="A Enter"
                                 aria-disabled={busy}
                                 onClick={run(() =>
                                     controller.reviewDecide('accept')
@@ -360,9 +360,10 @@ const ReviewCard = observer(
                     data-testid="annotation-review-keys"
                     style={{ marginTop: 6, color: colors.muted, fontSize: 11 }}
                 >
-                    Keys while reviewing: A accept, X reject (X again to
-                    confirm), S or → skip, ← previous, Esc exit. They come
-                    before the tool shortcuts until you exit.
+                    Keys while reviewing: A or Enter accept, X reject (X or
+                    Enter again to confirm, Esc to cancel), S or → skip, ←
+                    previous, Esc exit. They come before the tool shortcuts
+                    until you exit.
                 </div>
             </div>
         );

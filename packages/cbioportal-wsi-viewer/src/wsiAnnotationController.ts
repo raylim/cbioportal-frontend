@@ -139,7 +139,8 @@ function isOutlineTool(tool: WsiAnnotationTool): tool is WsiOutlineTool {
 /**
  * The toolbar's single-key shortcuts while Annotate is on: `select` is the
  * Select tool (no drawing tool). R is always the rectangle (never the
- * Shape menu's last tool, such as an HPF field).
+ * Shape menu's last tool), and C the point ("." always shows or hides the
+ * details sidebar, so each key has one meaning).
  */
 export const WSI_TOOL_SHORTCUTS: Record<
     string,
@@ -153,7 +154,7 @@ export const WSI_TOOL_SHORTCUTS: Record<
     f: 'freehand',
     b: 'brush',
     w: 'wand',
-    '.': 'point',
+    c: 'point',
 };
 
 /** Shift+B picks the smart brush (B alone is the brush). */
@@ -361,6 +362,14 @@ export function isTypingTarget(target: EventTarget | null): boolean {
         !!element &&
         (/^(INPUT|TEXTAREA|SELECT)$/.test(element.tagName) ||
             !!element.isContentEditable)
+    );
+}
+
+/** A control Enter activates by itself: a button, link or menu item. */
+function isActivatable(target: EventTarget | null): boolean {
+    const element = target as HTMLElement | null;
+    return !!element?.closest?.(
+        'button, a[href], summary, [role="button"], [role^="menuitem"], [role="link"]'
     );
 }
 
@@ -872,6 +881,7 @@ export const WSI_REVIEW_KEYS: Record<
     'accept' | 'reject' | 'next' | 'previous' | 'exit'
 > = {
     a: 'accept',
+    enter: 'accept',
     x: 'reject',
     s: 'next',
     arrowright: 'next',
@@ -4693,6 +4703,9 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
         }
         const key = WSI_REVIEW_KEYS[event.key.toLowerCase()];
         if (!key) return false;
+        // Enter on a focused control (the card's Skip, a list row) is that
+        // control's own; elsewhere it accepts.
+        if (event.key === 'Enter' && isActivatable(event.target)) return false;
         event.preventDefault();
         if (key !== 'reject') this.cancelReject();
         if (key === 'exit') this.exitReview();

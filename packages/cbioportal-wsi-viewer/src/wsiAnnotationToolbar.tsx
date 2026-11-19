@@ -121,7 +121,7 @@ export const TOOL_INFO: Record<DrawingTool, ToolInfo> = {
     },
     point: {
         label: 'Point',
-        shortcut: '.',
+        shortcut: 'C',
         hint: 'click for each point (drag to pan)',
     },
     measure: {
@@ -158,7 +158,7 @@ export const SHORTCUT_HELP: ShortcutSection[] = [
             [['B'], 'Brush'],
             [['Shift+B'], 'Smart brush: paints only tissue like its start'],
             [['W'], 'Magic wand: outline the tissue of similar color'],
-            [['.'], 'Point'],
+            [['C'], 'Point'],
             [
                 ['Esc'],
                 'Drop the shape being drawn, else clear the ruler, else back to Select',
@@ -195,6 +195,8 @@ export const SHORTCUT_HELP: ShortcutSection[] = [
         when: 'Annotate on or off',
         keys: [
             [['H'], 'Hide or show all annotations on the slide'],
+            [['.'], 'Show or hide the details sidebar'],
+            [['|'], 'Show or hide the slide list'],
             [[']'], 'Next annotation in the list, fitted in the view'],
             [['['], 'Previous annotation in the list'],
             [['Esc'], 'Clear the selection, else stop highlighting'],
@@ -234,12 +236,12 @@ export const SHORTCUT_HELP: ShortcutSection[] = [
     {
         title: 'Reviewing AI annotations',
         when:
-            'While the review card is open; these keys come first, and tool keys wait until you exit',
+            'While the review card is open; these keys come first, and tool keys wait until you exit (R is never a review key: it is always the rectangle)',
         keys: [
-            [['A'], 'Accept, then the next one'],
+            [['A', 'Enter'], 'Accept, then the next one'],
             [
                 ['X'],
-                'Reject: asks first; X or Enter again rejects, then the next one (reviews cannot be undone)',
+                'Reject: asks first; X or Enter again rejects, then the next one, Esc cancels (reviews cannot be undone)',
             ],
             [['S', '→'], 'Skip'],
             [['←'], 'Previous'],

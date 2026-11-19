@@ -657,25 +657,11 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
         if (isTypingTarget(event.target)) return;
         if (event.key === NAV_TOGGLE_KEY) {
             this.setNavCollapsed(!this.navCollapsed);
-        } else if (event.key === METADATA_TOGGLE_KEY && !this.pointKeyTaken()) {
+        } else if (event.key === METADATA_TOGGLE_KEY) {
+            // One meaning, Annotate on or off: the Point tool is C.
             this.setMetadataCollapsed(!this.metadataCollapsed);
         }
     };
-
-    /**
-     * Whether "." belongs to the annotations: Point while Annotate is on
-     * (whatever else is open), and nothing while the review card is open,
-     * so the key has one meaning and never folds the sidebar away
-     * mid-review. The sidebar's own button still shows or hides it.
-     */
-    private pointKeyTaken(): boolean {
-        if (!this.props.annotationApiUrl) return false;
-        const annotations = this.activePane.annotations;
-        return (
-            (annotations.annotating && annotations.canEdit) ||
-            !!annotations.reviewQueue
-        );
-    }
 
     private readonly updateControllerVisibility = () => {
         const pageHidden =

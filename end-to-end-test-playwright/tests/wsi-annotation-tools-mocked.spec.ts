@@ -386,7 +386,7 @@ if (process.env.PW_SUITE === 'wsi') {
             );
 
             // Points count as they are dropped; the tool stays on.
-            await page.keyboard.press('.');
+            await page.keyboard.press('c');
             await expect(
                 page.getByTestId('annotation-tool-point')
             ).toHaveAttribute('aria-pressed', 'true');
@@ -660,7 +660,8 @@ if (process.env.PW_SUITE === 'wsi') {
             ).toHaveCount(0);
             // The skipped one comes back.
             await expect(label).toHaveText('Tumor');
-            await page.getByTestId('annotation-review-accept').click();
+            // Enter accepts as A does.
+            await page.keyboard.press('Enter');
             await expect(progress).toHaveText('3 of 3 reviewed');
             await expect(
                 page.getByTestId('annotation-review-done')
@@ -1533,7 +1534,7 @@ if (process.env.PW_SUITE === 'wsi') {
             const service = await routeAnnotationService(page);
             const at = await gotoSlide(page);
             await startAnnotating(page);
-            await page.keyboard.press('.');
+            await page.keyboard.press('c');
             for (const [fx, fy] of [
                 [0.4, 0.4],
                 [0.45, 0.4],
@@ -2020,7 +2021,7 @@ if (process.env.PW_SUITE === 'wsi') {
                     () => pickFromMenu(page, 'outline', 'smartBrush'),
                 ],
                 ['wand', () => pickFromMenu(page, 'outline', 'wand')],
-                ['point', () => page.keyboard.press('.')],
+                ['point', () => page.keyboard.press('c')],
             ];
             for (const [name, pick] of steps) {
                 await pick();

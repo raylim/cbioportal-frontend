@@ -452,6 +452,17 @@ describe('AI review queue', () => {
         expect(controller.rejectArmed).toBeNull();
         press('A');
         expect(decide).toHaveBeenLastCalledWith('accept');
+        // Enter accepts too, but not on a focused button (its own click).
+        press('Enter');
+        expect(decide).toHaveBeenCalledTimes(3);
+        expect(decide).toHaveBeenLastCalledWith('accept');
+        const skip = document.createElement('button');
+        document.body.appendChild(skip);
+        skip.dispatchEvent(
+            new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })
+        );
+        skip.remove();
+        expect(decide).toHaveBeenCalledTimes(3);
         press('s');
         expect(controller.reviewQueue!.currentId).toBe('mid');
         press('ArrowRight');
@@ -479,7 +490,7 @@ describe('AI review queue', () => {
         });
         taken.preventDefault();
         document.dispatchEvent(taken);
-        expect(decide).toHaveBeenCalledTimes(2);
+        expect(decide).toHaveBeenCalledTimes(3);
         expect(controller.reviewQueue!.currentId).toBe('mid');
 
         press('Escape');
@@ -576,7 +587,7 @@ describe('AI review card', () => {
         });
         const accept = screen.getByTestId('annotation-review-accept');
         expect(document.activeElement).toBe(accept);
-        expect(accept.getAttribute('aria-keyshortcuts')).toBe('A');
+        expect(accept.getAttribute('aria-keyshortcuts')).toBe('A Enter');
         expect(screen.getByTestId('annotation-review-label').textContent).toBe(
             'Label first'
         );
@@ -592,7 +603,9 @@ describe('AI review card', () => {
         const progress = screen.getByTestId('annotation-review-progress');
         expect(progress.getAttribute('role')).toBe('status');
         expect(progress.textContent).toBe('0 of 2 reviewed');
-        expect(card.textContent).toContain('X reject (X again to confirm)');
+        expect(card.textContent).toContain(
+            'A or Enter accept, X reject (X or Enter again to confirm, Esc to cancel)'
+        );
 
         const decide = jest
             .spyOn(controller, 'reviewDecide')

@@ -4280,6 +4280,9 @@ describe('WsiAnnotationController', () => {
             expect(controller.activeTool).toBe('freehand');
             press('b');
             expect(controller.activeTool).toBe('brush');
+            press('c');
+            expect(controller.activeTool).toBe('point');
+            // "." is the details sidebar's, never a tool.
             press('.');
             expect(controller.activeTool).toBe('point');
             press('l', { ctrlKey: true });

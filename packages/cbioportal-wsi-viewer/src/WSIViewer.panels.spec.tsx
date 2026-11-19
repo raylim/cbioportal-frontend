@@ -209,7 +209,7 @@ describe('WSIViewer hideable panels', () => {
         expect(byTestId(viewer, 'wsi-metadata-rail')).toHaveLength(1);
     });
 
-    it('gives . to the Point tool while Annotate is on, and to nothing while reviewing', () => {
+    it('keeps . for the details sidebar while Annotate is on and while reviewing', () => {
         const viewer = makeViewer({
             annotationApiUrl: 'https://tiles.example',
         });
@@ -221,8 +221,11 @@ describe('WSIViewer hideable panels', () => {
         jest.spyOn(annotations, 'canEdit', 'get').mockReturnValue(true);
         act(() => annotations.setAnnotating(true));
         key('.');
+        expect(byTestId(viewer, 'wsi-metadata-rail')).toHaveLength(1);
+        expect(annotations.activeTool).toBeNull();
+        key('.');
         expect(byTestId(viewer, 'wsi-metadata-rail')).toHaveLength(0);
-        // Annotate off, the review card open: still not the sidebar.
+        // The review card open: still the sidebar.
         act(() => annotations.setAnnotating(false));
         action(() => {
             annotations.reviewQueue = {
@@ -233,13 +236,12 @@ describe('WSIViewer hideable panels', () => {
             };
         })();
         key('.');
-        expect(byTestId(viewer, 'wsi-metadata-rail')).toHaveLength(0);
-        // Closed, "." shows or hides the details again.
+        expect(byTestId(viewer, 'wsi-metadata-rail')).toHaveLength(1);
         action(() => {
             annotations.reviewQueue = null;
         })();
         key('.');
-        expect(byTestId(viewer, 'wsi-metadata-rail')).toHaveLength(1);
+        expect(byTestId(viewer, 'wsi-metadata-rail')).toHaveLength(0);
     });
 
     it('ignores the panel keys while the host hides the viewer', () => {
