@@ -83,7 +83,8 @@ describe('High-power fields and points inside regions', () => {
         expect(controller.hpfAreaMm2).toBe(DEFAULT_HPF_AREA_MM2);
         controller.setTool('hpf');
         expect(controller.activeTool).toBe('hpf');
-        expect(controller.shapeTool).toBe('hpf');
+        // Not a Shape menu tool: the Shape button keeps its own.
+        expect(controller.shapeTool).toBe('rectangle');
 
         // A drag pans the slide; a click places the field.
         pointer('pointerdown', 100, 100);
@@ -161,23 +162,24 @@ describe('High-power fields and points inside regions', () => {
         controller.setTool('hpf');
         expect(controller.activeTool).toBeNull();
         controller.setTool('rectangle');
-        (controller as any).shapeTool = 'hpf';
-        expect(controller.shapeToolNow).toBe('rectangle');
         render(<WsiAnnotationToolbar controller={controller} />);
-        fireEvent.click(screen.getByTestId('annotation-tool-shape-menu'));
         const item = screen.getByTestId('annotation-tool-hpf');
-        expect((item as HTMLButtonElement).disabled).toBe(true);
-        expect(item.textContent).toContain('Needs the slide scale');
+        expect(item.getAttribute('aria-disabled')).toBe('true');
+        expect(item.getAttribute('title')).toContain('needs the slide scale');
+        fireEvent.click(item);
+        expect(controller.activeTool).toBe('rectangle');
     });
 
     it('offers the common field areas and a custom one while the tool is on', async () => {
         const { controller } = await setup();
         render(<WsiAnnotationToolbar controller={controller} />);
         expect(screen.queryByTestId('annotation-hpf-area')).toBeNull();
-        fireEvent.click(screen.getByTestId('annotation-tool-shape-menu'));
-        // The menu item explains what a field is (tooltip and description).
+        // The Count group's HPF button explains what a field is.
         const item = screen.getByTestId('annotation-tool-hpf');
-        expect(item.getAttribute('title')).toBe(HPF_HELP_TEXT);
+        expect(
+            item.closest('[data-testid="annotation-tools-count"]')
+        ).not.toBeNull();
+        expect(item.getAttribute('title')).toMatch(/^HPF field \(Shift\+C\)/);
         const itemHelp = document.getElementById(
             item.getAttribute('aria-describedby')!
         )!;

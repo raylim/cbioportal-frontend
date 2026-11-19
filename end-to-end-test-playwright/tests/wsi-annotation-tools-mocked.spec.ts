@@ -347,7 +347,14 @@ if (process.env.PW_SUITE === 'wsi') {
                 .getByTestId('annotation-drawing-as')
                 .getByLabel('Label for new annotations')
                 .fill('Depth');
-            await page.getByTestId('annotation-tool-line').click();
+            // Measure, with "Keep as annotation" on, saves the line.
+            await page.getByTestId('annotation-tool-measure').click();
+            const keep = page.getByTestId('annotation-measure-keep');
+            await expect(keep).not.toBeChecked();
+            await keep.check();
+            await expect(
+                page.getByTestId('annotation-tool-measure')
+            ).toHaveAttribute('aria-label', /kept as a line annotation/);
             const start = at(0.35, 0.5);
             const end = at(0.6, 0.5);
             await page.mouse.move(start.x, start.y);
@@ -1347,7 +1354,7 @@ if (process.env.PW_SUITE === 'wsi') {
             ]);
             const at = await gotoSlide(page);
             await startAnnotating(page);
-            await pickFromMenu(page, 'shape', 'hpf');
+            await page.getByTestId('annotation-tool-hpf').click();
             // A custom field of 0.01 mm²: a radius of about 226 pixels.
             await page
                 .getByTestId('annotation-hpf-area')
@@ -1862,9 +1869,13 @@ if (process.env.PW_SUITE === 'wsi') {
                 maxY: 356,
             });
             await pickShapeOp(page, 'split');
+            // The split's line is Measure kept as an annotation.
             await expect(
-                page.getByTestId('annotation-tool-line')
+                page.getByTestId('annotation-tool-measure')
             ).toHaveAttribute('aria-pressed', 'true');
+            await expect(
+                page.getByTestId('annotation-measure-keep')
+            ).toBeChecked();
             // Across the lower part, away from the toolbar over the slide.
             await dragOnSlide(page, at(130, 300), at(380, 300));
             await expect(
@@ -1969,85 +1980,142 @@ if (process.env.PW_SUITE === 'wsi') {
     });
 
     test.describe('WSI annotation toolbar layout', () => {
-        test('keeps the tool buttons and Drawing as in place whatever tool is on', async ({
-            page,
-        }) => {
-            // Wide enough for the whole toolbar on one row, where options
-            // appearing next to the tools would push the rest along.
-            await page.setViewportSize({ width: 1920, height: 900 });
-            await openAnnotatedSlide(page, 2048);
-            const service = await routeAnnotationService(page);
-            const at = await gotoSlide(page);
-            await startAnnotating(page);
-            const fixed = [
-                'annotation-tool-select',
-                'annotation-tool-shape',
-                'annotation-tool-line',
-                'annotation-tool-measure',
-                'annotation-tool-outline',
-                'annotation-tool-point',
-                'annotation-drawing-as',
-                'annotation-undo',
-                'annotation-display-button',
-                'annotation-more-menu-button',
-            ];
-            const boxes = async () => {
-                const out: Record<string, string> = {};
-                for (const id of fixed) {
-                    const box = (await page.getByTestId(id).boundingBox())!;
-                    out[id] = [box.x, box.y, box.width, box.height]
-                        .map(value => value.toFixed(1))
-                        .join(',');
+        // 1920: wide. 1600 with both sidebars open: a viewer of at most
+        // about 1,100 pixels (944 on this page), still one row.
+        for (const width of [1920, 1600]) {
+            test(`keeps the tools on one row and in place whatever tool is on, ${width} px`, async ({
+                page,
+            }) => {
+                await page.setViewportSize({ width, height: 900 });
+                await openAnnotatedSlide(page, 2048);
+                // A long layer name, as AI pattern maps have, widens the
+                // layer choice to its limit.
+                const long = seededAnnotation(
+                    'pattern',
+                    'Micropapillary region (3 tiles)',
+                    '1800,1800 1900,1800 1900,1900',
+                    { source: 'precomputed', model: 'keep-v0.2' }
+                );
+                long.body.layer_name = 'AI pattern map (LUAD): Micropapillary';
+                long.body.type = `${long.body.layer_name}|#9333ea`;
+                const service = await routeAnnotationService(page, [long]);
+                const at = await gotoSlide(page);
+                await startAnnotating(page);
+                await expect(
+                    page.getByTestId('wsi-metadata-sidebar')
+                ).toBeVisible();
+                await expect(page.getByTestId('wsi-nav-hide')).toBeVisible();
+                const viewer = (await page
+                    .locator('.openseadragon-container')
+                    .first()
+                    .boundingBox())!;
+                if (width === 1600) {
+                    expect(viewer.width).toBeLessThanOrEqual(1100);
                 }
-                return out;
-            };
-            const before = await boxes();
-            const shot = async (name: string) => {
-                if (process.env.WSI_SHOT_DIR) {
-                    await page.screenshot({
-                        path: `${process.env.WSI_SHOT_DIR}/${process.env
-                            .WSI_SHOT_PREFIX || ''}toolbar-${name}.png`,
-                        clip: { x: 300, y: 60, width: 1300, height: 110 },
-                    });
+                const fixed = [
+                    'annotation-mode-toggle',
+                    'annotation-tool-select',
+                    'annotation-tool-shape',
+                    'annotation-tool-outline',
+                    'annotation-tool-point',
+                    'annotation-tool-hpf',
+                    'annotation-tool-measure',
+                    'annotation-drawing-as',
+                    'annotation-undo',
+                    'annotation-display-button',
+                    'annotation-more-menu-button',
+                ];
+                const boxes = async () => {
+                    const out: Record<string, string> = {};
+                    for (const id of fixed) {
+                        const box = (await page.getByTestId(id).boundingBox())!;
+                        out[id] = [box.x, box.y, box.width, box.height]
+                            .map(value => value.toFixed(1))
+                            .join(',');
+                    }
+                    return out;
+                };
+                // One row: every control's middle at the same height.
+                const middles = async () => {
+                    const out = new Set<number>();
+                    for (const id of fixed) {
+                        const box = (await page.getByTestId(id).boundingBox())!;
+                        out.add(Math.round(box.y + box.height / 2));
+                    }
+                    return out.size;
+                };
+                expect(await middles()).toBe(1);
+                const before = await boxes();
+                const shot = async (name: string) => {
+                    if (process.env.WSI_SHOT_DIR) {
+                        await page.screenshot({
+                            path: `${process.env.WSI_SHOT_DIR}/${process.env
+                                .WSI_SHOT_PREFIX ||
+                                ''}toolbar-${width}-${name}.png`,
+                            clip: {
+                                x: viewer.x,
+                                y: viewer.y - 4,
+                                width: viewer.width,
+                                height: 110,
+                            },
+                        });
+                    }
+                };
+                await shot('select');
+                const steps: Array<[string, () => Promise<void>]> = [
+                    [
+                        'rectangle',
+                        () => pickFromMenu(page, 'shape', 'rectangle'),
+                    ],
+                    ['ellipse', () => pickFromMenu(page, 'shape', 'ellipse')],
+                    ['circle', () => pickFromMenu(page, 'shape', 'circle')],
+                    [
+                        'hpf',
+                        () => page.getByTestId('annotation-tool-hpf').click(),
+                    ],
+                    ['line', () => page.keyboard.press('l')],
+                    ['measure', () => page.keyboard.press('m')],
+                    [
+                        'measure-keep',
+                        () =>
+                            page.getByTestId('annotation-measure-keep').check(),
+                    ],
+                    ['polygon', () => pickFromMenu(page, 'outline', 'polygon')],
+                    [
+                        'freehand',
+                        () => pickFromMenu(page, 'outline', 'freehand'),
+                    ],
+                    ['brush', () => pickFromMenu(page, 'outline', 'brush')],
+                    [
+                        'smartBrush',
+                        () => pickFromMenu(page, 'outline', 'smartBrush'),
+                    ],
+                    ['wand', () => pickFromMenu(page, 'outline', 'wand')],
+                    ['point', () => page.keyboard.press('c')],
+                ];
+                for (const [name, pick] of steps) {
+                    await pick();
+                    await shot(name);
+                    expect(await boxes(), name).toEqual(before);
                 }
-            };
-            await shot('select');
-            const steps: Array<[string, () => Promise<void>]> = [
-                ['rectangle', () => pickFromMenu(page, 'shape', 'rectangle')],
-                ['ellipse', () => pickFromMenu(page, 'shape', 'ellipse')],
-                ['circle', () => pickFromMenu(page, 'shape', 'circle')],
-                ['hpf', () => pickFromMenu(page, 'shape', 'hpf')],
-                ['line', () => page.keyboard.press('l')],
-                ['measure', () => page.keyboard.press('m')],
-                ['polygon', () => pickFromMenu(page, 'outline', 'polygon')],
-                ['freehand', () => pickFromMenu(page, 'outline', 'freehand')],
-                ['brush', () => pickFromMenu(page, 'outline', 'brush')],
-                [
-                    'smartBrush',
-                    () => pickFromMenu(page, 'outline', 'smartBrush'),
-                ],
-                ['wand', () => pickFromMenu(page, 'outline', 'wand')],
-                ['point', () => page.keyboard.press('c')],
-            ];
-            for (const [name, pick] of steps) {
-                await pick();
-                await shot(name);
-                expect(await boxes(), name).toEqual(before);
-            }
-            // Points dropped: the count grows and "Saving…"/"Saved" show.
-            await page.mouse.click(at(0.3, 0.6).x, at(0.3, 0.6).y);
-            await page.mouse.click(at(0.35, 0.6).x, at(0.35, 0.6).y);
-            await expect(
-                page.getByTestId('annotation-point-count')
-            ).toContainText(': 2');
-            await page.keyboard.press('Escape');
-            await expect.poll(() => service.writes.length).toBeGreaterThan(0);
-            await expect(page.getByTestId('annotation-save-status')).toHaveText(
-                'Saved'
-            );
-            await shot('saved');
-            expect(await boxes(), 'saved').toEqual(before);
-        });
+                // Points dropped: the count grows and "Saving…"/"Saved" show.
+                await page.mouse.click(at(0.3, 0.6).x, at(0.3, 0.6).y);
+                await page.mouse.click(at(0.35, 0.6).x, at(0.35, 0.6).y);
+                await expect(
+                    page.getByTestId('annotation-point-count')
+                ).toContainText(': 2');
+                await page.keyboard.press('Escape');
+                await expect
+                    .poll(() => service.writes.length)
+                    .toBeGreaterThan(0);
+                await expect(
+                    page.getByTestId('annotation-save-status')
+                ).toHaveText('Saved');
+                await shot('saved');
+                expect(await boxes(), 'saved').toEqual(before);
+                expect(await middles()).toBe(1);
+            });
+        }
     });
 
     test.describe('WSI tissue tools', () => {

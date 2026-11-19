@@ -383,7 +383,7 @@ describe('WsiAnnotationToolbar', () => {
         fireEvent.click(more);
         fireEvent.click(byTestId('annotation-shortcuts'));
         const help = screen.getByRole('dialog', { name: 'Keyboard shortcuts' });
-        expect(help.textContent).toContain('Freehand');
+        expect(help.textContent).toContain('Draw: freehand');
         expect(help.textContent).toContain('Ctrl+Shift+Z');
         fireEvent.keyDown(help, { key: 'Escape' });
         expect(screen.queryByRole('dialog')).toBeNull();
@@ -422,5 +422,44 @@ describe('WsiAnnotationToolbar', () => {
         fireEvent.click(redoButton);
         expect(undo).toHaveBeenCalled();
         expect(redo).toHaveBeenCalled();
+    });
+
+    it('groups the tools by task: Draw, Count, Measure', () => {
+        const controller = controllerWith();
+        controller.setAnnotating(true);
+        render(<WsiAnnotationToolbar controller={controller} />);
+        const groups = Array.from(
+            byTestId('annotation-tools').querySelectorAll('[role="group"]')
+        ).map(group => group.getAttribute('aria-label'));
+        expect(groups).toEqual(['Draw', 'Count', 'Measure']);
+        const ids = (group: string) =>
+            Array.from(
+                byTestId(`annotation-tools-${group}`).querySelectorAll(
+                    '[data-toolbar-item]'
+                )
+            ).map(item => item.getAttribute('data-testid'));
+        expect(ids('draw')).toEqual([
+            'annotation-tool-shape',
+            'annotation-tool-shape-menu',
+            'annotation-tool-outline',
+            'annotation-tool-outline-menu',
+        ]);
+        expect(ids('count')).toEqual([
+            'annotation-tool-point',
+            'annotation-tool-hpf',
+        ]);
+        expect(ids('measure')).toEqual(['annotation-tool-measure']);
+        fireEvent.click(byTestId('annotation-tool-shape-menu'));
+        expect(
+            Array.from(
+                byTestId('annotation-tool-shape-options').querySelectorAll(
+                    '[role^="menuitem"]'
+                )
+            ).map(item => item.getAttribute('data-testid'))
+        ).toEqual([
+            'annotation-tool-rectangle',
+            'annotation-tool-ellipse',
+            'annotation-tool-circle',
+        ]);
     });
 });

@@ -82,14 +82,14 @@ export const TOOL_INFO: Record<DrawingTool, ToolInfo> = {
     },
     hpf: {
         label: 'HPF field',
-        shortcut: '',
+        shortcut: 'Shift+C',
         hint:
             'click to place a high-power field of the chosen area, labelled HPF 1, HPF 2, …',
     },
     line: {
-        label: 'Line',
+        label: 'Measure, kept as a line',
         shortcut: 'L',
-        hint: 'click and drag to measure a length',
+        hint: 'drag to measure a length; the line is saved as an annotation',
     },
     polygon: {
         label: 'Polygon',
@@ -147,18 +147,22 @@ export const SHORTCUT_HELP: ShortcutSection[] = [
             'While Annotate is on; a drawing tool stays on, shape after shape, until Esc, V or another tool',
         keys: [
             [['V'], 'Select: pan, and select or edit shapes'],
+            [['R'], 'Draw: rectangle (ellipse and circle: the Shape menu)'],
+            [['P'], 'Draw: polygon'],
+            [['F'], 'Draw: freehand'],
+            [['B'], 'Draw: brush'],
             [
-                ['R'],
-                'Rectangle (ellipse, circle and HPF field: the Shape menu)',
+                ['Shift+B'],
+                'Draw: smart brush, which paints only tissue like its start',
             ],
-            [['L'], 'Line'],
-            [['M'], 'Measure: a quick ruler, not saved'],
-            [['P'], 'Polygon'],
-            [['F'], 'Freehand'],
-            [['B'], 'Brush'],
-            [['Shift+B'], 'Smart brush: paints only tissue like its start'],
-            [['W'], 'Magic wand: outline the tissue of similar color'],
-            [['C'], 'Point'],
+            [['W'], 'Draw: magic wand, which outlines tissue of similar color'],
+            [['C'], 'Count: point'],
+            [['Shift+C'], 'Count: HPF field'],
+            [['L'], 'Measure, with Keep as annotation on: the line is saved'],
+            [
+                ['M'],
+                'Measure, with Keep as annotation off: a quick ruler, not saved',
+            ],
             [
                 ['Esc'],
                 'Drop the shape being drawn, else clear the ruler, else back to Select',
@@ -460,7 +464,7 @@ function Divider() {
             style={{
                 width: 1,
                 alignSelf: 'stretch',
-                margin: '2px 2px',
+                margin: '2px 0',
                 background: colors.border,
             }}
         />
@@ -529,10 +533,16 @@ const ToolButton = observer(
         controller,
         tool,
         testId,
+        unavailable,
+        describedBy,
     }: {
         controller: WsiAnnotationController;
         tool: DrawingTool;
         testId: string;
+        /** Why the tool cannot be used now, or null when it can. */
+        unavailable?: string | null;
+        /** The id of an element describing the tool. */
+        describedBy?: string;
     }) => {
         const active = controller.activeTool === tool;
         const info = TOOL_INFO[tool];
@@ -542,19 +552,95 @@ const ToolButton = observer(
                 data-toolbar-item
                 data-testid={testId}
                 aria-label={`${info.label} (${info.shortcut})`}
+                aria-describedby={describedBy}
+                aria-disabled={unavailable ? true : undefined}
                 title={
-                    active
+                    unavailable
+                        ? `${toolName(tool)}: ${unavailable}`
+                        : active
                         ? `${info.label} is on: click or press Esc for Select`
                         : toolTitle(tool)
                 }
                 aria-pressed={active}
-                onClick={() => controller.setTool(active ? null : tool)}
-                style={iconButtonStyle(active)}
+                onClick={() => {
+                    if (!unavailable) controller.setTool(active ? null : tool);
+                }}
+                style={iconButtonStyle(active, !!unavailable)}
             >
                 <ToolIcon name={tool} />
             </button>
         );
     }
+);
+
+/**
+ * Measure: one tool for lengths, whose "Keep as annotation" option (in the
+ * options strip) decides whether the line is saved (L) or is a quick ruler
+ * that is never saved (M).
+ */
+const MeasureButton = observer(
+    ({ controller }: { controller: WsiAnnotationController }) => {
+        const tool = controller.activeTool;
+        const active = tool === 'line' || tool === 'measure';
+        const keep = controller.measureKeep;
+        return (
+            <button
+                type="button"
+                data-toolbar-item
+                data-testid="annotation-tool-measure"
+                aria-label={`Measure (${keep ? 'L' : 'M'}): ${
+                    keep
+                        ? 'kept as a line annotation'
+                        : 'a quick ruler, not saved'
+                }`}
+                title={
+                    active
+                        ? 'Measure is on: click or press Esc for Select'
+                        : `Measure: drag to measure a length; ${
+                              keep
+                                  ? 'kept as a line annotation (L)'
+                                  : 'a quick ruler, not saved (M)'
+                          }. "Keep as annotation" switches between them.`
+                }
+                aria-pressed={active}
+                onClick={() =>
+                    controller.setTool(active ? null : controller.measureTool)
+                }
+                style={iconButtonStyle(active)}
+            >
+                <ToolIcon name={keep ? 'line' : 'measure'} />
+            </button>
+        );
+    }
+);
+
+/** Measure's option: keep the line as an annotation, or a quick ruler. */
+const MeasureKeepControl = observer(
+    ({ controller }: { controller: WsiAnnotationController }) => (
+        <label
+            title="On: the line is saved as an annotation (L). Off: a quick ruler that is never saved (M)."
+            style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 4,
+                fontSize: 11,
+                margin: 0,
+                fontWeight: 400,
+            }}
+        >
+            <input
+                type="checkbox"
+                data-toolbar-item
+                data-testid="annotation-measure-keep"
+                checked={controller.measureKeep}
+                onChange={event =>
+                    controller.setMeasureKeep(event.target.checked)
+                }
+            />
+            Keep as annotation
+            <kbd style={kbdStyle}>{controller.measureKeep ? 'L' : 'M'}</kbd>
+        </label>
+    )
 );
 
 /**
@@ -590,7 +676,6 @@ const ToolMenuButton = observer(
         }, []);
         const active = tools.includes(controller.activeTool as DrawingTool);
         const shortcut = groupShortcut || TOOL_INFO[current].shortcut;
-        const hpfHelpId = useHpfHelpId();
         return (
             <span
                 ref={anchor}
@@ -667,30 +752,13 @@ const ToolMenuButton = observer(
                                 }
                                 checked={controller.activeTool === tool}
                                 disabled={!!why}
-                                title={
-                                    why ||
-                                    (tool === 'hpf' ? HPF_HELP_TEXT : undefined)
-                                }
-                                describedBy={
-                                    tool === 'hpf' ? hpfHelpId : undefined
-                                }
+                                title={why || undefined}
                                 onSelect={() => {
                                     controller.setTool(tool);
                                     close(true);
                                 }}
                             >
                                 {TOOL_INFO[tool].label}
-                                {tool === 'hpf' && (
-                                    <i
-                                        aria-hidden="true"
-                                        className="fa fa-info-circle"
-                                        data-testid="annotation-tool-hpf-info"
-                                        style={{
-                                            marginLeft: 4,
-                                            color: colors.muted,
-                                        }}
-                                    />
-                                )}
                                 {why && (
                                     <span
                                         style={{
@@ -706,15 +774,6 @@ const ToolMenuButton = observer(
                         );
                     })}
                 </Menu>
-                {tools.includes('hpf') && (
-                    <span
-                        id={hpfHelpId}
-                        hidden
-                        data-testid="annotation-tool-hpf-help"
-                    >
-                        {HPF_HELP_TEXT}
-                    </span>
-                )}
             </span>
         );
     }
@@ -780,13 +839,22 @@ const ToolOptions = observer(
         const tool = controller.activeTool;
         const brush = tool === 'brush' || tool === 'smartBrush';
         const tissue = tool === 'wand' || tool === 'smartBrush';
-        if (!brush && !tissue && tool !== 'hpf' && tool !== 'point') {
+        const measure = tool === 'line' || tool === 'measure';
+        if (
+            !brush &&
+            !tissue &&
+            !measure &&
+            tool !== 'hpf' &&
+            tool !== 'point'
+        ) {
             return null;
         }
         return (
             <div
                 role="group"
-                aria-label={`${TOOL_INFO[tool!].label} options`}
+                aria-label={`${
+                    measure ? 'Measure' : TOOL_INFO[tool!].label
+                } options`}
                 data-testid="annotation-tool-options"
                 style={optionsStripStyle}
             >
@@ -794,6 +862,7 @@ const ToolOptions = observer(
                 {tissue && <TissueToleranceControl controller={controller} />}
                 {tool === 'hpf' && <HpfAreaControl controller={controller} />}
                 {tool === 'point' && <PointCount controller={controller} />}
+                {measure && <MeasureKeepControl controller={controller} />}
             </div>
         );
     }
@@ -1309,7 +1378,7 @@ const DrawingAs = observer(
                 onChange={event =>
                     controller.setActiveLayer(event.target.value)
                 }
-                style={{ fontSize: 11, height: 24, maxWidth: 150 }}
+                style={{ fontSize: 11, height: 24, maxWidth: 112 }}
             >
                 {controller.layerNames.map(layer => (
                     <option key={layer} value={layer}>
@@ -1325,7 +1394,7 @@ const DrawingAs = observer(
                 testId="annotation-active-label"
                 placeholder={controller.strictLabels ? undefined : 'Auto label'}
                 style={{
-                    width: 120,
+                    width: 88,
                     fontSize: 11,
                     height: 24,
                     padding: '0 4px',
@@ -2169,6 +2238,7 @@ export const WsiAnnotationToolbar = observer(
         const fileInput = React.useRef<HTMLInputElement>(null);
         const bar = React.useRef<HTMLDivElement>(null);
         const onFocus = useRovingTabStop(bar);
+        const hpfHelpId = useHpfHelpId();
         if (!controller || !controller.visible) return null;
         const unavailable = annotateUnavailable(controller);
         const on = controller.annotating && !unavailable;
@@ -2254,40 +2324,68 @@ export const WsiAnnotationToolbar = observer(
                             >
                                 <ToolIcon name="select" />
                             </button>
-                            <ToolMenuButton
-                                controller={controller}
-                                group="shape"
-                                label="Shape"
-                                tools={SHAPE_TOOLS}
-                                current={controller.shapeToolNow}
-                                unavailable={tool =>
-                                    tool === 'hpf' && !controller.mpp
-                                        ? 'Needs the slide scale (µm per pixel)'
-                                        : null
-                                }
-                            />
-                            <ToolButton
-                                controller={controller}
-                                tool="line"
-                                testId="annotation-tool-line"
-                            />
-                            <ToolButton
-                                controller={controller}
-                                tool="measure"
-                                testId="annotation-tool-measure"
-                            />
-                            <ToolMenuButton
-                                controller={controller}
-                                group="outline"
-                                label="Outline"
-                                tools={OUTLINE_TOOLS}
-                                current={controller.outlineTool}
-                            />
-                            <ToolButton
-                                controller={controller}
-                                tool="point"
-                                testId="annotation-tool-point"
-                            />
+                            <Divider />
+                            <span
+                                role="group"
+                                aria-label="Draw"
+                                data-testid="annotation-tools-draw"
+                                style={groupStyle}
+                            >
+                                <ToolMenuButton
+                                    controller={controller}
+                                    group="shape"
+                                    label="Shape"
+                                    tools={SHAPE_TOOLS}
+                                    current={controller.shapeTool}
+                                />
+                                <ToolMenuButton
+                                    controller={controller}
+                                    group="outline"
+                                    label="Outline"
+                                    tools={OUTLINE_TOOLS}
+                                    current={controller.outlineTool}
+                                />
+                            </span>
+                            <Divider />
+                            <span
+                                role="group"
+                                aria-label="Count"
+                                data-testid="annotation-tools-count"
+                                style={groupStyle}
+                            >
+                                <ToolButton
+                                    controller={controller}
+                                    tool="point"
+                                    testId="annotation-tool-point"
+                                />
+                                <ToolButton
+                                    controller={controller}
+                                    tool="hpf"
+                                    testId="annotation-tool-hpf"
+                                    describedBy={hpfHelpId}
+                                    unavailable={
+                                        controller.mpp
+                                            ? null
+                                            : 'needs the slide scale (µm per pixel)'
+                                    }
+                                />
+                                <span
+                                    id={hpfHelpId}
+                                    hidden
+                                    data-testid="annotation-tool-hpf-help"
+                                >
+                                    {HPF_HELP_TEXT}
+                                </span>
+                            </span>
+                            <Divider />
+                            <span
+                                role="group"
+                                aria-label="Measure"
+                                data-testid="annotation-tools-measure"
+                                style={groupStyle}
+                            >
+                                <MeasureButton controller={controller} />
+                            </span>
                         </span>
                         <ToolOptions controller={controller} />
                         <Divider />

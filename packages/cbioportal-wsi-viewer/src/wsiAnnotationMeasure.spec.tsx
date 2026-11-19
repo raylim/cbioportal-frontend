@@ -2,7 +2,7 @@
  * @jest-environment jsdom
  */
 import * as React from 'react';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { loadAnnotorious } from './wsiAnnotoriousLoader';
 import { formatRuler, measureRuler } from './wsiAnnotationGeometryUtils';
 import { WsiAnnotationOverlay } from './wsiAnnotationOverlay';
@@ -176,7 +176,7 @@ describe('The Measure tool', () => {
             screen
                 .getByTestId('annotation-tool-measure')
                 .getAttribute('aria-label')
-        ).toBe('Measure (M)');
+        ).toBe('Measure (M): a quick ruler, not saved');
         pointer('pointerdown', 0, 0);
         pointer('pointermove', 40, 0);
         expect(screen.getByTestId('annotation-ruler-preview')).toBeTruthy();
@@ -220,5 +220,41 @@ describe('The Measure tool', () => {
         // Without a ruler, H leaves nothing to draw.
         press('Escape');
         expect(controller.snapshotScene()).toBeNull();
+    });
+
+    it('keeps the line as an annotation with Keep on (L), a ruler with it off (M)', async () => {
+        const { controller, press } = await setup();
+        render(<WsiAnnotationToolbar controller={controller} />);
+        expect(screen.queryByTestId('annotation-tool-line')).toBeNull();
+        press('l');
+        expect(controller.activeTool).toBe('line');
+        const measure = screen.getByTestId('annotation-tool-measure');
+        expect(measure.getAttribute('aria-pressed')).toBe('true');
+        expect(measure.getAttribute('aria-label')).toBe(
+            'Measure (L): kept as a line annotation'
+        );
+        const keep = screen.getByTestId(
+            'annotation-measure-keep'
+        ) as HTMLInputElement;
+        expect(keep.checked).toBe(true);
+        // Unchecked while on: the ruler at once, and remembered.
+        fireEvent.click(keep);
+        expect(controller.activeTool).toBe('measure');
+        expect(controller.measureKeep).toBe(false);
+        expect(
+            JSON.parse(
+                window.localStorage.getItem('wsi_annotation_toolbar_v1')!
+            ).measureKeep
+        ).toBe(false);
+        press('Escape');
+        expect(controller.activeTool).toBeNull();
+        press('l');
+        press('v');
+        // The button picks the last choice.
+        fireEvent.click(measure);
+        expect(controller.activeTool).toBe('line');
+        press('m');
+        expect(controller.activeTool).toBe('measure');
+        expect(controller.measureKeep).toBe(false);
     });
 });

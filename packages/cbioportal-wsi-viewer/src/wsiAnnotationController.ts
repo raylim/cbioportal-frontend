@@ -115,10 +115,10 @@ export type WsiAnnotationTool =
 
 type WsiPointerAnnotationTool = Exclude<WsiAnnotationTool, null>;
 
-/** The tools of the toolbar's Shape menu. */
-export const SHAPE_TOOLS = ['rectangle', 'ellipse', 'circle', 'hpf'] as const;
+/** The tools of the toolbar's Shape menu (Draw). */
+export const SHAPE_TOOLS = ['rectangle', 'ellipse', 'circle'] as const;
 export type WsiShapeTool = typeof SHAPE_TOOLS[number];
-/** The tools of the toolbar's Outline menu. */
+/** The tools of the toolbar's Outline menu (Draw). */
 export const OUTLINE_TOOLS = [
     'polygon',
     'freehand',
@@ -148,6 +148,7 @@ export const WSI_TOOL_SHORTCUTS: Record<
 > = {
     v: 'select',
     r: 'rectangle',
+    // Measure: L keeps the line as an annotation, M is the quick ruler.
     l: 'line',
     m: 'measure',
     p: 'polygon',
@@ -159,6 +160,8 @@ export const WSI_TOOL_SHORTCUTS: Record<
 
 /** Shift+B picks the smart brush (B alone is the brush). */
 export const WSI_SMART_BRUSH_SHORTCUT = 'Shift+B';
+/** Shift+C picks the HPF field (C alone is the point). */
+export const WSI_HPF_SHORTCUT = 'Shift+C';
 
 /**
  * High-power field areas offered, in mm², with the field diameter each
@@ -506,11 +509,15 @@ function saveLayerNames(layers: string[]) {
     }
 }
 
-/** The toolbar's remembered state: Annotate on or off, and the menus' tools. */
+/**
+ * The toolbar's remembered state: Annotate on or off, the menus' tools,
+ * and whether Measure keeps its line as an annotation.
+ */
 interface WsiToolbarPrefs {
     annotating: boolean;
     shapeTool: WsiShapeTool;
     outlineTool: WsiOutlineTool;
+    measureKeep: boolean;
 }
 
 function loadToolbarPrefs(): WsiToolbarPrefs {
@@ -518,6 +525,7 @@ function loadToolbarPrefs(): WsiToolbarPrefs {
         annotating: false,
         shapeTool: 'rectangle',
         outlineTool: 'polygon',
+        measureKeep: false,
     };
     try {
         const parsed = JSON.parse(
@@ -532,6 +540,9 @@ function loadToolbarPrefs(): WsiToolbarPrefs {
             }
             if (isOutlineTool(parsed.outlineTool)) {
                 prefs.outlineTool = parsed.outlineTool;
+            }
+            if (typeof parsed.measureKeep === 'boolean') {
+                prefs.measureKeep = parsed.measureKeep;
             }
         }
     } catch (_) {
@@ -1232,6 +1243,11 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
     @observable shapeTool: WsiShapeTool = loadToolbarPrefs().shapeTool;
     /** The Outline menu's last tool, which its button reuses. */
     @observable outlineTool: WsiOutlineTool = loadToolbarPrefs().outlineTool;
+    /**
+     * Measure keeps its line as an annotation (the Line tool, L) rather than
+     * a quick ruler that is never saved (M); remembered.
+     */
+    @observable measureKeep = loadToolbarPrefs().measureKeep;
     @observable activeColor = DEFAULT_COLOR;
     @observable activeColorName = DEFAULT_LAYER;
     @observable activeLayer = DEFAULT_LAYER;
@@ -2211,14 +2227,23 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
         return { rx: radiusUm / mpp.x, ry: radiusUm / mpp.y };
     }
 
+    /** The Measure button's tool: a saved line, or the quick ruler. */
+    @computed get measureTool(): 'line' | 'measure' {
+        return this.measureKeep ? 'line' : 'measure';
+    }
+
     /**
-     * The Shape button's tool: the menu's last, unless that is the HPF
-     * tool on a slide without a scale (then the rectangle).
+     * Whether Measure keeps its line as an annotation; while Measure is on
+     * it switches between the line and the ruler at once.
      */
-    @computed get shapeToolNow(): WsiShapeTool {
-        return this.shapeTool === 'hpf' && !this.mpp
-            ? 'rectangle'
-            : this.shapeTool;
+    @action.bound
+    setMeasureKeep(keep: boolean) {
+        this.measureKeep = keep;
+        if (this.activeTool === 'line' || this.activeTool === 'measure') {
+            this.setTool(this.measureTool);
+        } else {
+            this.saveToolbarPrefs();
+        }
     }
 
     /** The field under the pointer while the HPF tool is on, on screen. */
@@ -3523,6 +3548,7 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
             annotating: this.annotating,
             shapeTool: this.shapeTool,
             outlineTool: this.outlineTool,
+            measureKeep: this.measureKeep,
         });
     }
 
@@ -3554,6 +3580,9 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
         this.pointRun = null;
         if (isShapeTool(tool)) this.shapeTool = tool;
         if (isOutlineTool(tool)) this.outlineTool = tool;
+        if (tool === 'line' || tool === 'measure') {
+            this.measureKeep = tool === 'line';
+        }
         if (tool !== null && !this.annotating) {
             this.annotating = true;
             this.applySelectAction();
@@ -8782,6 +8811,11 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
         if (this.toolShortcutsActive && key === 'b' && event.shiftKey) {
             event.preventDefault();
             this.setTool('smartBrush');
+            return;
+        }
+        if (this.toolShortcutsActive && key === 'c' && event.shiftKey) {
+            event.preventDefault();
+            this.setTool('hpf');
             return;
         }
         const shortcut = this.toolShortcutsActive
