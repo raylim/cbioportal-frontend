@@ -576,7 +576,7 @@ if (process.env.PW_SUITE === 'wsi') {
             );
             await page.getByTestId('reject-annotation-agent-1').click();
             expect(await asked).toMatch(
-                /^Reject ".*"\? It is hidden for everyone; the service keeps it as a review record\. Reviews can't be undone\.$/
+                /^Reject ".*"\? It is hidden for everyone; the service keeps it as a review record\. Undo \(Ctrl\+Z\) can take the reject back\.$/
             );
             await expect(
                 page.getByTestId('annotation-row-agent-1')
@@ -1480,6 +1480,132 @@ if (process.env.PW_SUITE === 'wsi') {
             expect(service.rows.get('mine-1').body.comment).toBe('');
         });
 
+        test('takes a reject back with Undo: the annotation is unreviewed again', async ({
+            page,
+        }) => {
+            await openAnnotatedSlide(page);
+            const service = await routeAnnotationService(page, [
+                seededAnnotation('ai-1', 'Tumor', '40,40 140,40 140,140', {
+                    source: 'precomputed',
+                }),
+            ]);
+            await gotoSlide(page);
+            const badge = page.getByTestId('annotation-ai-badge-ai-1');
+            await expect(badge).toHaveText('AI · unreviewed', {
+                timeout: 15_000,
+            });
+            const asked = new Promise<string>(resolve =>
+                page.once('dialog', dialog => {
+                    resolve(dialog.message());
+                    void dialog.accept();
+                })
+            );
+            await page.getByTestId('reject-annotation-ai-1').click();
+            expect(await asked).toBe(
+                'Reject "Tumor"? It is hidden for everyone; the service keeps it as a review record. Undo (Ctrl+Z) can take the reject back.'
+            );
+            await expect(page.getByTestId('annotation-row-ai-1')).toHaveCount(
+                0
+            );
+            await startAnnotating(page);
+            const undo = page.getByTestId('annotation-undo');
+            await expect(undo).toHaveAttribute('title', /^Undo reject/);
+            await undo.click();
+            await expect(badge).toHaveText('AI · unreviewed');
+            await expect(
+                page.getByTestId('accept-annotation-ai-1')
+            ).toBeVisible();
+            expect(
+                service.writes.map(write => [write.path, write.body])
+            ).toEqual([
+                [
+                    '/wsi/annotations/ai-1/review',
+                    { decision: 'reject', version: 1 },
+                ],
+                [
+                    '/wsi/annotations/ai-1/review',
+                    { decision: 'reset', version: 2 },
+                ],
+            ]);
+            expect(
+                service.rows.get('ai-1').body.provenance.review_status
+            ).toBeUndefined();
+        });
+
+        test('undoes the delete of an annotation with a comment: same annotation, comment kept', async ({
+            page,
+        }) => {
+            await openAnnotatedSlide(page);
+            const service = await routeAnnotationService(page, [
+                {
+                    ...seededAnnotation(
+                        'mine-1',
+                        'Tumor',
+                        '40,40 140,40 140,140'
+                    ),
+                    created_by: USER,
+                },
+            ]);
+            service.comments.set('mine-1', [
+                {
+                    id: 'comment-a',
+                    annotation_id: 'mine-1',
+                    study_id: STUDY_ID,
+                    author: 'colleague',
+                    body: 'Is this the deep margin?',
+                    created_at: '2026-11-18T10:00:00Z',
+                    updated_at: '2026-11-18T10:00:00Z',
+                },
+            ]);
+            await gotoSlide(page);
+            const toggle = page.getByTestId(
+                'annotation-comments-toggle-mine-1'
+            );
+            await expect(toggle).toHaveAttribute(
+                'aria-label',
+                'Comments on Tumor: 1',
+                { timeout: 15_000 }
+            );
+            const asked = new Promise<string>(resolve =>
+                page.once('dialog', dialog => {
+                    resolve(dialog.message());
+                    void dialog.accept();
+                })
+            );
+            await page.getByTestId('delete-annotation-mine-1').click();
+            expect(await asked).toBe(
+                'Delete annotation "Tumor"? "Tumor" has 1 comment, all by other users. Undo (Ctrl+Z) brings it back with its comments; otherwise the service removes deleted annotations and their comments for good after 30 days (its default).'
+            );
+            await expect(page.getByTestId('annotation-row-mine-1')).toHaveCount(
+                0
+            );
+            expect(service.deleted.has('mine-1')).toBe(true);
+            await startAnnotating(page);
+            const undo = page.getByTestId('annotation-undo');
+            await expect(undo).toHaveAttribute('title', /^Undo delete/);
+            await undo.click();
+            // Back under the same id, with its thread.
+            await expect(toggle).toHaveAttribute(
+                'aria-label',
+                'Comments on Tumor: 1'
+            );
+            await toggle.click();
+            await expect(
+                page.getByTestId('annotation-comment-body-comment-a')
+            ).toHaveText('Is this the deep margin?');
+            expect(
+                service.writes.map(write => [
+                    write.method,
+                    write.path,
+                    write.body,
+                ])
+            ).toEqual([
+                ['DELETE', '/wsi/annotations/mine-1', null],
+                ['POST', '/wsi/annotations/mine-1/restore', { version: 1 }],
+            ]);
+            expect(service.rows.get('mine-1').version).toBe(2);
+        });
+
         test('adds a slide note with tags', async ({ page }) => {
             await openAnnotatedSlide(page);
             const service = await routeAnnotationService(page);
@@ -1538,7 +1664,7 @@ if (process.env.PW_SUITE === 'wsi') {
             await page.getByTestId('annotation-select-ai-2').check();
             await page.getByTestId('annotation-bulk-actions').click();
             const accept = page.getByTestId('annotation-bulk-accept');
-            await expect(accept).toHaveText("Accept 2Can't be undone");
+            await expect(accept).toHaveText('Accept 2Ctrl+Z undoes');
             await accept.click();
             await expect(
                 page.getByTestId('annotation-bulk-message')

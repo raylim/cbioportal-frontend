@@ -21,16 +21,20 @@ export const MACHINE_SOURCES = [
 /**
  * The annotation service, kept in memory: creates (one, or a batch) get an
  * id and version 1; updates and deletes are creator-only and check the
- * version; any user may review a machine-made annotation, and a rejected one
- * is kept but not listed. A batch item labelled "refuse" is refused with a
- * 422 naming it. `batch-update`, `batch-delete` and `batch-review` are all or
- * none (403/404 name the first failing item, 409 lists stale ones); comment
- * threads and slide notes follow the service's rules. While `hold` is set,
- * writes wait for `release()`. Returns the rows, comments, notes and the
+ * version; a delete is soft (the row and its comments are kept, unlisted)
+ * and its creator restores it under the same id with the version it had;
+ * any user may review a machine-made annotation, a rejected one is kept but
+ * not listed, and its reviewer may reset the review. A batch item labelled
+ * "refuse" is refused with a 422 naming it. `batch-update`, `batch-delete`,
+ * `batch-review` and `batch-restore` are all or none (403/404 name the
+ * first failing item, 409 lists stale ones); comment threads and slide
+ * notes follow the service's rules. While `hold` is set, writes wait for
+ * `release()`. Returns the rows, the deleted rows, comments, notes and the
  * writes it received.
  */
 export async function routeAnnotationService(page: Page, seed: any[] = []) {
     const rows = new Map<string, any>(seed.map(row => [row.id, row]));
+    const deleted = new Map<string, any>();
     const comments = new Map<string, any[]>();
     const notes = new Map<string, any>();
     const writes: Array<{ method: string; path: string; body: any }> = [];
@@ -63,20 +67,61 @@ export async function routeAnnotationService(page: Page, seed: any[] = []) {
         MACHINE_SOURCES.includes(
             String(row.body?.provenance?.source || '').toLowerCase()
         );
-    const reviewed = (row: any, decision: string) => ({
-        ...row,
-        body: {
-            ...row.body,
-            provenance: {
-                ...row.body.provenance,
-                review_status: decision === 'accept' ? 'accepted' : 'rejected',
-                reviewed_by: USER,
-                reviewed_at: now(),
+    const reviewed = (row: any, decision: string) => {
+        const { review_status, reviewed_by, reviewed_at, ...provenance } =
+            row.body.provenance || {};
+        return {
+            ...row,
+            body: {
+                ...row.body,
+                provenance:
+                    decision === 'reset'
+                        ? provenance
+                        : {
+                              ...provenance,
+                              review_status:
+                                  decision === 'accept'
+                                      ? 'accepted'
+                                      : 'rejected',
+                              reviewed_by: USER,
+                              reviewed_at: now(),
+                          },
             },
-        },
-        version: row.version + 1,
-        updated_at: now(),
-    });
+            version: row.version + 1,
+            updated_at: now(),
+        };
+    };
+    /** Why a reset of `row` is refused (after the version check). */
+    const resetRefusal = (row: any) => {
+        const provenance = row.body?.provenance || {};
+        if (!provenance.review_status) {
+            return {
+                status: 422,
+                msg: 'The annotation has no review to reset',
+            };
+        }
+        if (provenance.reviewed_by !== USER) {
+            return {
+                status: 403,
+                msg: 'Only the reviewer may reset this review',
+            };
+        }
+        return null;
+    };
+    const remove = (id: string) => {
+        deleted.set(id, rows.get(id));
+        rows.delete(id);
+    };
+    const restored = (id: string) => {
+        const row = {
+            ...deleted.get(id),
+            version: deleted.get(id).version + 1,
+            updated_at: now(),
+        };
+        deleted.delete(id);
+        rows.set(id, row);
+        return row;
+    };
     const updated = (row: any, item: any) => ({
         ...row,
         body: item.body ?? row.body,
@@ -149,12 +194,18 @@ export async function routeAnnotationService(page: Page, seed: any[] = []) {
             }
             return json(route, 201, body.annotations.map(create));
         }
-        if (method === 'POST' && /^batch-(update|delete|review)$/.test(id)) {
+        if (
+            method === 'POST' &&
+            /^batch-(update|delete|review|restore)$/.test(id)
+        ) {
             const kind = id.slice('batch-'.length);
             const conflicts: any[] = [];
             for (let index = 0; index < body.items.length; index++) {
                 const item = body.items[index];
-                const row = rows.get(item.id);
+                const row =
+                    kind === 'restore'
+                        ? deleted.get(item.id)
+                        : rows.get(item.id);
                 const refuse = (status: number, msg: string) =>
                     json(route, status, {
                         detail: {
@@ -184,7 +235,13 @@ export async function routeAnnotationService(page: Page, seed: any[] = []) {
                         version: item.version,
                         current_version: row.version,
                     });
+                    continue;
                 }
+                const refusal =
+                    kind === 'review' && item.decision === 'reset'
+                        ? resetRefusal(row)
+                        : null;
+                if (refusal) return refuse(refusal.status, refusal.msg);
             }
             if (conflicts.length) {
                 return json(route, 409, {
@@ -195,9 +252,10 @@ export async function routeAnnotationService(page: Page, seed: any[] = []) {
                 route,
                 200,
                 body.items.map((item: any) => {
+                    if (kind === 'restore') return listed(restored(item.id));
                     const row = rows.get(item.id);
                     if (kind === 'delete') {
-                        rows.delete(item.id);
+                        remove(item.id);
                         return listed(row);
                     }
                     const saved =
@@ -218,6 +276,23 @@ export async function routeAnnotationService(page: Page, seed: any[] = []) {
                 });
             }
             return json(route, 201, create(body));
+        }
+        if (method === 'POST' && sub === 'restore') {
+            const gone = deleted.get(id);
+            if (!gone) {
+                return json(route, 404, {
+                    detail: 'Deleted annotation not found',
+                });
+            }
+            if (gone.created_by !== USER) {
+                return json(route, 403, {
+                    detail: 'Only the creator may restore this annotation',
+                });
+            }
+            if (body.version !== gone.version) {
+                return json(route, 409, { detail: 'Version conflict' });
+            }
+            return json(route, 200, listed(restored(id)));
         }
         const row = rows.get(id);
         if (!row) return json(route, 404, { detail: 'Annotation not found' });
@@ -264,6 +339,11 @@ export async function routeAnnotationService(page: Page, seed: any[] = []) {
             if (body.version !== row.version) {
                 return json(route, 409, { detail: 'Version conflict' });
             }
+            const refusal =
+                body.decision === 'reset' ? resetRefusal(row) : null;
+            if (refusal) {
+                return json(route, refusal.status, { detail: refusal.msg });
+            }
             const saved = reviewed(row, body.decision);
             rows.set(id, saved);
             return json(route, 200, listed(saved));
@@ -281,7 +361,7 @@ export async function routeAnnotationService(page: Page, seed: any[] = []) {
             rows.set(id, saved);
             return json(route, 200, listed(saved));
         }
-        rows.delete(id);
+        remove(id);
         return route.fulfill({ status: 204, body: '' });
     });
     await page.route('**/wsi/slide-notes**', async (route: Route) => {
@@ -341,7 +421,7 @@ export async function routeAnnotationService(page: Page, seed: any[] = []) {
         notes.delete(id);
         return route.fulfill({ status: 204, body: '' });
     });
-    return { rows, comments, notes, writes, control, release };
+    return { rows, deleted, comments, notes, writes, control, release };
 }
 
 /** Another user's annotation, as the service stores it. */
