@@ -1628,13 +1628,15 @@ describe('WsiAnnotationController', () => {
             ][0].map((annotation: { id: string }) => annotation.id);
         expect(shownIds()).toEqual(['ai', 'mine']);
 
-        controller.toggleHideUnreviewedAi();
+        controller.setKindShown('aiUnreviewed', false);
         expect(shownIds()).toEqual(['mine']);
         expect(controller.visibleAnnotationCount).toBe(1);
+        expect(controller.hiddenByFilters).toBe(1);
         expect(annotator.cancelSelected).toHaveBeenCalled();
 
-        controller.toggleHideUnreviewedAi();
+        controller.setKindShown('aiUnreviewed', true);
         expect(shownIds()).toEqual(['ai', 'mine']);
+        expect(controller.hiddenByFilters).toBe(0);
     });
 
     it("keeps the study editable when the service refuses another user's annotation", async () => {
@@ -1914,18 +1916,30 @@ describe('WsiAnnotationController', () => {
         controller.clearListFilter();
         controller.setListFilter({ text: 'MARGIN' });
         expect(ids()).toEqual(['t2']);
-        controller.setListFilter({ text: '', ai: 'unreviewed' });
+        controller.setListFilter({ text: '' });
+        // Show decides the kinds, for the list as for the slide.
+        controller.setKindShown('mine', false);
+        controller.setKindShown('others', false);
         expect(ids()).toEqual(['ai']);
-        controller.setListFilter({ ai: 'human' });
+        controller.setKindShown('mine', true);
+        controller.setKindShown('others', true);
+        controller.setKindShown('aiUnreviewed', false);
         expect(ids()).toEqual(['t1', 't2', 's1']);
         expect(Array.from(controller.listedLabelCounts)).toEqual([
             ['Tumor', 2],
             ['Stroma', 1],
         ]);
+        expect(controller.hiddenByFilters).toBe(1);
+        controller.setListFilter({ layer: 'Tumor' });
+        expect(controller.hiddenByFilters).toBe(2);
+        controller.showEverything();
+        expect(controller.hiddenByFilters).toBe(0);
+        expect(controller.listFilter.layer).toBe('');
 
         // A new slide starts unfiltered.
+        controller.setListFilter({ text: 'x' });
         controller.beginSlide('slide2');
-        expect(controller.listFilter.ai).toBe('all');
+        expect(controller.listFilter.text).toBe('');
         expect(labelTerm('Necrosis 12', ['Necrosis'])).toBe('Necrosis');
         expect(labelTerm('Necrosis 12')).toBe('Necrosis 12');
         expect(labelTerm('42', ['42'])).toBe('42');

@@ -7,8 +7,8 @@ import {
     formatRegionCount,
     HPF_MIN_FIELDS,
     rejectConfirmation,
-    WsiAnnotationAiFilter,
     WsiAnnotationController,
+    WsiAnnotationShowKind,
     WsiHpfScope,
 } from './wsiAnnotationController';
 import { WsiAnnotation } from './wsiViewerTypes';
@@ -637,47 +637,232 @@ export const WsiAnnotationPanel = observer(
                     </div>
                 )}
                 <UnsavedPointsNotice controller={controller} />
-                {(controller.unreviewedAiCount > 0 ||
-                    controller.hideUnreviewedAi) && (
-                    <div
-                        style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            flexWrap: 'wrap',
-                            gap: 6,
-                            marginBottom: 4,
-                        }}
-                    >
-                        <label
-                            style={{
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: 4,
-                                fontSize: 11,
-                                color: colors.muted,
-                                margin: 0,
-                            }}
-                        >
-                            <input
-                                type="checkbox"
-                                data-testid="annotation-hide-unreviewed-ai"
-                                checked={controller.hideUnreviewedAi}
-                                onChange={controller.toggleHideUnreviewedAi}
-                            />
-                            Hide unreviewed AI annotations (
-                            {controller.unreviewedAiCount})
-                        </label>
-                        {controller.unreviewedAiCount > 0 && (
-                            <ReviewQueueButton controller={controller} />
-                        )}
-                    </div>
-                )}
+                <div
+                    style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        flexWrap: 'wrap',
+                        gap: 6,
+                        marginBottom: 4,
+                    }}
+                >
+                    <WsiShowControl controller={controller} variant="chips" />
+                    {controller.unreviewedAiCount > 0 && (
+                        <ReviewQueueButton controller={controller} />
+                    )}
+                </div>
+                <HiddenByFiltersHint controller={controller} />
                 <MeasurementScaleNote controller={controller} />
                 <PointTally controller={controller} />
                 <HpfSummary controller={controller} />
                 <AnnotationListFilters controller={controller} />
                 <AnnotationCounts controller={controller} />
                 <AnnotationList controller={controller} listed={listed} />
+            </div>
+        );
+    }
+);
+
+/** The Show control's name for each kind. */
+export function showKindLabel(
+    kind: WsiAnnotationShowKind,
+    userKnown: boolean
+): string {
+    switch (kind) {
+        case 'mine':
+            return userKnown ? 'Mine' : 'Manual';
+        case 'others':
+            return 'Others';
+        case 'aiUnreviewed':
+            return 'AI unreviewed';
+        case 'aiAccepted':
+            return 'AI accepted';
+    }
+}
+
+const SHOW_KIND_HELP: Record<WsiAnnotationShowKind, string> = {
+    mine: 'Annotations you made (including ones you made from AI annotations)',
+    others: 'Annotations other users made and shared',
+    aiUnreviewed:
+        'Annotations from the research assistant or a model that no one has reviewed yet',
+    aiAccepted:
+        'Annotations from the research assistant or a model that a user accepted',
+};
+
+/**
+ * Show: which kinds of annotation show on the slide, and so in the list,
+ * the counts, the review queue and "visible" exports; each with how many
+ * are on the shown layers. Checkboxes in the Display popover, toggle chips
+ * at the top of the Annotations section; both set the same state.
+ */
+export const WsiShowControl = observer(
+    ({
+        controller,
+        variant,
+    }: {
+        controller: WsiAnnotationController;
+        variant: 'checkboxes' | 'chips';
+    }) => {
+        const counts = controller.kindCounts;
+        const userKnown = !!controller.currentUser;
+        const kinds = controller.showKinds;
+        if (variant === 'chips') {
+            return (
+                <div
+                    role="group"
+                    aria-label="Show"
+                    data-testid="annotation-show-summary"
+                    style={{
+                        display: 'flex',
+                        flexWrap: 'wrap',
+                        alignItems: 'center',
+                        gap: 3,
+                        fontSize: 11,
+                        color: colors.muted,
+                    }}
+                >
+                    <span>Show:</span>
+                    {kinds.map(kind => {
+                        const on = controller.shownKinds[kind];
+                        return (
+                            <button
+                                key={kind}
+                                type="button"
+                                data-testid={`annotation-show-chip-${kind}`}
+                                aria-pressed={on}
+                                title={`${SHOW_KIND_HELP[kind]}: ${
+                                    on
+                                        ? 'shown; click to hide'
+                                        : 'hidden; click to show'
+                                }`}
+                                onClick={() =>
+                                    controller.setKindShown(kind, !on)
+                                }
+                                style={{
+                                    ...countChipStyle,
+                                    cursor: 'pointer',
+                                    background: on ? '#e8f0fb' : '#fff',
+                                    borderColor: on
+                                        ? colors.blue
+                                        : colors.border,
+                                    color: on ? colors.text : colors.muted,
+                                    textDecoration: on
+                                        ? undefined
+                                        : 'line-through',
+                                }}
+                            >
+                                {showKindLabel(kind, userKnown)} {counts[kind]}
+                            </button>
+                        );
+                    })}
+                </div>
+            );
+        }
+        return (
+            <fieldset
+                data-testid="annotation-show-kinds"
+                style={{ border: 'none', margin: '0 0 6px', padding: 0 }}
+            >
+                <legend
+                    style={{
+                        fontSize: 12,
+                        fontWeight: 600,
+                        color: colors.text,
+                        border: 'none',
+                        margin: '0 0 2px',
+                        padding: 0,
+                        width: 'auto',
+                    }}
+                >
+                    Show
+                </legend>
+                {kinds.map(kind => (
+                    <label
+                        key={kind}
+                        title={SHOW_KIND_HELP[kind]}
+                        style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 6,
+                            margin: '0 0 2px',
+                            fontWeight: 400,
+                            fontSize: 12,
+                            color: colors.text,
+                        }}
+                    >
+                        <input
+                            type="checkbox"
+                            data-testid={`annotation-show-${kind}`}
+                            checked={controller.shownKinds[kind]}
+                            onChange={event =>
+                                controller.setKindShown(
+                                    kind,
+                                    event.target.checked
+                                )
+                            }
+                        />
+                        {showKindLabel(kind, userKnown)}
+                        <span
+                            style={{ marginLeft: 'auto', color: colors.muted }}
+                        >
+                            {counts[kind]}
+                        </span>
+                    </label>
+                ))}
+            </fieldset>
+        );
+    }
+);
+
+/**
+ * "N hidden by filters · Show all" while layers, Show or the list's
+ * filters leave annotations out of the list, or all are hidden on the
+ * slide (H); Show all shows everything again.
+ */
+const HiddenByFiltersHint = observer(
+    ({ controller }: { controller: WsiAnnotationController }) => {
+        const hidden = controller.hiddenByFilters;
+        if (!hidden && !controller.hideAll) return null;
+        const text = hidden
+            ? `${hidden} hidden by filters${
+                  controller.hideAll ? '; all hidden on the slide (H)' : ''
+              }`
+            : 'All hidden on the slide (H)';
+        return (
+            <div
+                data-testid="annotation-hidden-hint"
+                style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 4,
+                    fontSize: 11,
+                    color: colors.text,
+                    background: '#fff8e1',
+                    border: '1px solid #f0d78c',
+                    borderRadius: 3,
+                    padding: '1px 6px',
+                    marginBottom: 4,
+                }}
+            >
+                <span data-testid="annotation-hidden-count">{text}</span>
+                <span aria-hidden="true">·</span>
+                <button
+                    type="button"
+                    data-testid="annotation-show-everything"
+                    title="Show every layer and kind, and clear the list's filters"
+                    onClick={controller.showEverything}
+                    style={{
+                        border: 'none',
+                        background: 'transparent',
+                        color: colors.blue,
+                        fontSize: 11,
+                        cursor: 'pointer',
+                        padding: 0,
+                        textDecoration: 'underline',
+                    }}
+                >
+                    Show all
+                </button>
             </div>
         );
     }
@@ -1415,19 +1600,15 @@ const filterControlStyle: React.CSSProperties = {
     color: colors.text,
 };
 
-/** Filters for the annotation list: label text, layer, author and AI. */
+/**
+ * Filters for the annotation list: label text, layer and author. Which
+ * kinds show is the Show control's, for the slide and the list alike.
+ */
 const AnnotationListFilters = observer(
     ({ controller }: { controller: WsiAnnotationController }) => {
         const filter = controller.listFilter;
-        const anyAi = controller.annotations.some(annotation =>
-            isAiProvenance(annotation.provenance)
-        );
         const filtered =
-            filter.text ||
-            filter.label ||
-            filter.layer ||
-            filter.author ||
-            filter.ai !== 'all';
+            filter.text || filter.label || filter.layer || filter.author;
         return (
             <div
                 data-testid="annotation-list-filters"
@@ -1483,24 +1664,6 @@ const AnnotationListFilters = observer(
                                 {author}
                             </option>
                         ))}
-                    </select>
-                )}
-                {anyAi && (
-                    <select
-                        aria-label="Filter annotations by AI origin"
-                        data-testid="annotation-filter-ai"
-                        value={filter.ai}
-                        onChange={event =>
-                            controller.setListFilter({
-                                ai: event.target.value as WsiAnnotationAiFilter,
-                            })
-                        }
-                        style={{ ...filterControlStyle, flex: 1 }}
-                    >
-                        <option value="all">AI and manual</option>
-                        <option value="ai">AI only</option>
-                        <option value="unreviewed">Unreviewed AI</option>
-                        <option value="human">Manual only</option>
                     </select>
                 )}
                 {filtered && (

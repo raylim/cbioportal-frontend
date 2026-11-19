@@ -502,9 +502,31 @@ if (process.env.PW_SUITE === 'wsi') {
             await expect(
                 page.getByTestId('annotation-ai-badge-human-1')
             ).toHaveCount(0);
+            // Show hides the unreviewed AI annotations on the slide and in
+            // the list, and the hint says how many are hidden.
+            const unreviewedChip = page.getByTestId(
+                'annotation-show-chip-aiUnreviewed'
+            );
+            await expect(unreviewedChip).toHaveText('AI unreviewed 2');
+            await unreviewedChip.click();
+            await expect(unreviewedChip).toHaveAttribute(
+                'aria-pressed',
+                'false'
+            );
             await expect(
-                page.getByTestId('annotation-hide-unreviewed-ai')
-            ).toBeVisible();
+                page.getByTestId('annotation-row-model-1')
+            ).toHaveCount(0);
+            await expect(
+                page.getByTestId('annotation-hidden-count')
+            ).toHaveText('2 hidden by filters');
+            await expect(
+                page.getByTestId('annotation-review-start')
+            ).toHaveAttribute('aria-disabled', 'true');
+            await page.getByTestId('annotation-show-everything').click();
+            await expect(
+                page.getByTestId('annotation-hidden-hint')
+            ).toHaveCount(0);
+            await expect(modelBadge).toBeVisible();
 
             // Another user's annotations offer no edit or delete; the AI
             // ones offer review.

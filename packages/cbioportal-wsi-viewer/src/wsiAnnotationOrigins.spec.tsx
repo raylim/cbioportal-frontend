@@ -124,7 +124,7 @@ describe('Showing mine, others and AI, and the history', () => {
         expect(drawn(annotator)).toEqual(['mine', 'theirs', 'ai']);
         fireEvent.click(screen.getByTestId('annotation-display-button'));
         const others = screen.getByTestId('annotation-show-others');
-        expect(others.closest('label')!.textContent).toBe('Other users’1');
+        expect(others.closest('label')!.textContent).toBe('Others1');
         expect(
             screen.getByTestId('annotation-show-mine').closest('label')!
                 .textContent
@@ -136,7 +136,40 @@ describe('Showing mine, others and AI, and the history', () => {
             'ai',
         ]);
         expect(screen.queryByTestId('annotation-row-theirs')).toBeNull();
-        fireEvent.click(screen.getByTestId('annotation-show-ai'));
+        // The sidebar's chips and the hint agree with the popover.
+        expect(
+            screen
+                .getByTestId('annotation-show-chip-others')
+                .getAttribute('aria-pressed')
+        ).toBe('false');
+        expect(screen.getByTestId('annotation-hidden-count').textContent).toBe(
+            '1 hidden by filters'
+        );
+        fireEvent.click(
+            screen.getByTestId('annotation-show-chip-aiUnreviewed')
+        );
+        expect(
+            (screen.getByTestId(
+                'annotation-show-aiUnreviewed'
+            ) as HTMLInputElement).checked
+        ).toBe(false);
+        expect(drawn(annotator)).toEqual(['mine']);
+        expect(controller.exportGeoJson('visible').features).toHaveLength(1);
+        expect(screen.getByTestId('annotation-hidden-count').textContent).toBe(
+            '2 hidden by filters'
+        );
+        // Unreviewed AI hidden: the review queue has nothing to show.
+        expect(
+            screen
+                .getByTestId('annotation-review-start')
+                .getAttribute('aria-disabled')
+        ).toBe('true');
+        expect(controller.reviewUnavailable).toMatch(/hidden/);
+        fireEvent.click(screen.getByTestId('annotation-show-everything'));
+        expect(drawn(annotator)).toEqual(['mine', 'theirs', 'ai']);
+        expect(screen.queryByTestId('annotation-hidden-hint')).toBeNull();
+        fireEvent.click(screen.getByTestId('annotation-show-others'));
+        fireEvent.click(screen.getByTestId('annotation-show-aiUnreviewed'));
         expect(drawn(annotator)).toEqual(['mine']);
 
         // Closed, the eye has a dot for the changed setting.
@@ -149,14 +182,14 @@ describe('Showing mine, others and AI, and the history', () => {
                 .querySelector('span')
         ).not.toBeNull();
 
-        // A link to a hidden annotation shows its origin again.
+        // A link to a hidden annotation shows its kind again.
         act(() => controller.requestAnnotation('theirs'));
         (controller as any).osdViewer = {
             ...(controller as any).osdViewer,
             viewport: {},
         };
         act(() => (controller as any).openRequestedAnnotation());
-        expect(controller.shownOrigins.others).toBe(true);
+        expect(controller.shownKinds.others).toBe(true);
         expect(drawn(annotator)).toEqual(['mine', 'theirs']);
     });
 

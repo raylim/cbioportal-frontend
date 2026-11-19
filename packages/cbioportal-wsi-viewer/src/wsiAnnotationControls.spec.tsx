@@ -105,7 +105,9 @@ describe('WsiAnnotationPanel', () => {
         fireEvent.click(screen.getByLabelText('Reject AI annotation ai-1'));
         expect(reject).toHaveBeenCalledWith('ai-1');
 
-        fireEvent.click(screen.getByTestId('annotation-hide-unreviewed-ai'));
+        fireEvent.click(
+            screen.getByTestId('annotation-show-chip-aiUnreviewed')
+        );
         expect(screen.queryByTestId('annotation-row-ai-1')).toBeNull();
         expect(screen.getByTestId('annotation-row-ai-2')).toBeTruthy();
     });
@@ -130,7 +132,9 @@ describe('WsiAnnotationPanel', () => {
         expect(screen.getByTestId('accept-annotation-m-1')).toBeTruthy();
         expect(controller.unreviewedAiCount).toBe(2);
 
-        fireEvent.click(screen.getByTestId('annotation-hide-unreviewed-ai'));
+        fireEvent.click(
+            screen.getByTestId('annotation-show-chip-aiUnreviewed')
+        );
         expect(screen.queryByTestId('annotation-row-m-1')).toBeNull();
     });
 

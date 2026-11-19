@@ -492,11 +492,8 @@ describe('AI review queue', () => {
     it('shows the annotation under review even when its kind is hidden', () => {
         const { controller } = setup();
         track(controller);
-        controller.toggleHideUnreviewedAi();
-        expect(
-            controller.shownAnnotations.some(item => item.id === 'first')
-        ).toBe(false);
         controller.startReview();
+        controller.setKindShown('aiUnreviewed', false);
         expect(controller.shownAnnotations.map(item => item.id)).toContain(
             'first'
         );

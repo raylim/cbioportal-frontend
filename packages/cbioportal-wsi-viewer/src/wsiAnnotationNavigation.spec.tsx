@@ -177,16 +177,16 @@ describe('Stepping through annotations and links to one', () => {
         expect(first.controller.focusedAnnotationId).toBe('b');
         expect(first.zoom).toHaveBeenCalledWith('b');
 
-        // Hidden by its layer, by "hide unreviewed" and by hide all.
+        // Hidden by its layer, by Show and by hide all.
         const { controller, zoom } = await tracked();
         controller.toggleLayerVisibility('Model');
-        controller.toggleHideUnreviewedAi();
+        controller.setKindShown('aiUnreviewed', false);
         controller.toggleHideAll();
         controller.requestAnnotation('ai');
         expect(controller.focusedAnnotationId).toBe('ai');
         expect(zoom).toHaveBeenLastCalledWith('ai');
         expect(controller.hiddenLayerNames.has('Model')).toBe(false);
-        expect(controller.hideUnreviewedAi).toBe(false);
+        expect(controller.shownKinds.aiUnreviewed).toBe(true);
         expect(controller.hideAll).toBe(false);
         expect(controller.shownAnnotations.map(item => item.id)).toContain(
             'ai'

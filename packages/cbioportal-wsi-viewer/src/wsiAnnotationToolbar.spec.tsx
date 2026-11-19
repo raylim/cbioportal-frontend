@@ -348,7 +348,7 @@ describe('WsiAnnotationToolbar', () => {
         act(() => controller.toggleLayerVisibility('Stroma'));
         fireEvent.click(more);
         expect(byTestId('annotation-export-visible').textContent).toBe(
-            'Export visible layers (1) as GeoJSON'
+            'Export shown (1) as GeoJSON'
         );
         fireEvent.click(byTestId('annotation-export-visible'));
         expect(download).toHaveBeenLastCalledWith('visible');

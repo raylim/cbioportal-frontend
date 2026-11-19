@@ -253,10 +253,34 @@ export type WsiSaveStatus =
     | { state: 'unsaved'; count: number };
 
 /**
- * Who an annotation comes from, for the Display popover's Show toggles:
- * the user, other users, or a machine (the assistant or a model).
+ * Who an annotation comes from: the user, other users, or a machine (the
+ * assistant or a model).
  */
 export type WsiAnnotationOrigin = 'mine' | 'others' | 'ai';
+
+/**
+ * The kinds the Show control shows or hides: the user's own, other users',
+ * and AI annotations (machine-made) not yet reviewed or accepted.
+ */
+export type WsiAnnotationShowKind =
+    | 'mine'
+    | 'others'
+    | 'aiUnreviewed'
+    | 'aiAccepted';
+
+export const WSI_SHOW_KINDS: readonly WsiAnnotationShowKind[] = [
+    'mine',
+    'others',
+    'aiUnreviewed',
+    'aiAccepted',
+];
+
+const ALL_KINDS_SHOWN: Record<WsiAnnotationShowKind, boolean> = {
+    mine: true,
+    others: true,
+    aiUnreviewed: true,
+    aiAccepted: true,
+};
 
 /** A comment in an annotation's thread. */
 export interface WsiComment {
@@ -664,19 +688,15 @@ export const WSI_ANNOTATION_ACCESS_MESSAGES: Record<
 };
 
 /**
- * Which annotations the list shows by origin: AI (the research assistant or
- * a model) or manual.
+ * The annotation list's own filters, on top of what shows on the slide
+ * (layers and Show); empty strings match everything.
  */
-export type WsiAnnotationAiFilter = 'all' | 'ai' | 'unreviewed' | 'human';
-
-/** The annotation list's filters; empty strings match everything. */
 export interface WsiAnnotationListFilter {
     layer: string;
     author: string;
     text: string;
     /** A label group (see `labelGroup`), matched exactly. */
     label: string;
-    ai: WsiAnnotationAiFilter;
 }
 
 const EMPTY_LIST_FILTER: WsiAnnotationListFilter = {
@@ -684,7 +704,6 @@ const EMPTY_LIST_FILTER: WsiAnnotationListFilter = {
     author: '',
     text: '',
     label: '',
-    ai: 'all',
 };
 
 const UNLABELED = '(unlabeled)';
@@ -816,6 +835,10 @@ function describeChange(entry: WsiUndoEntry, redo = false): string {
  */
 export const WSI_REVIEW_UNSUPPORTED_MESSAGE =
     "This annotation service cannot record reviews: only an AI annotation's creator can accept it or reject it, and Reject deletes it.";
+
+/** Why the review queue cannot open while Show or the layers hide them. */
+export const WSI_REVIEW_HIDDEN_MESSAGE =
+    'The unreviewed AI annotations are hidden: turn on "AI unreviewed" under Show, or show their layers.';
 
 /** Shown after a creator's accept or reject without the review route. */
 export const WSI_REVIEW_FALLBACK_NOTICE = {
@@ -1227,17 +1250,16 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
      */
     @observable soloLayer: string | null = null;
     private hiddenBeforeSolo: Set<string> | null = null;
-    /** Hides AI annotations no one has reviewed, on the slide and list. */
-    @observable hideUnreviewedAi = false;
     /**
-     * Which origins show on the slide and in the list (see
-     * `annotationOrigin`). For this visit only, like hiding all.
+     * Which kinds show (see `annotationKind`): with the layers' eyes and
+     * solo, this decides what is drawn on the slide, listed, counted,
+     * reviewed and exported as shown. For this visit only, like hiding all,
+     * so a slide never opens looking empty.
      */
-    @observable.ref shownOrigins: Record<WsiAnnotationOrigin, boolean> = {
-        mine: true,
-        others: true,
-        ai: true,
-    };
+    @observable.ref shownKinds: Record<
+        WsiAnnotationShowKind,
+        boolean
+    > = ALL_KINDS_SHOWN;
     @observable.ref listFilter: WsiAnnotationListFilter = EMPTY_LIST_FILTER;
     /**
      * The label new annotations get. Empty: an auto-label from the active
@@ -1662,12 +1684,9 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
             this.soloLayer = null;
             this.hiddenBeforeSolo = null;
         }
-        if (this.hideUnreviewedAi && isUnreviewedAi(annotation.provenance)) {
-            this.hideUnreviewedAi = false;
-        }
-        const origin = this.annotationOrigin(annotation);
-        if (!this.shownOrigins[origin]) {
-            this.shownOrigins = { ...this.shownOrigins, [origin]: true };
+        const kind = this.annotationKind(annotation);
+        if (!this.shownKinds[kind]) {
+            this.shownKinds = { ...this.shownKinds, [kind]: true };
         }
         if (this.hideAll) this.toggleHideAll();
         this.applyLayerFilter();
@@ -2488,14 +2507,14 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
         return this.shownAnnotations.length;
     }
 
-    /** The annotations drawn on the slide: visible layers, and filters. */
+    /** The annotations drawn on the slide: shown layers and Show. */
     @computed get shownAnnotations(): WsiAnnotation[] {
         return this.annotations.filter(annotation => this.isShown(annotation));
     }
 
     /** The annotations the list shows: those on the slide, filtered. */
     @computed get listedAnnotations(): WsiAnnotation[] {
-        const { layer, author, text, label, ai } = this.listFilter;
+        const { layer, author, text, label } = this.listFilter;
         const needle = text.trim().toLowerCase();
         return this.shownAnnotations.filter(annotation => {
             if (layer && (annotation.layerName || DEFAULT_LAYER) !== layer) {
@@ -2518,14 +2537,31 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
             ) {
                 return false;
             }
-            const isAi = isAiProvenance(annotation.provenance);
-            if (ai === 'ai' && !isAi) return false;
-            if (ai === 'human' && isAi) return false;
-            if (ai === 'unreviewed' && !isUnreviewedAi(annotation.provenance)) {
-                return false;
-            }
             return true;
         });
+    }
+
+    /**
+     * How many of the slide's annotations the list leaves out: hidden by a
+     * layer's eye or solo, by Show, or by the list's filters.
+     */
+    @computed get hiddenByFilters(): number {
+        return this.annotations.length - this.listedAnnotations.length;
+    }
+
+    /**
+     * Shows everything again: every layer (ending a solo), every kind under
+     * Show, no list filter, and the annotations on the slide (H).
+     */
+    @action.bound
+    showEverything() {
+        this.soloLayer = null;
+        this.hiddenBeforeSolo = null;
+        this.hiddenLayerNames = new Set();
+        this.shownKinds = ALL_KINDS_SHOWN;
+        this.listFilter = EMPTY_LIST_FILTER;
+        if (this.hideAll) this.toggleHideAll();
+        this.applyLayerFilter();
     }
 
     /** The creators of the slide's annotations, sorted. */
@@ -3107,9 +3143,14 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
         // The annotation under review shows whatever hides the others.
         if (annotation.id === this.reviewQueue?.currentId) return true;
         return (
-            !this.hiddenLayerNames.has(annotation.layerName || DEFAULT_LAYER) &&
-            !(this.hideUnreviewedAi && isUnreviewedAi(annotation.provenance)) &&
-            this.shownOrigins[this.annotationOrigin(annotation)]
+            this.onShownLayer(annotation) &&
+            this.shownKinds[this.annotationKind(annotation)]
+        );
+    }
+
+    private onShownLayer(annotation: WsiAnnotation): boolean {
+        return !this.hiddenLayerNames.has(
+            annotation.layerName || DEFAULT_LAYER
         );
     }
 
@@ -3127,19 +3168,48 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
             : 'mine';
     }
 
-    /** The slide's annotations per origin (see `annotationOrigin`). */
-    @computed get originCounts(): Record<WsiAnnotationOrigin, number> {
-        const counts = { mine: 0, others: 0, ai: 0 };
+    /**
+     * The Show kind of `annotation`: AI ones by their review, the rest by
+     * origin (see `annotationOrigin`).
+     */
+    annotationKind(annotation: WsiAnnotation): WsiAnnotationShowKind {
+        const origin = this.annotationOrigin(annotation);
+        if (origin !== 'ai') return origin;
+        return isUnreviewedAi(annotation.provenance)
+            ? 'aiUnreviewed'
+            : 'aiAccepted';
+    }
+
+    /**
+     * The annotations of each Show kind on the shown layers, so the counts
+     * of the kinds shown add up to what the slide shows.
+     */
+    @computed get kindCounts(): Record<WsiAnnotationShowKind, number> {
+        const counts = { mine: 0, others: 0, aiUnreviewed: 0, aiAccepted: 0 };
         this.annotations.forEach(annotation => {
-            counts[this.annotationOrigin(annotation)] += 1;
+            if (this.onShownLayer(annotation)) {
+                counts[this.annotationKind(annotation)] += 1;
+            }
         });
         return counts;
     }
 
-    /** Shows or hides the annotations of one origin, on the slide and list. */
+    /** The Show kinds offered: no "Others" while the user is unknown. */
+    @computed get showKinds(): WsiAnnotationShowKind[] {
+        return WSI_SHOW_KINDS.filter(
+            kind => kind !== 'others' || !!this.currentUser
+        );
+    }
+
+    /** Whether Show hides any kind. */
+    @computed get showFiltered(): boolean {
+        return this.showKinds.some(kind => !this.shownKinds[kind]);
+    }
+
+    /** Shows or hides one kind, on the slide, the list and the counts. */
     @action.bound
-    setOriginShown(origin: WsiAnnotationOrigin, shown: boolean) {
-        this.shownOrigins = { ...this.shownOrigins, [origin]: shown };
+    setKindShown(kind: WsiAnnotationShowKind, shown: boolean) {
+        this.shownKinds = { ...this.shownKinds, [kind]: shown };
         if (!shown) {
             this.annotorious?.cancelSelected?.();
             this.annotationTooltip = null;
@@ -4377,18 +4447,14 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
         });
     }
 
-    @action.bound
-    toggleHideUnreviewedAi() {
-        this.hideUnreviewedAi = !this.hideUnreviewedAi;
-        if (this.hideUnreviewedAi) this.annotorious?.cancelSelected?.();
-        this.applyLayerFilter();
-    }
-
     // ---- AI review queue ----
 
-    /** Unreviewed AI annotations the user may review now. */
+    /**
+     * Unreviewed AI annotations the user may review now, of those shown
+     * (layers and Show): the review queue holds these.
+     */
     @computed get reviewableAi(): WsiAnnotation[] {
-        return this.annotations.filter(annotation =>
+        return this.shownAnnotations.filter(annotation =>
             this.canReview(annotation)
         );
     }
@@ -4405,8 +4471,11 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
         if (!this.unreviewedAiCount) {
             return 'No AI annotations are waiting for review.';
         }
-        if (!this.reviewableAi.length) return WSI_REVIEW_UNSUPPORTED_MESSAGE;
-        return null;
+        if (this.reviewableAi.length) return null;
+        if (!this.annotations.some(annotation => this.canReview(annotation))) {
+            return WSI_REVIEW_UNSUPPORTED_MESSAGE;
+        }
+        return WSI_REVIEW_HIDDEN_MESSAGE;
     }
 
     /** The queue's annotations the user can still review, in queue order. */
