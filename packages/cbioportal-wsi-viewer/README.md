@@ -148,7 +148,7 @@ The toolbar over the slide starts with only **Annotate**, **Display** (an eye) a
 | Control | Contents |
 | --- | --- |
 | **Select** (V) | Pan, and click a shape to select it; the user's own shapes can then be moved or reshaped |
-| **Shape** (R) | Rectangle, ellipse, circle or HPF field. The button draws with the last one picked; the arrow next to it opens the menu |
+| **Shape** | Rectangle (R), ellipse, circle or HPF field. The button draws with the last one picked; the arrow next to it opens the menu. R is always the rectangle |
 | **Line** (L) | A line, with its length shown while drawing |
 | **Measure** (M) | A quick ruler that is never saved (see Quick ruler) |
 | **Outline** | Polygon (P), freehand (F), brush (B), smart brush (Shift+B) or magic wand (W); like Shape, the button reuses the last one |
@@ -157,7 +157,7 @@ The toolbar over the slide starts with only **Annotate**, **Display** (an eye) a
 | **Undo**, **Redo** | See Editing and undo |
 | Save status | "Saved", "Saving… N" or "N not saved" with **Retry** (see below) |
 
-The active tool's options show in a strip just under the toolbar's left end: the brush width while the brush or smart brush is on, the tolerance while the magic wand or smart brush is on, the field area with the HPF tool, and the point count with the Point tool. The strip is out of the toolbar's layout, so the tools, Drawing as and the rest never move as tools change; it is a labelled group ("Brush options") that follows the tools in the arrow-key order. The save status keeps its width while Annotate is on (and counts use tabular figures), so the controls after it stay put too. A drawing tool stays on after each shape, so shapes can be drawn one after another without picking the tool again; the toolbar keeps it highlighted. It stays on until Esc, Select (V), clicking the active tool again, or picking another tool. Esc first drops a shape being drawn (a drag, a stroke, or a polygon's vertices so far) and keeps the tool; with nothing being drawn it goes back to Select; with Select it clears the selection. A polygon ends with a double-click or a click on its first vertex, and the next click starts a new one. Each new shape gets the next auto label. Shift+click and Shift+drag select only with Select. Single-key shortcuts work only while Annotate is on and the focus is not in a text field or menu; while Annotate is on, "." picks the Point tool instead of toggling the details sidebar, and OpenSeadragon's R (rotate), F (flip) and W (pan up) keys are off (the arrow keys still pan). **⋯** holds **Review AI annotations** (see Reviewing AI annotations), the sharing of new annotations (Shared or Private), **Export** (all annotations, or those on visible layers), **Import…**, and a list of the keyboard shortcuts.
+The active tool's options show in a strip just under the toolbar's left end: the brush width while the brush or smart brush is on, the tolerance while the magic wand or smart brush is on, the field area with the HPF tool, and the point count with the Point tool. The strip is out of the toolbar's layout, so the tools, Drawing as and the rest never move as tools change; it is a labelled group ("Brush options") that follows the tools in the arrow-key order. The save status keeps its width while Annotate is on (and counts use tabular figures), so the controls after it stay put too. A drawing tool stays on after each shape, so shapes can be drawn one after another without picking the tool again; the toolbar keeps it highlighted. It stays on until Esc, Select (V), clicking the active tool again, or picking another tool. Esc first drops a shape being drawn (a drag, a stroke, or a polygon's vertices so far) and keeps the tool; with nothing being drawn it goes back to Select; with Select it clears the selection. A polygon ends with a double-click or a click on its first vertex, and the next click starts a new one. Each new shape gets the next auto label. Shift+click and Shift+drag select only with Select. Single-key shortcuts work only while Annotate is on and the focus is not in a text field or menu. "." has one meaning at a time: while Annotate is on it picks the Point tool, while the review card is open it does nothing, and otherwise it shows or hides the details sidebar (whose button always does). OpenSeadragon's R (rotate), F (flip) and W (pan up) keys are off, Annotate on or off, so a stray key never turns or flips the slide (the arrow keys still pan). **⋯** holds **Review AI annotations** (see Reviewing AI annotations), the sharing of new annotations (Shared or Private), **Export** (all annotations, or those on visible layers), **Import…**, and a list of the keyboard shortcuts.
 
 The **save status**, before the Display eye, says whether changes are saved: **Saving… N** while N annotations, comments or notes are being sent or wait to be sent (dropped points not yet sent, and the items of each write request not yet answered: a batch counts its items), **N not saved** with **Retry** for dropped points the service refused (Retry sends them again, as the Annotations section's Retry does), and **Saved** once a change on this slide was saved. "Saved" shows only while Annotate is on; saving and not saved show either way. It is a `role="status"` region that stays on the page, so screen readers announce each change, and its tooltip says more. Failed edits, deletes and reviews reload the slide and say so in the Annotations section instead, since the slide then shows what is stored.
 
@@ -185,12 +185,12 @@ Each row under **Layers** has a solo button (a circle, filled when on) that show
 
 #### Keyboard shortcuts
 
-Keys do nothing while the focus is in a text field (a slider, such as the tolerance, is not one). On a Mac, ⌘ works for Ctrl. The ⋯ menu's **Keyboard shortcuts** lists the same.
+Keys do nothing while the focus is in a text field (a slider, such as the tolerance, a checkbox or a radio button is not one). On a Mac, ⌘ works for Ctrl. The ⋯ menu's **Keyboard shortcuts** lists the same.
 
 | Key | Does | When |
 | --- | --- | --- |
 | V | Select | Annotate on |
-| R | Shape (the menu's last: rectangle, ellipse, circle or HPF field) | Annotate on, review card closed |
+| R | Rectangle (ellipse, circle and HPF field are in the Shape menu) | Annotate on, review card closed |
 | L | Line | Annotate on |
 | P, F, B | Polygon, freehand, brush | Annotate on |
 | Shift+B | Smart brush | Annotate on |
@@ -198,7 +198,7 @@ Keys do nothing while the focus is in a text field (a slider, such as the tolera
 | Click; Shift+click; Alt+click | Outline the tissue of similar color; add it to the outline; cut it out (see Magic wand) | Magic wand on |
 | Drag up or down; scroll | Raise or lower the tolerance of the outline waiting (scroll does not zoom then) | Magic wand on, an outline waiting |
 | Enter or double-click; Esc; Ctrl+Z | Save the outline; discard it; take back its last click | Magic wand on, an outline waiting |
-| . | Point (otherwise "." shows or hides the details sidebar) | Annotate on |
+| . | Point; with Annotate off and no review card, shows or hides the details sidebar | Annotate on |
 | M | Measure: a quick ruler, not saved | Annotate on |
 | Esc | Drop the shape being drawn, else clear the ruler, else back to Select | A drawing tool is on, or a ruler shows |
 | H | Hide or show all annotations on the slide | Always |

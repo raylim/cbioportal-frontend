@@ -209,6 +209,39 @@ describe('WSIViewer hideable panels', () => {
         expect(byTestId(viewer, 'wsi-metadata-rail')).toHaveLength(1);
     });
 
+    it('gives . to the Point tool while Annotate is on, and to nothing while reviewing', () => {
+        const viewer = makeViewer({
+            annotationApiUrl: 'https://tiles.example',
+        });
+        const key = (k: string) =>
+            act(() =>
+                viewer.handlePanelKey({ key: k, target: document.body } as any)
+            );
+        const annotations = viewer.annotationController;
+        jest.spyOn(annotations, 'canEdit', 'get').mockReturnValue(true);
+        act(() => annotations.setAnnotating(true));
+        key('.');
+        expect(byTestId(viewer, 'wsi-metadata-rail')).toHaveLength(0);
+        // Annotate off, the review card open: still not the sidebar.
+        act(() => annotations.setAnnotating(false));
+        action(() => {
+            annotations.reviewQueue = {
+                ids: ['a'],
+                currentId: 'a',
+                busy: false,
+                message: null,
+            };
+        })();
+        key('.');
+        expect(byTestId(viewer, 'wsi-metadata-rail')).toHaveLength(0);
+        // Closed, "." shows or hides the details again.
+        action(() => {
+            annotations.reviewQueue = null;
+        })();
+        key('.');
+        expect(byTestId(viewer, 'wsi-metadata-rail')).toHaveLength(1);
+    });
+
     it('ignores the panel keys while the host hides the viewer', () => {
         const viewer = makeViewer({ hidden: true });
         act(() =>

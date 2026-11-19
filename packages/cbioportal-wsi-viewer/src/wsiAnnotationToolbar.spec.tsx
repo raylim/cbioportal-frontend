@@ -146,7 +146,7 @@ describe('WsiAnnotationToolbar', () => {
         expect(controller.activeTool).toBe('circle');
         expect(screen.queryByRole('menu')).toBeNull();
         expect(document.activeElement).toBe(caret);
-        expect(main.getAttribute('aria-label')).toBe('Shape: Circle (R)');
+        expect(main.getAttribute('aria-label')).toBe('Shape: Circle');
         expect(main.getAttribute('aria-pressed')).toBe('true');
         expect(main.getAttribute('title')).toContain('Esc for Select');
 

@@ -5,6 +5,7 @@
 import {
     batchItemErrors,
     chunkBySize,
+    isTypingTarget,
     labelGroup,
     labelTerm,
     POINT_SAVE_DELAY_MS,
@@ -4235,9 +4236,9 @@ describe('WsiAnnotationController', () => {
             controller.setTool('circle');
             press('v');
             expect(controller.activeTool).toBeNull();
-            // R reuses the Shape menu's last tool.
+            // R is always the rectangle, whatever the Shape menu last was.
             press('r');
-            expect(controller.activeTool).toBe('circle');
+            expect(controller.activeTool).toBe('rectangle');
             press('Escape');
             expect(controller.activeTool).toBeNull();
             press('p');
@@ -4258,9 +4259,23 @@ describe('WsiAnnotationController', () => {
             );
             expect(controller.activeTool).toBe('point');
             input.remove();
+            // A checkbox or radio takes no text: the keys still apply.
+            ['checkbox', 'radio'].forEach(type => {
+                const box = document.createElement('input');
+                box.type = type;
+                document.body.appendChild(box);
+                expect(isTypingTarget(box)).toBe(false);
+                press('v');
+                box.dispatchEvent(
+                    new KeyboardEvent('keydown', { key: 'l', bubbles: true })
+                );
+                expect(controller.activeTool).toBe('line');
+                box.remove();
+            });
+            expect(isTypingTarget(input)).toBe(true);
         });
 
-        it("keeps OpenSeadragon's R and F from rotating or flipping while Annotate is on", () => {
+        it("keeps OpenSeadragon's R, F and W from rotating, flipping or panning, Annotate on or off", () => {
             const { controller, handlers } = attached();
             const canvasKey = (key: string) => {
                 const event = {
@@ -4270,7 +4285,13 @@ describe('WsiAnnotationController', () => {
                 handlers['canvas-key'](event);
                 return event.preventDefaultAction;
             };
-            expect(canvasKey('r')).toBe(false);
+            // Annotate off: a stray R, F or W must not turn the slide.
+            expect(canvasKey('r')).toBe(true);
+            expect(canvasKey('R')).toBe(true);
+            expect(canvasKey('f')).toBe(true);
+            expect(canvasKey('w')).toBe(true);
+            expect(canvasKey('s')).toBe(false);
+            expect(canvasKey('ArrowUp')).toBe(false);
             controller.setAnnotating(true);
             expect(canvasKey('r')).toBe(true);
             expect(canvasKey('f')).toBe(true);

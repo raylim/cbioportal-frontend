@@ -61,17 +61,17 @@ export const TOOL_INFO: Record<DrawingTool, ToolInfo> = {
     },
     ellipse: {
         label: 'Ellipse',
-        shortcut: 'R',
+        shortcut: '',
         hint: 'click and drag on the slide',
     },
     circle: {
         label: 'Circle',
-        shortcut: 'R',
+        shortcut: '',
         hint: 'click and drag a box to fit it in',
     },
     hpf: {
         label: 'HPF field',
-        shortcut: 'R',
+        shortcut: '',
         hint:
             'click to place a high-power field of the chosen area, labelled HPF 1, HPF 2, …',
     },
@@ -136,7 +136,10 @@ export const SHORTCUT_HELP: ShortcutSection[] = [
             'While Annotate is on; a drawing tool stays on, shape after shape, until Esc, V or another tool',
         keys: [
             [['V'], 'Select: pan, and select or edit shapes'],
-            [['R'], 'Shape: the last of rectangle, ellipse, circle, HPF field'],
+            [
+                ['R'],
+                'Rectangle (ellipse, circle and HPF field: the Shape menu)',
+            ],
             [['L'], 'Line'],
             [['M'], 'Measure: a quick ruler, not saved'],
             [['P'], 'Polygon'],
@@ -497,9 +500,14 @@ function MenuItem({
     );
 }
 
-function toolTitle(tool: DrawingTool, shortcut = TOOL_INFO[tool].shortcut) {
+/** "Rectangle (R)", or the name alone for a tool without a key. */
+function toolName(tool: DrawingTool, shortcut = TOOL_INFO[tool].shortcut) {
     const info = TOOL_INFO[tool];
-    return `${info.label} (${shortcut}): ${info.hint}`;
+    return shortcut ? `${info.label} (${shortcut})` : info.label;
+}
+
+function toolTitle(tool: DrawingTool, shortcut = TOOL_INFO[tool].shortcut) {
+    return `${toolName(tool, shortcut)}: ${TOOL_INFO[tool].hint}`;
 }
 
 /** A drawing tool's button: on, it goes back to Select. */
@@ -579,7 +587,7 @@ const ToolMenuButton = observer(
                     type="button"
                     data-toolbar-item
                     data-testid={`annotation-tool-${group}`}
-                    aria-label={`${label}: ${TOOL_INFO[current].label} (${shortcut})`}
+                    aria-label={`${label}: ${toolName(current, shortcut)}`}
                     title={
                         active
                             ? `${TOOL_INFO[current].label} is on: click or press Esc for Select`
@@ -2149,7 +2157,6 @@ export const WsiAnnotationToolbar = observer(
                                 label="Shape"
                                 tools={SHAPE_TOOLS}
                                 current={controller.shapeToolNow}
-                                groupShortcut="R"
                                 unavailable={tool =>
                                     tool === 'hpf' && !controller.mpp
                                         ? 'Needs the slide scale (µm per pixel)'

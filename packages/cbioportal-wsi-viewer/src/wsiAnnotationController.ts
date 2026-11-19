@@ -139,14 +139,15 @@ function isOutlineTool(tool: WsiAnnotationTool): tool is WsiOutlineTool {
 
 /**
  * The toolbar's single-key shortcuts while Annotate is on: `select` is the
- * Select tool (no drawing tool), `shape` the Shape menu's last tool.
+ * Select tool (no drawing tool). R is always the rectangle (never the
+ * Shape menu's last tool, such as an HPF field).
  */
 export const WSI_TOOL_SHORTCUTS: Record<
     string,
-    'select' | 'shape' | WsiPointerAnnotationTool
+    'select' | WsiPointerAnnotationTool
 > = {
     v: 'select',
-    r: 'shape',
+    r: 'rectangle',
     l: 'line',
     m: 'measure',
     p: 'polygon',
@@ -303,14 +304,25 @@ export const WSI_LINKED_ANNOTATION_MISSING =
 /** Hides or shows all annotations on the slide, Annotate on or off. */
 export const WSI_HIDE_ALL_KEY = 'h';
 
+/** Inputs that take no text: the shortcuts still apply in them. */
+const NON_TEXT_INPUTS = [
+    'range',
+    'checkbox',
+    'radio',
+    'button',
+    'submit',
+    'reset',
+    'color',
+];
+
 /** Whether `target` is a field the user types in. */
 export function isTypingTarget(target: EventTarget | null): boolean {
     const element = target as HTMLElement | null;
-    // A slider takes no text: Enter, Esc and the shortcuts still apply
-    // after the tolerance or fill opacity is dragged.
+    // A slider or a checkbox takes no text: Enter, Esc and the shortcuts
+    // still apply after the tolerance is dragged or a row is ticked.
     if (
         element?.tagName === 'INPUT' &&
-        (element as HTMLInputElement).type === 'range'
+        NON_TEXT_INPUTS.includes((element as HTMLInputElement).type)
     ) {
         return false;
     }
@@ -886,6 +898,9 @@ export function circleOverlap(
             )
     );
 }
+
+/** OpenSeadragon keys kept off: rotate (r, R), flip (f) and pan up (w, W). */
+const OSD_KEYS_OFF = ['r', 'R', 'f', 'F', 'w', 'W'];
 
 /** Threads loaded at most to check whose comments a delete would remove. */
 const THREAD_CHECK_LIMIT = 20;
@@ -8413,7 +8428,7 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
         if (!shortcut) return;
         event.preventDefault();
         if (shortcut === 'select') this.cancelDrawing();
-        else this.setTool(shortcut === 'shape' ? this.shapeToolNow : shortcut);
+        else this.setTool(shortcut);
     };
 
     /**
@@ -8427,8 +8442,11 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
     }
 
     /**
-     * Keeps OpenSeadragon's own keys (R rotates, F flips) from acting on a
-     * key that picks a tool while the toolbar's shortcuts apply.
+     * Keeps OpenSeadragon's own keys from acting on a key that picks a
+     * tool while the toolbar's shortcuts apply, and its R (rotate), F
+     * (flip) and W (pan up) keys off always: Annotate off they are the
+     * tool keys a user expects, and a slide turned by a stray key turns
+     * the annotations' frame of reference. The arrow keys still pan.
      */
     private readonly handleCanvasKey = (event: {
         originalEvent: KeyboardEvent;
@@ -8437,6 +8455,10 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
         const original = event.originalEvent;
         const plain =
             !original.ctrlKey && !original.metaKey && !original.altKey;
+        if (OSD_KEYS_OFF.includes(original.key)) {
+            event.preventDefaultAction = true;
+            return;
+        }
         // OpenSeadragon pans with A, S and the arrow keys.
         if (
             this.reviewQueue &&
