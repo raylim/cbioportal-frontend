@@ -169,6 +169,50 @@ describe('Comment threads', () => {
         );
     });
 
+    it("pages a long thread with Show more, and shows the service's cap", async () => {
+        const { controller, service } = await setup({ page: 2, cap: 4 });
+        service.comments.set('a1', [
+            comment('c1', 'other', 'One'),
+            comment('c2', 'me', 'Two'),
+            comment('c3', 'other', 'Three'),
+        ]);
+        await open();
+        const bodies = () =>
+            Array.from(
+                document.querySelectorAll(
+                    '[data-testid^="annotation-comment-body-"]'
+                )
+            ).map(item => item.textContent);
+        // The first page, oldest first, and how many more there are.
+        expect(bodies()).toEqual(['One', 'Two']);
+        const more = screen.getByTestId('annotation-comments-more-a1');
+        expect(more.textContent).toBe('Show more comments (1 more)');
+        expect(
+            service.calls[service.calls.length - 1].query.get('offset')
+        ).toBeNull();
+        await act(async () => {
+            fireEvent.click(more);
+        });
+        await flush();
+        expect(
+            service.calls[service.calls.length - 1].query.get('offset')
+        ).toBe('2');
+        expect(bodies()).toEqual(['One', 'Two', 'Three']);
+        expect(screen.queryByTestId('annotation-comments-more-a1')).toBeNull();
+        expect(controller.threads.get('a1')!.total).toBe(3);
+        // The fourth is the last the service takes; the fifth is refused
+        // with its message.
+        await act(async () => {
+            expect(await controller.addComment('a1', 'Four')).toBe(true);
+        });
+        await act(async () => {
+            expect(await controller.addComment('a1', 'Five')).toBe(false);
+        });
+        expect(controller.threads.get('a1')!.error).toBe(
+            'An annotation holds at most 4 comments.'
+        );
+    });
+
     it("reports another user's comment refused, and a deleted annotation", async () => {
         const { controller, service } = await setup();
         await open();

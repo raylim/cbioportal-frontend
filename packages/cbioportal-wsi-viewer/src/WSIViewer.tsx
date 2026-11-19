@@ -1732,7 +1732,7 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
                             }
                             slideNotesTitle={
                                 sideAnnotations.slideNotes.route
-                                    ? `Slide notes (${sideAnnotations.slideNotes.notes.length})`
+                                    ? `Slide notes (${sideAnnotations.slideNotes.count})`
                                     : 'Slide notes'
                             }
                             clinicalRows={this.selectedClinicalRows}

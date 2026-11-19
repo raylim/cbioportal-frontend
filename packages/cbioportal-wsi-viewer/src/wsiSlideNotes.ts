@@ -1,4 +1,5 @@
 import { action, computed, makeObservable, observable } from 'mobx';
+import { readPage } from './wsiServiceRequest';
 
 /** A note on a slide, with tags: attached to the slide, not to a shape. */
 export interface WsiSlideNote {
@@ -128,14 +129,32 @@ export class WsiSlideNotes {
     private loadedFor: string | null = null;
     /** Bumped when the notes are forgotten, so a shown section loads again. */
     @observable resets = 0;
+    /**
+     * On a paged service: where the next page of notes starts ("Show
+     * more"), null when all are loaded; how many notes there are in all;
+     * and the tags over all of them, not only those loaded.
+     */
+    @observable nextOffset: number | null = null;
+    @observable total: number | null = null;
+    @observable.ref private allTags: WsiTagCount[] | null = null;
 
     constructor(private readonly host: WsiSlideNotesHost) {
         makeObservable(this);
     }
 
-    /** Each tag on the slide's notes, most used first. */
+    /**
+     * Each tag on the slide's notes, most used first: over all of them (the
+     * service's summary) while some are not loaded yet, else counted here.
+     */
     @computed get tags(): WsiTagCount[] {
-        return tagSummary(this.notes);
+        return this.nextOffset !== null && this.allTags
+            ? this.allTags
+            : tagSummary(this.notes);
+    }
+
+    /** How many notes the slide has (those the user may see). */
+    @computed get count(): number {
+        return Math.max(this.total ?? 0, this.notes.length);
     }
 
     /** The notes shown, under the tag filter. */
@@ -165,6 +184,9 @@ export class WsiSlideNotes {
         this.busy = false;
         this.loading = false;
         this.tagFilter = null;
+        this.nextOffset = null;
+        this.total = null;
+        this.allTags = null;
         if (routeUnknown) this.route = null;
     }
 
@@ -247,7 +269,9 @@ export class WsiSlideNotes {
             this.busy = false;
             this.error =
                 response.status === 422
-                    ? 'A note needs text or tags: up to 4,000 characters and 20 tags of 1–40 letters, digits, spaces or _-.:/+#.'
+                    ? typeof detail === 'string'
+                        ? detail
+                        : 'A note needs text or tags: up to 4,000 characters and 20 tags of 1–40 letters, digits, spaces or _-.:/+#.'
                     : `The slide notes could not be saved or loaded (${response.status}).`;
         })();
         return true;
@@ -284,12 +308,25 @@ export class WsiSlideNotes {
             if (await this.refused(response, context)) return;
             const raw = await response.json();
             if (!this.host.isCurrentContext(context)) return;
+            const page = readPage<any>(raw, 'notes');
             action(() => {
                 this.route = true;
                 this.loading = false;
-                this.notes = Array.isArray(raw?.notes)
-                    ? raw.notes.map((item: any) => this.fromApi(item))
-                    : [];
+                this.notes = page.items.map(item => this.fromApi(item));
+                this.nextOffset = page.nextOffset;
+                this.total = page.total;
+                this.allTags = Array.isArray(raw?.tags)
+                    ? raw.tags
+                          .filter(
+                              (item: any) =>
+                                  typeof item?.tag === 'string' &&
+                                  typeof item?.count === 'number'
+                          )
+                          .map((item: any) => ({
+                              tag: item.tag,
+                              count: item.count,
+                          }))
+                    : null;
                 if (
                     this.tagFilter &&
                     !this.tags.some(t => t.tag === this.tagFilter)
@@ -307,6 +344,56 @@ export class WsiSlideNotes {
             action(() => {
                 this.loading = false;
                 this.error = 'The slide notes could not be loaded.';
+            })();
+        }
+    }
+
+    /**
+     * Loads the next page of notes ("Show more"), after those loaded; a
+     * note already shown is not repeated.
+     */
+    @action.bound
+    async loadMore(): Promise<void> {
+        const slideKey = this.slideKey;
+        const offset = this.nextOffset;
+        if (!slideKey || offset === null || this.loading) return;
+        const context = this.host.requestContext();
+        this.loading = true;
+        try {
+            const response = await this.host.serviceRequest(
+                `/slide-notes?slide_id=${encodeURIComponent(
+                    slideKey
+                )}&offset=${offset}`,
+                {},
+                context.signal
+            );
+            if (!this.host.isCurrentContext(context)) return;
+            if (await this.refused(response, context)) return;
+            const raw = await response.json();
+            if (!this.host.isCurrentContext(context)) return;
+            const page = readPage<any>(raw, 'notes');
+            action(() => {
+                this.loading = false;
+                const known = new Set(this.notes.map(note => note.id));
+                this.notes = [
+                    ...this.notes,
+                    ...page.items
+                        .map(item => this.fromApi(item))
+                        .filter(note => !known.has(note.id)),
+                ];
+                this.nextOffset = page.nextOffset;
+                if (page.total !== null) this.total = page.total;
+            })();
+        } catch (error) {
+            if (
+                !this.host.isCurrentContext(context) ||
+                (error as Error)?.name === 'AbortError'
+            ) {
+                return;
+            }
+            action(() => {
+                this.loading = false;
+                this.error = 'More notes could not be loaded.';
             })();
         }
     }
@@ -363,6 +450,7 @@ export class WsiSlideNotes {
         if (!saved) return false;
         action(() => {
             this.notes = [...this.notes, this.fromApi(saved)];
+            if (this.total !== null) this.total += 1;
         })();
         return true;
     }
@@ -409,6 +497,11 @@ export class WsiSlideNotes {
         if (done === undefined) return false;
         action(() => {
             this.notes = this.notes.filter(item => item.id !== note.id);
+            if (this.total !== null) this.total = Math.max(0, this.total - 1);
+            // A deleted note shifts the later pages back by one.
+            if (this.nextOffset !== null) {
+                this.nextOffset = Math.max(0, this.nextOffset - 1);
+            }
             if (
                 this.tagFilter &&
                 !this.tags.some(t => t.tag === this.tagFilter)

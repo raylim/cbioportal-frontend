@@ -7,6 +7,7 @@ import { loadAnnotorious } from './wsiAnnotoriousLoader';
 import { WsiAnnotationPanel } from './wsiAnnotationControls';
 import { WsiAnnotationBulkBar } from './wsiAnnotationBulkBar';
 import { drawAnnotationScene } from './wsiAnnotationSnapshot';
+import { WSI_SHAPE_REFUSED } from './wsiAnnotationController';
 import {
     parseAnnotationShape,
     regionShape,
@@ -422,6 +423,36 @@ describe('Shape editing: holes, merge, subtract, intersect, cut, split', () => {
             /^The split was not saved \(Annotation changed elsewhere; reloaded latest data\)\. What was saved of it was taken back/
         );
         expect(controller.canUndo).toBe(false);
+    });
+
+    it("says a shape the service refuses can't be saved, and shows it as stored", async () => {
+        const harness = await setup(
+            [serviceRow('mine', squareSvg(0, 0, 300), { label: 'Tumor' })],
+            {
+                override: request =>
+                    request.method === 'PUT'
+                        ? {
+                              status: 422,
+                              body: {
+                                  detail: [
+                                      {
+                                          loc: ['body', 'target', 'selector'],
+                                          msg: 'unsupported SVG',
+                                      },
+                                  ],
+                              },
+                          }
+                        : undefined,
+            }
+        );
+        const { controller } = harness;
+        controller.select(['mine']);
+        controller.runShapeOp('cut');
+        controller.setTool('rectangle');
+        box(harness, [40, 40], [60, 60]);
+        await flush(6);
+        expect(controller.error).toBe(WSI_SHAPE_REFUSED);
+        expect(area(controller, 'mine')).toBe(90000);
     });
 
     it('applies two cuts drawn back to back, each on the saved shape', async () => {

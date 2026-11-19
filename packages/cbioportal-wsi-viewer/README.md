@@ -120,16 +120,16 @@ annotations: {
 | `GET {apiUrl}/annotations?slide_id=…&studyId=…` | The slide's annotations in the authorized study |
 | `POST {apiUrl}/annotations?studyId=…` | Create one; the body names `slide_id` and `study_id` |
 | `POST {apiUrl}/annotations/batch?studyId=…` | Create 1–100 in one request, `{annotations: [...]}`; saved all or none |
-| `PUT {apiUrl}/annotations/{id}?studyId=…` | Update one, with its `version` (creator only) |
+| `PUT {apiUrl}/annotations/{id}?studyId=…` | Update one, with its `version` (creator only). A 409 (changed meanwhile) or 404 (deleted meanwhile) reloads the slide and says so. A 422 whose `loc` names `target` (a shape outside the service's selector rules) says "This shape can't be saved", as a create or batch item refused for its `target` does |
 | `POST {apiUrl}/annotations/{id}/review?studyId=…` | Accept or reject an AI annotation, with its `version` (any user of the study) |
 | `DELETE {apiUrl}/annotations/{id}?studyId=…` | Delete one (creator only) |
 | `POST {apiUrl}/annotations/batch-update?studyId=…` | Update 1–100, `{items: [{id, version, body, target, visible_to}]}`, all or none |
 | `POST {apiUrl}/annotations/batch-delete?studyId=…` | Delete 1–100, `{items: [{id, version}]}`, all or none |
 | `POST {apiUrl}/annotations/batch-review?studyId=…` | Review 1–100, `{items: [{id, version, decision}]}`, all or none |
-| `GET {apiUrl}/annotations/{id}/comments?studyId=…` | The annotation's comment thread, oldest first |
+| `GET {apiUrl}/annotations/{id}/comments?studyId=…[&offset=…]` | The annotation's comment thread, oldest first: a page `{annotation_id, comments, total, offset, limit, has_more, next_offset}` (100 by default), or the whole thread as an array from an older service |
 | `POST {apiUrl}/annotations/{id}/comments?studyId=…` | Add `{body}` (1–4,000 characters) |
 | `PUT` / `DELETE {apiUrl}/annotations/{id}/comments/{cid}?studyId=…` | Edit `{body}` or delete one's own comment |
-| `GET {apiUrl}/slide-notes?slide_id=…&studyId=…` | The slide's notes the user may see, `{slide_id, notes, tags: [{tag, count}]}` |
+| `GET {apiUrl}/slide-notes?slide_id=…&studyId=…[&offset=…]` | The slide's notes the user may see, `{slide_id, notes, tags: [{tag, count}]}`, paged by a newer service (`total`, `offset`, `limit`, `has_more`, `next_offset`; `tags` over all the notes) |
 | `POST {apiUrl}/slide-notes?studyId=…` | Add `{slide_id, study_id, text, tags, visible_to}` |
 | `PUT {apiUrl}/slide-notes/{id}?studyId=…` / `DELETE …/slide-notes/{id}?studyId=…&version=…` | Edit or delete one's own note, with its `version` |
 
@@ -295,13 +295,15 @@ The sidebar's **Slide notes** section, above Layers, holds notes on the open sli
 
 Users who can edit in the study add a note under the list: text (up to 4,000 characters; Ctrl/Cmd+Enter adds it), tags (Enter or a comma adds what was typed, Backspace in the empty field removes the last, × removes one; the field suggests the slide's tags; up to 20 tags of 1–40 letters, digits, spaces or `_ - . : / + #`, starting with a letter or digit, checked before sending, a repeat in another letter case dropped) and who sees it: **Shared with the study** or **Private (only you)**, starting from the ⋯ menu's default for new annotations. A note needs text or a tag. After adding, the text field empties and keeps the focus. Users edit (**Edit**, which focuses the text; Escape cancels and the focus returns to Edit) and delete (**Delete**, after a confirmation) only their own notes, each with its `version`; a 409 or a note gone meanwhile reloads the notes and says so.
 
-The notes load when the section first shows (a collapsed section loads nothing) and again on another slide or study. The section's title gives the count. On a service without slide notes (404 "Not Found" or 405 from `/slide-notes`) the section goes away for the session. The proxy's 401 and 403 give the usual sign-in or read-only state.
+The notes load when the section first shows (a collapsed section loads nothing) and again on another slide or study. The section's title gives the count (the service's `total` when it pages). A service that pages the notes sends the first 100: **Show more notes (N more)** loads the next page (a note already shown is not repeated), the tags above count all the notes, and a tag filter applies to the notes loaded. A service that holds at most so many notes per slide answers a new one with a 422 whose message is shown. On a service without slide notes (404 "Not Found" or 405 from `/slide-notes`) the section goes away for the session. The proxy's 401 and 403 give the usual sign-in or read-only state.
 
 #### Comment threads
 
 Each saved annotation has a comment thread for discussion, separate from its note (the note is the creator's own text in `body.comment`). The list row shows **Comments** with the thread's count (`comment_count` from the service) as a badge; it is a disclosure (`aria-expanded`, `aria-controls`) that loads the thread and shows it under the row, oldest first, each comment with its author, time and "(edited)" when changed. Users who can edit in the study add a comment in the field under it (**Comment**, or Ctrl/Cmd+Enter; 1–4,000 characters, with a count near the limit), and edit or delete their own (**Edit**, **Delete** after a confirmation); others' comments have no controls, and the service refuses them anyway. Opening the thread focuses the field; after a post the field empties and keeps the focus, and after a delete the focus goes to it. The click tooltip says "2 comments".
 
 Deleting an annotation deletes its thread, and an annotation Undo creates again is a new one, so its comments cannot come back. Deleting one with comments (its row's delete, the selection bar's Delete, a layer delete) or merging it away therefore asks first, naming how many comments and whether other users wrote some (the threads not loaded yet are loaded to tell, up to 20); Undo that creates it again says its comments could not be restored. Keeping them would need the service to restore a deleted annotation under its id (see Known gaps).
+
+A service that pages threads sends the first 100 comments, oldest first: **Show more comments (N more)** at the end of the thread loads the next page, and a new comment is added at the end. An older service answers the whole thread as an array, read the same way. A thread the service caps (its 422 with a message, e.g. at 1,000 comments) shows that message.
 
 The thread appears only on a service that has threads, known from the `comment_count` on the listed annotations. A 404 whose JSON `detail` is "Not Found", or a 405, from the thread route turns threads off for the session. The service's refusals show on the thread (`role="alert"`): another user's comment ("Only its author can change this comment."), and a comment deleted meanwhile (the thread reloads); an annotation gone or no longer shared (404 "Annotation not found") reloads the slide. A 401 or 403 from the proxy is the usual sign-in or read-only state.
 

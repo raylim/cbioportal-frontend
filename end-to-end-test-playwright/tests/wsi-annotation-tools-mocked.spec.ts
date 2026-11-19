@@ -178,6 +178,12 @@ async function gotoTissueView(page: Page, cx: number, cy: number, z: number) {
     });
 }
 
+/** Picks a shape operation from the selection bar's Edit shapes… menu. */
+async function pickShapeOp(page: Page, operation: string) {
+    await page.getByTestId('annotation-bulk-shape').click();
+    await page.getByTestId(`annotation-shape-op-${operation}`).click();
+}
+
 /** The wand's outline once it has settled; its data attributes. */
 async function settledOutline(page: Page) {
     const outline = page.getByTestId('annotation-tissue-outline');
@@ -520,7 +526,17 @@ if (process.env.PW_SUITE === 'wsi') {
                 page.getByTestId('accept-annotation-model-1')
             ).toHaveCount(0);
 
+            // Reject asks first, saying what it does.
+            const asked = new Promise<string>(resolve =>
+                page.once('dialog', dialog => {
+                    resolve(dialog.message());
+                    void dialog.accept();
+                })
+            );
             await page.getByTestId('reject-annotation-agent-1').click();
+            expect(await asked).toMatch(
+                /^Reject ".*"\? It is hidden for everyone; the service keeps it as a review record\. Reviews can't be undone\.$/
+            );
             await expect(
                 page.getByTestId('annotation-row-agent-1')
             ).toHaveCount(0);
@@ -602,14 +618,20 @@ if (process.env.PW_SUITE === 'wsi') {
                 page.getByTestId('annotation-focus-highlight')
             ).toBeVisible();
 
-            // S skips; A and R decide and move on.
+            // S skips; A accepts and X, confirmed, rejects; each moves on.
             await page.keyboard.press('s');
             await expect(label).toHaveText('Stroma');
             await page.keyboard.press('a');
             await expect(progress).toHaveText('1 of 3 reviewed');
             await expect(label).toHaveText('Necrosis');
-            // R rejects here; it does not pick the Shape tool.
+            // X asks first; R does nothing while reviewing.
             await page.keyboard.press('r');
+            await page.keyboard.press('x');
+            await expect(
+                page.getByTestId('annotation-review-reject')
+            ).toHaveText(/^Confirm reject/);
+            await expect(progress).toHaveText('1 of 3 reviewed');
+            await page.keyboard.press('x');
             await expect(progress).toHaveText('2 of 3 reviewed');
             await expect(
                 page.getByTestId('annotation-row-agent-c')
@@ -1218,15 +1240,10 @@ if (process.env.PW_SUITE === 'wsi') {
             await expect
                 .poll(async () => (await vertices())[0][0])
                 .toBeLessThan(x0 - 10);
-            let last = NaN;
-            await expect
-                .poll(async () => {
-                    const x = (await vertices())[0][0];
-                    const settled = x === last;
-                    last = x;
-                    return settled;
-                })
-                .toBe(true);
+            // Settled: OpenSeadragon's animation has finished.
+            await expect(
+                page.locator('[data-wsi-animating]').first()
+            ).toHaveAttribute('data-wsi-animating', 'false');
             const box = (await page
                 .locator('.openseadragon-container')
                 .first()
@@ -1640,7 +1657,7 @@ if (process.env.PW_SUITE === 'wsi') {
             await expect(
                 page.getByTestId('annotation-measurement-region')
             ).toHaveText('Area 2,500 µm² · Perimeter 200 µm');
-            await page.getByTestId('annotation-bulk-shape').selectOption('cut');
+            await pickShapeOp(page, 'cut');
             await expect(
                 page.getByTestId('annotation-shape-edit-hint')
             ).toContainText('Cut a hole: draw a shape inside "Tumor"');
@@ -1712,9 +1729,7 @@ if (process.env.PW_SUITE === 'wsi') {
             await startAnnotating(page);
             await page.getByTestId('annotation-select-a').check();
             await page.getByTestId('annotation-select-b').check();
-            await page
-                .getByTestId('annotation-bulk-shape')
-                .selectOption('merge');
+            await pickShapeOp(page, 'merge');
             await expect(
                 page.getByTestId('annotation-bulk-message')
             ).toHaveText('Merged 2 regions into "A".');
@@ -1736,8 +1751,7 @@ if (process.env.PW_SUITE === 'wsi') {
                 service.writes.map(write => [write.method, write.path])
             ).toEqual([
                 ['POST', '/wsi/annotations/batch'],
-                ['DELETE', '/wsi/annotations/a'],
-                ['DELETE', '/wsi/annotations/b'],
+                ['POST', '/wsi/annotations/batch-delete'],
             ]);
             await expect(page.getByTestId('annotation-bulk-count')).toHaveText(
                 '1 selected'
@@ -1779,9 +1793,7 @@ if (process.env.PW_SUITE === 'wsi') {
             await startAnnotating(page);
             await page.getByTestId('annotation-select-mine').check();
             await page.getByTestId('annotation-select-theirs').check();
-            await page
-                .getByTestId('annotation-bulk-shape')
-                .selectOption('merge');
+            await pickShapeOp(page, 'merge');
             await expect(
                 page.getByTestId('annotation-bulk-message')
             ).toHaveText(
@@ -1820,9 +1832,7 @@ if (process.env.PW_SUITE === 'wsi') {
                 maxX: 356,
                 maxY: 356,
             });
-            await page
-                .getByTestId('annotation-bulk-shape')
-                .selectOption('split');
+            await pickShapeOp(page, 'split');
             await expect(
                 page.getByTestId('annotation-tool-line')
             ).toHaveAttribute('aria-pressed', 'true');

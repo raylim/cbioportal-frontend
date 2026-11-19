@@ -51,6 +51,7 @@ import {
     WsiServiceAccessIssue,
     wsiServiceAccessIssue,
     wsiServiceFetch,
+    readPage,
 } from './wsiServiceRequest';
 import {
     AnnotoriousModule,
@@ -271,8 +272,16 @@ export interface WsiCommentThread {
     loading: boolean;
     /** A comment is being saved. */
     busy: boolean;
+    /** The comments loaded so far, oldest first. */
     comments: WsiComment[];
     error: string | null;
+    /**
+     * Where the next page starts, on a paged service with more to load
+     * ("Show more"); null when all are loaded.
+     */
+    nextOffset?: number | null;
+    /** The thread's comments in all, on a paged service. */
+    total?: number;
 }
 
 /** The longest comment the service takes, in characters. */
@@ -1013,6 +1022,22 @@ export function chunkBySize(
  * The batch items a 422 names, by position in the request, with the first
  * message for each; empty when the refusal names no item.
  */
+/** Said when the service refuses a shape's outline (its selector rules). */
+export const WSI_SHAPE_REFUSED =
+    "This shape can't be saved: the service does not accept its outline.";
+
+/** Whether a 422's `detail` refuses the annotation's `target` (its shape). */
+export function refusesTarget(detail: unknown): boolean {
+    return (
+        Array.isArray(detail) &&
+        detail.some(
+            error =>
+                Array.isArray(error?.loc) &&
+                error.loc.some((part: unknown) => part === 'target')
+        )
+    );
+}
+
 export function batchItemErrors(detail: unknown): Map<number, string> {
     const errors = new Map<number, string>();
     if (!Array.isArray(detail)) return errors;
@@ -1028,7 +1053,14 @@ export function batchItemErrors(detail: unknown): Map<number, string> {
                 .join('.');
             const message =
                 typeof error.msg === 'string' ? error.msg : 'invalid';
-            errors.set(index, field ? `${field}: ${message}` : message);
+            errors.set(
+                index,
+                /^target\b/.test(field)
+                    ? WSI_SHAPE_REFUSED
+                    : field
+                    ? `${field}: ${message}`
+                    : message
+            );
         }
     });
     return errors;
@@ -4763,13 +4795,21 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
         text: string;
         bounds: WsiBounds;
     }> {
-        const shapes: Array<{ id: string; text: string; bounds: WsiBounds }> = [];
+        const shapes: Array<{
+            id: string;
+            text: string;
+            bounds: WsiBounds;
+        }> = [];
         this.shownAnnotations.forEach(annotation => {
             const text = annotation.body?.[0]?.value || '';
             if (!text.trim() || this.isPoint(annotation)) return;
             const shape = this.shapeOf(annotation);
             if (shape) {
-                shapes.push({ id: annotation.id, text, bounds: shapeBounds(shape) });
+                shapes.push({
+                    id: annotation.id,
+                    text,
+                    bounds: shapeBounds(shape),
+                });
             }
         });
         return shapes;
@@ -6892,7 +6932,9 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
             busy: false,
             error:
                 response.status === 422
-                    ? 'A comment needs 1 to 4,000 characters.'
+                    ? typeof detail === 'string'
+                        ? detail
+                        : 'A comment needs 1 to 4,000 characters.'
                     : `The comment thread could not be saved or loaded (${response.status}).`,
         });
         return true;
@@ -6918,16 +6960,70 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
             if (await this.refuseThread(id, response)) return;
             const raw = await response.json();
             if (!this.isCurrent(context)) return;
-            const comments = Array.isArray(raw)
-                ? raw.map(item => this.toComment(item))
-                : [];
-            this.setThread(id, { loading: false, comments });
-            this.setCommentCount(id, comments.length);
+            const page = readPage<any>(raw, 'comments');
+            const comments = page.items.map(item => this.toComment(item));
+            this.setThread(id, {
+                loading: false,
+                comments,
+                nextOffset: page.nextOffset,
+                total: page.total ?? comments.length,
+            });
+            this.setCommentCount(id, page.total ?? comments.length);
         } catch (_) {
             if (!this.isCurrent(context)) return;
             this.setThread(id, {
                 loading: false,
                 error: 'The comments could not be loaded.',
+            });
+        }
+    }
+
+    /**
+     * Loads the next page of `id`'s thread ("Show more"), after the
+     * comments loaded so far; a comment already shown is not repeated.
+     */
+    @action.bound
+    async loadMoreComments(id: string): Promise<void> {
+        const thread = this.threads.get(id);
+        const offset = thread?.nextOffset;
+        if (offset === null || offset === undefined || thread?.loading) return;
+        const context = {
+            generation: this.generation,
+            slideKey: this.slideKey,
+            signal: this.abortController?.signal,
+        };
+        this.setThread(id, { loading: true, error: null });
+        try {
+            const response = await this.request(
+                `/annotations/${encodeURIComponent(
+                    id
+                )}/comments?offset=${offset}`,
+                {},
+                context.signal
+            );
+            if (!this.isCurrent(context)) return;
+            if (await this.refuseThread(id, response)) return;
+            const raw = await response.json();
+            if (!this.isCurrent(context)) return;
+            const page = readPage<any>(raw, 'comments');
+            const known = new Set(
+                (this.threads.get(id)?.comments || []).map(item => item.id)
+            );
+            const more = page.items
+                .map(item => this.toComment(item))
+                .filter(item => !known.has(item.id));
+            this.setThread(id, {
+                loading: false,
+                comments: [...(this.threads.get(id)?.comments || []), ...more],
+                nextOffset: page.nextOffset,
+                total: page.total ?? this.threads.get(id)?.total,
+            });
+            if (page.total !== null) this.setCommentCount(id, page.total);
+        } catch (_) {
+            if (!this.isCurrent(context)) return;
+            this.setThread(id, {
+                loading: false,
+                error: 'More comments could not be loaded.',
             });
         }
     }
@@ -6979,11 +7075,12 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
             { method: 'POST', body: JSON.stringify({ body }) }
         );
         if (!saved) return false;
-        const comments = [
-            ...(this.threads.get(id)?.comments || []),
-            this.toComment(saved),
-        ];
-        this.setThread(id, { comments });
+        const thread = this.threads.get(id);
+        const comments = [...(thread?.comments || []), this.toComment(saved)];
+        this.setThread(id, {
+            comments,
+            total: thread?.total !== undefined ? thread.total + 1 : undefined,
+        });
         const annotation = this.annotations.find(item => item.id === id);
         this.setCommentCount(
             id,
@@ -7029,10 +7126,22 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
             { method: 'DELETE' }
         );
         if (done === undefined) return false;
-        const comments = (this.threads.get(id)?.comments || []).filter(
+        const thread = this.threads.get(id);
+        const comments = (thread?.comments || []).filter(
             item => item.id !== commentId
         );
-        this.setThread(id, { comments });
+        // A deleted comment shifts the later pages back by one.
+        this.setThread(id, {
+            comments,
+            total:
+                thread?.total !== undefined
+                    ? Math.max(0, thread.total - 1)
+                    : undefined,
+            nextOffset:
+                typeof thread?.nextOffset === 'number'
+                    ? Math.max(0, thread.nextOffset - 1)
+                    : thread?.nextOffset,
+        });
         const annotation = this.annotations.find(item => item.id === id);
         this.setCommentCount(
             id,
@@ -7327,6 +7436,17 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
                 this.removeAnnotationLocally(annotation.id);
                 return null;
             }
+            if (
+                response.status === 422 &&
+                this.isCurrent(context) &&
+                refusesTarget(await this.errorDetail(response))
+            ) {
+                this.removeAnnotationLocally(annotation.id);
+                action(() => {
+                    this.error = WSI_SHAPE_REFUSED;
+                })();
+                return null;
+            }
             if (!response.ok)
                 throw new Error(
                     `Annotation create failed (${response.status})`
@@ -7456,6 +7576,25 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
                     'Annotation changed elsewhere; reloaded latest data.'
                 );
                 return null;
+            }
+            if (
+                (response.status === 404 || response.status === 422) &&
+                this.isCurrent(context)
+            ) {
+                const detail =
+                    response.status === 422
+                        ? await this.errorDetail(response)
+                        : undefined;
+                if (response.status === 404 || refusesTarget(detail)) {
+                    // Gone meanwhile, or a shape the service refuses: show
+                    // the slide as stored.
+                    await this.reloadCurrentSlide(
+                        response.status === 404
+                            ? 'The annotation was deleted elsewhere; reloaded latest data.'
+                            : WSI_SHAPE_REFUSED
+                    );
+                    return null;
+                }
             }
             if (!response.ok)
                 throw new Error(
@@ -7799,6 +7938,11 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
                     if (!this.isCurrent(context)) return;
                     if (this.refuseAccess(response)) {
                         results[index] = { reason: 'no access' };
+                    } else if (
+                        response.status === 422 &&
+                        refusesTarget(await this.errorDetail(response))
+                    ) {
+                        results[index] = { reason: WSI_SHAPE_REFUSED };
                     } else if (!response.ok) {
                         results[index] = {
                             reason: `save failed (${response.status})`,

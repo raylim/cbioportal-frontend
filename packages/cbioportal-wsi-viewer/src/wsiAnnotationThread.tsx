@@ -393,6 +393,31 @@ export const AnnotationThread = observer(
                                         }
                                     />
                                 ))}
+                                {typeof thread?.nextOffset === 'number' && (
+                                    <li style={{ listStyle: 'none' }}>
+                                        <button
+                                            type="button"
+                                            data-testid={`annotation-comments-more-${annotation.id}`}
+                                            disabled={thread.loading}
+                                            onClick={() =>
+                                                void controller.loadMoreComments(
+                                                    annotation.id
+                                                )
+                                            }
+                                            style={smallButtonStyle()}
+                                        >
+                                            {thread.loading
+                                                ? 'Loading…'
+                                                : `Show more comments${
+                                                      thread.total !== undefined
+                                                          ? ` (${thread.total -
+                                                                thread.comments
+                                                                    .length} more)`
+                                                          : ''
+                                                  }`}
+                                        </button>
+                                    </li>
+                                )}
                                 {thread &&
                                     !thread.loading &&
                                     !thread.comments.length && (

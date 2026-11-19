@@ -2,7 +2,7 @@
  * @jest-environment jsdom
  */
 import * as React from 'react';
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { loadAnnotorious } from './wsiAnnotoriousLoader';
 import { addTag, normalizeTag, tagSummary } from './wsiSlideNotes';
 import { WsiSlideNotesPanel } from './wsiSlideNotesPanel';
@@ -167,6 +167,49 @@ describe('Slide notes', () => {
             controller.slideNotes.notes.map(note => note.text)
         ).not.toContain('For the first slide');
         expect(controller.slideNotes.busy).toBe(false);
+    });
+
+    it('pages the notes with Show more, keeps the tags of all, and shows the cap', async () => {
+        const { controller } = await setup({ page: 1, cap: 4 });
+        render(<WsiSlideNotesPanel controller={controller} />);
+        await flush();
+        // One note a page: the first, and the tags over both visible ones.
+        expect(notesListed()).toEqual(['Margin involved']);
+        expect(controller.slideNotes.count).toBe(2);
+        expect(screen.getByTestId('slide-notes-tag-QC').textContent).toBe(
+            'QC 2'
+        );
+        const more = screen.getByTestId('slide-notes-more');
+        expect(more.textContent).toBe('Show more notes (1 more)');
+        await act(async () => {
+            fireEvent.click(more);
+        });
+        await flush();
+        expect(notesListed()).toEqual(['Margin involved', 'Recut?']);
+        expect(screen.queryByTestId('slide-notes-more')).toBeNull();
+        // The slide holds 4 notes (one private to another user): the next
+        // is refused with the service's message.
+        await act(async () => {
+            expect(
+                await controller.slideNotes.create({
+                    text: 'Fourth',
+                    tags: [],
+                    shared: true,
+                })
+            ).toBe(true);
+        });
+        await act(async () => {
+            expect(
+                await controller.slideNotes.create({
+                    text: 'Fifth',
+                    tags: [],
+                    shared: true,
+                })
+            ).toBe(false);
+        });
+        expect(controller.slideNotes.error).toBe(
+            'A slide holds at most 4 notes.'
+        );
     });
 
     it('adds a note with tags, edits and deletes the own one', async () => {

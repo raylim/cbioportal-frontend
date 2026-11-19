@@ -10,6 +10,8 @@ import {
     labelTerm,
     POINT_SAVE_DELAY_MS,
     pointSelectorSvg,
+    refusesTarget,
+    WSI_SHAPE_REFUSED,
     WSI_REVIEW_FALLBACK_NOTICE,
     WSI_REVIEW_UNSUPPORTED_MESSAGE,
     WsiAnnotationController,
@@ -3221,6 +3223,23 @@ describe('WsiAnnotationController', () => {
             expect(batchItemErrors('A batch must contain one study').size).toBe(
                 0
             );
+        });
+
+        it('says a shape the service refuses (its selector rules) cannot be saved', () => {
+            const refused = [
+                {
+                    loc: ['body', 'annotations', 1, 'target', 'selector'],
+                    msg: 'Value error, unsupported SVG element',
+                },
+            ];
+            expect(batchItemErrors(refused).get(1)).toBe(WSI_SHAPE_REFUSED);
+            expect(
+                refusesTarget([{ loc: ['body', 'target'], msg: 'bad' }])
+            ).toBe(true);
+            expect(refusesTarget([{ loc: ['body', 'body'], msg: 'x' }])).toBe(
+                false
+            );
+            expect(refusesTarget('Not Found')).toBe(false);
         });
     });
 

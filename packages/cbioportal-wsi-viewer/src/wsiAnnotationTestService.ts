@@ -96,6 +96,30 @@ export interface TestServiceOptions {
     commentCounts?: boolean;
     /** Answers before the default handling, e.g. to fail one request. */
     override?: (request: TestRequest) => TestResponse | undefined;
+    /**
+     * Pages comment threads and slide notes as the current service does
+     * (`{…, total, offset, limit, has_more, next_offset}`, this many a
+     * page by default), and caps a thread and a slide's notes at `cap`.
+     * Unset, they are answered whole, as an older service does.
+     */
+    page?: number;
+    cap?: number;
+}
+
+/** A page of `items` as the service answers it, from the query. */
+function paged<T>(items: T[], query: URLSearchParams, limit: number) {
+    const offset = Number(query.get('offset') || 0);
+    const size = Number(query.get('limit') || limit);
+    const slice = items.slice(offset, offset + size);
+    const more = offset + size < items.length;
+    return {
+        items: slice,
+        total: items.length,
+        offset,
+        limit: size,
+        has_more: more,
+        next_offset: more ? offset + size : null,
+    };
 }
 
 export interface TestRequest {
@@ -460,7 +484,25 @@ export class TestAnnotationService {
         const { method, body } = request;
         if (!cid) {
             if (method === 'GET') {
-                return { status: 200, body: thread.filter(c => !c.deleted) };
+                const live = thread.filter(c => !c.deleted);
+                if (!this.options.page) return { status: 200, body: live };
+                const { items, ...page } = paged(
+                    live,
+                    request.query,
+                    this.options.page
+                );
+                return {
+                    status: 200,
+                    body: { annotation_id: id, comments: items, ...page },
+                };
+            }
+            if (this.options.cap && thread.length >= this.options.cap) {
+                return {
+                    status: 422,
+                    body: {
+                        detail: `An annotation holds at most ${this.options.cap} comments.`,
+                    },
+                };
             }
             const text = String(body?.body || '').trim();
             if (!text || text.length > 4000) {
@@ -523,14 +565,37 @@ export class TestAnnotationService {
                     counts.set(tag, (counts.get(tag) || 0) + 1)
                 )
             );
+            const tags = Array.from(counts.entries())
+                .sort((a, b) => b[1] - a[1])
+                .map(([tag, count]) => ({ tag, count }));
+            if (this.options.page) {
+                const { items, ...page } = paged(
+                    notes,
+                    query,
+                    this.options.page
+                );
+                return {
+                    status: 200,
+                    body: { slide_id: slide, notes: items, tags, ...page },
+                };
+            }
             return {
                 status: 200,
+                body: { slide_id: slide, notes, tags },
+            };
+        }
+        if (
+            !id &&
+            method === 'POST' &&
+            this.options.cap &&
+            Array.from(this.notes.values()).filter(
+                note => note.slide_id === body.slide_id
+            ).length >= this.options.cap
+        ) {
+            return {
+                status: 422,
                 body: {
-                    slide_id: slide,
-                    notes,
-                    tags: Array.from(counts.entries())
-                        .sort((a, b) => b[1] - a[1])
-                        .map(([tag, count]) => ({ tag, count })),
+                    detail: `A slide holds at most ${this.options.cap} notes.`,
                 },
             };
         }

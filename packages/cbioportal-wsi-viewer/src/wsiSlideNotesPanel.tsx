@@ -578,7 +578,7 @@ export const WsiSlideNotesPanel = observer(
                                 }
                             />
                         ))}
-                        {!shown.length && (
+                        {!shown.length && notes.nextOffset === null && (
                             <li
                                 style={{
                                     listStyle: 'none',
@@ -590,6 +590,24 @@ export const WsiSlideNotesPanel = observer(
                             </li>
                         )}
                     </ul>
+                )}
+                {notes.nextOffset !== null && (
+                    <button
+                        type="button"
+                        data-testid="slide-notes-more"
+                        disabled={notes.loading}
+                        onClick={() => void notes.loadMore()}
+                        style={{ ...buttonStyle(), marginTop: 2 }}
+                    >
+                        {notes.loading
+                            ? 'Loading…'
+                            : `Show more notes (${notes.count -
+                                  notes.notes.length} more${
+                                  notes.tagFilter
+                                      ? '; the tag filter shows loaded notes only'
+                                      : ''
+                              })`}
+                    </button>
                 )}
                 {controller.canEdit && (
                     <NoteForm

@@ -827,7 +827,16 @@ export class WsiViewerController {
                 });
             });
         }
+        // Whether the view is moving (a zoom or pan animating), on the
+        // viewer element: tests wait for `data-wsi-animating="false"`
+        // instead of guessing when a zoom has settled.
+        const element = this.osdViewer?.element as HTMLElement | undefined;
+        if (element?.dataset) element.dataset.wsiAnimating = 'false';
+        this.addSlideHandler('animation-start', () => {
+            if (element?.dataset) element.dataset.wsiAnimating = 'true';
+        });
         this.addSlideHandler('animation-finish', () => {
+            if (element?.dataset) element.dataset.wsiAnimating = 'false';
             this.writeHashState();
         });
         this.addSlideHandler('update-viewport', () => this.reportViewScale());
