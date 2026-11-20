@@ -57,6 +57,7 @@
   },
   "dependencies": {
     "@annotorious/openseadragon": "3.8.6",
-    "openseadragon": "6.0.2"
+    "openseadragon": "6.0.2",
+    "polygon-clipping": "0.15.7"
   }
 }

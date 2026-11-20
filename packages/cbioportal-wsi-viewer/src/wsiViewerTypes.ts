@@ -132,11 +132,39 @@ export interface WsiAnnotation {
         };
     };
     created?: string;
+    /** When the service last saved a change (`updated_at`). */
+    updated?: string;
     creator?: string;
     version?: number;
     color?: string;
     colorName?: string;
     layerName?: string;
+    /** The user's free-text note (`body.comment`). */
+    note?: string;
+    /**
+     * A legacy row's stored `body.comment`, read as its layer (see
+     * `readLayerAndNote`): written back as the comment until the note is
+     * edited.
+     */
+    legacyComment?: string;
+    /**
+     * The service's `visible_to`: null for private to the creator, [] for
+     * shared with the study; undefined when the service did not say.
+     */
+    visibleTo?: string[] | null;
+    /**
+     * A dropped point the service refused to save (signed out, or no
+     * access): kept on the slide, marked, until it is saved or the slide
+     * reloads.
+     */
+    unsaved?: boolean;
+    /** `body.provenance` as stored, kept on every update. */
+    provenance?: Record<string, unknown> | null;
+    /**
+     * Comments in the annotation's thread, from a service that has threads
+     * (`comment_count`); undefined otherwise.
+     */
+    commentCount?: number;
 }
 
 /** A label/value row for the sidebar's Clinical section, built by the host. */

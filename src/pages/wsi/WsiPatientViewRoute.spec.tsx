@@ -10,6 +10,7 @@ const mockEntryPoint = jest.fn((_props: Record<string, unknown>) => null);
 
 jest.mock('config/config', () => ({
     getServerConfig: () => mockServerConfig,
+    getLoadConfig: () => ({ baseUrl: 'portal.example' }),
 }));
 
 jest.mock('shared/components/wsiViewer/wsiAppConfig', () => ({
@@ -30,6 +31,24 @@ describe('WsiPatientViewRoute', () => {
         mockEntryPoint.mockClear();
         mockServerConfig.wsi_tile_server_url = '/wsi';
     });
+    afterEach(() => {
+        delete (window as any).globalStores;
+    });
+
+    it("passes the portal's signed-in user name to the viewer", () => {
+        (window as any).globalStores = { appStore: { userName: 'user-a' } };
+        mockServerConfig.user_display_name = 'display-user';
+        renderRoute('?studyId=study-1');
+
+        expect(mockEntryPoint.mock.calls[0][0].userName).toBe('user-a');
+        delete mockServerConfig.user_display_name;
+    });
+
+    it('passes no user name without an app store', () => {
+        renderRoute('?studyId=study-1');
+
+        expect(mockEntryPoint.mock.calls[0][0].userName).toBeUndefined();
+    });
 
     it('passes the slideKey link parameter as the requested slide', () => {
         renderRoute('?studyId=study-1&slideKey=0123456789ab');
@@ -43,6 +62,40 @@ describe('WsiPatientViewRoute', () => {
                 tileServerUrl: '/wsi',
             })
         );
+    });
+
+    it('opens at a linked annotation, and links annotations by slide key and id', () => {
+        renderRoute('?studyId=study-1&slideKey=0123456789ab&annotationId=a-7');
+        const props = mockEntryPoint.mock.calls[0][0] as any;
+        expect(props.requestedAnnotationId).toBe('a-7');
+        // Opened on the link's slide only, and dropped from the address
+        // once used.
+        expect(props.requestedAnnotationSlideKey).toBe('0123456789ab');
+        window.history.replaceState(
+            null,
+            '',
+            '/wsi/patient/P-1?studyId=study-1&slideKey=0123456789ab&annotationId=a-7#wsi:x=1'
+        );
+        props.onRequestedAnnotationUsed();
+        expect(window.location.search).toBe(
+            '?studyId=study-1&slideKey=0123456789ab'
+        );
+        expect(window.location.hash).toBe('#wsi:x=1');
+        window.history.replaceState(null, '', '/');
+        const link = new URL(
+            props.annotationLink({
+                slideKey: '0123456789ab',
+                annotationId: 'a 8',
+            })
+        );
+        expect(link.host).toBe('portal.example');
+        expect(link.pathname).toBe('/wsi/patient/P-1');
+        expect(Array.from(link.searchParams.entries())).toEqual([
+            ['studyId', 'study-1'],
+            ['slideKey', '0123456789ab'],
+            ['annotationId', 'a 8'],
+        ]);
+        expect(link.hash).toBe('');
     });
 
     it('decodes an encoded slideKey', () => {

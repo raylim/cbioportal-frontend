@@ -65,3 +65,29 @@ export function wsiServiceAccessIssue(
     if (status === 403) return 'forbidden';
     return null;
 }
+
+/**
+ * A page of a list the service may page (comments, slide notes): an
+ * older service answers the whole list (an array, or the object without
+ * paging fields), a newer one `{…, total, offset, limit, has_more,
+ * next_offset}`.
+ */
+export function readPage<T>(
+    raw: unknown,
+    key: string
+): { items: T[]; total: number | null; nextOffset: number | null } {
+    if (Array.isArray(raw)) {
+        return { items: raw as T[], total: null, nextOffset: null };
+    }
+    const page = (raw || {}) as Record<string, unknown>;
+    const items = Array.isArray(page[key]) ? (page[key] as T[]) : [];
+    const next =
+        page.has_more === true && typeof page.next_offset === 'number'
+            ? page.next_offset
+            : null;
+    return {
+        items,
+        total: typeof page.total === 'number' ? page.total : null,
+        nextOffset: next,
+    };
+}

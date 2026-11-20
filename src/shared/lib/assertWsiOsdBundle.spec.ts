@@ -5,6 +5,8 @@ import path from 'path';
 const {
     assertWsiOsdBundle,
     OPENSEADRAGON_MARKER,
+    SHAPE_OPS_MARKER,
+    TISSUE_MARKER,
 } = require('../../../scripts/assert_wsi_osd_bundle');
 
 const OSD_LIBRARY = `console.error(${JSON.stringify(
@@ -63,6 +65,49 @@ describe('assertWsiOsdBundle', () => {
                     'wsi-openseadragon.123.js'
                 );
             }
+        );
+    });
+
+    it('accepts the shape operations in their own chunk only', () => {
+        const clipping = `throw Error(${JSON.stringify(SHAPE_OPS_MARKER)});`;
+        withDist(
+            {
+                'reactapp/common.bundle.js': 'window.__common__ = true;',
+                'reactapp/main.app.js': RUNTIME_CHUNK_NAMES,
+                'reactapp/wsi-openseadragon.123.js': OSD_LIBRARY,
+                'reactapp/wsi-shapeops.456.chunk.js': clipping,
+            },
+            distDir =>
+                expect(() => assertWsiOsdBundle({ distDir })).not.toThrow()
+        );
+        // In the viewer's chunk, or an initial bundle, it fails.
+        withDist(
+            {
+                'reactapp/common.bundle.js': 'window.__common__ = true;',
+                'reactapp/main.app.js': RUNTIME_CHUNK_NAMES,
+                'reactapp/wsi-openseadragon.123.js': OSD_LIBRARY,
+                'reactapp/244.789.chunk.js': clipping,
+            },
+            distDir =>
+                expect(() => assertWsiOsdBundle({ distDir })).toThrow(
+                    /shape operations \(polygon-clipping\) only in the asynchronous wsi-shapeops chunk, but they are in 244\.789\.chunk\.js/
+                )
+        );
+    });
+
+    it('fails when the tissue tools are in an initial bundle', () => {
+        withDist(
+            {
+                'reactapp/common.bundle.js': `x=${JSON.stringify(
+                    TISSUE_MARKER
+                )};`,
+                'reactapp/main.app.js': RUNTIME_CHUNK_NAMES,
+                'reactapp/wsi-openseadragon.123.js': OSD_LIBRARY,
+            },
+            distDir =>
+                expect(() => assertWsiOsdBundle({ distDir })).toThrow(
+                    /tissue tools in an asynchronous chunk, but they are in common\.bundle\.js/
+                )
         );
     });
 

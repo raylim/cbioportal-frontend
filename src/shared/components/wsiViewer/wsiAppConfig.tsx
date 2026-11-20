@@ -12,6 +12,24 @@ function renderWsiLoading() {
     return <LoadingIndicator isLoading={true} center={true} size="big" />;
 }
 
+/** The terms of a comma-separated frontend property, trimmed. */
+export function parseWsiLabelVocabulary(value: unknown): string[] {
+    if (typeof value !== 'string') return [];
+    return Array.from(
+        new Set(
+            value
+                .split(',')
+                .map(term => term.trim())
+                .filter(Boolean)
+        )
+    );
+}
+
+/** A boolean frontend property, which may arrive as a string. */
+function isTrueProperty(value: unknown): boolean {
+    return value === true || value === 'true';
+}
+
 /** Viewer services from the portal configuration, installed at startup. */
 export function buildWsiViewerConfig(): WsiViewerConfig {
     const annotationApiUrl = getServerConfig().wsi_annotation_api_url?.trim();
@@ -21,7 +39,15 @@ export function buildWsiViewerConfig(): WsiViewerConfig {
             buildCBioPortalPageUrl(path, query),
         osdPrefixUrl: WSI_OSD_PREFIX_URL,
         annotations: annotationApiUrl
-            ? { apiUrl: annotationApiUrl.replace(/\/+$/, '') }
+            ? {
+                  apiUrl: annotationApiUrl.replace(/\/+$/, ''),
+                  labelVocabulary: parseWsiLabelVocabulary(
+                      getServerConfig().wsi_annotation_label_vocabulary
+                  ),
+                  labelVocabularyStrict: isTrueProperty(
+                      getServerConfig().wsi_annotation_label_vocabulary_strict
+                  ),
+              }
             : undefined,
     };
 }
@@ -32,6 +58,18 @@ export function buildWsiViewerConfig(): WsiViewerConfig {
  */
 export function wsiAuthScope(userName?: string): string {
     return userName || getServerConfig().user_display_name || 'anonymousUser';
+}
+
+/**
+ * The signed-in user as the annotation service names creators: the page's
+ * portal user name (`AppStore.userName`, the backend's
+ * `Authentication.getName()`, which the study access check forwards as
+ * `X-Auth-Request-User`); only when the page passes none, the configured
+ * display name. Undefined when anonymous.
+ */
+export function wsiAnnotationUser(userName?: string): string | undefined {
+    const user = userName || getServerConfig().user_display_name;
+    return user && user !== 'anonymousUser' ? user : undefined;
 }
 
 // The viewer is its own async chunk, and OpenSeadragon another one loaded on
@@ -45,7 +83,11 @@ export const LazyWsiViewer = React.lazy(() => {
 
 export type AppWsiViewerProps = Omit<
     WsiViewerProps,
-    'authScope' | 'showDownload' | 'renderLoading' | 'clinicalRows'
+    | 'authScope'
+    | 'showDownload'
+    | 'renderLoading'
+    | 'clinicalRows'
+    | 'annotationUser'
 > & {
     /** Signed-in user name, when the page knows it. */
     userName?: string;
@@ -78,6 +120,7 @@ export function AppWsiViewer({
             <LazyWsiViewer
                 {...viewerProps}
                 authScope={wsiAuthScope(userName)}
+                annotationUser={wsiAnnotationUser(userName)}
                 showDownload={
                     getServerConfig().skin_hide_download_controls ===
                     DownloadControlOption.SHOW_ALL

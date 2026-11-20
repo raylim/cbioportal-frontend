@@ -431,6 +431,46 @@ describe('WSIViewer — servableSlides', () => {
     });
 });
 
+describe('WSIViewer — hidden by its host', () => {
+    let origFetch: typeof globalThis.fetch;
+
+    beforeEach(() => {
+        origFetch = (global as any).fetch;
+        setFetchMock(jest.fn(() => new Promise(() => undefined)) as any);
+    });
+
+    afterEach(() => {
+        (global as any).fetch = origFetch;
+    });
+
+    it('turns the annotation shortcuts off while hidden, e.g. in another tab', () => {
+        const viewer = (hidden: boolean) => (
+            <WSIViewer
+                tileServerUrl="https://tiles.example.com"
+                studyId="study"
+                authScope="anonymousUser"
+                patientId="P-1"
+                height={500}
+                annotationApiUrl="https://tiles.example.com/wsi"
+                hidden={hidden}
+            />
+        );
+        let renderer: TestRenderer.ReactTestRenderer;
+        act(() => {
+            renderer = TestRenderer.create(viewer(true));
+        });
+        const inst = renderer!.getInstance() as any;
+        assert.isTrue(inst.annotationController.viewerHidden);
+        act(() => {
+            renderer.update(viewer(false));
+        });
+        assert.isFalse(inst.annotationController.viewerHidden);
+        act(() => {
+            renderer.unmount();
+        });
+    });
+});
+
 describe('WSIViewer — componentWillUnmount', () => {
     let origFetch: typeof globalThis.fetch;
 

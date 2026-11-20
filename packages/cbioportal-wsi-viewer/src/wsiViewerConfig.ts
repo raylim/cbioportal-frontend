@@ -30,6 +30,13 @@ export interface WsiViewerConfig {
 export interface WsiAnnotationsConfig {
     /** Annotation service base URL, without a trailing slash. */
     apiUrl: string;
+    /**
+     * Terms the label field offers, e.g. Tumor, Stroma, Necrosis. Unset or
+     * empty: no list, and the field suggests the labels already used.
+     */
+    labelVocabulary?: string[];
+    /** Only labels from `labelVocabulary` are allowed (ignored without one). */
+    labelVocabularyStrict?: boolean;
 }
 
 /** Services read by the viewer's module-level caches and controller. */

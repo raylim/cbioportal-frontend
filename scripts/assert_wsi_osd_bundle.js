@@ -9,6 +9,14 @@ const OPENSEADRAGON_MARKER = '[Viewer.addTiledImage]';
 const OSD_LIBRARY_MARKER = /versionStr\s*:\s*["'`]\d/;
 // A class name from the Annotorious annotation layer.
 const ANNOTORIOUS_MARKER = 'a9s-annotationlayer';
+// A message of the magic wand (wsiTissueSelect.ts), in the wsi-tissue chunk.
+const TISSUE_MARKER = 'The outline stops at the edge of the view';
+// A message of polygon-clipping, which the shape operations
+// (wsiAnnotationShapeOps.ts) load in the wsi-shapeops chunk.
+const SHAPE_OPS_MARKER = 'Unable to complete output ring';
+// The only chunks polygon-clipping may be in: the shape operations', or a
+// chunk shared by them and the tissue tools.
+const SHAPE_OPS_CHUNK = /^wsi-(shapeops|tissue)(?:\.|-)/;
 
 function containsOpenSeadragon(bundle) {
     return bundle.includes(OPENSEADRAGON_MARKER);
@@ -106,6 +114,39 @@ function assertWsiOsdBundle(options = {}) {
         );
     }
 
+    // The magic wand and smart brush load when either tool is picked.
+    const initialTissueBundles = bundleEntries.filter(({ bundle }) =>
+        bundle.includes(TISSUE_MARKER)
+    );
+    if (initialTissueBundles.length) {
+        throw new Error(
+            `Expected the tissue tools in an asynchronous chunk, but they are in ${initialTissueBundles
+                .map(({ bundlePath }) => path.basename(bundlePath))
+                .join(', ')}`
+        );
+    }
+
+    // The shape operations (polygon-clipping) load when one first runs:
+    // in no initial bundle, and not in the viewer's own chunk.
+    const shapeOpsChunks = fs
+        .readdirSync(reactAppDir)
+        .filter(name => name.endsWith('.js'))
+        .filter(name =>
+            fs
+                .readFileSync(path.join(reactAppDir, name), 'utf8')
+                .includes(SHAPE_OPS_MARKER)
+        );
+    const misplacedShapeOps = shapeOpsChunks.filter(
+        name => !SHAPE_OPS_CHUNK.test(name)
+    );
+    if (misplacedShapeOps.length) {
+        throw new Error(
+            `Expected the shape operations (polygon-clipping) only in the asynchronous wsi-shapeops chunk, but they are in ${misplacedShapeOps.join(
+                ', '
+            )}`
+        );
+    }
+
     return {
         distDir,
         reactAppDir,
@@ -126,5 +167,7 @@ if (require.main === module) {
 module.exports = {
     assertWsiOsdBundle,
     OPENSEADRAGON_MARKER,
+    SHAPE_OPS_MARKER,
+    TISSUE_MARKER,
     getInitialBundlePaths,
 };

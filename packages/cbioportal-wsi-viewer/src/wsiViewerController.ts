@@ -4,6 +4,8 @@ import {
     buildWsiDownloadFilename,
     buildWsiViewState,
     clampImageCoordinates,
+    backgroundBehind,
+    composeSnapshot,
     copyCurrentUrlToClipboard,
     hashUrlState,
     downloadCanvasAsJpeg,
@@ -11,6 +13,7 @@ import {
     writeSelectedSlideState,
 } from './wsiViewStateUtils';
 import { getWsiViewerRuntime } from './wsiViewerConfig';
+import { WSI_THEME } from './wsiTheme';
 import {
     buildOsdOptions,
     createOsdMouseTracker,
@@ -87,6 +90,19 @@ export interface WsiViewerControllerHost {
     onSelectionCleared?(): void;
     onViewerOpened?(viewer: any, openSeadragon: any, slide: Slide): void;
     onViewerDestroyed?(): void;
+    /**
+     * Draws over the downloaded view what shows over the slide (the
+     * annotations); its pixels are `scale` times the viewer's.
+     */
+    drawDownloadOverlay?(
+        context: CanvasRenderingContext2D,
+        scale: number
+    ): void;
+    /**
+     * Whether this viewer keeps its slide and view in the page's `#wsi:`
+     * hash (default true). The second slide shown side by side does not.
+     */
+    ownsUrlState?: boolean;
 }
 
 type MountTimer =
@@ -221,6 +237,10 @@ export class WsiViewerController {
         this.finishInitialSlideLoad(outcome);
     }
 
+    private get ownsUrlState(): boolean {
+        return this.host.ownsUrlState !== false;
+    }
+
     dispose() {
         this.resetMount();
         this.clearTimer('writeHashTimer');
@@ -228,7 +248,7 @@ export class WsiViewerController {
         this.hierarchyAbortController = null;
         this.cancelNavigatorSchedule();
         this.destroyViewer();
-        hashUrlState.clear();
+        if (this.ownsUrlState) hashUrlState.clear();
     }
 
     private cancelNavigatorSchedule() {
@@ -259,6 +279,7 @@ export class WsiViewerController {
     }
 
     private writeHashState() {
+        if (!this.ownsUrlState) return;
         // A viewport measured in a container with no size is not a view to share or restore.
         if (!hasLaidOutContainer(this.mountedViewer)) return;
         this.writeHashTimer = scheduleHashStateWrite({
@@ -574,7 +595,9 @@ export class WsiViewerController {
     ): Promise<void> {
         this.cancelActiveMount();
         this.state.beginSlideSelection(slide, sample);
-        writeSelectedSlideState(hashUrlState, slide.slide_key);
+        if (this.ownsUrlState) {
+            writeSelectedSlideState(hashUrlState, slide.slide_key);
+        }
         if (notifyHost) this.host.onSlideSelectionStarted?.(slide);
         this.loadingStart = Date.now();
         const seq = this.mountSeq;
@@ -605,7 +628,7 @@ export class WsiViewerController {
         this.destroyViewer();
         this.state.clearSelection();
         this.host.onSelectionCleared?.();
-        hashUrlState.clear();
+        if (this.ownsUrlState) hashUrlState.clear();
     }
 
     goToCoordinates() {
@@ -649,7 +672,17 @@ export class WsiViewerController {
                 x: Math.round(center.x),
                 y: Math.round(center.y),
             });
-            downloadCanvasAsJpeg(canvas, filename);
+            const overlay = this.host.drawDownloadOverlay;
+            downloadCanvasAsJpeg(
+                composeSnapshot(
+                    canvas,
+                    overlay
+                        ? (context, scale) => overlay(context, scale)
+                        : undefined,
+                    backgroundBehind(canvas, WSI_THEME.stageBg)
+                ),
+                filename
+            );
         } catch (_) {
             // canvas tainted or not ready
         }
@@ -760,7 +793,10 @@ export class WsiViewerController {
         if (seq !== this.mountSeq) return;
         this.clearTimer('osdOpenTimer');
         this.clearTimer('selectionTimeoutTimer');
-        const hashState = restoreHashViewport ? hashUrlState.read() : null;
+        const hashState =
+            restoreHashViewport && this.ownsUrlState
+                ? hashUrlState.read()
+                : null;
         const applyInitialView = () => {
             try {
                 restoreOrHomeViewport({
@@ -791,7 +827,16 @@ export class WsiViewerController {
                 });
             });
         }
+        // Whether the view is moving (a zoom or pan animating), on the
+        // viewer element: tests wait for `data-wsi-animating="false"`
+        // instead of guessing when a zoom has settled.
+        const element = this.osdViewer?.element as HTMLElement | undefined;
+        if (element?.dataset) element.dataset.wsiAnimating = 'false';
+        this.addSlideHandler('animation-start', () => {
+            if (element?.dataset) element.dataset.wsiAnimating = 'true';
+        });
         this.addSlideHandler('animation-finish', () => {
+            if (element?.dataset) element.dataset.wsiAnimating = 'false';
             this.writeHashState();
         });
         this.addSlideHandler('update-viewport', () => this.reportViewScale());

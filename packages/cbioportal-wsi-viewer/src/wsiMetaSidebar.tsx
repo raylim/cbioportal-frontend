@@ -53,30 +53,71 @@ const sectionToggleStyle: React.CSSProperties = {
     textAlign: 'left',
 };
 
+/**
+ * Browser-stored open state of a section collapsed by default while
+ * Annotate is on (see `SbSection`'s `collapsedWhileAnnotating`).
+ */
+export function wsiSidebarSectionAnnotatingExpandedKey(
+    sectionId: string
+): string {
+    return `wsi.viewer.sidebarSection.${sectionId}.annotating.expanded`;
+}
+
+/**
+ * The least height of a section that fills the sidebar: 360 px, or more of
+ * a tall window, so the list stays long while the sections below it scroll.
+ */
+export const WSI_SIDEBAR_FILL_MIN_HEIGHT = 'max(360px, 55vh)';
+
 /** A sidebar section whose header collapses and expands its content. */
 function SbSection({
     id,
     title,
     action,
+    fill = false,
+    collapsedByDefault = false,
     children,
 }: {
     id: string;
     title: string;
     action?: React.ReactNode;
+    /**
+     * Takes the sidebar's height left over by the other sections (at least
+     * `WSI_SIDEBAR_FILL_MIN_HEIGHT`), its content a flex column.
+     */
+    fill?: boolean;
+    /**
+     * Collapsed until opened, the open state remembered on its own key
+     * (see `wsiSidebarSectionAnnotatingExpandedKey`).
+     */
+    collapsedByDefault?: boolean;
     children: React.ReactNode;
 }) {
-    const [collapsed, setCollapsed] = useWsiPanelFlag(
-        wsiSidebarSectionCollapsedKey(id)
+    const [flag, setFlag] = useWsiPanelFlag(
+        collapsedByDefault
+            ? wsiSidebarSectionAnnotatingExpandedKey(id)
+            : wsiSidebarSectionCollapsedKey(id)
     );
-    const toggle = () => setCollapsed(!collapsed);
+    const collapsed = collapsedByDefault ? !flag : flag;
+    const toggle = () => setFlag(!flag);
     const contentId = `wsi-sidebar-section-${id}`;
+    const filling = fill && !collapsed;
 
     return (
         <div
             data-testid={`wsi-sidebar-section-${id}`}
+            data-fill={filling || undefined}
             style={{
                 padding: '10px 12px',
                 borderBottom: `1px solid ${SIDEBAR_COLORS.border}`,
+                ...(filling
+                    ? {
+                          flex: '1 1 0',
+                          minHeight: WSI_SIDEBAR_FILL_MIN_HEIGHT,
+                          display: 'flex',
+                          flexDirection: 'column',
+                      }
+                    : { flexShrink: 0 }),
             }}
         >
             <div
@@ -106,7 +147,23 @@ function SbSection({
                 {action}
             </div>
             {/* Collapsed content stays mounted so panels keep their state. */}
-            <div id={contentId} hidden={collapsed}>
+            <div
+                id={contentId}
+                hidden={collapsed}
+                style={
+                    filling
+                        ? {
+                              flex: '1 1 auto',
+                              minHeight: 0,
+                              display: 'flex',
+                              flexDirection: 'column',
+                              // Taller content (Counts open) scrolls here
+                              // rather than over the sections below.
+                              overflowY: 'auto',
+                          }
+                        : undefined
+                }
+            >
                 {children}
             </div>
         </div>
@@ -276,7 +333,10 @@ function WsiMetaSidebarComponent({
     annotationLayersPanel,
     annotationPanel,
     annotationPanelTitle,
+    slideNotesPanel,
+    slideNotesTitle,
     clinicalRows,
+    annotating = false,
     onHide,
 }: {
     width: number;
@@ -287,11 +347,69 @@ function WsiMetaSidebarComponent({
     annotationLayersPanel?: React.ReactNode;
     annotationPanel?: React.ReactNode;
     annotationPanelTitle?: string;
+    /** The open slide's notes and tags; unset hides the section. */
+    slideNotesPanel?: React.ReactNode;
+    slideNotesTitle?: string;
     /** Patient clinical rows; unset (e.g. still loading) hides the section. */
     clinicalRows?: ReadonlyArray<MetaRow>;
+    /**
+     * Annotate is on: the Annotations section comes first and fills the
+     * height left, then Layers and Slide notes, then the slide's details,
+     * Clinical collapsed until opened.
+     */
+    annotating?: boolean;
     /** Shows a header button that hides the sidebar. */
     onHide?: () => void;
 }) {
+    const annotationsFirst = annotating && !!annotationPanel;
+    const imageProperties = (
+        <SbSection id="imageProperties" title="Image properties">
+            {showImageProperties ? (
+                <MetaTable rows={wsiRows} />
+            ) : (
+                <EmptyState />
+            )}
+        </SbSection>
+    );
+    const pathology = (
+        <SbSection id="pathology" title="Pathology">
+            {showPathology ? <MetaTable rows={pathRows} /> : <EmptyState />}
+        </SbSection>
+    );
+    const clinical = clinicalRows && (
+        <SbSection
+            // Its own open state while annotating, so it remounts.
+            key={annotationsFirst ? 'clinical-annotating' : 'clinical'}
+            id="clinical"
+            title="Clinical"
+            collapsedByDefault={annotationsFirst}
+        >
+            {clinicalRows.length > 0 ? (
+                <ExpandableMetaTable id="clinical" rows={clinicalRows} />
+            ) : (
+                <EmptyState />
+            )}
+        </SbSection>
+    );
+    const slideNotes = slideNotesPanel && (
+        <SbSection id="slideNotes" title={slideNotesTitle || 'Slide notes'}>
+            {slideNotesPanel}
+        </SbSection>
+    );
+    const layers = annotationLayersPanel && (
+        <SbSection id="annotationLayers" title="Layers">
+            {annotationLayersPanel}
+        </SbSection>
+    );
+    const annotations = annotationPanel && (
+        <SbSection
+            id="annotations"
+            title={annotationPanelTitle || 'Annotations'}
+            fill={annotationsFirst}
+        >
+            {annotationPanel}
+        </SbSection>
+    );
     return (
         <div
             data-testid="wsi-metadata-sidebar"
@@ -312,43 +430,27 @@ function WsiMetaSidebarComponent({
                 onHide={onHide}
                 hideTestId="wsi-metadata-hide"
             />
-            <SbSection id="imageProperties" title="Image properties">
-                {showImageProperties ? (
-                    <MetaTable rows={wsiRows} />
-                ) : (
-                    <EmptyState />
-                )}
-            </SbSection>
-
-            <SbSection id="pathology" title="Pathology">
-                {showPathology ? <MetaTable rows={pathRows} /> : <EmptyState />}
-            </SbSection>
-
-            {clinicalRows && (
-                <SbSection id="clinical" title="Clinical">
-                    {clinicalRows.length > 0 ? (
-                        <ExpandableMetaTable
-                            id="clinical"
-                            rows={clinicalRows}
-                        />
-                    ) : (
-                        <EmptyState />
-                    )}
-                </SbSection>
-            )}
-            {annotationLayersPanel && (
-                <SbSection id="annotationLayers" title="Layers">
-                    {annotationLayersPanel}
-                </SbSection>
-            )}
-            {annotationPanel && (
-                <SbSection
-                    id="annotations"
-                    title={annotationPanelTitle || 'Annotations'}
-                >
-                    {annotationPanel}
-                </SbSection>
-            )}
+            {/* Keyed, so a new order moves sections rather than remounting them. */}
+            {(annotationsFirst
+                ? ([
+                      ['annotations', annotations],
+                      ['layers', layers],
+                      ['slideNotes', slideNotes],
+                      ['imageProperties', imageProperties],
+                      ['pathology', pathology],
+                      ['clinical', clinical],
+                  ] as const)
+                : ([
+                      ['imageProperties', imageProperties],
+                      ['pathology', pathology],
+                      ['clinical', clinical],
+                      ['slideNotes', slideNotes],
+                      ['layers', layers],
+                      ['annotations', annotations],
+                  ] as const)
+            ).map(([key, section]) => (
+                <React.Fragment key={key}>{section}</React.Fragment>
+            ))}
         </div>
     );
 }

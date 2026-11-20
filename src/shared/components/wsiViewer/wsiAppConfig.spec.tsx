@@ -6,6 +6,7 @@ import { act, render, screen } from '@testing-library/react';
 import {
     AppWsiViewer,
     buildWsiViewerConfig,
+    wsiAnnotationUser,
     wsiAuthScope,
 } from './wsiAppConfig';
 
@@ -56,6 +57,18 @@ describe('buildWsiViewerConfig', () => {
         expect(wsiAuthScope()).toBe('anonymousUser');
     });
 
+    it('names the annotation user by the user or the display name, never anonymous', () => {
+        mockServerConfig.user_display_name = 'display-user';
+        expect(wsiAnnotationUser('user-a')).toBe('user-a');
+        expect(wsiAnnotationUser()).toBe('display-user');
+
+        mockServerConfig.user_display_name = 'anonymousUser';
+        expect(wsiAnnotationUser()).toBeUndefined();
+        expect(wsiAnnotationUser('anonymousUser')).toBeUndefined();
+        delete mockServerConfig.user_display_name;
+        expect(wsiAnnotationUser()).toBeUndefined();
+    });
+
     it('enables annotations only when an annotation service is configured', () => {
         expect(buildWsiViewerConfig().annotations).toBeUndefined();
         mockServerConfig.wsi_annotation_api_url = '  ';
@@ -64,7 +77,27 @@ describe('buildWsiViewerConfig', () => {
             'https://annotations.example/wsi/';
         expect(buildWsiViewerConfig().annotations).toEqual({
             apiUrl: 'https://annotations.example/wsi',
+            labelVocabulary: [],
+            labelVocabularyStrict: false,
         });
+    });
+
+    it('passes the annotation label vocabulary from the frontend properties', () => {
+        mockServerConfig.wsi_annotation_api_url = '/wsi';
+        mockServerConfig.wsi_annotation_label_vocabulary =
+            ' Tumor, Stroma ,,Necrosis,Tumor ';
+        mockServerConfig.wsi_annotation_label_vocabulary_strict = 'true';
+        expect(buildWsiViewerConfig().annotations).toEqual({
+            apiUrl: '/wsi',
+            labelVocabulary: ['Tumor', 'Stroma', 'Necrosis'],
+            labelVocabularyStrict: true,
+        });
+        mockServerConfig.wsi_annotation_label_vocabulary_strict = false;
+        expect(buildWsiViewerConfig().annotations?.labelVocabularyStrict).toBe(
+            false
+        );
+        delete mockServerConfig.wsi_annotation_label_vocabulary;
+        delete mockServerConfig.wsi_annotation_label_vocabulary_strict;
     });
 });
 
@@ -114,6 +147,7 @@ describe('AppWsiViewer', () => {
                 tileServerUrl: '/wsi',
                 height: 600,
                 authScope: 'user-a',
+                annotationUser: 'user-a',
                 showDownload: true,
                 renderLoading: expect.any(Function),
                 clinicalRows: [{ label: 'Sex', value: 'Female' }],
