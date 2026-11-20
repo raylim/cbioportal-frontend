@@ -16,6 +16,7 @@ import { WsiViewerState } from './wsiViewerState';
 import { Sample, Slide, TileMetadata } from './wsiViewerTypes';
 
 jest.mock('./wsiAuth', () => ({
+    ...jest.requireActual('./wsiAuth'),
     getWsiSlideSource: jest.fn(),
 }));
 jest.mock('./wsiThumbnailFetchCache', () => ({

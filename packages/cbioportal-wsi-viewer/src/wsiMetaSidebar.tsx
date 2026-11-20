@@ -333,6 +333,7 @@ function WsiMetaSidebarComponent({
     annotationLayersPanel,
     annotationPanel,
     annotationPanelTitle,
+    agentPanel,
     slideNotesPanel,
     slideNotesTitle,
     clinicalRows,
@@ -347,6 +348,7 @@ function WsiMetaSidebarComponent({
     annotationLayersPanel?: React.ReactNode;
     annotationPanel?: React.ReactNode;
     annotationPanelTitle?: string;
+    agentPanel?: React.ReactNode;
     /** The open slide's notes and tags; unset hides the section. */
     slideNotesPanel?: React.ReactNode;
     slideNotesTitle?: string;
@@ -451,6 +453,11 @@ function WsiMetaSidebarComponent({
             ).map(([key, section]) => (
                 <React.Fragment key={key}>{section}</React.Fragment>
             ))}
+            {agentPanel && (
+                <SbSection id="researchAssistant" title="Research assistant">
+                    {agentPanel}
+                </SbSection>
+            )}
         </div>
     );
 }

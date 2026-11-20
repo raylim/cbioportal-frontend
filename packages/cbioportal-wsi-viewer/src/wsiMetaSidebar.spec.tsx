@@ -62,6 +62,7 @@ describe('WsiMetaSidebar collapsible sections', () => {
                 clinicalRows={[{ label: 'Sex', value: 'Female' }]}
                 annotationLayersPanel={<span>layer list</span>}
                 annotationPanel={<span>annotation list</span>}
+                agentPanel={<span>assistant</span>}
                 slideNotesPanel={<span>notes</span>}
                 annotating={annotating}
             />
@@ -104,6 +105,7 @@ describe('WsiMetaSidebar collapsible sections', () => {
         'clinical',
         'annotationLayers',
         'annotations',
+        'researchAssistant',
     ])('collapses and expands the %s section', id => {
         const renderer = renderSidebar();
         expect(toggle(renderer, id).props['aria-expanded']).toBe(true);
@@ -146,6 +148,7 @@ describe('WsiMetaSidebar collapsible sections', () => {
             'slideNotes',
             'annotationLayers',
             'annotations',
+            'researchAssistant',
         ]);
         const annotations = () =>
             renderer.root.findByProps({
@@ -161,6 +164,7 @@ describe('WsiMetaSidebar collapsible sections', () => {
             'imageProperties',
             'pathology',
             'clinical',
+            'researchAssistant',
         ]);
         expect(annotations().props['data-fill']).toBe(true);
         expect(annotations().props.style.flex).toBe('1 1 0');

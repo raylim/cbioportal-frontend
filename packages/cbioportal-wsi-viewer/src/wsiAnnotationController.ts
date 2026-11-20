@@ -8302,6 +8302,67 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
         }
     }
 
+    async createAgentAnnotation(input: {
+        label: string;
+        layerName: string;
+        color: string;
+        selector: string;
+    }): Promise<boolean> {
+        if (!this.slideKey) return false;
+        const saved = await this.createAnnotation({
+            '@context': 'http://www.w3.org/ns/anno.jsonld',
+            type: 'Annotation',
+            id: `agent-${Date.now()}-${Math.random()
+                .toString(36)
+                .slice(2)}`,
+            body: [
+                {
+                    type: 'TextualBody',
+                    value: input.label,
+                    purpose: 'commenting',
+                },
+            ],
+            target: {
+                source: this.slideKey,
+                selector: { type: 'SvgSelector', value: input.selector },
+            },
+            color: input.color,
+            colorName: input.layerName,
+            layerName: input.layerName,
+        });
+        return saved !== null;
+    }
+
+    @action.bound
+    adoptAgentAnnotations(items: Array<Record<string, unknown>>) {
+        const slideKey = this.slideKey;
+        if (!slideKey) return;
+        const saved = items
+            .filter(item => {
+                const itemSlideKey = item.slide_id;
+                const itemStudyId = item.study_id;
+                return (
+                    itemSlideKey === slideKey &&
+                    (typeof itemStudyId !== 'string' ||
+                        !this.studyId ||
+                        itemStudyId === this.studyId)
+                );
+            })
+            .map(item => this.fromApi(item, slideKey));
+        if (!saved.length) return;
+        const savedById = new Map(
+            saved.map(annotation => [annotation.id, annotation])
+        );
+        this.annotations = [
+            ...this.annotations.filter(
+                annotation => !savedById.has(annotation.id)
+            ),
+            ...saved,
+        ];
+        this.applyLayerFilter();
+        this.refreshStyle();
+    }
+
     /**
      * Saves an edit with the annotation's version; resolves to the saved
      * annotation, or null. With `record`, undo can put the old one back.
@@ -9586,6 +9647,21 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
         return { x: imagePoint.x, y: imagePoint.y };
     }
 
+    getAgentViewerElementSize(): { width: number; height: number } {
+        const element = this.osdViewer?.element as HTMLElement | undefined;
+        return {
+            width: element?.clientWidth || 0,
+            height: element?.clientHeight || 0,
+        };
+    }
+
+    getAgentViewerElementPoint(imagePoint: {
+        x: number;
+        y: number;
+    }): { x: number; y: number } | null {
+        return this.screenPoint(imagePoint);
+    }
+
     /** Where image point `point` is shown now, in screen pixels. */
     private screenPoint(point: WsiXY): WsiXY | null {
         const viewport = this.osdViewer?.viewport;
@@ -9597,6 +9673,15 @@ export class WsiAnnotationController implements WsiSlideNotesHost {
             true
         );
         return { x: pixel.x, y: pixel.y };
+    }
+
+    subscribeAgentViewerChanges(callback: () => void): () => void {
+        const viewer = this.osdViewer;
+        if (!viewer?.addHandler) return () => {};
+        const events = ['viewport-change', 'animation-finish', 'resize'];
+        events.forEach(event => viewer.addHandler(event, callback));
+        return () =>
+            events.forEach(event => viewer.removeHandler?.(event, callback));
     }
 
     private async createCustomShape(

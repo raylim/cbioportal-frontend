@@ -259,6 +259,7 @@ export const ServerConfigDefaults: Partial<IServerConfig> = {
     wsi_annotation_label_vocabulary: '',
     wsi_annotation_label_vocabulary_strict: false,
     wsi_annotation_api_url: '',
+    wsi_agent_enabled: false,
 };
 
 export default ServerConfigDefaults;

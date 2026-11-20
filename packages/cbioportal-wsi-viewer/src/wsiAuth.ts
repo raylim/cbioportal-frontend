@@ -191,3 +191,14 @@ export function getWsiSlideSource(
         tileMetadata,
     };
 }
+
+/**
+ * Identifies the pixels a slide source serves, so that an agent proposal made
+ * against one capture is not applied to another: the opaque slide key and the
+ * tile pyramid's shape. The sealed source is opaque to the browser, so it is
+ * not part of the fingerprint.
+ */
+export function getWsiSourceFingerprint(source: WsiSlideSource): string {
+    const meta = source.tileMetadata;
+    return `wsi-v3:${source.slideKey}:${meta.dimensions.width}x${meta.dimensions.height}:${meta.levels}:${meta.tile_size}`;
+}

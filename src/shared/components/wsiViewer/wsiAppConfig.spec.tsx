@@ -92,6 +92,16 @@ describe('buildWsiViewerConfig', () => {
         });
     });
 
+    it('enables the research assistant from the frontend property', () => {
+        expect(buildWsiViewerConfig().agent).toBeUndefined();
+        mockServerConfig.wsi_agent_enabled = false;
+        expect(buildWsiViewerConfig().agent).toBeUndefined();
+        mockServerConfig.wsi_agent_enabled = true;
+        expect(buildWsiViewerConfig().agent).toEqual({ enabled: true });
+        mockServerConfig.wsi_agent_enabled = 'true';
+        expect(buildWsiViewerConfig().agent).toEqual({ enabled: true });
+    });
+
     it('passes the annotation label vocabulary from the frontend properties', () => {
         mockServerConfig.wsi_annotation_api_url = '/wsi';
         mockServerConfig.wsi_annotation_label_vocabulary =

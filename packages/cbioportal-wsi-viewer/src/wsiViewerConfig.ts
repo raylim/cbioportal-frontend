@@ -32,6 +32,15 @@ export interface WsiViewerConfig {
      * called with the portal session cookie. Off when unset.
      */
     annotations?: WsiAnnotationsConfig;
+    /**
+     * Research assistant panel. It talks to the annotation service, so it is
+     * shown only when `annotations` is configured too.
+     */
+    agent?: WsiAgentConfig;
+}
+
+export interface WsiAgentConfig {
+    enabled: boolean;
 }
 
 export interface WsiAnnotationsConfig {
@@ -54,6 +63,7 @@ export interface WsiViewerRuntime {
     osdPrefixUrl?: string;
     onSessionExpired?: () => void;
     annotations?: WsiAnnotationsConfig;
+    agent?: WsiAgentConfig;
 }
 
 // Resolves the global at call time so a replaced `window.fetch` is used.
@@ -102,6 +112,7 @@ export function configureWsiViewerRuntime(config: WsiViewerConfig): void {
         osdPrefixUrl: config.osdPrefixUrl,
         onSessionExpired,
         annotations: config.annotations,
+        agent: config.agent,
     };
 }
 
