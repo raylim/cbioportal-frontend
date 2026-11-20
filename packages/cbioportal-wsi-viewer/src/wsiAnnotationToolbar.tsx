@@ -1357,18 +1357,37 @@ const ColorSwatch = observer(
     }
 );
 
-/** "Drawing as": the layer, label and color of new annotations. */
+/**
+ * "Drawing as": the layer, label and color of new annotations. Compact,
+ * the "Drawing as:" text is a tooltip on the group.
+ */
 const DrawingAs = observer(
-    ({ controller }: { controller: WsiAnnotationController }) => (
+    ({
+        controller,
+        compact,
+    }: {
+        controller: WsiAnnotationController;
+        compact: boolean;
+    }) => (
         <span
             role="group"
             aria-label="Drawing as"
             data-testid="annotation-drawing-as"
+            title={
+                compact
+                    ? 'Drawing as: the layer, label and color of new annotations'
+                    : undefined
+            }
             style={{ ...groupStyle, gap: 4, flexWrap: 'wrap' }}
         >
-            <span style={{ color: colors.muted, whiteSpace: 'nowrap' }}>
-                Drawing as:
-            </span>
+            {!compact && (
+                <span
+                    data-testid="annotation-drawing-as-text"
+                    style={{ color: colors.muted, whiteSpace: 'nowrap' }}
+                >
+                    Drawing as:
+                </span>
+            )}
             <select
                 data-toolbar-item
                 data-testid="annotation-active-layer"
@@ -2026,7 +2045,14 @@ const ImportStatus = observer(
  * region stays on the page so that changes are announced.
  */
 export const SaveStatus = observer(
-    ({ controller }: { controller: WsiAnnotationController }) => {
+    ({
+        controller,
+        compact = false,
+    }: {
+        controller: WsiAnnotationController;
+        /** The icon alone, the text in its tooltip. */
+        compact?: boolean;
+    }) => {
         const status = controller.saveStatus;
         const show =
             status.state === 'saving' ||
@@ -2083,14 +2109,19 @@ export const SaveStatus = observer(
                     title={show ? title : undefined}
                     style={{
                         // While annotating, always there and at least as
-                        // wide as "Saving… 999", so the controls after it do
-                        // not move.
+                        // wide as "Saving… 999" (compact: as the icon), so
+                        // the controls after it do not move.
                         display:
                             show || controller.annotating
                                 ? 'inline-flex'
                                 : 'none',
                         visibility: show ? 'visible' : 'hidden',
-                        minWidth: controller.annotating ? 84 : undefined,
+                        minWidth: controller.annotating
+                            ? compact
+                                ? 18
+                                : 84
+                            : undefined,
+                        justifyContent: compact ? 'center' : undefined,
                         alignItems: 'center',
                         gap: 3,
                         padding: '0 3px',
@@ -2114,7 +2145,11 @@ export const SaveStatus = observer(
                             size={12}
                         />
                     )}
-                    {text}
+                    {compact ? (
+                        <span style={visuallyHidden}>{text}</span>
+                    ) : (
+                        text
+                    )}
                 </span>
                 {unsaved > 0 && status.state === 'unsaved' && (
                     <button
@@ -2229,6 +2264,38 @@ function onToolbarKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
 }
 
 /**
+ * Below this viewer width the toolbar is compact ("Drawing as:" and the
+ * save status text go to tooltips), so that it keeps to one row with both
+ * sidebars open; full, it needs about 860 px plus its 52 px of margin.
+ */
+export const TOOLBAR_COMPACT_BELOW_PX = 960;
+
+/**
+ * Whether the toolbar in `bar` is compact: true while its container (the
+ * viewer) is narrower than `TOOLBAR_COMPACT_BELOW_PX`. A width of 0 (a
+ * hidden tab) keeps the last answer.
+ */
+export function useCompactToolbar(bar: HTMLElement | null): boolean {
+    const [compact, setCompact] = React.useState(false);
+    React.useLayoutEffect(() => {
+        const container = bar?.parentElement;
+        if (!container) return;
+        const update = (width: number) => {
+            if (width > 0) setCompact(width < TOOLBAR_COMPACT_BELOW_PX);
+        };
+        update(container.clientWidth);
+        if (typeof ResizeObserver === 'undefined') return;
+        const observer = new ResizeObserver(entries => {
+            const entry = entries[entries.length - 1];
+            if (entry) update(entry.contentRect.width);
+        });
+        observer.observe(container);
+        return () => observer.disconnect();
+    }, [bar]);
+    return compact;
+}
+
+/**
  * The annotation toolbar: the Annotate toggle, and while it is on the
  * drawing tools, what new annotations are drawn as, undo and redo; the ⋯
  * menu holds sharing, export, import and the shortcuts.
@@ -2236,7 +2303,16 @@ function onToolbarKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
 export const WsiAnnotationToolbar = observer(
     ({ controller }: { controller: WsiAnnotationController }) => {
         const fileInput = React.useRef<HTMLInputElement>(null);
-        const bar = React.useRef<HTMLDivElement>(null);
+        const bar = React.useRef<HTMLDivElement | null>(null);
+        const [
+            barElement,
+            setBarElement,
+        ] = React.useState<HTMLDivElement | null>(null);
+        const barRef = React.useCallback((element: HTMLDivElement | null) => {
+            bar.current = element;
+            setBarElement(element);
+        }, []);
+        const compact = useCompactToolbar(barElement);
         const onFocus = useRovingTabStop(bar);
         const hpfHelpId = useHpfHelpId();
         if (!controller || !controller.visible) return null;
@@ -2245,10 +2321,11 @@ export const WsiAnnotationToolbar = observer(
         const tool = controller.activeTool;
         return (
             <div
-                ref={bar}
+                ref={barRef}
                 role="toolbar"
                 aria-label="Annotation tools"
                 data-testid="wsi-annotation-toolbar"
+                data-compact={compact || undefined}
                 onKeyDown={onToolbarKeyDown}
                 onFocus={onFocus}
                 style={barStyle}
@@ -2389,7 +2466,7 @@ export const WsiAnnotationToolbar = observer(
                         </span>
                         <ToolOptions controller={controller} />
                         <Divider />
-                        <DrawingAs controller={controller} />
+                        <DrawingAs controller={controller} compact={compact} />
                         <Divider />
                         <span style={groupStyle}>
                             <button
@@ -2429,7 +2506,7 @@ export const WsiAnnotationToolbar = observer(
                         </span>
                     </>
                 )}
-                <SaveStatus controller={controller} />
+                <SaveStatus controller={controller} compact={compact} />
                 <DisplayMenu controller={controller} />
                 <MoreMenu
                     controller={controller}

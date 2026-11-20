@@ -2121,10 +2121,21 @@ if (process.env.PW_SUITE === 'wsi') {
     });
 
     test.describe('WSI annotation toolbar layout', () => {
-        // 1920: wide. 1600 with both sidebars open: a viewer of at most
-        // about 1,100 pixels (944 on this page), still one row.
-        for (const width of [1920, 1600]) {
-            test(`keeps the tools on one row and in place whatever tool is on, ${width} px`, async ({
+        // Windows of 1920 and 1600 px with both sidebars open (a viewer of
+        // 944 px on this page), and viewers of 904 px (a 1600 px window on
+        // the patient page, whose sidebars are wider) and 880 px: one row.
+        const layouts: Array<{
+            name: string;
+            width: number;
+            viewer?: number;
+        }> = [
+            { name: '1920 px window', width: 1920 },
+            { name: '1600 px window', width: 1600 },
+            { name: '904 px viewer', width: 1600, viewer: 904 },
+            { name: '880 px viewer', width: 1600, viewer: 880 },
+        ];
+        for (const { name: layout, width, viewer: viewerWidth } of layouts) {
+            test(`keeps the tools on one row and in place whatever tool is on, ${layout}`, async ({
                 page,
             }) => {
                 await page.setViewportSize({ width, height: 900 });
@@ -2146,12 +2157,46 @@ if (process.env.PW_SUITE === 'wsi') {
                     page.getByTestId('wsi-metadata-sidebar')
                 ).toBeVisible();
                 await expect(page.getByTestId('wsi-nav-hide')).toBeVisible();
-                const viewer = (await page
-                    .locator('.openseadragon-container')
-                    .first()
-                    .boundingBox())!;
+                const viewerBox = async () =>
+                    (await page
+                        .locator('.openseadragon-container')
+                        .first()
+                        .boundingBox())!;
+                if (viewerWidth) {
+                    // The sidebars keep their widths: narrow the window by
+                    // what the viewer has too much.
+                    const extra = (await viewerBox()).width - viewerWidth;
+                    await page.setViewportSize({
+                        width: Math.round(width - extra),
+                        height: 900,
+                    });
+                    await expect
+                        .poll(async () => Math.round((await viewerBox()).width))
+                        .toBe(viewerWidth);
+                }
+                const viewer = await viewerBox();
                 if (width === 1600) {
                     expect(viewer.width).toBeLessThanOrEqual(1100);
+                }
+                // Compact below 960 px of viewer: "Drawing as:" and the
+                // save status text are tooltips.
+                const toolbar = page.getByTestId('wsi-annotation-toolbar');
+                if (viewer.width < 960) {
+                    await expect(toolbar).toHaveAttribute(
+                        'data-compact',
+                        'true'
+                    );
+                    await expect(
+                        page.getByTestId('annotation-drawing-as-text')
+                    ).toHaveCount(0);
+                } else {
+                    await expect(toolbar).not.toHaveAttribute(
+                        'data-compact',
+                        'true'
+                    );
+                    await expect(
+                        page.getByTestId('annotation-drawing-as-text')
+                    ).toHaveText('Drawing as:');
                 }
                 const fixed = [
                     'annotation-mode-toggle',
@@ -2186,13 +2231,19 @@ if (process.env.PW_SUITE === 'wsi') {
                     return out.size;
                 };
                 expect(await middles()).toBe(1);
+                // Inside the viewer, with its margin.
+                const bar = (await toolbar.boundingBox())!;
+                expect(bar.x + bar.width).toBeLessThanOrEqual(
+                    viewer.x + viewer.width - 4
+                );
                 const before = await boxes();
                 const shot = async (name: string) => {
                     if (process.env.WSI_SHOT_DIR) {
                         await page.screenshot({
                             path: `${process.env.WSI_SHOT_DIR}/${process.env
-                                .WSI_SHOT_PREFIX ||
-                                ''}toolbar-${width}-${name}.png`,
+                                .WSI_SHOT_PREFIX || ''}toolbar-${Math.round(
+                                viewer.width
+                            )}-${name}.png`,
                             clip: {
                                 x: viewer.x,
                                 y: viewer.y - 4,

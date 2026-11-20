@@ -5,7 +5,10 @@ import * as React from 'react';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { runInAction } from 'mobx';
 import { WsiAnnotationController } from './wsiAnnotationController';
-import { WsiAnnotationToolbar } from './wsiAnnotationToolbar';
+import {
+    TOOLBAR_COMPACT_BELOW_PX,
+    WsiAnnotationToolbar,
+} from './wsiAnnotationToolbar';
 
 function controllerWith(items: any[] = []): WsiAnnotationController {
     const controller = new WsiAnnotationController(
@@ -461,5 +464,113 @@ describe('WsiAnnotationToolbar', () => {
             'annotation-tool-ellipse',
             'annotation-tool-circle',
         ]);
+    });
+
+    describe('compact below a viewer width', () => {
+        let resize: ((width: number) => void) | null = null;
+        let disconnected = 0;
+        const original = (window as any).ResizeObserver;
+        beforeEach(() => {
+            resize = null;
+            disconnected = 0;
+            (window as any).ResizeObserver = class {
+                constructor(private callback: (entries: any[]) => void) {}
+                observe() {
+                    resize = width =>
+                        this.callback([{ contentRect: { width } }]);
+                }
+                disconnect() {
+                    disconnected++;
+                }
+            };
+        });
+        afterEach(() => {
+            (window as any).ResizeObserver = original;
+        });
+
+        function renderIn(width: number) {
+            const controller = controllerWith();
+            controller.setAnnotating(true);
+            runInAction(() => ((controller as any).savedOnSlide = true));
+            const container = document.createElement('div');
+            Object.defineProperty(container, 'clientWidth', {
+                configurable: true,
+                get: () => width,
+            });
+            document.body.appendChild(container);
+            const result = render(
+                <WsiAnnotationToolbar controller={controller} />,
+                { container }
+            );
+            return { controller, ...result };
+        }
+        const compact = () =>
+            byTestId('wsi-annotation-toolbar').hasAttribute('data-compact');
+
+        it('puts "Drawing as:" and the save status text in tooltips, and back', () => {
+            const { unmount } = renderIn(TOOLBAR_COMPACT_BELOW_PX - 56);
+            expect(compact()).toBe(true);
+            expect(
+                screen.queryByTestId('annotation-drawing-as-text')
+            ).toBeNull();
+            const group = byTestId('annotation-drawing-as');
+            expect(group.getAttribute('aria-label')).toBe('Drawing as');
+            expect(group.getAttribute('title')).toMatch(/^Drawing as:/);
+            // The status keeps its text (for tests and the tooltip) but
+            // shows the icon alone, at a fixed width.
+            const status = byTestId('annotation-save-status');
+            expect(status.textContent).toBe('Saved');
+            expect(status.getAttribute('title')).toBe('All changes are saved');
+            expect(status.style.minWidth).toBe('18px');
+            // The icon-only controls keep their names.
+            expect(
+                byTestId('annotation-display-button').getAttribute('aria-label')
+            ).toBe('Display');
+            expect(
+                byTestId('annotation-more-menu-button').getAttribute(
+                    'aria-label'
+                )
+            ).toBe('More annotation actions');
+
+            act(() => resize!(TOOLBAR_COMPACT_BELOW_PX));
+            expect(compact()).toBe(false);
+            expect(byTestId('annotation-drawing-as-text').textContent).toBe(
+                'Drawing as:'
+            );
+            expect(byTestId('annotation-save-status').style.minWidth).toBe(
+                '84px'
+            );
+            // A hidden tab reports 0: the last answer stays.
+            act(() => resize!(0));
+            expect(compact()).toBe(false);
+            act(() => resize!(880));
+            expect(compact()).toBe(true);
+            unmount();
+            expect(disconnected).toBe(1);
+        });
+
+        it('is full when the viewer is wide', () => {
+            renderIn(1224);
+            expect(compact()).toBe(false);
+            expect(
+                byTestId('annotation-drawing-as').getAttribute('title')
+            ).toBe(null);
+        });
+
+        it('keeps the arrow keys moving through the compact toolbar', () => {
+            renderIn(880);
+            expect(compact()).toBe(true);
+            const items = Array.from(
+                byTestId('wsi-annotation-toolbar').querySelectorAll<
+                    HTMLElement
+                >('[data-toolbar-item]')
+            );
+            expect(items.filter(item => item.tabIndex === 0)).toHaveLength(1);
+            items[0].focus();
+            fireEvent.keyDown(items[0], { key: 'End' });
+            expect(document.activeElement).toBe(
+                byTestId('annotation-more-menu-button')
+            );
+        });
     });
 });
