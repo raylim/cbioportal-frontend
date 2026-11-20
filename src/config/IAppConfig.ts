@@ -159,6 +159,14 @@ export interface IServerConfig {
      * origin such as /wsi). Empty or unset hides the slide viewer.
      */
     wsi_tile_server_url: string | null;
+    /**
+     * Comma-separated label terms the WSI annotation label field offers,
+     * e.g. "Tumor,Stroma,Necrosis,Lymphocytes,Mitosis". Empty: free text.
+     */
+    wsi_annotation_label_vocabulary: string | null;
+    /** Only labels from wsi_annotation_label_vocabulary are allowed. */
+    wsi_annotation_label_vocabulary_strict: boolean;
+    wsi_annotation_api_url: string | null;
     query_product_limit: number;
     clinical_attribute_product_limit: number;
     dat_method: string;

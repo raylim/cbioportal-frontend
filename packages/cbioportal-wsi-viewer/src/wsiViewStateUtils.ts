@@ -223,6 +223,59 @@ export function buildWsiDownloadFilename({
         'slide'}-x${x}-y${y}.jpg`;
 }
 
+/**
+ * A copy of `canvas` (the slide as drawn) on `background`, with `draw`
+ * drawn over it. The copy has the canvas's own pixels; `draw` gets how
+ * many of them make one screen pixel of the viewer (the device pixel
+ * ratio, as measured).
+ */
+export function composeSnapshot(
+    canvas: HTMLCanvasElement,
+    draw?: (context: CanvasRenderingContext2D, scale: number) => void,
+    background?: string
+): HTMLCanvasElement {
+    const copy = document.createElement('canvas');
+    copy.width = canvas.width;
+    copy.height = canvas.height;
+    const context = copy.getContext('2d');
+    if (!context) return canvas;
+    // The slide's canvas is transparent outside the slide, which a JPEG
+    // would make black: fill it as the viewer shows it first.
+    if (background) {
+        context.fillStyle = background;
+        context.fillRect(0, 0, copy.width, copy.height);
+    }
+    context.drawImage(canvas, 0, 0);
+    const scale =
+        canvas.clientWidth > 0
+            ? canvas.width / canvas.clientWidth
+            : (typeof window !== 'undefined' && window.devicePixelRatio) || 1;
+    draw?.(context, scale);
+    return copy;
+}
+
+/**
+ * The color shown behind `element`: its own background, else that of the
+ * nearest ancestor with an opaque one, else `fallback`.
+ */
+export function backgroundBehind(
+    element: Element | null | undefined,
+    fallback: string
+): string {
+    if (typeof getComputedStyle !== 'function') return fallback;
+    for (let node = element; node; node = node.parentElement) {
+        const color = getComputedStyle(node).backgroundColor;
+        if (
+            color &&
+            color !== 'transparent' &&
+            !/^rgba\(.*,\s*0\)$/.test(color)
+        ) {
+            return color;
+        }
+    }
+    return fallback;
+}
+
 export function downloadCanvasAsJpeg(
     canvas: HTMLCanvasElement,
     filename: string

@@ -5,6 +5,7 @@ import * as React from 'react';
 import TestRenderer, { act } from 'react-test-renderer';
 import {
     WsiMetaSidebar,
+    wsiSidebarSectionAnnotatingExpandedKey,
     wsiSidebarSectionCollapsedKey,
     wsiSidebarSectionExpandedKey,
 } from './wsiMetaSidebar';
@@ -50,8 +51,8 @@ describe('WsiMetaSidebar clinical section', () => {
 describe('WsiMetaSidebar collapsible sections', () => {
     beforeEach(() => window.localStorage.clear());
 
-    function renderSidebar() {
-        return TestRenderer.create(
+    function sidebar(annotating = false) {
+        return (
             <WsiMetaSidebar
                 width={300}
                 showImageProperties={true}
@@ -59,8 +60,31 @@ describe('WsiMetaSidebar collapsible sections', () => {
                 showPathology={true}
                 pathRows={[{ label: 'Stain', value: 'H&E' }]}
                 clinicalRows={[{ label: 'Sex', value: 'Female' }]}
+                annotationLayersPanel={<span>layer list</span>}
+                annotationPanel={<span>annotation list</span>}
+                slideNotesPanel={<span>notes</span>}
+                annotating={annotating}
             />
         );
+    }
+
+    function renderSidebar(annotating = false) {
+        return TestRenderer.create(sidebar(annotating));
+    }
+
+    function order(renderer: TestRenderer.ReactTestRenderer): string[] {
+        return renderer.root
+            .findAll(
+                node =>
+                    typeof node.props['data-testid'] === 'string' &&
+                    /^wsi-sidebar-section-[A-Za-z]+$/.test(
+                        node.props['data-testid']
+                    ) &&
+                    typeof node.type === 'string'
+            )
+            .map(node =>
+                node.props['data-testid'].replace('wsi-sidebar-section-', '')
+            );
     }
 
     function isHidden(renderer: TestRenderer.ReactTestRenderer, id: string) {
@@ -74,26 +98,29 @@ describe('WsiMetaSidebar collapsible sections', () => {
         });
     }
 
-    it.each(['imageProperties', 'pathology', 'clinical'])(
-        'collapses and expands the %s section',
-        id => {
-            const renderer = renderSidebar();
-            expect(toggle(renderer, id).props['aria-expanded']).toBe(true);
+    it.each([
+        'imageProperties',
+        'pathology',
+        'clinical',
+        'annotationLayers',
+        'annotations',
+    ])('collapses and expands the %s section', id => {
+        const renderer = renderSidebar();
+        expect(toggle(renderer, id).props['aria-expanded']).toBe(true);
 
-            act(() => toggle(renderer, id).props.onClick());
-            expect(toggle(renderer, id).props['aria-expanded']).toBe(false);
-            expect(isHidden(renderer, id)).toBe(true);
-            expect(
-                window.localStorage.getItem(wsiSidebarSectionCollapsedKey(id))
-            ).toBe('1');
+        act(() => toggle(renderer, id).props.onClick());
+        expect(toggle(renderer, id).props['aria-expanded']).toBe(false);
+        expect(isHidden(renderer, id)).toBe(true);
+        expect(
+            window.localStorage.getItem(wsiSidebarSectionCollapsedKey(id))
+        ).toBe('1');
 
-            act(() => toggle(renderer, id).props.onClick());
-            expect(toggle(renderer, id).props['aria-expanded']).toBe(true);
-            expect(
-                window.localStorage.getItem(wsiSidebarSectionCollapsedKey(id))
-            ).toBeNull();
-        }
-    );
+        act(() => toggle(renderer, id).props.onClick());
+        expect(toggle(renderer, id).props['aria-expanded']).toBe(true);
+        expect(
+            window.localStorage.getItem(wsiSidebarSectionCollapsedKey(id))
+        ).toBeNull();
+    });
 
     it('collapses one section without touching the others', () => {
         const renderer = renderSidebar();
@@ -108,6 +135,48 @@ describe('WsiMetaSidebar collapsible sections', () => {
         const renderer = renderSidebar();
         act(() => toggle(renderer, 'clinical').props.onClick());
         expect(JSON.stringify(renderer.toJSON())).toContain('"Female"');
+    });
+
+    it('puts Annotations first, filling the height, while Annotate is on', () => {
+        const renderer = renderSidebar();
+        expect(order(renderer)).toEqual([
+            'imageProperties',
+            'pathology',
+            'clinical',
+            'slideNotes',
+            'annotationLayers',
+            'annotations',
+        ]);
+        const annotations = () =>
+            renderer.root.findByProps({
+                'data-testid': 'wsi-sidebar-section-annotations',
+            });
+        expect(annotations().props['data-fill']).toBeUndefined();
+
+        act(() => renderer.update(sidebar(true)));
+        expect(order(renderer)).toEqual([
+            'annotations',
+            'annotationLayers',
+            'slideNotes',
+            'imageProperties',
+            'pathology',
+            'clinical',
+        ]);
+        expect(annotations().props['data-fill']).toBe(true);
+        expect(annotations().props.style.flex).toBe('1 1 0');
+        // Clinical starts collapsed while annotating, and is remembered.
+        expect(isHidden(renderer, 'clinical')).toBe(true);
+        act(() => toggle(renderer, 'clinical').props.onClick());
+        expect(isHidden(renderer, 'clinical')).toBe(false);
+        expect(
+            window.localStorage.getItem(
+                wsiSidebarSectionAnnotatingExpandedKey('clinical')
+            )
+        ).toBe('1');
+        // Annotate off: the usual order, and Clinical's own state.
+        act(() => renderer.update(sidebar(false)));
+        expect(order(renderer)[0]).toBe('imageProperties');
+        expect(isHidden(renderer, 'clinical')).toBe(false);
     });
 
     it('restores the stored collapsed state', () => {

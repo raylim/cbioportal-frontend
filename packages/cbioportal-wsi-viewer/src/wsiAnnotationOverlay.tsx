@@ -1,0 +1,345 @@
+import * as React from 'react';
+import { observer } from 'mobx-react';
+import { WsiAnnotationController } from './wsiAnnotationController';
+import { SLIDE_LABEL_FONT_SIZE, WsiScreenBox } from './wsiAnnotationSpatial';
+import { RULER_COLOR, RULER_HALO, rulerTicks } from './wsiAnnotationSnapshot';
+
+/**
+ * The quick ruler from (`x1`, `y1`) to (`x2`, `y2`) in screen pixels: a
+ * yellow line on a dark halo with ticks across its ends, and its reading
+ * next to the end, white on a dark outline (readable on any tissue).
+ */
+export function WsiRulerLine({
+    x1,
+    y1,
+    x2,
+    y2,
+    text,
+    testId,
+}: {
+    x1: number;
+    y1: number;
+    x2: number;
+    y2: number;
+    text: string | null;
+    testId: string;
+}) {
+    const a = { x: x1, y: y1 };
+    const b = { x: x2, y: y2 };
+    const segments = [[a, b], ...rulerTicks(a, b)];
+    const path = segments
+        .map(([from, to]) => `M${from.x},${from.y}L${to.x},${to.y}`)
+        .join('');
+    return (
+        <g data-testid={testId}>
+            <path
+                d={path}
+                stroke={RULER_HALO}
+                strokeWidth={4}
+                strokeLinecap="round"
+                fill="none"
+            />
+            <path
+                d={path}
+                stroke={RULER_COLOR}
+                strokeWidth={2}
+                strokeLinecap="round"
+                fill="none"
+            />
+            {text && (
+                <text
+                    data-testid={`${testId}-text`}
+                    x={x2 + 12}
+                    y={y2 - 10}
+                    fontSize={12}
+                    fontWeight={600}
+                    fill="#fff"
+                    stroke={RULER_HALO}
+                    strokeWidth={3}
+                    paintOrder="stroke"
+                >
+                    {text}
+                </text>
+            )}
+        </g>
+    );
+}
+
+/** Space between a shape and its highlight, in screen pixels. */
+const HIGHLIGHT_PADDING = 6;
+/** The smallest highlight, e.g. around a point. */
+const HIGHLIGHT_MIN = 20;
+
+function padded(box: WsiScreenBox, padding: number, min: number) {
+    const width = Math.max(box.width + 2 * padding, min);
+    const height = Math.max(box.height + 2 * padding, min);
+    return {
+        x: box.x + box.width / 2 - width / 2,
+        y: box.y + box.height / 2 - height / 2,
+        width,
+        height,
+    };
+}
+
+/**
+ * Drawn over the slide, in screen pixels, following it as it moves: labels
+ * on the slide, the quick ruler, and the highlight of the focused annotation (under review,
+ * stepped to, or opened by a link). It ignores the pointer. The downloaded
+ * view draws the labels again (see `wsiAnnotationSnapshot`), not the
+ * highlight or selection.
+ */
+export const WsiAnnotationOverlay = observer(
+    ({ controller }: { controller: WsiAnnotationController }) => {
+        const focused = controller.focusedBox;
+        const labels = controller.slideLabels;
+        const selected = controller.selectedBoxes;
+        const drag = controller.selectionDragBox;
+        const ruler = controller.rulerOnScreen;
+        if (!focused && !labels.length && !selected.length && !drag && !ruler) {
+            return null;
+        }
+        const box =
+            focused && padded(focused, HIGHLIGHT_PADDING, HIGHLIGHT_MIN);
+        return (
+            <svg
+                data-testid="annotation-overlay"
+                aria-hidden="true"
+                style={{
+                    position: 'absolute',
+                    inset: 0,
+                    width: '100%',
+                    height: '100%',
+                    pointerEvents: 'none',
+                    overflow: 'hidden',
+                    zIndex: 18,
+                }}
+            >
+                {labels.length > 0 && (
+                    <g data-testid="annotation-slide-label-layer">
+                        {labels.map(label => (
+                            <g
+                                key={label.id}
+                                data-testid={`annotation-slide-label-${label.id}`}
+                            >
+                                {/* White on at least 70% black: 7:1 or more
+                                    on any tissue. */}
+                                <rect
+                                    x={label.x}
+                                    y={label.y}
+                                    width={label.width}
+                                    height={label.height}
+                                    rx={2}
+                                    fill="rgba(0,0,0,0.7)"
+                                />
+                                <text
+                                    x={label.x + 3}
+                                    y={label.y + label.height - 4}
+                                    fontSize={SLIDE_LABEL_FONT_SIZE}
+                                    fill="#fff"
+                                >
+                                    {label.text}
+                                </text>
+                            </g>
+                        ))}
+                    </g>
+                )}
+                {selected.length > 0 && (
+                    <g data-testid="annotation-selection-frames">
+                        {selected.map(({ id, box: frame }) => {
+                            const at = padded(frame, 3, 12);
+                            return (
+                                <g
+                                    key={id}
+                                    data-testid={`annotation-selection-frame-${id}`}
+                                >
+                                    <rect
+                                        {...at}
+                                        fill="none"
+                                        stroke="#fff"
+                                        strokeWidth={3}
+                                    />
+                                    <rect
+                                        {...at}
+                                        fill="none"
+                                        stroke="#1f6fbf"
+                                        strokeWidth={1.5}
+                                        strokeDasharray="4 3"
+                                    />
+                                </g>
+                            );
+                        })}
+                    </g>
+                )}
+                {drag && (
+                    <rect
+                        data-testid="annotation-selection-box"
+                        {...drag}
+                        fill="rgba(31,111,191,0.12)"
+                        stroke="#1f6fbf"
+                        strokeWidth={1}
+                        strokeDasharray="4 3"
+                    />
+                )}
+                {ruler && <WsiRulerLine {...ruler} testId="annotation-ruler" />}
+                {box && (
+                    <g data-testid="annotation-focus-highlight">
+                        <rect
+                            {...box}
+                            rx={3}
+                            fill="none"
+                            stroke="rgba(0,0,0,0.7)"
+                            strokeWidth={4}
+                        />
+                        <rect
+                            {...box}
+                            rx={3}
+                            fill="none"
+                            stroke="#ffd400"
+                            strokeWidth={2}
+                            strokeDasharray="6 4"
+                        />
+                    </g>
+                )}
+            </svg>
+        );
+    }
+);
+
+const barButtonStyle: React.CSSProperties = {
+    border: '1px solid #cfcfcf',
+    borderRadius: 3,
+    background: '#fff',
+    color: '#222',
+    fontSize: 12,
+    lineHeight: '18px',
+    padding: '0 6px',
+    cursor: 'pointer',
+};
+
+/**
+ * The annotation the slide is pointed at by `]` / `[`, a list row or a
+ * link: where it is among those listed, the previous and next ones, and
+ * Copy link. Hidden while the review card is open.
+ */
+export const WsiAnnotationFocusBar = observer(
+    ({ controller }: { controller: WsiAnnotationController }) => {
+        const position = controller.navigationPosition;
+        const id = controller.focusedAnnotationId;
+        const annotation =
+            id && controller.annotations.find(item => item.id === id);
+        const message = controller.linkMessage;
+        if (controller.reviewQueue || (!annotation && !message)) return null;
+        const label = annotation
+            ? annotation.body?.[0]?.value || '(unlabeled)'
+            : '';
+        return (
+            <div
+                role="group"
+                aria-label="Annotation shown"
+                data-testid="annotation-focus-bar"
+                style={{
+                    position: 'absolute',
+                    left: '50%',
+                    bottom: 40,
+                    transform: 'translateX(-50%)',
+                    maxWidth: 'calc(100% - 16px)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    flexWrap: 'wrap',
+                    gap: 6,
+                    padding: '4px 8px',
+                    background: '#fff',
+                    border: '1px solid #cfcfcf',
+                    borderRadius: 4,
+                    boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
+                    color: '#222',
+                    fontSize: 12,
+                    zIndex: 21,
+                }}
+            >
+                {annotation && (
+                    <>
+                        <button
+                            type="button"
+                            data-testid="annotation-focus-previous"
+                            aria-label="Previous annotation ([)"
+                            title="Previous annotation ([)"
+                            onClick={() => controller.stepAnnotation(-1)}
+                            style={barButtonStyle}
+                        >
+                            ‹
+                        </button>
+                        <span
+                            role="status"
+                            data-testid="annotation-focus-status"
+                            style={{
+                                maxWidth: 260,
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                whiteSpace: 'nowrap',
+                            }}
+                        >
+                            {position && position.index >= 0
+                                ? `${position.index + 1} of ${position.total}: `
+                                : ''}
+                            {label}
+                        </span>
+                        <button
+                            type="button"
+                            data-testid="annotation-focus-next"
+                            aria-label="Next annotation (])"
+                            title="Next annotation (])"
+                            onClick={() => controller.stepAnnotation(1)}
+                            style={barButtonStyle}
+                        >
+                            ›
+                        </button>
+                        {controller.canLinkAnnotations && (
+                            <button
+                                type="button"
+                                data-testid="annotation-focus-copy-link"
+                                title="Copy a link that opens the slide at this annotation"
+                                onClick={() =>
+                                    void controller.copyAnnotationLink(
+                                        annotation.id
+                                    )
+                                }
+                                style={barButtonStyle}
+                            >
+                                <i aria-hidden="true" className="fa fa-link" />{' '}
+                                Copy link
+                            </button>
+                        )}
+                    </>
+                )}
+                {message && (
+                    <span
+                        role="status"
+                        data-testid="annotation-link-message"
+                        style={{ overflowWrap: 'anywhere' }}
+                    >
+                        {message}
+                    </span>
+                )}
+                <button
+                    type="button"
+                    data-testid="annotation-focus-close"
+                    aria-label="Close (Esc)"
+                    title="Close (Esc)"
+                    onClick={() => {
+                        controller.dismissLinkMessage();
+                        controller.clearFocus();
+                    }}
+                    style={{
+                        ...barButtonStyle,
+                        border: 'none',
+                        color: '#595959',
+                        fontSize: 14,
+                    }}
+                >
+                    ×
+                </button>
+            </div>
+        );
+    }
+);

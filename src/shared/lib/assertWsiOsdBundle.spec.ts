@@ -5,11 +5,15 @@ import path from 'path';
 const {
     assertWsiOsdBundle,
     OPENSEADRAGON_MARKER,
+    SHAPE_OPS_MARKER,
+    TISSUE_MARKER,
 } = require('../../../scripts/assert_wsi_osd_bundle');
 
 const OSD_LIBRARY = `console.error(${JSON.stringify(
     `${OPENSEADRAGON_MARKER} options is required`
 )});`;
+// OpenSeadragon's version object, which the one-copy check counts.
+const OSD_VERSION = 'c.version={versionStr:"6.0.2",major:6};';
 // The webpack runtime names async chunks in the initial bundle.
 const RUNTIME_CHUNK_NAMES = 'n.u=e=>({546:"wsi-openseadragon"})[e]+".js";';
 
@@ -61,6 +65,49 @@ describe('assertWsiOsdBundle', () => {
                     'wsi-openseadragon.123.js'
                 );
             }
+        );
+    });
+
+    it('accepts the shape operations in their own chunk only', () => {
+        const clipping = `throw Error(${JSON.stringify(SHAPE_OPS_MARKER)});`;
+        withDist(
+            {
+                'reactapp/common.bundle.js': 'window.__common__ = true;',
+                'reactapp/main.app.js': RUNTIME_CHUNK_NAMES,
+                'reactapp/wsi-openseadragon.123.js': OSD_LIBRARY,
+                'reactapp/wsi-shapeops.456.chunk.js': clipping,
+            },
+            distDir =>
+                expect(() => assertWsiOsdBundle({ distDir })).not.toThrow()
+        );
+        // In the viewer's chunk, or an initial bundle, it fails.
+        withDist(
+            {
+                'reactapp/common.bundle.js': 'window.__common__ = true;',
+                'reactapp/main.app.js': RUNTIME_CHUNK_NAMES,
+                'reactapp/wsi-openseadragon.123.js': OSD_LIBRARY,
+                'reactapp/244.789.chunk.js': clipping,
+            },
+            distDir =>
+                expect(() => assertWsiOsdBundle({ distDir })).toThrow(
+                    /shape operations \(polygon-clipping\) only in the asynchronous wsi-shapeops chunk, but they are in 244\.789\.chunk\.js/
+                )
+        );
+    });
+
+    it('fails when the tissue tools are in an initial bundle', () => {
+        withDist(
+            {
+                'reactapp/common.bundle.js': `x=${JSON.stringify(
+                    TISSUE_MARKER
+                )};`,
+                'reactapp/main.app.js': RUNTIME_CHUNK_NAMES,
+                'reactapp/wsi-openseadragon.123.js': OSD_LIBRARY,
+            },
+            distDir =>
+                expect(() => assertWsiOsdBundle({ distDir })).toThrow(
+                    /tissue tools in an asynchronous chunk, but they are in common\.bundle\.js/
+                )
         );
     });
 
@@ -131,5 +178,62 @@ describe('assertWsiOsdBundle', () => {
                     /Expected one asynchronous wsi-openseadragon chunk .* found 2/
                 )
         );
+    });
+
+    it('fails when OpenSeadragon is bundled into more than one chunk', () => {
+        const { root, distDir } = makeTempDist();
+        try {
+            writeBundleFixture(distDir, {
+                'reactapp/common.bundle.js': 'window.__common__ = true;',
+                'reactapp/main.app.js': 'window.__main__ = true;',
+                'reactapp/wsi-openseadragon.123.js': OSD_LIBRARY + OSD_VERSION,
+                'reactapp/wsi-annotorious.456.js': OSD_VERSION,
+            });
+
+            expect(() => assertWsiOsdBundle({ distDir })).toThrow(
+                /Expected one copy of OpenSeadragon/
+            );
+        } finally {
+            fs.rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it('accepts Annotorious in its own chunk sharing OpenSeadragon', () => {
+        const { root, distDir } = makeTempDist();
+        try {
+            writeBundleFixture(distDir, {
+                'reactapp/common.bundle.js': 'window.__common__ = true;',
+                'reactapp/main.app.js': 'window.__main__ = true;',
+                'reactapp/wsi-openseadragon.123.js': OSD_LIBRARY + OSD_VERSION,
+                'reactapp/wsi-annotorious.456.js':
+                    'e.className="a9s-annotationlayer";',
+            });
+
+            const result = assertWsiOsdBundle({ distDir });
+
+            expect(path.basename(result.osdBundlePath)).toBe(
+                'wsi-openseadragon.123.js'
+            );
+        } finally {
+            fs.rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it('fails when Annotorious is in an initial bundle', () => {
+        const { root, distDir } = makeTempDist();
+        try {
+            writeBundleFixture(distDir, {
+                'reactapp/common.bundle.js':
+                    'e.className="a9s-annotationlayer";',
+                'reactapp/main.app.js': 'window.__main__ = true;',
+                'reactapp/wsi-openseadragon.123.js': OSD_LIBRARY,
+            });
+
+            expect(() => assertWsiOsdBundle({ distDir })).toThrow(
+                /Expected Annotorious in an asynchronous chunk/
+            );
+        } finally {
+            fs.rmSync(root, { recursive: true, force: true });
+        }
     });
 });

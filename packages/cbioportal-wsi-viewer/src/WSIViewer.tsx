@@ -1,6 +1,13 @@
 import * as React from 'react';
 import { observer } from 'mobx-react';
-import { observable, action, computed, makeObservable } from 'mobx';
+import {
+    observable,
+    action,
+    computed,
+    makeObservable,
+    reaction,
+    IReactionDisposer,
+} from 'mobx';
 import { DefaultTooltip } from 'cbioportal-frontend-commons';
 import {
     PathologySlideFilter,
@@ -38,6 +45,25 @@ import { clearPatientHierarchyCache } from './wsiHierarchyFetchCache';
 import { clearWsiSlideSources } from './wsiAuth';
 import { clearWsiThumbnailFetchCache } from './wsiThumbnailFetchCache';
 import {
+    isTypingTarget,
+    WsiAnnotationController,
+    WsiAnnotationLinkTarget,
+} from './wsiAnnotationController';
+import {
+    WsiAnnotationDrawPreview,
+    WsiAnnotationLayersPanel,
+    WsiAnnotationPanel,
+    WsiAnnotationTooltip,
+} from './wsiAnnotationControls';
+import { WsiAnnotationToolbar } from './wsiAnnotationToolbar';
+import {
+    WsiAnnotationFocusBar,
+    WsiAnnotationOverlay,
+} from './wsiAnnotationOverlay';
+import { WsiAnnotationReviewCard } from './wsiAnnotationReview';
+import { WsiTissueBar, WsiTissueOverlay } from './wsiTissueOverlay';
+import { WsiSlideNotesPanel } from './wsiSlideNotesPanel';
+import {
     checkWsiTileServerOrigin,
     normalizeWsiTileServerBase,
 } from './wsiUrls';
@@ -58,6 +84,20 @@ import {
     writeWsiPanelFlag,
 } from './wsiPanelChrome';
 import { getStainDotColor } from './wsiMetaUtils';
+import {
+    otherSide,
+    WsiCompareController,
+    WsiPaneSide,
+} from './wsiCompareController';
+import {
+    WsiAlignMarkers,
+    WsiAlignPanel,
+    WsiCompareBar,
+    WsiCompareDivider,
+    WsiPaneHeader,
+} from './wsiCompareView';
+import { defaultPairCandidate, slideStainLabel } from './wsiComparePairing';
+import { formatSlideId } from './wsiSlideId';
 
 const SIDEBAR_HANDLE_W = 8;
 const SLIDE_SELECTION_DEBOUNCE_MS = 120;
@@ -67,19 +107,16 @@ export { WSI_METADATA_COLLAPSED_KEY, WSI_NAV_COLLAPSED_KEY };
 /** Keys that show or hide the slide list and the details sidebar. */
 const NAV_TOGGLE_KEY = '|';
 const METADATA_TOGGLE_KEY = '.';
+/** Moves the focus to the other slide, side by side. */
+export const WSI_PANE_SWITCH_KEY = 'F6';
 
-function isTypingTarget(target: EventTarget | null): boolean {
-    const element = target as HTMLElement | null;
-    if (!element || !element.tagName) {
-        return false;
-    }
-    const tag = element.tagName.toLowerCase();
-    return (
-        tag === 'input' ||
-        tag === 'textarea' ||
-        tag === 'select' ||
-        element.isContentEditable
-    );
+/** One slide's viewer: the main one, or the second side by side. */
+interface WsiViewerPane {
+    side: WsiPaneSide;
+    state: WsiViewerState;
+    controller: WsiViewerController;
+    annotations: WsiAnnotationController;
+    containerRef: React.RefObject<HTMLDivElement>;
 }
 
 export interface WsiViewerProps {
@@ -117,6 +154,38 @@ export interface WsiViewerProps {
     showDownload?: boolean;
     /** Indicator shown while the hierarchy loads. */
     renderLoading?: () => React.ReactNode;
+    /** Annotation service base URL; annotation authoring is off when unset. */
+    annotationApiUrl?: string | null;
+    /**
+     * The signed-in user as the annotation service names creators (the
+     * portal user name). Edit and delete then show only on the user's own
+     * annotations; unset, they show on all and the service refuses others'.
+     */
+    annotationUser?: string;
+    /**
+     * An annotation to open, as from a link made by `annotationLink`: once
+     * the slide's annotations load it is shown, fitted in the view and
+     * highlighted; a missing one is reported.
+     */
+    requestedAnnotationId?: string;
+    /**
+     * The slide `requestedAnnotationId` is on (its opaque key, as the link
+     * names it): the annotation opens only on that slide. Unset, it opens
+     * on the first slide shown.
+     */
+    requestedAnnotationSlideKey?: string;
+    /**
+     * Called once the requested annotation was opened or found missing, so
+     * the host can drop it from the URL (a reload or another slide does not
+     * open it again).
+     */
+    onRequestedAnnotationUsed?: () => void;
+    /**
+     * Makes a shareable link that opens this viewer at a slide and one
+     * annotation (by id; never an image id). Unset, annotations offer no
+     * Copy link.
+     */
+    annotationLink?: (target: WsiAnnotationLinkTarget) => string;
     /**
      * Hides the slide list. Unset, the viewer keeps the user's choice in
      * browser storage.
@@ -187,6 +256,15 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
     private resizeStartWidth = 0;
     private isResizingSidebar = false;
     private controller: WsiViewerController;
+    private annotationController: WsiAnnotationController;
+    private readonly primaryPane: WsiViewerPane;
+    /** Side by side: the second slide's viewer while Compare is open. */
+    @observable.ref private comparePane: WsiViewerPane | null = null;
+    private readonly compare = new WsiCompareController(side =>
+        side === 'left' ? this.primaryPane : this.comparePane
+    );
+    private readonly compareRowRef = React.createRef<HTMLDivElement>();
+    private comparePairReaction: IReactionDisposer | null = null;
     @observable private requestedSlideNoticeDismissed = false;
     private slideSelectionTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -292,11 +370,164 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
             props.initialMatchFilter ||
             getInitialMatchFilter(props.pathologyFilter);
         this.linkoutScopeActive = !!props.pathologyFilter;
+        this.annotationController = new WsiAnnotationController(
+            props.annotationApiUrl,
+            props.studyId
+        );
+        this.annotationController.setCurrentUser(props.annotationUser);
+        this.annotationController.setMppProvider(
+            () => this.viewerState.selectedMpp
+        );
+        this.annotationController.setObjectivePowerProvider(
+            () => this.viewerState.selectedObjectivePower
+        );
+        this.annotationController.setLinkBuilder(props.annotationLink);
+        this.annotationController.requestAnnotation(
+            props.requestedAnnotationId,
+            props.requestedAnnotationSlideKey,
+            () => this.props.onRequestedAnnotationUsed?.()
+        );
+        this.annotationController.setCursorReporter((x, y) =>
+            this.viewerState.setCursorPos(x, y)
+        );
+        this.annotationController.setViewerHidden(!!props.hidden);
         this.controller = new WsiViewerController(
             this.createControllerHost(),
             this.viewerState,
             loadOpenSeadragon
         );
+        this.primaryPane = {
+            side: 'left',
+            state: this.viewerState,
+            controller: this.controller,
+            annotations: this.annotationController,
+            containerRef: this.viewerContainerRef,
+        };
+    }
+
+    // ---- side by side ----
+
+    /** The pane whose details, layers and annotations the sidebar shows. */
+    @computed private get activePane(): WsiViewerPane {
+        return this.compare.open &&
+            this.compare.activeSide === 'right' &&
+            this.comparePane
+            ? this.comparePane
+            : this.primaryPane;
+    }
+
+    /** Why Compare cannot open now, or null. */
+    @computed private get compareUnavailable(): string | null {
+        if (!this.viewerState.selectedSlide) return 'No slide is open';
+        return defaultPairCandidate(
+            this.viewerState.hierarchy,
+            this.viewerState.selectedSlide
+        )
+            ? null
+            : 'This patient has no other slide to compare with';
+    }
+
+    private createComparePane(): WsiViewerPane {
+        const state = new WsiViewerState();
+        action(() => {
+            state.hierarchy = this.viewerState.hierarchy;
+            state.loading = false;
+        })();
+        const annotations = new WsiAnnotationController(
+            this.props.annotationApiUrl,
+            this.props.studyId
+        );
+        annotations.setCurrentUser(this.props.annotationUser);
+        annotations.setMppProvider(() => state.selectedMpp);
+        annotations.setObjectivePowerProvider(
+            () => state.selectedObjectivePower
+        );
+        annotations.setCursorReporter((x, y) => state.setCursorPos(x, y));
+        annotations.setViewerHidden(!!this.props.hidden);
+        const containerRef = React.createRef<HTMLDivElement>();
+        const controller = new WsiViewerController(
+            {
+                getProps: () => this.controllerProps,
+                getServableSlides: () => this.servableSlides,
+                getStainFilter: () => 'all',
+                getTileServerBase: () => this.tileServerBase,
+                getViewerContainerElement: () => containerRef.current,
+                chooseInitialServableSlide: () => undefined,
+                reportInitialSlideLoadPerformance: () => undefined,
+                onSlideSelectionStarted: slide => {
+                    this.compare.beginSlide('right');
+                    annotations.beginSlide(slide.slide_key);
+                },
+                onViewerOpened: (viewer, openSeadragon, slide) => {
+                    annotations.attachViewer(
+                        viewer,
+                        openSeadragon,
+                        slide.slide_key
+                    );
+                    this.compare.attachViewer('right', viewer, openSeadragon);
+                },
+                onViewerDestroyed: () => {
+                    annotations.detachViewer();
+                    this.compare.detachViewer('right');
+                },
+                drawDownloadOverlay: (context, scale) =>
+                    annotations.drawSnapshot(context, scale),
+                ownsUrlState: false,
+            },
+            state,
+            loadOpenSeadragon
+        );
+        return { side: 'right', state, controller, annotations, containerRef };
+    }
+
+    /**
+     * Opens a second viewer next to the slide, on the closest slide of the
+     * other stain (the same block's IHC for an H&E slide, and back).
+     */
+    @action.bound
+    private openCompare() {
+        const left = this.viewerState.selectedSlide;
+        const first = defaultPairCandidate(this.viewerState.hierarchy, left);
+        if (this.compare.open || !first) return;
+        const pane = this.createComparePane();
+        this.comparePane = pane;
+        this.compare.setOpen(true);
+        this.updateControllerVisibility();
+        void pane.controller.selectSlide(first.slide, first.sample, false);
+    }
+
+    @action.bound
+    private closeCompare() {
+        const pane = this.comparePane;
+        if (!pane) return;
+        this.compare.setOpen(false);
+        pane.controller.dispose();
+        pane.annotations.invalidatePendingRequests();
+        this.comparePane = null;
+    }
+
+    private readonly toggleCompare = () => {
+        if (this.compare.open) this.closeCompare();
+        else this.openCompare();
+    };
+
+    private readonly selectCompareSlide = (slide: Slide, sample: Sample) => {
+        void this.comparePane?.controller.selectSlide(slide, sample, false);
+    };
+
+    /** F6 moves the focus to the other slide's view, side by side. */
+    private focusOtherPane(): boolean {
+        if (!this.compare.open || !this.comparePane) return false;
+        const side = otherSide(this.compare.activeSide);
+        const pane = side === 'left' ? this.primaryPane : this.comparePane;
+        const target =
+            (pane.containerRef.current?.querySelector(
+                '.openseadragon-canvas'
+            ) as HTMLElement | null) || pane.containerRef.current;
+        if (!target) return false;
+        this.compare.setActiveSide(side);
+        target.focus();
+        return true;
     }
 
     @computed private get navCollapsed(): boolean {
@@ -359,6 +590,24 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
             getViewerContainerElement: () => this.viewerContainerRef.current,
             chooseInitialServableSlide: allSlides =>
                 this.chooseInitialServableSlide(allSlides),
+            onSlideSelectionStarted: slide => {
+                this.compare.beginSlide('left');
+                this.annotationController.beginSlide(slide.slide_key);
+            },
+            onViewerOpened: (viewer, openSeadragon, slide) => {
+                this.annotationController.attachViewer(
+                    viewer,
+                    openSeadragon,
+                    slide.slide_key
+                );
+                this.compare.attachViewer('left', viewer, openSeadragon);
+            },
+            onViewerDestroyed: () => {
+                this.annotationController.detachViewer();
+                this.compare.detachViewer('left');
+            },
+            drawDownloadOverlay: (context, scale) =>
+                this.annotationController.drawSnapshot(context, scale),
             reportInitialSlideLoadPerformance: metric =>
                 this.reportInitialSlideLoadPerformance(metric),
         };
@@ -390,6 +639,11 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
             document.addEventListener('keydown', this.handlePanelKey);
         }
         checkWsiTileServerOrigin(this.props.tileServerUrl);
+        this.comparePairReaction = reaction(
+            () => [this.compare.leftSlideKey, this.compare.rightSlideKey],
+            () => this.compare.refreshPair(),
+            { fireImmediately: true }
+        );
         void this.controller.loadHierarchy();
     }
 
@@ -398,14 +652,19 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
             this.props.hidden ||
             event.altKey ||
             event.ctrlKey ||
-            event.metaKey ||
-            isTypingTarget(event.target)
+            event.metaKey
         ) {
             return;
         }
+        if (event.key === WSI_PANE_SWITCH_KEY && this.focusOtherPane()) {
+            event.preventDefault();
+            return;
+        }
+        if (isTypingTarget(event.target)) return;
         if (event.key === NAV_TOGGLE_KEY) {
             this.setNavCollapsed(!this.navCollapsed);
         } else if (event.key === METADATA_TOGGLE_KEY) {
+            // One meaning, Annotate on or off: the Point tool is C.
             this.setMetadataCollapsed(!this.metadataCollapsed);
         }
     };
@@ -415,6 +674,13 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
             typeof document !== 'undefined' &&
             document.visibilityState === 'hidden';
         this.controller.setVisible(!this.props.hidden && !pageHidden);
+        this.comparePane?.controller.setVisible(
+            !this.props.hidden && !pageHidden
+        );
+        // A hidden viewer's annotation shortcuts are off, e.g. R in another
+        // tab must not reject the AI annotation under review.
+        this.annotationController.setViewerHidden(!!this.props.hidden);
+        this.comparePane?.annotations.setViewerHidden(!!this.props.hidden);
     };
 
     private async selectSlideFromHash(): Promise<void> {
@@ -470,6 +736,37 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
         const stainFilterChanged =
             prev.initialStainFilter !== this.props.initialStainFilter;
 
+        if (prev.annotationUser !== this.props.annotationUser) {
+            this.annotationController.setCurrentUser(this.props.annotationUser);
+            this.comparePane?.annotations.setCurrentUser(
+                this.props.annotationUser
+            );
+        }
+        // Another patient, study or service: the second slide goes.
+        if (
+            authScopeChanged ||
+            prev.studyId !== this.props.studyId ||
+            prev.patientId !== this.props.patientId ||
+            prev.tileServerUrl !== this.props.tileServerUrl ||
+            prev.annotationApiUrl !== this.props.annotationApiUrl
+        ) {
+            this.closeCompare();
+        }
+        if (prev.annotationLink !== this.props.annotationLink) {
+            this.annotationController.setLinkBuilder(this.props.annotationLink);
+        }
+        if (
+            prev.requestedAnnotationId !== this.props.requestedAnnotationId ||
+            prev.requestedAnnotationSlideKey !==
+                this.props.requestedAnnotationSlideKey
+        ) {
+            this.annotationController.requestAnnotation(
+                this.props.requestedAnnotationId,
+                this.props.requestedAnnotationSlideKey,
+                () => this.props.onRequestedAnnotationUsed?.()
+            );
+        }
+
         if (prev.hidden !== this.props.hidden) {
             this.updateControllerVisibility();
         }
@@ -486,6 +783,22 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
             clearPatientHierarchyCache();
             clearWsiSlideSources();
             clearWsiThumbnailFetchCache();
+        }
+
+        if (
+            authScopeChanged ||
+            prev.studyId !== this.props.studyId ||
+            prev.annotationApiUrl !== this.props.annotationApiUrl
+        ) {
+            // A hierarchy reload begins the slide again, so only drop the
+            // previous context's annotations here.
+            if (requiresHierarchyReload) {
+                this.annotationController.invalidatePendingRequests();
+            }
+            this.annotationController.setContext(
+                this.props.annotationApiUrl,
+                this.props.studyId
+            );
         }
 
         if (pathologyFilterChanged) {
@@ -529,10 +842,15 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
             document.removeEventListener('keydown', this.handlePanelKey);
         }
         this.cancelPendingSlideSelection();
+        this.closeCompare();
+        this.comparePairReaction?.();
+        this.comparePairReaction = null;
+        this.compare.dispose();
         action(() => {
             this.viewerState.hierarchy = null;
         })();
         this.controller.dispose();
+        this.annotationController.detachViewer();
         this.handleSidebarResizeEnd();
     }
 
@@ -800,7 +1118,7 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
     @computed get selectedClinicalRows(): WsiClinicalRow[] | undefined {
         const rows = this.props.clinicalRows;
         if (!rows) return undefined;
-        const sampleId = this.viewerState.selectedSample?.sample_id;
+        const sampleId = this.activePane.state.selectedSample?.sample_id;
         return rows.filter(row => !row.sampleId || row.sampleId === sampleId);
     }
 
@@ -810,25 +1128,21 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
 
     @computed
     private get selectedWsiRows(): MetaRow[] {
-        return this.viewerState.selectedMeta
-            ? buildWsiRows(
-                  this.viewerState.selectedSlide,
-                  this.viewerState.selectedMeta
-              )
+        const state = this.activePane.state;
+        return state.selectedMeta
+            ? buildWsiRows(state.selectedSlide, state.selectedMeta)
             : [];
     }
 
     @computed
     private get selectedPathRows(): MetaRow[] {
-        if (
-            !this.viewerState.selectedSlide ||
-            !this.viewerState.selectedSample
-        ) {
+        const { selectedSlide, selectedSample } = this.activePane.state;
+        if (!selectedSlide || !selectedSample) {
             return [];
         }
         return buildPathRows(
-            this.viewerState.selectedSlide,
-            this.viewerState.selectedSample,
+            selectedSlide,
+            selectedSample,
             this.props.patientId,
             this.props.studyId
         );
@@ -858,17 +1172,405 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
         );
     }
 
+    /** The `side` pane's handlers on the side-by-side area. */
+    private paneEvents(side: WsiPaneSide) {
+        const activate = () => {
+            if (this.compare.activeSide !== side) {
+                this.compare.setActiveSide(side);
+            }
+            this.compare.noteInteraction(side);
+        };
+        return {
+            onPointerDownCapture: activate,
+            onFocusCapture: activate,
+            onWheelCapture: () => this.compare.noteInteraction(side),
+            onKeyDownCapture: () => this.compare.noteInteraction(side),
+        };
+    }
+
+    /** "Left slide: H&E · WSI-0123-4567-89ab", a pane's region name. */
+    private paneLabel(pane: WsiViewerPane): string {
+        const slide = pane.state.selectedSlide;
+        const side = pane.side === 'left' ? 'Left' : 'Right';
+        return slide
+            ? `${side} slide: ${slideStainLabel(slide)} · ${formatSlideId(
+                  slide.slide_key
+              )}`
+            : `${side} slide`;
+    }
+
+    /**
+     * The slide area: the main slide's stage, and side by side the bar, the
+     * Align and copy panel and the second slide. The main stage keeps its
+     * place in the tree either way, so its viewer is never rebuilt when
+     * Compare opens or closes.
+     */
+    private renderStageArea() {
+        const hierarchy = this.viewerState.hierarchy!;
+        const left = this.primaryPane;
+        const right = this.compare.open ? this.comparePane : null;
+        const pane = (entry: WsiViewerPane, other: WsiViewerPane | null) => {
+            const active = this.compare.activeSide === entry.side;
+            return (
+                <section
+                    key={entry.side}
+                    role={other ? 'region' : undefined}
+                    aria-label={other ? this.paneLabel(entry) : undefined}
+                    data-testid={`wsi-pane-${entry.side}`}
+                    data-active={active ? 'true' : 'false'}
+                    {...(other ? this.paneEvents(entry.side) : {})}
+                    style={{
+                        display: 'flex',
+                        flexDirection: 'column',
+                        minWidth: 0,
+                        ...(entry.side === 'left' && other
+                            ? {
+                                  flex: `0 1 ${this.compare.split * 100}%`,
+                              }
+                            : { flex: '1 1 0' }),
+                    }}
+                >
+                    {other && (
+                        <WsiPaneHeader
+                            side={entry.side}
+                            active={active}
+                            hierarchy={hierarchy}
+                            slide={entry.state.selectedSlide}
+                            otherSlide={other.state.selectedSlide}
+                            onSelect={
+                                entry.side === 'left'
+                                    ? this.handleSelectSlide
+                                    : this.selectCompareSlide
+                            }
+                        />
+                    )}
+                    {this.renderStage(entry)}
+                </section>
+            );
+        };
+        return (
+            <div
+                style={{
+                    flex: 1,
+                    minWidth: 0,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    background: C.stageBg,
+                }}
+            >
+                {right && (
+                    <WsiCompareBar
+                        compare={this.compare}
+                        onClose={this.closeCompare}
+                    />
+                )}
+                {right && <WsiAlignPanel compare={this.compare} />}
+                <div
+                    ref={this.compareRowRef}
+                    style={{ flex: 1, minHeight: 0, display: 'flex' }}
+                >
+                    {pane(left, right)}
+                    {right && (
+                        <WsiCompareDivider
+                            compare={this.compare}
+                            rowRef={this.compareRowRef}
+                        />
+                    )}
+                    {right && pane(right, left)}
+                </div>
+            </div>
+        );
+    }
+
+    /**
+     * One slide's stage: its viewer, zoom buttons, loading and error
+     * states, status bar and annotation layers. Side by side, only the
+     * active pane shows the annotation toolbar.
+     */
+    private renderStage(pane: WsiViewerPane) {
+        const {
+            error,
+            selectedSlide,
+            thumbnailPreviewUrl,
+            tilesReady,
+        } = pane.state;
+        const primary = pane === this.primaryPane;
+        const compareOpen = this.compare.open;
+        const annotations = this.props.annotationApiUrl
+            ? pane.annotations
+            : null;
+        const toolbar =
+            annotations &&
+            (!compareOpen || this.compare.activeSide === pane.side);
+        return (
+            <div
+                style={{
+                    flex: 1,
+                    minWidth: 0,
+                    minHeight: 0,
+                    position: 'relative',
+                    background: C.stageBg,
+                }}
+            >
+                {toolbar && <WsiAnnotationToolbar controller={annotations!} />}
+                {selectedSlide && thumbnailPreviewUrl && (
+                    <img
+                        data-testid="wsi-thumbnail-preview"
+                        src={thumbnailPreviewUrl}
+                        alt=""
+                        aria-hidden="true"
+                        style={{
+                            position: 'absolute',
+                            inset: 0,
+                            width: '100%',
+                            height: '100%',
+                            objectFit: 'contain',
+                            pointerEvents: 'none',
+                            zIndex: 0,
+                        }}
+                    />
+                )}
+                <div
+                    ref={pane.containerRef}
+                    style={{
+                        width: '100%',
+                        height: '100%',
+                        position: 'relative',
+                        zIndex: 1,
+                        background: 'transparent',
+                    }}
+                />
+                {/* Custom Bootstrap-styled OSD nav buttons — always in DOM so OSD can adopt them.
+                    OSD wires zoom-in/zoom-out/home handlers onto these elements via the
+                    zoomInButton/zoomOutButton/homeButton options in mountOSD. */}
+                <div
+                    style={{
+                        position: 'absolute',
+                        top: 8,
+                        left: 8,
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 2,
+                        zIndex: 100,
+                    }}
+                >
+                    {ZOOM_BUTTONS.map(({ id, title, icon }) => (
+                        <DefaultTooltip
+                            key={id}
+                            trigger={['hover']}
+                            placement="right"
+                            overlay={<span>{title}</span>}
+                        >
+                            <button
+                                type="button"
+                                id={`${pane.controller.navId}-${id}`}
+                                aria-label={title}
+                                className="btn btn-default btn-sm"
+                                style={{
+                                    width: 28,
+                                    padding: '3px 0',
+                                    lineHeight: 1,
+                                }}
+                            >
+                                <i className={`fa ${icon}`} />
+                            </button>
+                        </DefaultTooltip>
+                    ))}
+                </div>
+                {primary &&
+                    this.requestedSlideUnavailable &&
+                    !this.requestedSlideNoticeDismissed && (
+                        <div
+                            role="status"
+                            data-testid="wsi-requested-slide-unavailable"
+                            style={{
+                                position: 'absolute',
+                                top: 8,
+                                left: '50%',
+                                transform: 'translateX(-50%)',
+                                zIndex: 120,
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 8,
+                                padding: '6px 10px',
+                                borderRadius: 3,
+                                color: C.text,
+                                background: '#fcf8e3',
+                                border: '1px solid #faebcc',
+                                boxShadow: '0 1px 4px rgba(0,0,0,0.2)',
+                                fontSize: 12,
+                            }}
+                        >
+                            <span>
+                                The requested slide is not available. Showing
+                                the default slide instead.
+                            </span>
+                            <button
+                                type="button"
+                                className="close"
+                                aria-label="Dismiss"
+                                onClick={this.dismissRequestedSlideNotice}
+                                style={{ float: 'none', fontSize: 16 }}
+                            >
+                                &times;
+                            </button>
+                        </div>
+                    )}
+                {pane.state.spinnerVisible && selectedSlide && (
+                    <div
+                        data-testid="wsi-loading-spinner"
+                        style={{
+                            ...overlayStyle,
+                            background: thumbnailPreviewUrl
+                                ? 'rgba(232,232,232,0.18)'
+                                : 'rgba(232,232,232,0.75)',
+                        }}
+                    >
+                        {thumbnailPreviewUrl ? (
+                            <div
+                                role="status"
+                                style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: 8,
+                                    padding: '7px 10px',
+                                    borderRadius: 3,
+                                    color: C.text,
+                                    background: 'rgba(255,255,255,0.92)',
+                                    border: `1px solid ${C.border}`,
+                                    boxShadow: '0 1px 3px rgba(0,0,0,0.15)',
+                                    fontSize: 13,
+                                }}
+                            >
+                                <i
+                                    className="fa fa-spinner fa-spin"
+                                    style={{ color: C.muted }}
+                                />
+                                <span>Loading full-resolution image…</span>
+                            </div>
+                        ) : this.props.renderLoading ? (
+                            this.props.renderLoading()
+                        ) : (
+                            <DefaultLoadingIndicator />
+                        )}
+                    </div>
+                )}
+                {error && selectedSlide && (
+                    <div
+                        data-testid="wsi-viewer-error"
+                        style={{
+                            ...overlayStyle,
+                            background: 'rgba(232,232,232,0.92)',
+                            zIndex: 110,
+                            pointerEvents: 'auto',
+                            flexDirection: 'column',
+                            gap: 12,
+                            padding: 24,
+                            textAlign: 'center',
+                        }}
+                    >
+                        <span style={{ color: C.text }}>{error}</span>
+                        {error === WSI_SESSION_EXPIRED_MESSAGE ? (
+                            <button
+                                className="btn btn-primary btn-sm"
+                                onClick={this.handleReloadPage}
+                            >
+                                Reload page
+                            </button>
+                        ) : (
+                            <button
+                                className="btn btn-primary btn-sm"
+                                onClick={
+                                    primary
+                                        ? this.handleRetryViewer
+                                        : () =>
+                                              void pane.controller.retrySelectedSlide()
+                                }
+                            >
+                                Retry
+                            </button>
+                        )}
+                    </div>
+                )}
+                {!selectedSlide && (
+                    <div style={overlayStyle}>
+                        <span style={{ color: C.muted, fontSize: 13 }}>
+                            {primary
+                                ? 'No viewable slides for this patient'
+                                : 'Pick a slide'}
+                        </span>
+                    </div>
+                )}
+                {tilesReady && (
+                    <ViewerStatusBar
+                        viewer={pane.state}
+                        onChangeX={
+                            primary
+                                ? this.handleChangeX
+                                : action((v: string) => {
+                                      pane.state.coordInputX = v;
+                                  })
+                        }
+                        onChangeY={
+                            primary
+                                ? this.handleChangeY
+                                : action((v: string) => {
+                                      pane.state.coordInputY = v;
+                                  })
+                        }
+                        onGo={
+                            primary
+                                ? this.handleGoToCoordinates
+                                : () => pane.controller.goToCoordinates()
+                        }
+                        onCopyLink={primary ? this.handleCopyLink : undefined}
+                        onDownload={() => pane.controller.downloadView()}
+                        showDownload={!!this.props.showDownload}
+                        compare={
+                            primary
+                                ? {
+                                      open: compareOpen,
+                                      unavailable: this.compareUnavailable,
+                                      onToggle: this.toggleCompare,
+                                  }
+                                : undefined
+                        }
+                    />
+                )}
+                {annotations && (
+                    <WsiAnnotationTooltip controller={annotations} />
+                )}
+                {annotations && (
+                    <WsiAnnotationOverlay controller={annotations} />
+                )}
+                {annotations && (
+                    <WsiAnnotationDrawPreview controller={annotations} />
+                )}
+                {annotations && <WsiTissueOverlay controller={annotations} />}
+                {annotations && <WsiTissueBar controller={annotations} />}
+                {annotations && (
+                    <WsiAnnotationReviewCard controller={annotations} />
+                )}
+                {annotations && (
+                    <WsiAnnotationFocusBar controller={annotations} />
+                )}
+                {compareOpen && (
+                    <WsiAlignMarkers
+                        compare={this.compare}
+                        side={pane.side}
+                        containerRef={pane.containerRef}
+                    />
+                )}
+            </div>
+        );
+    }
+
     render() {
         const { height } = this.props;
-        const {
-            loading,
-            error,
-            hierarchy,
-            selectedSlide,
-            selectedSample,
-            thumbnailPreviewUrl,
-        } = this.viewerState;
+        const { loading, error, hierarchy, selectedSlide } = this.viewerState;
         const { stainFilter, matchFilter } = this;
+        const sidePane = this.activePane;
+        const sideAnnotations = sidePane.annotations;
         // Only offered when it changes the list: a filter is set, or a link
         // scope it would release hides some of the patient's slides.
         const showClearFilters =
@@ -907,6 +1609,7 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
 
         return (
             <div
+                data-wsi-viewer-root
                 style={{
                     display: 'flex',
                     height,
@@ -943,207 +1646,7 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
                     />
                 )}
 
-                {/* OSD viewer */}
-                <div
-                    style={{
-                        flex: 1,
-                        position: 'relative',
-                        background: C.stageBg,
-                    }}
-                >
-                    {selectedSlide && thumbnailPreviewUrl && (
-                        <img
-                            data-testid="wsi-thumbnail-preview"
-                            src={thumbnailPreviewUrl}
-                            alt=""
-                            aria-hidden="true"
-                            style={{
-                                position: 'absolute',
-                                inset: 0,
-                                width: '100%',
-                                height: '100%',
-                                objectFit: 'contain',
-                                pointerEvents: 'none',
-                                zIndex: 0,
-                            }}
-                        />
-                    )}
-                    <div
-                        ref={this.viewerContainerRef}
-                        style={{
-                            width: '100%',
-                            height: '100%',
-                            position: 'relative',
-                            zIndex: 1,
-                            background: 'transparent',
-                        }}
-                    />
-                    {/* Custom Bootstrap-styled OSD nav buttons — always in DOM so OSD can adopt them.
-                        OSD wires zoom-in/zoom-out/home handlers onto these elements via the
-                        zoomInButton/zoomOutButton/homeButton options in mountOSD. */}
-                    <div
-                        style={{
-                            position: 'absolute',
-                            top: 8,
-                            left: 8,
-                            display: 'flex',
-                            flexDirection: 'column',
-                            gap: 2,
-                            zIndex: 100,
-                        }}
-                    >
-                        {ZOOM_BUTTONS.map(({ id, title, icon }) => (
-                            <DefaultTooltip
-                                key={id}
-                                trigger={['hover']}
-                                placement="right"
-                                overlay={<span>{title}</span>}
-                            >
-                                <button
-                                    type="button"
-                                    id={`${this.navId}-${id}`}
-                                    aria-label={title}
-                                    className="btn btn-default btn-sm"
-                                    style={{
-                                        width: 28,
-                                        padding: '3px 0',
-                                        lineHeight: 1,
-                                    }}
-                                >
-                                    <i className={`fa ${icon}`} />
-                                </button>
-                            </DefaultTooltip>
-                        ))}
-                    </div>
-                    {this.requestedSlideUnavailable &&
-                        !this.requestedSlideNoticeDismissed && (
-                            <div
-                                role="status"
-                                data-testid="wsi-requested-slide-unavailable"
-                                style={{
-                                    position: 'absolute',
-                                    top: 8,
-                                    left: '50%',
-                                    transform: 'translateX(-50%)',
-                                    zIndex: 120,
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    gap: 8,
-                                    padding: '6px 10px',
-                                    borderRadius: 3,
-                                    color: C.text,
-                                    background: '#fcf8e3',
-                                    border: '1px solid #faebcc',
-                                    boxShadow: '0 1px 4px rgba(0,0,0,0.2)',
-                                    fontSize: 12,
-                                }}
-                            >
-                                <span>
-                                    The requested slide is not available.
-                                    Showing the default slide instead.
-                                </span>
-                                <button
-                                    type="button"
-                                    className="close"
-                                    aria-label="Dismiss"
-                                    onClick={this.dismissRequestedSlideNotice}
-                                    style={{ float: 'none', fontSize: 16 }}
-                                >
-                                    &times;
-                                </button>
-                            </div>
-                        )}
-                    {this.viewerState.spinnerVisible && selectedSlide && (
-                        <div
-                            data-testid="wsi-loading-spinner"
-                            style={{
-                                ...overlayStyle,
-                                background: thumbnailPreviewUrl
-                                    ? 'rgba(232,232,232,0.18)'
-                                    : 'rgba(232,232,232,0.75)',
-                            }}
-                        >
-                            {thumbnailPreviewUrl ? (
-                                <div
-                                    role="status"
-                                    style={{
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        gap: 8,
-                                        padding: '7px 10px',
-                                        borderRadius: 3,
-                                        color: C.text,
-                                        background: 'rgba(255,255,255,0.92)',
-                                        border: `1px solid ${C.border}`,
-                                        boxShadow: '0 1px 3px rgba(0,0,0,0.15)',
-                                        fontSize: 13,
-                                    }}
-                                >
-                                    <i
-                                        className="fa fa-spinner fa-spin"
-                                        style={{ color: C.muted }}
-                                    />
-                                    <span>Loading full-resolution image…</span>
-                                </div>
-                            ) : this.props.renderLoading ? (
-                                this.props.renderLoading()
-                            ) : (
-                                <DefaultLoadingIndicator />
-                            )}
-                        </div>
-                    )}
-                    {error && selectedSlide && (
-                        <div
-                            data-testid="wsi-viewer-error"
-                            style={{
-                                ...overlayStyle,
-                                background: 'rgba(232,232,232,0.92)',
-                                zIndex: 110,
-                                pointerEvents: 'auto',
-                                flexDirection: 'column',
-                                gap: 12,
-                                padding: 24,
-                                textAlign: 'center',
-                            }}
-                        >
-                            <span style={{ color: C.text }}>{error}</span>
-                            {error === WSI_SESSION_EXPIRED_MESSAGE ? (
-                                <button
-                                    className="btn btn-primary btn-sm"
-                                    onClick={this.handleReloadPage}
-                                >
-                                    Reload page
-                                </button>
-                            ) : (
-                                <button
-                                    className="btn btn-primary btn-sm"
-                                    onClick={this.handleRetryViewer}
-                                >
-                                    Retry
-                                </button>
-                            )}
-                        </div>
-                    )}
-                    {!selectedSlide && (
-                        <div style={overlayStyle}>
-                            <span style={{ color: C.muted, fontSize: 13 }}>
-                                No viewable slides for this patient
-                            </span>
-                        </div>
-                    )}
-                    {this.viewerState.tilesReady && (
-                        <ViewerStatusBar
-                            viewer={this.viewerState}
-                            onChangeX={this.handleChangeX}
-                            onChangeY={this.handleChangeY}
-                            onGo={this.handleGoToCoordinates}
-                            onCopyLink={this.handleCopyLink}
-                            onDownload={this.handleDownload}
-                            showDownload={!!this.props.showDownload}
-                        />
-                    )}
-                </div>
-
+                {this.renderStageArea()}
                 {this.metadataCollapsed ? (
                     <WsiCollapsedRail
                         side="right"
@@ -1189,13 +1692,59 @@ export default class WSIViewer extends React.Component<WsiViewerProps, {}> {
                         {/* Right metadata sidebar */}
                         <WsiMetaSidebar
                             width={this.sidebarWidth}
-                            showImageProperties={
-                                !!this.viewerState.selectedMeta
-                            }
+                            showImageProperties={!!sidePane.state.selectedMeta}
                             wsiRows={this.selectedWsiRows}
-                            showPathology={!!(selectedSlide && selectedSample)}
+                            showPathology={
+                                !!(
+                                    sidePane.state.selectedSlide &&
+                                    sidePane.state.selectedSample
+                                )
+                            }
                             pathRows={this.selectedPathRows}
+                            annotationLayersPanel={
+                                this.props.annotationApiUrl &&
+                                sideAnnotations.visible ? (
+                                    <WsiAnnotationLayersPanel
+                                        key={sidePane.side}
+                                        controller={sideAnnotations}
+                                    />
+                                ) : null
+                            }
+                            annotationPanel={
+                                this.props.annotationApiUrl &&
+                                sideAnnotations.visible ? (
+                                    <WsiAnnotationPanel
+                                        key={sidePane.side}
+                                        controller={sideAnnotations}
+                                        fill={sideAnnotations.annotateOn}
+                                    />
+                                ) : null
+                            }
+                            annotationPanelTitle={
+                                'Annotations (' +
+                                sideAnnotations.visibleAnnotationCount +
+                                ')'
+                            }
+                            slideNotesPanel={
+                                this.props.annotationApiUrl &&
+                                sideAnnotations.visible &&
+                                sideAnnotations.slideNotes.route !== false ? (
+                                    <WsiSlideNotesPanel
+                                        key={sidePane.side}
+                                        controller={sideAnnotations}
+                                    />
+                                ) : null
+                            }
+                            slideNotesTitle={
+                                sideAnnotations.slideNotes.route
+                                    ? `Slide notes (${sideAnnotations.slideNotes.count})`
+                                    : 'Slide notes'
+                            }
                             clinicalRows={this.selectedClinicalRows}
+                            annotating={
+                                !!this.props.annotationApiUrl &&
+                                sideAnnotations.annotateOn
+                            }
                             onHide={this.hideMetadata}
                         />
                     </>
@@ -1231,9 +1780,16 @@ interface ViewerStatusBarProps {
     onChangeX: (v: string) => void;
     onChangeY: (v: string) => void;
     onGo: () => void;
-    onCopyLink: () => void;
+    /** Unset, there is no copy-link button (the second slide side by side). */
+    onCopyLink?: () => void;
     onDownload: () => void;
     showDownload: boolean;
+    /** The Compare (side by side) button, on the main slide's bar. */
+    compare?: {
+        open: boolean;
+        unavailable: string | null;
+        onToggle: () => void;
+    };
 }
 
 /** A status bar tool: a Bootstrap button with a portal tooltip. */
@@ -1242,12 +1798,17 @@ function StatusBarButton({
     icon,
     testId,
     pressed,
+    disabled,
+    text,
     onClick,
 }: {
     label: string;
     icon: string;
     testId: string;
     pressed?: boolean;
+    disabled?: boolean;
+    /** A visible label next to the icon. */
+    text?: string;
     onClick: () => void;
 }) {
     return (
@@ -1262,9 +1823,12 @@ function StatusBarButton({
                 data-testid={testId}
                 aria-label={label}
                 aria-pressed={pressed}
-                onClick={onClick}
+                aria-disabled={disabled || undefined}
+                onClick={disabled ? undefined : onClick}
+                style={disabled ? { opacity: 0.55 } : undefined}
             >
-                <i className={`fa ${icon}`} />
+                <i className={`fa ${icon}`} aria-hidden="true" />
+                {text && <span style={{ marginLeft: 4 }}>{text}</span>}
             </button>
         </DefaultTooltip>
     );
@@ -1282,6 +1846,7 @@ const ViewerStatusBar = observer(function ViewerStatusBar({
     onCopyLink,
     onDownload,
     showDownload,
+    compare,
 }: ViewerStatusBarProps) {
     const {
         coordInputX: inputX,
@@ -1299,7 +1864,7 @@ const ViewerStatusBar = observer(function ViewerStatusBar({
     };
 
     const handleCopy = () => {
-        onCopyLink();
+        onCopyLink?.();
         setCopied(true);
         setTimeout(() => setCopied(false), 2000);
     };
@@ -1432,18 +1997,36 @@ const ViewerStatusBar = observer(function ViewerStatusBar({
                 pressed={goToOpen}
                 onClick={() => setGoToOpen(open => !open)}
             />
-            <StatusBarButton
-                label="Copy a link to this exact view (slide, position, zoom)"
-                icon={copied ? 'fa-check' : 'fa-link'}
-                testId="wsi-share-button"
-                onClick={handleCopy}
-            />
+            {onCopyLink && (
+                <StatusBarButton
+                    label="Copy a link to this exact view (slide, position, zoom)"
+                    icon={copied ? 'fa-check' : 'fa-link'}
+                    testId="wsi-share-button"
+                    onClick={handleCopy}
+                />
+            )}
             {showDownload && (
                 <StatusBarButton
                     label="Download current viewport as JPEG"
                     icon="fa-download"
                     testId="wsi-download-button"
                     onClick={onDownload}
+                />
+            )}
+            {compare && (
+                <StatusBarButton
+                    label={
+                        compare.open
+                            ? 'Close side by side'
+                            : compare.unavailable ||
+                              "Compare: show another slide of the patient side by side (the same block's other stain first)"
+                    }
+                    icon="fa-columns"
+                    text="Compare"
+                    testId="wsi-compare-button"
+                    pressed={compare.open}
+                    disabled={!compare.open && !!compare.unavailable}
+                    onClick={compare.onToggle}
                 />
             )}
         </div>

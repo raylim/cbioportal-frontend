@@ -60,7 +60,11 @@ export const tileMetadata = {
 };
 
 /** One WSI_SAMPLE resource row, as the resource table API returns it. */
-function makeSlideRow(slideKey: string, stainName: string, stainGroup: string) {
+export function makeSlideRow(
+    slideKey: string,
+    stainName: string,
+    stainGroup: string
+) {
     return {
         studyId: STUDY_ID,
         resourceId: 'WSI_SAMPLE',

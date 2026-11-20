@@ -27,6 +27,23 @@ export interface WsiViewerConfig {
      * error that asks for a page reload.
      */
     onSessionExpired?: () => void;
+    /**
+     * Annotation authoring against the annotation service at `apiUrl`,
+     * called with the portal session cookie. Off when unset.
+     */
+    annotations?: WsiAnnotationsConfig;
+}
+
+export interface WsiAnnotationsConfig {
+    /** Annotation service base URL, without a trailing slash. */
+    apiUrl: string;
+    /**
+     * Terms the label field offers, e.g. Tumor, Stroma, Necrosis. Unset or
+     * empty: no list, and the field suggests the labels already used.
+     */
+    labelVocabulary?: string[];
+    /** Only labels from `labelVocabulary` are allowed (ignored without one). */
+    labelVocabularyStrict?: boolean;
 }
 
 /** Services read by the viewer's module-level caches and controller. */
@@ -36,6 +53,7 @@ export interface WsiViewerRuntime {
     fetchImpl: typeof fetch;
     osdPrefixUrl?: string;
     onSessionExpired?: () => void;
+    annotations?: WsiAnnotationsConfig;
 }
 
 // Resolves the global at call time so a replaced `window.fetch` is used.
@@ -83,6 +101,7 @@ export function configureWsiViewerRuntime(config: WsiViewerConfig): void {
             : baseFetch,
         osdPrefixUrl: config.osdPrefixUrl,
         onSessionExpired,
+        annotations: config.annotations,
     };
 }
 
